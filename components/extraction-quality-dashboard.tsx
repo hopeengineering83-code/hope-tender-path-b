@@ -52,9 +52,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
   try {
     await prismaReady;
 
-    const [tender, files] = await Promise.all([
-      prisma.tender.findUnique({ where: { id: tenderId }, select: { analysisExtractionStatus: true } }),
-      prisma.tenderFile.findMany({
+    const files = await prisma.tenderFile.findMany({
       where: { tenderId },
       select: {
         id: true,
@@ -70,9 +68,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         ocrModel: true,
       },
       orderBy: { createdAt: "asc" },
-    }),
-    ]);
-    const analysisStatus = tender?.analysisExtractionStatus ?? null;
+    });
 
     if (files.length === 0) {
       return (
@@ -128,6 +124,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       const perPage = text ? assessExtractionQualityPerPage(text) : null;
       const detectionMode = perPage?.detectionMode ?? "EMPTY";
       const documentLevelDetection = detectionMode === "DOCUMENT_LEVEL";
+      const perfectPages = perPage?.pages.filter((p) => p.status === "GOOD").length ?? null;
 
       // Per-page analysis: perfectly extracted pages (status GOOD)
       const perfectPagesCount = perPage?.perfectPages.length ?? null;
@@ -146,6 +143,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         perfectPagesCount,
         ocrPages,
         failedPages,
+        perfectPages,
         ocrModel: file.ocrModel ?? null,
         blankPages: perPage?.blankPages.length ?? null,
         coverage: perPageCoverage,
@@ -175,6 +173,11 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
 
     const anyPoor = fileData.some((f) => f.status === "POOR" || f.corrupted);
     const allGood = fileData.every((f) => f.status === "GOOD" && !f.corrupted);
+
+    // Compute overall coverage summary across all files
+    const totalPagesOverall = fileData.reduce((sum, f) => sum + (f.totalPages ?? 0), 0);
+    const extractedPagesOverall = fileData.reduce((sum, f) => sum + (f.extractedPages ?? 0), 0);
+    const overallCoverage = totalPagesOverall > 0 ? Math.round((extractedPagesOverall / totalPagesOverall) * 100) : null;
 
     const headerBadge = anyPoor ? (
       <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
@@ -213,16 +216,15 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
               <p className="text-xs text-slate-500">
                 Per-file breakdown of extraction coverage and tender-section detection
               </p>
+              {overallCoverage !== null && (
+                <p className="mt-1.5 text-xs font-medium text-slate-700">
+                  Overall coverage: <span className={overallCoverage >= 95 ? "text-green-700" : overallCoverage >= 50 ? "text-amber-700" : "text-red-700"}>{extractedPagesOverall}/{totalPagesOverall} pages ({overallCoverage}%)</span>
+                </p>
+              )}
             </div>
           </div>
           {headerBadge}
         </div>
-
-        {(analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") && (
-          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <strong>Warning: document is only partially extracted.</strong> AI Analyze ran on incomplete extraction. Results may be missing tender pages. Re-extract or run OCR for a more reliable analysis.
-          </div>
-        )}
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {fileData.map((file) => (
@@ -252,10 +254,11 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                 <p className="mt-3 text-xs italic text-slate-500">Not yet extracted</p>
               ) : (
                 <>
-                  <div className="mt-3 grid grid-cols-5 gap-2 text-center">
+                  <div className="mt-3 grid grid-cols-6 gap-2 text-center">
                     {(
                       [
                         ["Total", file.totalPages, "slate"],
+                        ["Extracted", file.extractedPages, "slate"],
                         ["Perfect", file.perfectPagesCount, file.perfectPagesCount && file.totalPages ? file.perfectPagesCount < file.totalPages * 0.5 ? "amber" : "slate" : "slate"],
                         ["OCR", file.ocrPages, "slate"],
                         ["Blank", file.blankPages, file.blankPages ? "amber" : "slate"],
@@ -264,7 +267,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ).map(([label, value, tone]) => (
                       <div key={label} className="rounded-lg border bg-white px-2 py-2">
                         <p className="text-[10px] uppercase text-slate-400">{label}</p>
-                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : "text-slate-800"}`}>
+                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "green" ? "text-green-700" : tone === "amber" ? "text-amber-700" : "text-slate-800"}`}>
                           {value !== null ? (
                             value
                           ) : (
@@ -339,14 +342,14 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                         <div className="flex items-center justify-between text-xs text-slate-500">
                           <span>Coverage</span>
                           <span
-                            className={`font-semibold ${severityTextClass(scoreToSeverity(file.coverage ?? 0, { good: 80, warn: 50 }))}`}
+                            className={`font-semibold ${severityTextClass(scoreToSeverity(file.coverage ?? 0, { good: 95, warn: 50 }))}`}
                           >
                             {file.extractedPages}/{file.totalPages} = {file.coverage}%
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
                           <div
-                            className={`h-full rounded-full transition-all ${(file.coverage ?? 0) >= 80 ? "bg-emerald-500" : (file.coverage ?? 0) >= 50 ? "bg-amber-500" : "bg-red-500"}`}
+                            className={`h-full rounded-full transition-all ${(file.coverage ?? 0) >= 95 ? "bg-emerald-500" : (file.coverage ?? 0) >= 50 ? "bg-amber-500" : "bg-red-500"}`}
                             style={{ width: `${Math.min(100, file.coverage)}%` }}
                           />
                         </div>
@@ -410,7 +413,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     )}
                     {!file.corrupted &&
                       file.coverage !== null &&
-                      file.coverage < 80 && (
+                      file.coverage < 95 && (
                         <p className="text-xs text-amber-700">
                           ⚠ Only {file.coverage}% of pages extracted — submission
                           instructions may be missing

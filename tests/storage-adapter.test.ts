@@ -110,8 +110,32 @@ describe("development local storage", () => {
   });
 });
 
-describe("production storage fails closed", () => {
-  it("allows DB fallback by default unless explicitly disabled (ALLOW_DB_FILE_STORAGE=false)", async () => {
+describe("production storage falls back safely", () => {
+  it("allows database-backed storage as fallback when Blob is not configured", async () => {
+    const snapshot = snapshotEnv();
+    try {
+      const mutable = process.env as Record<string, string | undefined>;
+      mutable.NODE_ENV = "production";
+      delete mutable.VERCEL_ENV;
+      delete mutable.BLOB_READ_WRITE_TOKEN;
+      delete mutable.ALLOW_DB_FILE_STORAGE;
+      mutable.STORAGE_ROOT = temporaryRoot;
+      resetStorageAdapter();
+
+      assert.equal(resolveStorageProvider(), "db-base64");
+      assert.equal(isProductionStorageReady(), true);
+      const adapter = getStorageAdapter();
+      const small = Buffer.from("fallback-content");
+      const written = await adapter.putFile(small, { fileName: "small.txt", mimeType: "text/plain" });
+      assert.equal(written.provider, "db-base64");
+      assert.equal(written.fileContent, small.toString("base64"));
+    } finally {
+      restoreEnv(snapshot);
+      resetStorageAdapter();
+    }
+  });
+
+  it("rejects database storage when explicitly disabled", async () => {
     const snapshot = snapshotEnv();
     try {
       const mutable = process.env as Record<string, string | undefined>;
@@ -122,7 +146,6 @@ describe("production storage fails closed", () => {
       mutable.STORAGE_ROOT = temporaryRoot;
       resetStorageAdapter();
 
-      assert.equal(resolveStorageProvider(), "db-base64");
       assert.equal(isProductionStorageReady(), false);
       await assert.rejects(
         () => getStorageAdapter().putFile(Buffer.from("small"), { fileName: "small.txt", mimeType: "text/plain" }),

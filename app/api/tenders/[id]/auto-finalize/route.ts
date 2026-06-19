@@ -9,7 +9,7 @@ import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
@@ -180,12 +180,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // ── Pre-flight gates (same contract as generate-missing-plan-files) ──────
   // Gate 1: extraction quality — auto-finalize must not mark docs READY_FOR_EXPORT
-  // when the underlying tender was never reliably extracted.
+  // when the underlying tender was never reliably extracted. Because auto-finalize
+  // produces export-ready output, both the generation and the (stricter) export
+  // extraction bars must pass.
   const effectiveFiles = tender.files.map((file) => {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
     return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
   });
-  if (effectiveFiles.length > 0 && !isExtractionAcceptableForGeneration(effectiveFiles)) {
+  if (effectiveFiles.length > 0 && (!isExtractionAcceptableForGeneration(effectiveFiles) || !isExtractionAcceptableForExport(effectiveFiles))) {
     return NextResponse.json({
       error: "Auto-finalize blocked: tender extraction is not reliable enough. Re-extract or run OCR first.",
       code: "EXTRACTION_QUALITY_INSUFFICIENT",

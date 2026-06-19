@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
+const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -32,6 +33,10 @@ export default defineConfig({
           ...process.env,
           NEXT_TELEMETRY_DISABLED: "1",
           DATABASE_URL: process.env.DATABASE_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder",
+          // Full-auth CI runs against an isolated disposable database. Permit
+          // the bounded DB file fallback only for that harness; production and
+          // previews still require durable Blob/S3 storage.
+          ALLOW_DB_FILE_STORAGE: isolatedFullAuth ? "true" : (process.env.ALLOW_DB_FILE_STORAGE ?? "false"),
         },
       },
 });

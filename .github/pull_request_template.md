@@ -1,74 +1,76 @@
 ## Objective
 
-<!-- State one coherent objective. Do not use "fix everything". -->
+<!-- One coherent subsystem objective only. -->
 
-## Verified baseline
+## Controlled branch declaration
 
-- Base branch: `main`
+- Target branch: `integration/production-engine-2026-06`
+- Feature branch:
+- Feature lane:
 - Base commit SHA:
-- Current implementation inspected:
-- Relevant tests/logs inspected:
+- Control issue: #748
 
 ## Verified gap and evidence
 
-<!-- Describe the actual code, test, log, or deployment evidence. Do not rely only on an earlier AI summary. -->
+<!-- State the exact code, test, log, or deployment evidence. Do not rely only on an earlier AI summary. -->
 
-## Change-impact matrix
+## Scope
 
-| Area | Changed? | Risk | Required proof |
-|---|---|---|---|
-| Authentication / sessions | No | — | Authorization tests if Yes |
-| RBAC / tenant isolation | No | — | Two-user role-matrix tests if Yes |
-| Tender creation / upload | No | — | Upload contract and storage-failure tests if Yes |
-| Extraction / OCR | No | — | Quality and corruption tests if Yes |
-| AI Analyze / fallback | No | — | Provider, fallback, promotion, and provenance tests if Yes |
-| Requirements / source linkage | No | — | Source-file/page/quote tests if Yes |
-| Expert / project matching | No | — | Deterministic and AI matching tests if Yes |
-| Submission plan | No | — | Naming, order, and envelope tests if Yes |
-| Document generation | No | — | DOCX/PDF quality tests if Yes |
-| Review / approval | No | — | Role, ownership, and audit-history tests if Yes |
-| Export / ZIP | No | — | Readiness, manifest, signature, and ZIP integrity tests if Yes |
-| Prisma schema / migrations | No | — | Production migration-path and critical-schema tests if Yes |
-| Storage / environment | No | — | Storage adapter and production-readiness tests if Yes |
-| UI / recovery actions | No | — | Browser and action-registry tests if Yes |
-| Observability / operations | No | — | Structured-log and failure-path evidence if Yes |
+### Files intentionally changed
+
+-
+
+### Explicit exclusions
+
+-
+
+### Shared high-risk files changed
+
+- [ ] None
+- [ ] `prisma/schema.prisma` or migrations
+- [ ] `lib/prisma.ts`
+- [ ] `lib/ai.ts`
+- [ ] `lib/rate-limit.ts`
+- [ ] package or lock files
+- [ ] Next/Vercel configuration
+- [ ] GitHub workflows
+
+Explain every checked high-risk file:
 
 ## Behaviour preserved
 
-<!-- List current working behaviours that must remain unchanged. -->
+<!-- List verified existing behaviours that this change must not weaken or remove. -->
 
-## Explicit exclusions
+-
 
-<!-- State what this PR intentionally does not change. -->
+## Data, tenant, and security safety
 
-## Database and data-safety statement
-
-- [ ] No production data was accessed or modified during development/testing.
+- [ ] No production data was accessed or modified.
+- [ ] Existing legitimate records are preserved.
 - [ ] Migration is additive/backward-compatible, or no migration is included.
-- [ ] Object-storage and database compensation paths were tested where applicable.
-- [ ] Existing legitimate records and generated-document versions are preserved.
+- [ ] Ownership and cross-user isolation were tested where relevant.
+- [ ] No new fail-open security, storage, or rate-limit fallback was introduced.
+- [ ] Runtime schema creation is not used as a replacement for migrations.
 
 ## Validation evidence
 
 - [ ] `npm ci`
-- [ ] `npm run audit:release-integrity`
+- [ ] `npx prisma validate`
+- [ ] `npx prisma generate`
 - [ ] `npm run typecheck`
 - [ ] `npm run lint`
 - [ ] `npm test`
 - [ ] `npm run build`
 - [ ] `npm run test:e2e`
-- [ ] Production-equivalent migration path validated
-- [ ] Critical schema check passed
-- [ ] Vercel preview is READY
+- [ ] `git diff --exit-code`
+- [ ] Vercel preview inspected
+- [ ] Relevant workflow tested end-to-end
 
-## Representative workflow verification
+## Integration order and dependencies
 
-- [ ] Upload persisted at least one source file
-- [ ] Extraction state matched stored content
-- [ ] AI Analyze completed or returned an explicitly labelled fallback/recovery action
-- [ ] Requirements retained source linkage
-- [ ] Submission plan and generation gates behaved correctly
-- [ ] Final package checks were unaffected or revalidated
+- Must be integrated before:
+- Must be integrated after:
+- Conflicts or overlaps with other PRs:
 
 ## Rollback
 
@@ -78,4 +80,12 @@
 
 ## Remaining risks
 
-<!-- List unresolved risks. Use "None verified" only after checking. -->
+<!-- Be explicit. Do not write "none" unless verified. -->
+
+-
+
+## Integrator decision
+
+- [ ] Accept for controlled integration
+- [ ] Requires revision
+- [ ] Reject or supersede

@@ -72,7 +72,7 @@ export async function createSession(userId: string) {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: (process.env.NODE_ENV === "production" && !process.env.CI) || Boolean(process.env.VERCEL_ENV),
+    secure: process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV),
     path: "/",
     expires: expiresAt,
   });

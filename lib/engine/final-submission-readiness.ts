@@ -613,6 +613,7 @@ export async function getFinalSubmissionReadiness(
     submissionMethod: tender.submissionMethod,
     submissionAddress: tender.submissionAddress,
     submissionEmails: tender.submissionEmails,
+    metadataContaminated: tender.metadataContaminated,
     deadline: tender.deadline ?? null,
     clientContactName: tender.clientContactName,
     clientContactEmail: tender.clientContactEmail,
@@ -906,7 +907,12 @@ export async function getFinalSubmissionReadiness(
     qualityFailedDocuments: qualityFailed,
     finalExportCandidatesCount: finalCandidates.length,
     readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
-    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
+    finalExportGateOk:
+      readiness.ok &&
+      documentBlockers.length === 0 &&
+      tenderLevelBlockers.length === 0 &&
+      isExtractionAcceptableForExport(tender.files ?? []) &&
+      !metadata.blockingForExport,
   });
 
   const summary: FinalReadinessSummary = {
