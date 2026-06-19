@@ -238,12 +238,18 @@ const oldHeader = `# Default order: OpenAI → Gemini → Mistral → DeepSeek �
 const newHeader = `# Canonical order for analysis, extraction, proposal, validation, fast, and reasoning:
 # Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude.
 # The first configured and healthy provider is used; cooled-down providers are skipped.`;
-if (!env.includes(oldHeader)) throw new Error("Unable to find stale provider-order header in .env.example");
-env = env.replace(oldHeader, newHeader);
-env = env.replace(
-  "# Gemini is the primary analysis/extraction provider and second provider in\n# the default proposal chain.",
-  "# Gemini is the fourth provider in the canonical chain. It remains a high-quality\n# analysis, extraction, and proposal fallback after Mistral, Groq, and OpenRouter.",
-);
+// Tolerant of the header already being fixed in source (e.g. by PR #782 which
+// permanently fixed the stale provider-order header in .env.example). When the
+// stale header is no longer present, the .env.example patch is a no-op rather
+// than a hard error — the script's job for this file is already done.
+if (env.includes(oldHeader)) {
+  env = env.replace(oldHeader, newHeader);
+}
+const oldGeminiNote = "# Gemini is the primary analysis/extraction provider and second provider in\n# the default proposal chain.";
+const newGeminiNote = "# Gemini is the fourth provider in the canonical chain. It remains a high-quality\n# analysis, extraction, and proposal fallback after Mistral, Groq, and OpenRouter.";
+if (env.includes(oldGeminiNote)) {
+  env = env.replace(oldGeminiNote, newGeminiNote);
+}
 env = env.replace(
   '# BLOB_READ_WRITE_TOKEN=""',
   '# BLOB_READ_WRITE_TOKEN=""\n# When Blob is absent, files up to 5 MiB use the bounded database fallback by default.\n# Set false only after durable Blob storage is configured and verified.\n# ALLOW_DB_FILE_STORAGE="true"',
