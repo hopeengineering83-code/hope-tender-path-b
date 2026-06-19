@@ -1,1 +1,0 @@
-@copilot Synchronize package-lock.json with the current package.json using Node.js 22 and npm install --package-lock-only --ignore-scripts. Verify node_modules/postcss resolves exactly to 8.5.10. Commit only package-lock.json. Do not modify any other file.
