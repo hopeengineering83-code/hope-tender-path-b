@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
-import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
@@ -10,6 +10,7 @@ import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { autoFillTenderMetadata } from "../../../../../lib/engine/auto-fill-tender-metadata";
 import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -23,8 +24,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized. Sign in again before running the tender engine.", code: "UNAUTHORIZED", nextAction: "LOGIN_AGAIN", diagnosticId }, { status: 401 });
 
-  const rl = rateLimit(`engine:${userId}`, AI_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many engine runs. Please wait before retrying.", code: "RATE_LIMITED", resetAt: rl.resetAt, diagnosticId }, { status: 429 });
+  const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many engine runs. Please wait before retrying.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter, diagnosticId }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   try {
     await prismaReady;
@@ -67,31 +71,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       for (const field of invalidFields) (tender as Record<string, unknown>)[field] = null;
     }
 
-    // ─── Auto-fill missing tender metadata from extracted text ────────────
-    // Runs before extraction-quality gating so client name, country, etc.
-    // are populated even when the user hasn't filled them manually. Only
-    // writes fields that are currently empty or placeholder-only — never
-    // overwrites real existing values.
     const metadataAutoFill = await autoFillTenderMetadata(tender, prisma);
-    if (metadataAutoFill.filled.length > 0) {
-      console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
-    }
+    if (metadataAutoFill.filled.length > 0) console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
 
     const effectiveExtractionFiles = tender.files.map((file) => {
       const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
-      return {
-        ...file,
-        extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
-        quality,
-      };
+      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
     });
-    const extractionReports = effectiveExtractionFiles.map((file) => ({
-      fileName: file.originalFileName || file.fileName,
-      quality: file.quality,
-      totalPages: file.totalPages,
-      extractedPages: file.extractedPages,
-      failedPages: file.failedPages,
-    }));
+    const extractionReports = effectiveExtractionFiles.map((file) => ({ fileName: file.originalFileName || file.fileName, quality: file.quality, totalPages: file.totalPages, extractedPages: file.extractedPages, failedPages: file.failedPages }));
     const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
     if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
       const corruptedFiles = effectiveExtractionFiles.filter((file) => file.quality.corrupted).map((file) => file.originalFileName || file.fileName || file.id);
@@ -107,47 +94,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    // Block engine run when prior AI Analyze flagged corrupted or regex-fallback extraction.
-    // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is the tender.status value; the
-    // analysisExtractionStatus field is set to "OCR_REQUIRED" in that case.
     const engineAnalysisStatus = tender.analysisExtractionStatus;
-    if (engineAnalysisStatus === "OCR_REQUIRED") {
-      return NextResponse.json({
-        error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.",
-        code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
-        nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
-        hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.",
-        diagnosticId,
-        inputStats,
-      }, { status: 422 });
-    }
-    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
-      return NextResponse.json({
-        error: "Engine run blocked: AI Analyze ran on a weak extraction. Re-extract and re-run AI Analyze before running the engine.",
-        code: "ANALYSIS_FROM_WEAK_EXTRACTION",
-        nextAction: "RERUN_AI_ANALYZE",
-        hint: "AI Analyze ran on weak extraction — requirements and metadata may be incomplete. Fix extraction quality and re-run AI Analyze before running the engine.",
-        diagnosticId,
-        inputStats,
-      }, { status: 422 });
-    }
-    if (engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-      return NextResponse.json({
-        error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.",
-        code: "ANALYSIS_FROM_WEAK_EXTRACTION",
-        nextAction: "RERUN_AI_ANALYZE",
-        hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.",
-        diagnosticId,
-        inputStats,
-      }, { status: 422 });
-    }
+    if (engineAnalysisStatus === "OCR_REQUIRED") return NextResponse.json({ error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.", code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.", diagnosticId, inputStats }, { status: 422 });
+    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") return NextResponse.json({ error: "Engine run blocked: AI Analyze ran on a weak extraction. Re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze ran on weak extraction — requirements and metadata may be incomplete. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId, inputStats }, { status: 422 });
+    if (engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId, inputStats }, { status: 422 });
 
-    // ─── Server-side large-vault guard ───────────────────────────────────
-    // Vaults with >30 reviewed records typically exceed Vercel's 60s cap
-    // during the AI-rematch phase (12 perspectives × N records).  Auto-apply
-    // skipAiRematch for sync runs so callers that don't set the flag
-    // explicitly (API scripts, future integrations) don't silently timeout.
-    // Async runs are not gated here because the worker has its own budget.
     const LARGE_VAULT_SYNC_THRESHOLD = 30;
     let effectiveSkipAiRematch = skipAiRematch;
     if (!isAsync && !skipAiRematch) {
@@ -191,7 +142,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), inputStats, metadataAutoFill, diagnosticId });
   } catch (error) {
-    console.error("Engine run failed:", { diagnosticId, error });
+    console.error("Engine run failed:", { diagnosticId, error: sanitizeError(error) });
     const mapped = actionableEngineError(error);
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }

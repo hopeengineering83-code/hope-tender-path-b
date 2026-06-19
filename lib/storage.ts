@@ -18,14 +18,6 @@ export type StoredRecord = {
   fileName: string;
 };
 
-export type StorageReadiness = {
-  provider: StorageProvider;
-  ready: boolean;
-  durable: boolean;
-  boundedFallback: boolean;
-  detail: string;
-};
-
 export interface StorageAdapter {
   putFile(buffer: Buffer, metadata: StorageMetadata): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }>;
   getFile(record: StoredRecord): Promise<Buffer>;
@@ -44,28 +36,8 @@ function hasBlobToken(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }
 
-function parseBooleanSetting(value: string | undefined): boolean | null {
-  if (value === undefined || value.trim() === "") return null;
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes", "on"].includes(normalized)) return true;
-  if (["false", "0", "no", "off"].includes(normalized)) return false;
-  return null;
-}
-
-/**
- * Canonical production storage policy.
- *
- * Blob storage is preferred. When Blob is not configured, a bounded 5 MiB
- * database fallback remains available unless an operator explicitly disables
- * it with ALLOW_DB_FILE_STORAGE=false. This prevents one upload route from
- * working while another silently fails because of per-route environment
- * mutation or duplicated policy.
- */
-export function isDatabaseStorageAllowed(): boolean {
-  if (!isProduction()) return true;
-  const explicit = parseBooleanSetting(process.env.ALLOW_DB_FILE_STORAGE);
-  if (explicit !== null) return explicit;
-  return !hasBlobToken();
+function allowDatabaseStorage(): boolean {
+  return !isProduction() || process.env.ALLOW_DB_FILE_STORAGE === "true";
 }
 
 function safeScope(metadata: StorageMetadata): string {
@@ -84,48 +56,28 @@ function assertLocalPath(storagePath: string): void {
   }
 }
 
+/**
+ * Vercel Blob credentials must never be forwarded to an arbitrary URL stored
+ * in the database. Private Blob URLs use a subdomain of blob.vercel-storage.com.
+ */
+export function isVercelBlobStorageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.toLowerCase().endsWith(".blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+
 export function resolveStorageProvider(): StorageProvider {
   if (hasBlobToken()) return "blob";
   if (!isProduction()) return "local";
   return "db-base64";
 }
 
-export function getStorageReadiness(): StorageReadiness {
-  const provider = resolveStorageProvider();
-  if (!isProduction()) {
-    return {
-      provider,
-      ready: true,
-      durable: provider !== "local",
-      boundedFallback: false,
-      detail: `Development storage provider: ${provider}.`,
-    };
-  }
-
-  if (provider === "blob") {
-    return {
-      provider,
-      ready: true,
-      durable: true,
-      boundedFallback: false,
-      detail: "Private Vercel Blob storage is configured.",
-    };
-  }
-
-  const allowed = isDatabaseStorageAllowed();
-  return {
-    provider,
-    ready: allowed,
-    durable: allowed,
-    boundedFallback: allowed,
-    detail: allowed
-      ? `Using bounded database file storage fallback (maximum ${DB_BASE64_MAX_BYTES} bytes per file). Configure BLOB_READ_WRITE_TOKEN before larger-scale use.`
-      : "No production file storage is available. Configure BLOB_READ_WRITE_TOKEN or allow the bounded database fallback.",
-  };
-}
-
 export function isProductionStorageReady(): boolean {
-  return getStorageReadiness().ready;
+  if (!isProduction()) return true;
+  return hasBlobToken() || allowDatabaseStorage();
 }
 
 class LocalStorage implements StorageAdapter {
@@ -158,19 +110,13 @@ class LocalStorage implements StorageAdapter {
   }
 }
 
-let warnedAboutDatabaseFallback = false;
-
 class DbBase64Storage implements StorageAdapter {
   async putFile(buffer: Buffer, _metadata: StorageMetadata) {
-    if (!isDatabaseStorageAllowed()) {
+    if (!allowDatabaseStorage()) {
       throw new Error("Durable production storage is not configured");
     }
     if (buffer.byteLength > DB_BASE64_MAX_BYTES) {
-      throw new Error(`Database file storage limit exceeded (${DB_BASE64_MAX_BYTES} bytes). Configure Vercel Blob for larger files.`);
-    }
-    if (isProduction() && !warnedAboutDatabaseFallback) {
-      warnedAboutDatabaseFallback = true;
-      console.warn("[storage] BLOB_READ_WRITE_TOKEN is not configured; using bounded database file storage fallback");
+      throw new Error(`Database file storage limit exceeded (${DB_BASE64_MAX_BYTES} bytes)`);
     }
     return { storagePath: "", fileContent: buffer.toString("base64"), provider: "db-base64" as const };
   }
@@ -195,23 +141,35 @@ class BlobStorage implements StorageAdapter {
     const ext = path.extname(metadata.fileName).replace(/[^.a-zA-Z0-9]/g, "");
     const key = `${safeScope(metadata)}/${randomUUID()}${ext}`;
     const result = await put(key, buffer, { access: "private", token });
+    if (!isVercelBlobStorageUrl(result.url)) {
+      throw new Error("Blob provider returned an unexpected storage URL");
+    }
     return { storagePath: result.url, provider: "blob" as const };
   }
 
   async getFile(record: StoredRecord): Promise<Buffer> {
-    if (record.storagePath && /^https:\/\//.test(record.storagePath)) {
+    if (record.storagePath && /^https:\/\//i.test(record.storagePath)) {
+      if (!isVercelBlobStorageUrl(record.storagePath)) {
+        throw new Error("Stored Blob URL is outside the trusted Vercel Blob domain");
+      }
       const token = process.env.BLOB_READ_WRITE_TOKEN;
       if (!token) throw new Error("Blob storage token is not configured");
-      const response = await fetch(record.storagePath, { headers: { Authorization: `Bearer ${token}` } });
-      if (!response.ok) throw new Error(`Blob read failed with status ${response.status}`);
-      return Buffer.from(await response.arrayBuffer());
+      const { get } = await import("@vercel/blob");
+      const result = await get(record.storagePath, { access: "private", token });
+      if (!result || result.statusCode !== 200 || !result.stream) {
+        throw new Error(`Blob read failed${result ? ` with status ${result.statusCode}` : ": object not found"}`);
+      }
+      return Buffer.from(await new Response(result.stream).arrayBuffer());
     }
     return this.fallback.getFile(record);
   }
 
   async deleteFile(record: StoredRecord): Promise<void> {
     if (!record.storagePath) return;
-    if (/^https:\/\//.test(record.storagePath)) {
+    if (/^https:\/\//i.test(record.storagePath)) {
+      if (!isVercelBlobStorageUrl(record.storagePath)) {
+        throw new Error("Stored Blob URL is outside the trusted Vercel Blob domain");
+      }
       const token = process.env.BLOB_READ_WRITE_TOKEN;
       if (!token) throw new Error("Blob storage token is not configured");
       const { del } = await import("@vercel/blob");
@@ -241,7 +199,6 @@ export function getActiveStorageProvider(): StorageProvider {
 export function resetStorageAdapter(): void {
   cached = null;
   cachedProvider = null;
-  warnedAboutDatabaseFallback = false;
 }
 
 export async function saveUploadedFile(

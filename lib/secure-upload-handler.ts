@@ -11,6 +11,7 @@ import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
 import { enqueueJob, findActiveEngineRunForTender } from "./ai-jobs";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
+import { sanitizeError } from "./sanitize-error";
 
 function extractionMetadata(fileType: string, text: string, truncated: boolean) {
   const meaningful = isMeaningfulExtraction(text);
@@ -148,7 +149,8 @@ export async function handleSecureUpload(req: Request) {
       if (stored) {
         await storage.deleteFile({ storagePath: stored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
       }
-      results.push({ success: false, fileName: file.name, error: error instanceof Error ? error.message.slice(0, 240) : "Upload processing failed" });
+      console.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
+      results.push({ success: false, fileName: file.name, error: "Upload processing failed. Use the request ID when contacting support.", requestId });
     }
   }
 
@@ -168,7 +170,8 @@ export async function handleSecureUpload(req: Request) {
         : await runCompanyKnowledgeSafetyImport(prisma, company.id);
       companyImport = { ...primary, safetyImport: safety } as unknown as Record<string, unknown>;
     } catch (error) {
-      companyImport = { status: "FAILED", error: error instanceof Error ? error.constructor.name : "UnknownError" };
+      console.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
+      companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
     }
   }
 
