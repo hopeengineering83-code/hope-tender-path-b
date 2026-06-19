@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
 import { requireRole } from "./auth";
 import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
@@ -78,6 +79,10 @@ export async function handleSecureUpload(req: Request) {
       const extracted = limitExtractedText(await extractTextFromBuffer(buffer, mimeType, fileName));
       const fileType = getFileTypeLabel(mimeType, fileName);
       const extraction = extractionMetadata(fileType, extracted.text, extracted.truncated);
+      // Persist page-level extraction diagnostics so the Extraction Quality
+      // dashboard reads stored truth instead of recomputing on every render.
+      const quality = assessExtractionQuality(extracted.text, fileName);
+      const perPage = assessExtractionQualityPerPage(extracted.text);
 
       stored = await storage.putFile(buffer, {
         fileName,
@@ -98,6 +103,12 @@ export async function handleSecureUpload(req: Request) {
             fileContent: stored.fileContent ?? null,
             classification,
             extractedText: extracted.text || null,
+            totalPages: perPage.totalDetectedPages,
+            extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
+            ocrPages: perPage.ocrPages.length,
+            failedPages: perPage.failedPages.length,
+            extractionScore: quality.score,
+            pageStatusJson: JSON.stringify(perPage.pages),
           },
           select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
         });
