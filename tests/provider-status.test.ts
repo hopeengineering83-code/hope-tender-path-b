@@ -8,6 +8,20 @@ describe("safe provider status", () => {
     assert.equal(AI_PROVIDER_ORDER.at(-1)?.order, 8);
   });
 
+  it("uses the canonical runtime order (Mistral first, Anthropic last)", () => {
+    // Mirrors lib/ai.ts CANONICAL_PROVIDER_CHAIN and lib/ai-provider-policy.ts
+    // CANONICAL_AI_PROVIDER_CHAIN. Reordering here is a breaking change that
+    // requires an explicit product decision.
+    assert.deepEqual(
+      AI_PROVIDER_ORDER.map((p) => p.provider),
+      ["Mistral", "Groq", "OpenRouter", "Gemini", "OpenAI", "Together", "DeepSeek", "Anthropic"],
+    );
+    assert.deepEqual(
+      AI_PROVIDER_ORDER.map((p) => p.order),
+      [1, 2, 3, 4, 5, 6, 7, 8],
+    );
+  });
+
   it("reports configured/not configured without exposing values", () => {
     const status = getSafeProviderStatus({ GEMINI_API_KEY: "real-value-not-returned", OPENAI_API_KEY: undefined });
     const gemini = status.find((item) => item.provider === "Gemini");

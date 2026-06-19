@@ -92,6 +92,10 @@ describe("DeepSeek runtime snapshot", () => {
       "lastSuccessAt",
       "rateLimited",
       "runtimeVerified",
+      // Unified operator-facing status enum (see AiProviderStatus in
+      // lib/ai-provider-health.ts). The dashboard uses this field, NOT the
+      // legacy `available` boolean, to decide whether to show a green pill.
+      "status",
     ].sort());
   });
 

@@ -46,7 +46,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "ANTHROPIC_API_KEY",
     description:
-      "Anthropic Claude API key (sk-ant-..., 97+ chars). Last-resort provider in the current chain; keep Claude last to avoid Anthropic rate limits blocking the app when other providers are available. Get from https://console.anthropic.com/settings/keys.",
+      "Anthropic Claude API key (sk-ant-..., 97+ chars). EIGHTH-tier (last) AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Keep Claude last to avoid Anthropic rate limits blocking the app when other providers are available. Get from https://console.anthropic.com/settings/keys.",
     validate: (v) => {
       if (!v.startsWith("sk-ant-")) return `Expected a Claude API key starting with "sk-ant-". Got: "${v.slice(0, 8)}..." — check you have not set a Gemini or OpenAI key here.`;
       if (v.length < 50) return `Claude API key is too short (${v.length} chars). A real key is 97+ characters.`;
@@ -56,7 +56,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza... legacy or AQ... new format). First-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases. Without any AI provider key, imported records remain REGEX_DRAFT only.",
+      "Google Gemini API key (AIza... legacy or AQ... new format). FOURTH-tier AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Without any AI provider key, imported records remain REGEX_DRAFT only.",
     validate: (v) => {
       // Google AI Studio keys have historically started with "AIza" (39 chars).
       // Newer projects issue keys starting with "AQ" — accept both formats.
@@ -70,7 +70,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "OPENAI_API_KEY",
     description:
-      "OpenAI API key (sk-...). Second-tier provider in the canonical chain after Gemini. At least one AI provider key is required in production.",
+      "OpenAI API key (sk-...). FIFTH-tier AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). At least one AI provider key is required in production.",
     validate: (v) => {
       if (!v.startsWith("sk-")) return `Expected an OpenAI API key starting with "sk-". Got: "${v.slice(0, 8)}..."`;
       return null;
@@ -79,31 +79,31 @@ const AI_PROVIDER_KEYS = [
   {
     name: "MISTRAL_API_KEY",
     description:
-      "Mistral API key. Third-tier proposal/validation provider and analysis fallback. Models override via MISTRAL_PROPOSAL_MODEL / MISTRAL_ANALYSIS_MODEL / MISTRAL_FAST_MODEL.",
+      "Mistral API key. FIRST-tier (preferred) AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Used for analysis, extraction, proposal, validation, and fast use cases. Models override via MISTRAL_PROPOSAL_MODEL / MISTRAL_ANALYSIS_MODEL / MISTRAL_FAST_MODEL.",
     validate: (_v) => null,
   },
   {
     name: "DEEPSEEK_API_KEY",
     description:
-      "DeepSeek API key. Fifth-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
+      "DeepSeek API key. SEVENTH-tier fallback AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
     validate: (_v) => null, // no canonical prefix to validate
   },
   {
     name: "GROQ_API_KEY",
     description:
-      "Groq API key (gsk_...). Sixth-tier fallback provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+      "Groq API key (gsk_...). SECOND-tier AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Fastest verified working provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
     validate: (_v) => null,
   },
   {
     name: "TOGETHER_API_KEY",
     description:
-      "Together API key. Fourth-tier fallback provider. Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.",
+      "Together API key. SIXTH-tier AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.",
     validate: (_v) => null,
   },
   {
     name: "OPENROUTER_API_KEY",
     description:
-      "OpenRouter API key (sk-or-...). Seventh-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
+      "OpenRouter API key (sk-or-...). THIRD-tier aggregator AI provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
     validate: (_v) => null,
   },
 ];
