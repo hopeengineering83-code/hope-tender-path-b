@@ -176,7 +176,11 @@ let warnedAboutDatabaseFallback = false;
 class DbBase64Storage implements StorageAdapter {
   async putFile(buffer: Buffer, _metadata: StorageMetadata) {
     if (!isDatabaseStorageAllowed()) {
-      throw new Error("Durable production storage is not configured");
+      throw new Error(
+        "Durable production storage is not configured. " +
+        "Configure BLOB_READ_WRITE_TOKEN for Vercel Blob Storage, " +
+        "or set ALLOW_DB_FILE_STORAGE=true to enable bounded database storage."
+      );
     }
     if (buffer.byteLength > DB_BASE64_MAX_BYTES) {
       throw new Error(`Database file storage limit exceeded (${DB_BASE64_MAX_BYTES} bytes). Configure Vercel Blob for larger files.`);
