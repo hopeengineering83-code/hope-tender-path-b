@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath } from "../lib/recovery-command-actions";
+import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon } from "./icons";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -129,6 +130,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
   const [expanded, setExpanded] = useState(false);
   const [actioning, setActioning] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [analyzeProgress, setAnalyzeProgress] = useState<number | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
   const [ocrProvider, setOcrProvider] = useState<string>("auto");
 
@@ -162,6 +164,66 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     if (action === "RE_EXTRACT_METADATA") return "Metadata re-extraction complete. Review the tender detail panel to confirm updated fields.";
     if (action === "LINK_VAULT_EVIDENCE") return (json.message as string | undefined) ?? `Vault evidence linking completed — ${(json.linked as number | undefined) ?? 0} document(s) ready.`;
     return `${recoveryCommandLabel(action)} completed.`;
+  }
+
+  // AI Analyze runs the full analysis, which can take 30–90s. A plain POST gives
+  // no feedback (the button just sits on "Working…") and can hit the serverless
+  // timeout — which is why it looked like the command center analysis "wasn't
+  // working". Stream it instead so the user sees live chunk progress and the
+  // same reliable path (auto-retry/fallback) the main panel uses.
+  async function runStreamingAnalyze(path: string): Promise<string> {
+    setAnalyzeProgress(5);
+    setActionMsg("Connecting to AI providers…");
+    const res = await fetch(path, { method: "POST", headers: { Accept: "text/event-stream" } });
+
+    if (!res.ok || !res.body) {
+      const json = await res.json().catch(() => ({}));
+      setAnalyzeProgress(null);
+      throw new Error(json.error ?? json.message ?? "AI Analyze failed to start");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalMsg = "Analysis complete.";
+    let done = false;
+
+    while (!done) {
+      const { done: streamDone, value } = await reader.read();
+      if (streamDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        if (!part.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(part.slice(6));
+          if (event.phase === "analyzing" && event.chunk !== undefined) {
+            const total = event.totalChunks ?? 0;
+            setAnalyzeProgress(total ? Math.round(20 + (event.chunk / total) * 60) : 50);
+            setActionMsg(`Analyzing chunk ${event.chunk}${total ? `/${total}` : ""}…`);
+          } else if (event.phase === "extracting") {
+            setAnalyzeProgress(15);
+            setActionMsg("Preparing tender content…");
+          } else if (event.phase === "saving") {
+            setAnalyzeProgress(90);
+            setActionMsg("Saving analysis results…");
+          } else if (event.phase === "complete") {
+            setAnalyzeProgress(100);
+            finalMsg = event.fallback
+              ? "Regex fallback used — approve below or retry when providers recover."
+              : `Analysis complete — ${event.requirementCount ?? 0} requirement(s) extracted.`;
+            done = true;
+          } else if (event.phase === "error") {
+            throw new Error(event.message ?? "Analysis failed");
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message !== "Unexpected end of JSON input") throw e;
+        }
+      }
+    }
+    setAnalyzeProgress(null);
+    return finalMsg;
   }
 
   async function executeAction(action: string) {
@@ -210,6 +272,14 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         return;
       }
       if (spec.kind === "api" && spec.path) {
+        // AI Analyze actions stream live progress instead of a blind POST.
+        if (spec.path.includes("/ai-analyze")) {
+          const msg = await runStreamingAnalyze(renderRecoveryActionPath(spec.path, tenderId));
+          setActionMsg(msg);
+          await load();
+          router.refresh();
+          return;
+        }
         const isReExtract = action === "RE_EXTRACT_METADATA";
         const fetchOptions: RequestInit = {
           method: spec.method ?? "POST",
@@ -234,6 +304,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
       setActionMsg(e instanceof Error ? e.message : "Action failed");
     } finally {
       setActioning(false);
+      setAnalyzeProgress(null);
     }
   }
 
@@ -293,17 +364,17 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         <div className="flex items-center gap-2">
           <button
             onClick={load}
-            className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
             aria-label="Refresh lifecycle state"
           >
-            ↻ Refresh
+            <RefreshIcon /> Refresh
           </button>
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
             aria-label={expanded ? "Collapse details" : "Expand details"}
           >
-            {expanded ? "▲ Collapse" : "▼ Details"}
+            <ChevronDownIcon className={`transition-transform ${expanded ? "rotate-180" : ""}`} /> {expanded ? "Collapse" : "Details"}
           </button>
         </div>
       </div>
@@ -317,17 +388,24 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             <button
               onClick={() => void executeAction(data.primaryNextAction)}
               disabled={actioning}
-              className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {actioning ? "Working…" : "▶ Execute"}
+              <PlayIcon /> {actioning ? "Working…" : "Execute"}
             </button>
           )}
           {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
-            <a href={`/api/tenders/${tenderId}/download`} className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
-              ↓ Download ZIP
+            <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+              <DownloadIcon /> Download ZIP
             </a>
           )}
         </div>
+        {analyzeProgress !== null && (
+          <div className="mt-2">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-100">
+              <div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${analyzeProgress}%` }} />
+            </div>
+          </div>
+        )}
         {data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
           <div className="mt-2 flex gap-2">
             <input
@@ -400,7 +478,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
           <ul className="space-y-1">
             {data.blockedActions.map((b) => (
               <li key={b.action} className="flex items-start gap-1.5 text-xs text-gray-700">
-                <span className="mt-0.5 shrink-0 text-amber-500">⊘</span>
+                <BanIcon className="mt-0.5 shrink-0 text-amber-500" />
                 <span>
                   <span className="font-medium">{ACTION_LABELS[b.action] ?? b.action}</span>
                   {" — "}
@@ -449,7 +527,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
               </p>
               <ul className="space-y-1">
                 {data.warnings.map((w) => (
-                  <li key={w.code} className="text-xs text-amber-800">⚠ {w.message}</li>
+                  <li key={w.code} className="flex items-start gap-1.5 text-xs text-amber-800"><WarningIcon className="mt-0.5 shrink-0" /> {w.message}</li>
                 ))}
               </ul>
             </div>
@@ -523,8 +601,8 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {data.allowedActions.map((a) => (
-                  <span key={a} className="rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800">
-                    ✓ {ACTION_LABELS[a] ?? a}
+                  <span key={a} className="inline-flex items-center gap-1 rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800">
+                    <CheckIcon /> {ACTION_LABELS[a] ?? a}
                   </span>
                 ))}
               </div>
@@ -548,8 +626,8 @@ function StatusRow({
   return (
     <div className="flex items-center justify-between gap-2">
       <span className="text-gray-600">{label}</span>
-      <span className={`font-medium ${ok ? "text-green-700" : "text-red-600"}`}>
-        {ok ? "✓" : "✗"} {value}
+      <span className={`inline-flex items-center gap-1 font-medium ${ok ? "text-green-700" : "text-red-600"}`}>
+        {ok ? <CheckIcon /> : <CrossIcon />} {value}
       </span>
     </div>
   );

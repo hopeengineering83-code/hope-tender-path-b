@@ -17,6 +17,7 @@ import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
 import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
 import { CollapsiblePanel } from "../../../../components/collapsible-panel";
+import { SparklesIcon, BoltIcon, CheckIcon, ArrowRightIcon, DownloadIcon } from "../../../../components/icons";
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "../../../../components/canonical-status-badge";
 import type { CanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
@@ -1753,14 +1754,16 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           {aiEnabled && (
             <button onClick={handleAnalyzeStreaming} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
-              className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
-              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ Run AI Analyze"}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
+              <SparklesIcon />
+              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "Resume AI Analyze" : "Run AI Analyze"}
             </button>
           )}
           {aiEnabled && (
             <button onClick={handleAIProposal} disabled={generating}
-              className="rounded-lg bg-purple-100 px-3 py-2 text-sm text-purple-800 hover:bg-purple-200 disabled:opacity-50">
-              {generating ? "Generating..." : "✦ AI Proposal"}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-100 px-3 py-2 text-sm text-purple-800 hover:bg-purple-200 disabled:opacity-50">
+              <SparklesIcon />
+              {generating ? "Generating..." : "AI Proposal"}
             </button>
           )}
           <button onClick={handleRunEngine} disabled={engineRunning}
@@ -1772,32 +1775,35 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           </button>
           <button onClick={handleGenerateDocs} disabled={generatingDocs || !canGenerateDocs}
             title={generateDisabledReason}
-            className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
-            {generatingDocs ? "Generating…" : "⚡ Generate Docs"}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
+            <BoltIcon />
+            {generatingDocs ? "Generating…" : "Generate Docs"}
           </button>
           <button onClick={handleValidate} disabled={validating}
-            className="rounded-lg bg-teal-600 px-3 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-50">
-            {validating ? "Validating…" : "✓ Validate"}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-50">
+            <CheckIcon />
+            {validating ? "Validating…" : "Validate"}
           </button>
           {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
             <button onClick={handleStatusAdvance} disabled={saving}
-              className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-              → {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+              <ArrowRightIcon />
+              {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
             </button>
           )}
           <button onClick={downloadZip}
             disabled={!!zipDisabledReason}
             title={zipDisabledReason ?? "Download the final ZIP package"}
-            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
-            ↓ ZIP Package
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
+            <DownloadIcon /> ZIP Package
           </button>
           <button onClick={() => downloadDoc("proposal")}
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
-            ↓ Proposal
+            className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
+            <DownloadIcon /> Proposal
           </button>
           <button onClick={() => downloadDoc("requirements")}
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
-            ↓ Requirements
+            className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
+            <DownloadIcon /> Requirements
           </button>
           <button onClick={() => setEditing((v) => !v)} className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
             {editing ? "Cancel" : "Edit"}
@@ -1938,9 +1944,10 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               <button
                 onClick={handleAIAnalyze}
                 disabled={analyzing}
-                className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
               >
-                {analyzing ? "Analyzing…" : "✦ Run OCR / Re-extract before AI Analyze"}
+                <SparklesIcon />
+                {analyzing ? "Analyzing…" : "Run OCR / Re-extract before AI Analyze"}
               </button>
             )}
             <div className="flex flex-1 min-w-0 gap-1">
@@ -3368,7 +3375,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       {aiProposal && (
         <div className="rounded-2xl border border-purple-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-900">✦ AI-Generated Proposal Draft</h2>
+            <h2 className="inline-flex items-center gap-1.5 text-lg font-semibold text-slate-900"><SparklesIcon /> AI-Generated Proposal Draft</h2>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={async () => {
