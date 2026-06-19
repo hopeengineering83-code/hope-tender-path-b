@@ -329,14 +329,16 @@ function uniqueModels(primary: string): string[] {
   return Array.from(new Set([primary, ...FALLBACK_GEMINI_MODELS]));
 }
 
-async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promise<string> {
+async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL, maxTokens?: number): Promise<string> {
   const errors: string[] = [];
 
   for (const candidate of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
     try {
       const text = await withRateLimitRetry(async () => {
         const model = getModel(candidate);
-        const result = await model.generateContent(prompt, { timeout: GEMINI_TIMEOUT_MS });
+        const config = { timeout: GEMINI_TIMEOUT_MS } as Record<string, unknown>;
+        if (maxTokens !== undefined) config.maxOutputTokens = maxTokens;
+        const result = await model.generateContent(prompt, config);
         const t = result.response.text();
         if (!t || t.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidate}`);
         return t;
@@ -440,7 +442,7 @@ async function callProvider(
       }
 
       try {
-        const r = await generate(prompt, opts?.geminiModel);
+        const r = await generate(prompt, opts?.geminiModel, maxTokens);
         recordProviderSuccess("gemini");
         return r;
       } catch (err) {

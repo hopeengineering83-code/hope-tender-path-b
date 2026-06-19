@@ -126,18 +126,27 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       const documentLevelDetection = detectionMode === "DOCUMENT_LEVEL";
       const perfectPages = perPage?.pages.filter((p) => p.status === "GOOD").length ?? null;
 
+      // Per-page analysis: perfectly extracted pages (status GOOD)
+      const perfectPagesCount = perPage?.perfectPages.length ?? null;
+      // Use per-page coverage (perfect pages / total detected) when available, else file-level
+      const perPageCoverage =
+        perPage && totalPages && totalPages > 0 && perfectPagesCount !== null
+          ? Math.round((perfectPagesCount / totalPages) * 100)
+          : coverage;
+
       return {
         id: file.id,
         name,
         fileType,
         totalPages,
         extractedPages,
+        perfectPagesCount,
         ocrPages,
         failedPages,
         perfectPages,
         ocrModel: file.ocrModel ?? null,
         blankPages: perPage?.blankPages.length ?? null,
-        coverage,
+        coverage: perPageCoverage,
         corrupted,
         score,
         status,
@@ -250,7 +259,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       [
                         ["Total", file.totalPages, "slate"],
                         ["Extracted", file.extractedPages, "slate"],
-                        ["Perfect", file.perfectPages, file.perfectPages ? "green" : "slate"],
+                        ["Perfect", file.perfectPagesCount, file.perfectPagesCount && file.totalPages ? file.perfectPagesCount < file.totalPages * 0.5 ? "amber" : "slate" : "slate"],
                         ["OCR", file.ocrPages, "slate"],
                         ["Blank", file.blankPages, file.blankPages ? "amber" : "slate"],
                         ["Failed", file.failedPages, file.failedPages ? "red" : "slate"],
