@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import {
   isValidClientName,
   isValidReferenceNumber,
@@ -210,6 +211,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   tryFill("financialWeight", metadata.financialWeight);
   tryFill("description", metadata.description);
   tryFill("intakeSummary", metadata.intakeSummary);
+
+  // Refresh persisted page-level extraction diagnostics on every re-extract so
+  // the Extraction Quality dashboard reflects the latest stored truth even when
+  // no new metadata fields are discovered.
+  for (const file of tender.files) {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+    const perPage = assessExtractionQualityPerPage(file.extractedText);
+    await prisma.tenderFile.update({
+      where: { id: file.id },
+      data: {
+        totalPages: perPage.totalDetectedPages,
+        extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
+        ocrPages: perPage.ocrPages.length,
+        failedPages: perPage.failedPages.length,
+        extractionScore: quality.score,
+        pageStatusJson: JSON.stringify(perPage.pages),
+      },
+    });
+  }
 
   const updatedCount = Object.keys(update).length;
   if (updatedCount === 0) {
