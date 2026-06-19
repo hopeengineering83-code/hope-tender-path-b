@@ -21,6 +21,11 @@
 //   → EXPORT_READINESS_BLOCKED → EXPORT_READY → ZIP_READY
 
 import type { PrismaClient } from "@prisma/client";
+import { assessExtractionQuality } from "../extraction-quality";
+import {
+  isExtractionAcceptableForGeneration,
+  isExtractionAcceptableForExport,
+} from "./extraction-quality-gate";
 import {
   detectAnalysisSourceWithApproval,
   type AnalysisSource,
@@ -315,7 +320,17 @@ export async function computeTenderLifecycle(
       }),
       client.tenderFile.findMany({
         where: { tenderId },
-        select: { id: true, extractedText: true },
+        select: {
+          id: true,
+          fileName: true,
+          originalFileName: true,
+          extractedText: true,
+          totalPages: true,
+          extractedPages: true,
+          ocrPages: true,
+          failedPages: true,
+          extractionScore: true,
+        },
       }),
       client.tenderRequirement.findMany({
         where: { tenderId },
@@ -355,6 +370,14 @@ export async function computeTenderLifecycle(
 
   if (!tender) return null;
 
+  // Effective extraction metrics — combine the stored per-file score with a
+  // freshly recomputed score and keep the more conservative (lower) value so a
+  // stale-optimistic stored score cannot unblock a genuinely poor extraction.
+  const effectiveFiles = files.map((file) => {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+    return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score) };
+  });
+
   // ── Analysis source ────────────────────────────────────────────────────────
   const analysisSource = await detectAnalysisSourceWithApproval(
     client,
@@ -383,6 +406,7 @@ export async function computeTenderLifecycle(
     submissionMethod: tender.submissionMethod,
     submissionAddress: tender.submissionAddress,
     submissionEmails: tender.submissionEmails,
+    metadataContaminated: tender.metadataContaminated,
     requirementCount: requirements.length,
     hasEvaluationMethodology: Boolean(tender.evaluationMethodology),
     hasSubmissionRules: Boolean(
@@ -391,6 +415,12 @@ export async function computeTenderLifecycle(
   };
   const meta: MetadataCompletenessReport =
     assessTenderMetadataCompleteness(metaInput);
+  // Extraction quality gates — mirror the route-level enforcement so the
+  // lifecycle's allowed/blocked actions stay truthful in the UI.
+  const extractionGenerationOk = isExtractionAcceptableForGeneration(effectiveFiles);
+  const extractionExportOk = isExtractionAcceptableForExport(effectiveFiles);
+  const metadataGenerationOk = !meta.blockingForGeneration;
+  const metadataExportOk = !meta.blockingForExport;
 
   // ── Source references ──────────────────────────────────────────────────────
   const mandatoryReqs = requirements.filter((r) => r.priority === "MANDATORY");
@@ -661,11 +691,17 @@ export async function computeTenderLifecycle(
     allowed.push("LINK_VAULT_EVIDENCE");
   }
 
-  // Generate Docs — blocked when fallback unapproved
+  // Generate Docs — blocked when extraction is too weak, metadata is
+  // incomplete/contaminated, or the analysis fallback is unapproved. Mirrors the
+  // hard gates enforced by POST /generate so the UI affordance matches the route.
   if (fallbackUnapproved) {
     blocked.push({ action: "GENERATE_DOCS", reason: "Analysis source is unapproved regex fallback. Retry AI Analyze or approve the fallback with a note first." });
   } else if (!analysisOk) {
     blocked.push({ action: "GENERATE_DOCS", reason: "No approved analysis exists. Run AI Analyze first." });
+  } else if (effectiveFiles.length > 0 && !extractionGenerationOk) {
+    blocked.push({ action: "GENERATE_DOCS", reason: "Tender extraction quality is too low for reliable generation. Re-extract or run OCR first." });
+  } else if (!metadataGenerationOk) {
+    blocked.push({ action: "GENERATE_DOCS", reason: "Tender metadata is incomplete or the client name is contaminated. Correct client details first." });
   } else {
     allowed.push("GENERATE_DOCS");
   }
@@ -680,8 +716,13 @@ export async function computeTenderLifecycle(
     allowed.push("REPAIR_DOCS");
   }
 
-  // Auto-finalize — blocked when no final docs or fallback unapproved
-  if (noFinalDocs) {
+  // Auto-finalize — blocked when extraction/metadata fail the export bar, when
+  // there are no final docs, or when the analysis fallback is unapproved.
+  if (effectiveFiles.length > 0 && !extractionExportOk) {
+    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender extraction quality is too low for final export." });
+  } else if (!metadataExportOk) {
+    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender metadata is incomplete or the client name is contaminated." });
+  } else if (noFinalDocs) {
     blocked.push({ action: "AUTO_FINALIZE", reason: "No active final export candidates exist. Generate and approve required documents first." });
   } else if (fallbackUnapproved) {
     blocked.push({ action: "AUTO_FINALIZE", reason: "Analysis source is unapproved regex fallback." });
@@ -698,7 +739,7 @@ export async function computeTenderLifecycle(
   }
 
   // Download ZIP — blocked when canonical readiness not passed
-  if (!finalExportReady) {
+  if (!finalExportReady || (effectiveFiles.length > 0 && !extractionExportOk) || !metadataExportOk) {
     const reasons: string[] = [];
     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
     if (noFinalDocs) reasons.push("no active final export candidates");
@@ -706,10 +747,11 @@ export async function computeTenderLifecycle(
     if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
     if (meta.missingCritical.length > 0) reasons.push(`${meta.missingCritical.length} critical metadata field(s) missing`);
     if (meta.invalidFields.length > 0) reasons.push(`${meta.invalidFields.length} metadata field(s) contain internal placeholders`);
-    if (tender.metadataContaminated) reasons.push("client name is contaminated");
+    if (tender.metadataContaminated) reasons.push("client name is contaminated with portal noise");
     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);
+    if (effectiveFiles.length > 0 && !extractionExportOk) reasons.push("tender extraction quality is too low for export");
     blocked.push({
       action: "DOWNLOAD_ZIP",
       reason: reasons.length > 0 ? reasons.join("; ") : "Canonical readiness has not passed.",
