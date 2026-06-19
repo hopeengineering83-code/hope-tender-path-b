@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AiAnalyzeStatusBanner } from "./ai-analyze-status-banner";
-import { SparklesIcon, ClockIcon, BoltIcon } from "./icons";
+import { SparklesIcon, ClockIcon, BoltIcon, RefreshIcon } from "./icons";
 
 type ChunkProgress = {
   total: number;
@@ -291,12 +291,30 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
             </details>
           )}
           {!showAutoRetryBanner && (
-            <button
-              onClick={() => setError("")}
-              className="mt-2 text-xs font-medium underline hover:text-red-900"
-            >
-              Dismiss
-            </button>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={() => { setError(""); handleAnalyzeStreaming(); }}
+                disabled={analyzing}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                <RefreshIcon /> Retry AI Analyze
+              </button>
+              {continueJobId && (
+                <button
+                  onClick={() => { setError(""); setContinueJobId(null); handleAnalyzeStreaming(); }}
+                  disabled={analyzing}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <SparklesIcon /> Start Fresh
+                </button>
+              )}
+              <button
+                onClick={() => setError("")}
+                className="text-xs font-medium underline hover:text-red-900"
+              >
+                Dismiss
+              </button>
+            </div>
           )}
         </div>
       )}
