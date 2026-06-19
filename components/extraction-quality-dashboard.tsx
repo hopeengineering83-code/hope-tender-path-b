@@ -133,8 +133,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       const perfectPagesCount = perPage?.perfectPages.length ?? null;
       // Use per-page coverage (perfect pages / total detected) when available, else file-level
       const perPageCoverage =
-        perPage && totalPages && totalPages > 0
-          ? Math.round((perfectPagesCount! / totalPages) * 100)
+        perPage && totalPages && totalPages > 0 && perfectPagesCount !== null
+          ? Math.round((perfectPagesCount / totalPages) * 100)
           : coverage;
 
       return {
