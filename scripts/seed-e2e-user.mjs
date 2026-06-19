@@ -12,9 +12,9 @@ const prisma = new PrismaClient();
 const primaryEmail = process.env.E2E_TEST_EMAIL || "e2e-release-integrity@example.test";
 const primaryPassword = process.env.E2E_TEST_PASSWORD || "E2E-release-integrity-password-2026";
 
-// Secondary Owner Private Tender
-const secondaryEmail = process.env.E2E_SECONDARY_EMAIL || "e2e-secondary-owner@example.test";
-const secondaryPassword = process.env.E2E_SECONDARY_PASSWORD || "E2E-secondary-password-2026";
+// Secondary Owner Private Tender (uses E2E_SECOND_* names to match CI workflow)
+const secondaryEmail = process.env.E2E_SECOND_EMAIL || "e2e-secondary-owner@example.test";
+const secondaryPassword = process.env.E2E_SECOND_PASSWORD || "E2E-secondary-password-2026";
 
 if (primaryPassword.length < 16) throw new Error("E2E_TEST_PASSWORD must be at least 16 characters");
 if (secondaryPassword.length < 16) throw new Error("E2E_SECONDARY_PASSWORD must be at least 16 characters");
