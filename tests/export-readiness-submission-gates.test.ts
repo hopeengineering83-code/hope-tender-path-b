@@ -209,3 +209,41 @@ describe("export gate — DEADLINE_MISSING blocker", () => {
     );
   });
 });
+
+// ── 6. EVALUATION_CRITERIA_NOT_EXTRACTED advisory ────────────────────────────
+
+describe("export gate — EVALUATION_CRITERIA_NOT_EXTRACTED advisory", () => {
+  it("source registers EVALUATION_CRITERIA_NOT_EXTRACTED as an advisoryWarning category", () => {
+    assert.ok(
+      SRC.includes('"EVALUATION_CRITERIA_NOT_EXTRACTED"'),
+      "EVALUATION_CRITERIA_NOT_EXTRACTED must be registered in export-readiness.ts",
+    );
+  });
+
+  it("the check reads evaluationCriteriaPages from assessExtractionQualityPerPage output", () => {
+    assert.ok(
+      SRC.includes("evaluationCriteriaPages"),
+      "export-readiness.ts must check evaluationCriteriaPages to enforce the CLAUDE.md export gate",
+    );
+  });
+
+  it("the check is scoped to totalDetectedPages > 0 to avoid false positives on empty files", () => {
+    const criteriaIdx = SRC.indexOf('"EVALUATION_CRITERIA_NOT_EXTRACTED"');
+    assert.ok(criteriaIdx !== -1, "EVALUATION_CRITERIA_NOT_EXTRACTED must exist");
+    const before = SRC.slice(Math.max(0, criteriaIdx - 500), criteriaIdx);
+    assert.ok(
+      before.includes("totalDetectedPages > 0"),
+      "evaluation criteria check must be guarded by totalDetectedPages > 0",
+    );
+  });
+
+  it("evaluation criteria warning is an advisoryWarning, not a hard blocker", () => {
+    const criteriaIdx = SRC.indexOf('"EVALUATION_CRITERIA_NOT_EXTRACTED"');
+    assert.ok(criteriaIdx !== -1, "EVALUATION_CRITERIA_NOT_EXTRACTED must exist");
+    const before = SRC.slice(Math.max(0, criteriaIdx - 300), criteriaIdx);
+    assert.ok(
+      before.includes("advisoryWarnings.push"),
+      "EVALUATION_CRITERIA_NOT_EXTRACTED should be an advisory warning, not a hard blocker",
+    );
+  });
+});

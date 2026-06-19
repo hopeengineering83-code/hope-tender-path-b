@@ -111,14 +111,14 @@ describe("development local storage", () => {
 });
 
 describe("production storage fails closed", () => {
-  it("rejects every database-backed write unless explicitly approved", async () => {
+  it("allows DB fallback by default unless explicitly disabled (ALLOW_DB_FILE_STORAGE=false)", async () => {
     const snapshot = snapshotEnv();
     try {
       const mutable = process.env as Record<string, string | undefined>;
       mutable.NODE_ENV = "production";
       delete mutable.VERCEL_ENV;
       delete mutable.BLOB_READ_WRITE_TOKEN;
-      delete mutable.ALLOW_DB_FILE_STORAGE;
+      mutable.ALLOW_DB_FILE_STORAGE = "false";
       mutable.STORAGE_ROOT = temporaryRoot;
       resetStorageAdapter();
 

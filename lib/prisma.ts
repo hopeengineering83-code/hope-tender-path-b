@@ -603,6 +603,15 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Expert", "deletedBy", "TEXT");
   await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
+  // Missing TenderFile extraction/deletion columns (gap analysis)
+  await ensureColumn(client, "TenderFile", "deletionStatus", "TEXT NOT NULL DEFAULT 'ACTIVE'");
+  await ensureColumn(client, "TenderFile", "deletionAttempts", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn(client, "TenderFile", "totalPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "extractedPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "ocrPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "failedPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "extractionScore", "DOUBLE PRECISION");
+  await ensureColumn(client, "TenderFile", "extractionMethod", "TEXT");
 
   // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
   // Earlier bootstrap created these tables with wrong column names
@@ -874,7 +883,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "priorStatus" TEXT NOT NULL DEFAULT '',
     "newStatus" TEXT NOT NULL DEFAULT '',
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("reviewerId") REFERENCES "User"("id") ON DELETE CASCADE
   )`);
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentComment" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -888,7 +898,9 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "resolved" BOOLEAN NOT NULL DEFAULT FALSE,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("parentId") REFERENCES "DocumentComment"("id") ON DELETE CASCADE
   )`);
 
   // ── tables added by feature migrations (missing from original bootstrap) ──

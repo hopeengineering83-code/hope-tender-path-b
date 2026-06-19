@@ -52,7 +52,9 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
   try {
     await prismaReady;
 
-    const files = await prisma.tenderFile.findMany({
+    const [tender, files] = await Promise.all([
+      prisma.tender.findUnique({ where: { id: tenderId }, select: { analysisExtractionStatus: true } }),
+      prisma.tenderFile.findMany({
       where: { tenderId },
       select: {
         id: true,
@@ -68,7 +70,9 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         ocrModel: true,
       },
       orderBy: { createdAt: "asc" },
-    });
+    }),
+    ]);
+    const analysisStatus = tender?.analysisExtractionStatus ?? null;
 
     if (files.length === 0) {
       return (
@@ -204,6 +208,12 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
           </div>
           {headerBadge}
         </div>
+
+        {(analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") && (
+          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <strong>Warning: document is only partially extracted.</strong> AI Analyze ran on incomplete extraction. Results may be missing tender pages. Re-extract or run OCR for a more reliable analysis.
+          </div>
+        )}
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {fileData.map((file) => (
