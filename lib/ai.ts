@@ -1,6 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
 import { protectPrompt } from "./ai-trust-boundary";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -388,11 +388,30 @@ function isProviderEnabled(name: AiProviderName): boolean {
   }
 }
 
+/**
+ * Output-token budget per use case.
+ *
+ * Extraction/analysis returns a bounded JSON object — it never needs the 16K
+ * budget used for full proposal generation. Requesting 16K against the
+ * tender-analysis path was a real production failure: models whose completion
+ * cap is below 16K (commonly the model `openrouter/auto` routes to, and some
+ * Groq/Mistral models) reject the request with HTTP 400, and the oversized
+ * reservation inflates free-tier tokens-per-minute usage, causing 429s. Every
+ * provider then failed the actual analysis even though the tiny health PING
+ * (max_tokens: 10) passed — which is exactly the "providers OK but regex
+ * fallback" symptom. A 4K budget comfortably fits one chunk's analysis JSON.
+ */
+function maxOutputTokensForUseCase(useCase: AiUseCase = "default"): number {
+  if (useCase === "extraction" || useCase === "fast") return 4096;
+  return 16000;
+}
+
 async function callProvider(
   name: AiProviderName,
   prompt: string,
   opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
 ): Promise<string | null> {
+  const maxTokens = maxOutputTokensForUseCase(opts?.useCase);
   switch (name) {
     case "anthropic": {
       if (opts?.useCase === "reasoning") {
@@ -403,7 +422,7 @@ async function callProvider(
         return null;
       }
 
-      const r = await generateWithClaude(prompt, opts?.systemPrompt).catch((err) => {
+      const r = await generateWithClaude(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
         recordProviderFailure("anthropic", err);
         return null;
       });
@@ -439,7 +458,7 @@ async function callProvider(
         return null;
       }
 
-      const r = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
+      const r = await generateWithOpenAI(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
         recordProviderFailure("openai", err);
         return null; // never re-throw — always continue the fallback chain
       });
@@ -447,7 +466,7 @@ async function callProvider(
       return null;
     }
     case "mistral": {
-      const r = await generateWithMistral(prompt, opts?.systemPrompt, undefined, opts?.useCase).catch((err) => {
+      const r = await generateWithMistral(prompt, opts?.systemPrompt, maxTokens, opts?.useCase).catch((err) => {
         recordProviderFailure("mistral", err);
         return null;
       });
@@ -461,7 +480,7 @@ async function callProvider(
         return null;
       }
 
-      const r = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+      const r = await generateWithDeepSeek(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
         console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
         recordProviderFailure("deepseek", err);
         return null;
@@ -470,7 +489,7 @@ async function callProvider(
       return null;
     }
     case "groq": {
-      const r = await generateWithGroq(prompt, opts?.systemPrompt).catch((err) => {
+      const r = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
         recordProviderFailure("groq", err);
         return null;
       });
@@ -478,7 +497,7 @@ async function callProvider(
       return null;
     }
     case "together": {
-      const r = await generateWithTogether(prompt, opts?.systemPrompt, undefined, opts?.useCase).catch((err) => {
+      const r = await generateWithTogether(prompt, opts?.systemPrompt, maxTokens, opts?.useCase).catch((err) => {
         recordProviderFailure("together", err);
         return null;
       });
@@ -486,7 +505,7 @@ async function callProvider(
       return null;
     }
     case "openrouter": {
-      const r = await generateWithOpenRouter(prompt, opts?.systemPrompt).catch((err) => {
+      const r = await generateWithOpenRouter(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
         recordProviderFailure("openrouter", err);
         return null;
       });
@@ -507,16 +526,28 @@ export async function generateWithFallback(
     console.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
   }
   const tried: string[] = [];
+  const failureDetails: string[] = [];
+  let cooledDownCount = 0;
 
   for (const provider of chain) {
     if (!isProviderEnabled(provider)) continue;
-    if (isProviderCooledDown(provider)) continue;
+    if (isProviderCooledDown(provider)) {
+      cooledDownCount++;
+      failureDetails.push(`${provider}: in cooldown`);
+      continue;
+    }
     tried.push(provider);
     const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase });
     if (result) {
       opts?.onProviderUsed?.(provider);
       return result;
     }
+    // callProvider returned null — capture the real reason recorded in the
+    // health store (HTTP 400 max_tokens, 429 rate limit, timeout, etc.) so the
+    // thrown error and downstream diagnostics are actionable rather than a bare
+    // "all providers exhausted".
+    const snap = getProviderStateSnapshot(provider);
+    failureDetails.push(`${provider}: ${snap.lastFailureMessage ?? snap.lastFailureCategory ?? "no response"}`);
   }
 
   const configured = chain.filter(isProviderEnabled);
@@ -525,8 +556,16 @@ export async function generateWithFallback(
       "No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.",
     );
   }
+  // When every enabled provider was skipped because it is still cooling down
+  // after a 429/quota, signal that distinctly so the diagnostics recommend a
+  // short wait + retry rather than a key/billing change.
+  if (tried.length === 0 && cooledDownCount > 0) {
+    throw new Error(
+      `AI_PROVIDERS_RATE_LIMITED: all ${cooledDownCount} configured provider(s) are in cooldown after recent rate-limit/quota errors for use-case "${useCase}". Details: ${failureDetails.join(" | ")}. Wait for cooldowns to expire and re-run.`,
+    );
+  }
   throw new Error(
-    `All configured AI providers exhausted for use-case "${useCase}" (tried: ${tried.join(", ") || "none — all in cooldown"}). Check provider API keys and rate limits, or wait for cooldown periods to expire.`,
+    `All configured AI providers exhausted for use-case "${useCase}" (tried: ${tried.join(", ") || "none — all in cooldown"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.`,
   );
 }
 
@@ -753,6 +792,7 @@ function fallbackTemperature(): number {
 }
 async function generateOpenAICompatible(params: {
   providerLabel: string;
+  providerName?: AiProviderName;
   endpoint: string;
   apiKey: string;
   model: string;
@@ -761,7 +801,16 @@ async function generateOpenAICompatible(params: {
   maxTokens: number;
   extraHeaders?: Record<string, string>;
 }): Promise<string | null> {
-  const { providerLabel, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders } = params;
+  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders } = params;
+  // Surface the real failure reason. Previously every HTTP-error / empty-content
+  // branch only logged to console.warn and returned null, so the actual cause
+  // (e.g. "HTTP 400: max_tokens too large", "HTTP 429: rate limit") was lost and
+  // AI Analyze could only ever report a generic "all providers exhausted". By
+  // recording the failure here it flows into the health store and the
+  // generateWithFallback thrown error, making the diagnostics actionable.
+  const note = (reason: string) => {
+    if (providerName) recordProviderFailure(providerName, new Error(`${providerLabel} ${reason}`));
+  };
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
   try {
@@ -792,13 +841,16 @@ async function generateOpenAICompatible(params: {
         const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
         if (strictAuth) throw new Error(`${providerLabel} API key invalid (${res.status}): ${sanitized}`);
         console.warn(`[ai] ${providerLabel} auth error (${res.status}) — continuing to next provider: ${sanitized}`);
+        note(`auth error HTTP ${res.status}: ${sanitized}`);
         return null;
       }
       if (res.status === 429) {
         console.warn(`[ai] ${providerLabel} rate limit (429) on ${model} — skipping to next provider.`);
+        note(`rate limit HTTP 429 on ${model}: ${sanitized}`);
         return null;
       }
       console.warn(`[ai] ${providerLabel} error ${res.status} on ${model}: ${sanitized} — skipping.`);
+      note(`HTTP ${res.status} on ${model}: ${sanitized}`);
       return null;
     }
 
@@ -806,11 +858,13 @@ async function generateOpenAICompatible(params: {
     if (data.error?.message) {
       const sanitized = data.error.message.replace(/(sk|gsk)[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]").slice(0, 200);
       console.warn(`[ai] ${providerLabel} API error: ${sanitized}`);
+      note(`API error: ${sanitized}`);
       return null;
     }
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
       console.warn(`[ai] ${providerLabel} ${model} returned empty content.`);
+      note(`${model} returned empty content`);
       return null;
     }
     return text;
@@ -819,6 +873,7 @@ async function generateOpenAICompatible(params: {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
       console.warn(`[ai] ${providerLabel} fetch timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms — falling through.`);
+      note(`timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms`);
       return null;
     }
     if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
@@ -826,6 +881,7 @@ async function generateOpenAICompatible(params: {
       if (strictAuth) throw err;
     }
     console.warn(`[ai] ${providerLabel} fetch failed: ${msg.slice(0, 200)} — falling through.`);
+    note(`fetch failed: ${msg.slice(0, 200)}`);
     return null;
   }
 }
@@ -840,6 +896,7 @@ async function generateWithMistral(
   if (!key) return null;
   return generateOpenAICompatible({
     providerLabel: "Mistral",
+    providerName: "mistral",
     endpoint: `${getMistralBaseUrl()}/chat/completions`,
     apiKey: key,
     model: getMistralModelForUseCase(useCase),
@@ -855,6 +912,7 @@ async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_P
   if (!key) return null;
   return generateOpenAICompatible({
     providerLabel: "Groq",
+    providerName: "groq",
     endpoint: `${getGroqBaseUrl()}/chat/completions`,
     apiKey: key,
     model: getGroqModel(),
@@ -874,6 +932,7 @@ async function generateWithTogether(
   if (!key) return null;
   return generateOpenAICompatible({
     providerLabel: "Together",
+    providerName: "together",
     endpoint: `${getTogetherBaseUrl()}/chat/completions`,
     apiKey: key,
     model: getTogetherModelForUseCase(useCase),
@@ -889,6 +948,7 @@ async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEF
   if (!key) return null;
   return generateOpenAICompatible({
     providerLabel: "OpenRouter",
+    providerName: "openrouter",
     endpoint: `${getOpenRouterBaseUrl()}/chat/completions`,
     apiKey: key,
     model: getOpenRouterModel(),
