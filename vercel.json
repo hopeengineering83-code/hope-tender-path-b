@@ -2,7 +2,6 @@
   "framework": "nextjs",
   "buildCommand": "npm run vercel-build",
   "installCommand": "npm ci",
-  "_redeploy_trigger": "2026-06-19-force-retry-post-rate-limit",
   "crons": [
     {
       "path": "/api/ai-jobs/run-next",
