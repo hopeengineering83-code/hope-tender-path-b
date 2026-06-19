@@ -25,9 +25,10 @@ describe("plan-action endpoint contract", () => {
     assert.match(source, /code:\s*"NOTE_REQUIRED"/);
   });
 
-  it("is role-gated, rate-limited, and audit-logged", () => {
+  it("is role-gated, persistently rate-limited, tenant-scoped, and audit-logged", () => {
     assert.match(source, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
-    assert.match(source, /rateLimit\(/);
+    assert.match(source, /rateLimitPersistent\(/);
+    assert.match(source, /tender:\s*\{\s*userId:\s*actor\.id\s*\}/);
     assert.match(source, /SUBMISSION_PLAN_ROW_ACTION/);
   });
 

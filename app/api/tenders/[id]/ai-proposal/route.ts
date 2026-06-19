@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
-import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
 import type { ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
@@ -12,6 +12,7 @@ import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
 import { logAction } from "../../../../../lib/audit";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -79,8 +80,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rl = rateLimit(`ai-proposal:${userId}`, AI_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before generating again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
+  const rl = await rateLimitPersistent(`ai-proposal:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before generating again.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
   await prismaReady;
   const { id } = await params;
@@ -109,7 +116,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   //                   Omit on the first chunk=1 call; include on retries.
   // Response always includes proposalJobId so the client can store it.
 
-  const resumeJobId = typeof body.proposalJobId === "string" && body.proposalJobId.length > 0
+  const resumeJobId = typeof body.proposalJobId === "string" && body.proposalJobId.length > 0 && body.proposalJobId.length <= 128
     ? body.proposalJobId : null;
 
   // Chunk output stored as { chunks: { "1": "..md..", "2": "..md..", "3": "..md.." } }
@@ -455,11 +462,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         : generateBenchmarkProposalWithAI(aiInputBase);
       proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {
-      const msg = aiError instanceof Error ? aiError.message : String(aiError);
-      console.error("Benchmark AI proposal failed in /ai-proposal route:", aiError);
+      const msg = sanitizeError(aiError);
+      console.error("Benchmark AI proposal failed in /ai-proposal route:", msg);
 
       // Rate limit: don't overwrite any existing proposal — ask user to retry
-      if (msg.includes("rate limit") || msg.includes("429")) {
+      if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
         return NextResponse.json({
           error: "AI provider rate limit reached. Please wait 30–60 seconds and try again.",
           rateLimitRetry: true,
@@ -477,7 +484,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         projectLines,
         differentiators: intelligence.differentiators,
         submissionRules: intelligence.submissionRules,
-        aiError: msg.slice(0, 240),
+        aiError: "AI provider unavailable; deterministic fallback used.",
       });
     }
 
@@ -508,7 +515,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ? proposal.length > 100
         : proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
     if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
-      const accumulated = typeof body.accumulatedProposal === "string" && body.accumulatedProposal.length > 200
+      const accumulated = typeof body.accumulatedProposal === "string" && body.accumulatedProposal.length > 200 && body.accumulatedProposal.length <= 500_000
         ? body.accumulatedProposal
         : null;
       const contentToSave = accumulated ? `${accumulated}\n\n${proposal}` : proposal;
@@ -547,12 +554,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // previous one back as input to the next.
     return NextResponse.json({ success: true, proposal, fallback, cached: false, proposalJobId });
   } catch (error) {
+    const safeError = sanitizeError(error).slice(0, 500);
     // Mark the AiJob as FAILED so the client knows to offer a retry
     void prisma.aiJob.update({
       where: { id: proposalJobId },
-      data: { status: "FAILED", errorMessage: error instanceof Error ? error.message.slice(0, 500) : "Unknown error", finishedAt: new Date(), updatedAt: new Date() },
+      data: { status: "FAILED", errorMessage: safeError, finishedAt: new Date(), updatedAt: new Date() },
     }).catch(() => {});
-    console.error("Proposal generation route error:", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Proposal generation failed", proposalJobId }, { status: 500 });
+    console.error("Proposal generation route error:", safeError);
+    return NextResponse.json({ error: "Proposal generation failed. Retry or review server logs.", proposalJobId }, { status: 500 });
   }
 }

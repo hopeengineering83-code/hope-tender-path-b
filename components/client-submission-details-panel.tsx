@@ -125,16 +125,9 @@ function sourceForField(tender: TenderPayload, field: string): SourceInfo | null
   if (contactSource) return contactSource;
 
   if (field === "clientName") {
-    // Try procuringEntityName key in contactDetailsSource first (AI stores it there)
-    const fromContactSource = sourceFromObject(tender, contactSources["procuringEntityName"]);
-    if (fromContactSource) return fromContactSource;
     const page = num(tender.clientNameSourcePage);
     const quote = normalizeQuote(tender.clientNameSourceQuote);
     return page != null || quote ? { page, quote, fileName: null } : null;
-  }
-  if (field === "reference") {
-    // AI stores the procurement reference source under "procurementReferenceNumber" key
-    return sourceFromObject(tender, contactSources["procurementReferenceNumber"]);
   }
   if (field === "submissionEmails") {
     const page = num(tender.submissionEmailSourcePage);

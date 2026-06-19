@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
-import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import {
   aiRematchExperts,
   aiRematchProjects,
@@ -15,6 +15,7 @@ import {
 import { exactSelectionLimit } from "../../../../../lib/engine/scope-policy";
 import { logAction } from "../../../../../lib/audit";
 import { childLogger, time, reportError } from "../../../../../lib/observability";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -141,11 +142,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (!["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)) return forbiddenResponse();
 
-  const rl = rateLimit(`rematch:${actor.id}`, AI_RATE_LIMIT);
+  const rl = await rateLimitPersistent(`rematch:${actor.id}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
     return NextResponse.json(
-      { error: "Rate limit exceeded — too many rematch requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
-      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+      { error: "Rate limit exceeded — too many rematch requests. Please wait a minute and retry.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
 
@@ -266,7 +268,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ]), { tenderId });
   } catch (err) {
     void reportError(err, { tenderId, route: "/api/tenders/[id]/ai-rematch" });
-    return NextResponse.json({ error: err instanceof Error ? err.message : "AI rematch failed", code: "AI_REMATCH_FAILED" }, { status: 502 });
+    log.error("ai_rematch_failed", { error: sanitizeError(err) });
+    return NextResponse.json({ error: "AI rematch failed. Retry after checking provider availability.", code: "AI_REMATCH_FAILED" }, { status: 502 });
   }
 
   if (!expertBatch && !projectBatch) {

@@ -14,7 +14,7 @@
 
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
-import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
 import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
@@ -22,27 +22,10 @@ import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-dri
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
-
-// Simple in-memory per-user rate limit: max 8 section regenerations per minute.
-// Resets on the rolling window; safe for single-instance deployments.
-const _regenLimit = new Map<string, { count: number; windowStart: number }>();
-const REGEN_LIMIT_MAX = 8;
-const REGEN_LIMIT_WINDOW_MS = 60_000;
-
-function checkRegenRateLimit(userId: string): boolean {
-  const now = Date.now();
-  const entry = _regenLimit.get(userId);
-  if (!entry || now - entry.windowStart > REGEN_LIMIT_WINDOW_MS) {
-    _regenLimit.set(userId, { count: 1, windowStart: now });
-    return true;
-  }
-  if (entry.count >= REGEN_LIMIT_MAX) return false;
-  entry.count += 1;
-  return true;
-}
 
 const VALID_SECTION_IDS: ProposalSectionId[] = [
   "cover-and-summary",
@@ -87,8 +70,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rl = rateLimit(`regen-section:${userId}`, AI_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before regenerating again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
+  const rl = await rateLimitPersistent(`regen-section:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before regenerating again.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
   await prismaReady;
   const { id } = await params;
@@ -103,13 +92,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!isAIEnabled()) {
     return NextResponse.json({ error: "AI is not configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
-  }
-
-  if (!checkRegenRateLimit(userId)) {
-    return NextResponse.json({
-      error: `Rate limit reached: maximum ${REGEN_LIMIT_MAX} section regenerations per minute. Please wait and try again.`,
-      rateLimitRetry: true,
-    }, { status: 429 });
   }
 
   const [tender, company] = await Promise.all([
@@ -314,7 +296,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const { generateWithFallback } = await import("../../../../../lib/ai");
       sectionMarkdown = await generateWithFallback(spec.userPrompt, { systemPrompt: spec.systemPrompt });
     } catch (err) {
-      console.warn(`[regenerate-section] AI generation failed for ${sectionId}:`, err);
+      console.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
     }
 
     if (!sectionMarkdown || sectionMarkdown.trim().length < 50) {
@@ -335,8 +317,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fallback: false,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error(`[regenerate-section] Fatal error for ${sectionId}:`, error);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
+    return NextResponse.json({ error: "Section regeneration failed. Retry or review server logs." }, { status: 500 });
   }
 }
