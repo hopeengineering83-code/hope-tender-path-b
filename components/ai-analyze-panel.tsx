@@ -101,8 +101,14 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
       if (!res.ok || !res.body) {
         // Fall back to non-streaming path or show error
         const data = await res.json().catch(() => ({}));
-        setError(data.error || "Analysis failed to start");
+        const errorMsg = data.error || "Analysis failed to start";
+        setError(errorMsg);
         setAnalyzing(false);
+
+        // If providers are cooling down, schedule auto-retry
+        if (data.providerRetryAfterMs && typeof data.providerRetryAfterMs === "number") {
+          scheduleAutoRetry(Math.max(data.providerRetryAfterMs, 5000), data.resumableJobId ?? null);
+        }
         return;
       }
 
@@ -238,37 +244,58 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
       )}
 
       {showAutoRetryBanner && (
-        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 shadow-sm animate-pulse">
           <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-xl">⏳</span>
-              <div>
-                <p className="text-sm font-bold text-amber-900">AI providers cooling down</p>
-                <p className="text-xs text-amber-700">
-                  Automatically retrying {analyzeResult?.resumableJobId ? "to resume " : ""}in <strong>{autoRetrySecondsLeft}</strong> seconds...
+            <div className="flex items-center gap-3 flex-1">
+              <span className="text-2xl animate-spin">⏳</span>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-amber-900">⚡ Auto-Retry Active</p>
+                <p className="text-xs text-amber-800">
+                  AI providers are cooling down. Automatically {analyzeResult?.resumableJobId ? "resuming " : "retrying "}analysis in <strong className="text-amber-900">{autoRetrySecondsLeft}s</strong>
                 </p>
               </div>
             </div>
-            <button
-              onClick={cancelAutoRetry}
-              className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
-            >
-              Cancel Auto-retry
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAnalyzeStreaming}
+                disabled={analyzing}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
+              >
+                Retry Now
+              </button>
+              <button
+                onClick={cancelAutoRetry}
+                className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {error && (
-        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-          <p className="font-semibold">Analysis failed</p>
-          <p className="mt-1">{error}</p>
-          <button
-            onClick={() => setError("")}
-            className="mt-2 text-xs font-medium underline hover:text-red-900"
-          >
-            Dismiss
-          </button>
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <p className="font-semibold">Analysis Error</p>
+          <p className="mt-1 text-red-700">{error}</p>
+          {analyzeResult?.providerDiagnostics && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs font-medium underline">Provider Diagnostics</summary>
+              <pre className="mt-1 overflow-auto rounded bg-red-100 p-2 text-[10px] text-red-900 whitespace-pre-wrap break-words">
+                {typeof analyzeResult.providerDiagnostics === "string"
+                  ? analyzeResult.providerDiagnostics
+                  : JSON.stringify(analyzeResult.providerDiagnostics, null, 2)}
+              </pre>
+            </details>
+          )}
+          {!showAutoRetryBanner && (
+            <button
+              onClick={() => setError("")}
+              className="mt-2 text-xs font-medium underline hover:text-red-900"
+            >
+              Dismiss
+            </button>
+          )}
         </div>
       )}
 
