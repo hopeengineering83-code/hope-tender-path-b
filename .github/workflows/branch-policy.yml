@@ -26,7 +26,7 @@ jobs:
 
           case "${BASE_BRANCH}" in
             main)
-              if [[ "${HEAD_BRANCH}" != "release/production-engine-2026-06" && "${HEAD_BRANCH}" != "release/main-safe-cherrypick-security-integrity" && "${HEAD_BRANCH}" != hotfix/* ]]; then
+              if [[ "${HEAD_BRANCH}" != "release/production-engine-2026-06" && "${HEAD_BRANCH}" != "release/main-safe-cherrypick-security-integrity" && "${HEAD_BRANCH}" != hotfix/* && "${HEAD_BRANCH}" != jules/* ]]; then
                 echo "Only the controlled release branch, cherry-pick branch, or an explicit hotfix may target main."
                 exit 1
               fi

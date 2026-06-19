@@ -22,36 +22,39 @@ describe("release integrity upgrade", () => {
     assert.equal(vercel.installCommand, "npm ci");
   });
 
-  it("limits automatic migration recovery to the exact failed init", () => {
+  it("limits automatic migration recovery to the exact failed init with strict preconditions", () => {
     const migration = read("scripts/migrate-deploy-safe.mjs");
     assert.match(migration, /INIT_MIGRATION = "20260601000000_init"/);
     assert.match(migration, /P3009/);
     assert.match(migration, /--expect-failed-init/);
+    assert.match(migration, /--require-schema/);
+    assert.match(migration, /verifyFailedInitPreconditions/);
     assert.match(migration, /verify-retroactive-init\.mjs/);
     assert.match(migration, /check-critical-schema\.mjs/);
     assert.match(migration, /ALLOW_PREVIEW_DB_MIGRATIONS/);
     assert.match(migration, /Automatic baselining is disabled/);
     assert.doesNotMatch(migration, /PRISMA_BASELINE_EXISTING_DB/);
     assert.doesNotMatch(migration, /\["db", "execute"/);
+
+    // Ensure recovery is blocked if preconditions fail (no swallowing of errors in recovery path)
+    assert.doesNotMatch(migration, /catch.*proceeding with recovery attempt/);
+    assert.match(migration, /throw new Error\("Safety check failed/);
   });
 
   it("verifies the init checksum, structure, and migration state", () => {
     const verifier = read("scripts/verify-retroactive-init.mjs");
     assert.match(verifier, /createHash\("sha256"\)/);
-    assert.match(verifier, /Missing initialization table/);
-    assert.match(verifier, /Missing initialization column/);
-    assert.match(verifier, /Missing initialization index/);
-    assert.match(verifier, /Missing initialization constraint/);
-    assert.match(verifier, /Expected exactly one unfinished migration/);
-    assert.match(verifier, /No completed, checksum-matching/);
+    assert.match(verifier, /schemaFailures\.push\(`Missing initialization table/);
+    assert.match(verifier, /schemaFailures\.push\(`Missing initialization column/);
+    assert.match(verifier, /schemaFailures\.push\(`Missing initialization index/);
+    assert.match(verifier, /schemaFailures\.push\(`Missing initialization constraint/);
+    assert.match(verifier, /historyFailures\.push\(`Expected exactly one unfinished migration/);
+    assert.match(verifier, /historyFailures\.push\(`No completed, checksum-matching/);
   });
 
-  it("skips schema validation when expecting failed init migration", () => {
+  it("supports schema validation even when expecting failed init migration via --require-schema", () => {
     const verifier = read("scripts/verify-retroactive-init.mjs");
-    // The verifier should have logic to skip database schema checks when --expect-failed-init is true
-    // because a failed migration means those database objects don't exist yet
-    assert.match(verifier, /if \(!expectFailedInit\)/);
-    assert.match(verifier, /Only validate actual database schema when NOT expecting a failed init/);
+    assert.match(verifier, /if \(!expectFailedInit || requireSchema\)/);
     // Ensure it still checks migration history in failed state
     assert.match(verifier, /unfinished\.length !== 1/);
     assert.match(verifier, /Checksum mismatch for unfinished/);
@@ -87,5 +90,11 @@ describe("release integrity upgrade", () => {
     for (const table of ["RateLimitBucket", "PasswordResetToken", "SubmissionPlanState", "AiAnalyzeChunk", "AiJob"]) {
       assert.match(verifier, new RegExp(table));
     }
+  });
+
+  it("includes specific missing TenderFile columns in critical schema check", () => {
+    const check = read("scripts/check-critical-schema.mjs");
+    assert.match(check, /"lastDeletionError"/);
+    assert.match(check, /"deletedAt"/);
   });
 });
