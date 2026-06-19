@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AiAnalyzeStatusBanner } from "./ai-analyze-status-banner";
+import { SparklesIcon, ClockIcon, BoltIcon } from "./icons";
 
 type ChunkProgress = {
   total: number;
@@ -218,9 +219,10 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
             <button
               onClick={handleAnalyzeStreaming}
               disabled={analyzing}
-              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
             >
-              {analyzing ? (analyzePhase || "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ Run AI Analyze"}
+              <SparklesIcon />
+              {analyzing ? (analyzePhase || "Analyzing…") : continueJobId ? "Resume AI Analyze" : "Run AI Analyze"}
             </button>
           ) : (
             <span className="text-xs text-red-600 font-medium italic">AI providers not configured</span>
@@ -247,9 +249,9 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
         <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 shadow-sm animate-pulse">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1">
-              <span className="text-2xl animate-spin">⏳</span>
+              <ClockIcon className="text-2xl animate-spin text-amber-700" />
               <div className="flex-1">
-                <p className="text-sm font-bold text-amber-900">⚡ Auto-Retry Active</p>
+                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-amber-900"><BoltIcon /> Auto-Retry Active</p>
                 <p className="text-xs text-amber-800">
                   AI providers are cooling down. Automatically {analyzeResult?.resumableJobId ? "resuming " : "retrying "}analysis in <strong className="text-amber-900">{autoRetrySecondsLeft}s</strong>
                 </p>
