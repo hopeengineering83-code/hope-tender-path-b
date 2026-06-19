@@ -160,12 +160,25 @@ function sourceForField(tender: TenderPayload, field: string): SourceInfo | null
       label: req.sourceSectionHeading ?? req.title ?? "Requirement source",
     };
   }
+  if (field === "procuringEntityName") return sourceFromObject(tender, contactSources.procuringEntityName);
+  if (field === "legalClientName") return sourceFromObject(tender, contactSources.legalClientName);
+  if (field === "donorAgency") return sourceFromObject(tender, contactSources.donorAgency);
+  if (field === "implementingAgency") return sourceFromObject(tender, contactSources.implementingAgency);
+  if (field === "reference") return sourceFromObject(tender, contactSources.procurementReferenceNumber);
   if (field === "country") return sourceFromObject(tender, contactSources.country);
+  if (field === "clientCity") return sourceFromObject(tender, contactSources.clientCity);
   if (field === "clientAddress") return sourceFromObject(tender, contactSources.clientAddress);
+  if (field === "clientWebsite") return sourceFromObject(tender, contactSources.clientWebsite);
   if (field === "clientContactName") return sourceFromObject(tender, contactSources.clientContactName);
   if (field === "clientContactTitle") return sourceFromObject(tender, contactSources.clientContactTitle);
   if (field === "clientContactEmail") return sourceFromObject(tender, contactSources.clientContactEmail);
   if (field === "clientContactPhone") return sourceFromObject(tender, contactSources.clientContactPhone);
+  if (field === "clientRepresentative") return sourceFromObject(tender, contactSources.clientRepresentative);
+  if (field === "submissionAddress") return sourceFromObject(tender, contactSources.submissionAddress);
+  if (field === "submissionEmailSubject") return sourceFromObject(tender, contactSources.submissionEmailSubject);
+  if (field === "preBidChannel") return sourceFromObject(tender, contactSources.preBidChannel);
+  if (field === "preBidMeetingDate") return sourceFromObject(tender, contactSources.preBidMeetingDate);
+  if (field === "preBidMeetingLocation") return sourceFromObject(tender, contactSources.preBidMeetingLocation);
   return null;
 }
 
