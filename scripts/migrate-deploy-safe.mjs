@@ -71,22 +71,34 @@ function deploy() {
   }
 }
 
-function verifyFailedInit() {
+function verifyFailedInitPreconditions() {
   if (!existsSync(join(MIGRATIONS_DIR, INIT_MIGRATION, "migration.sql"))) {
     throw new Error(`Cannot recover ${INIT_MIGRATION}: migration file is missing`);
   }
+
+  console.log("Verifying failed-init recovery preconditions...");
+
+  // 1. Verify history state (must have exactly one unfinished init)
+  // 2. Verify schema state (must have all required tables even if migration is marked unfinished)
+  // We use --require-schema to ensure the data objects actually exist before we mark it as applied.
   try {
-    command(process.execPath, ["scripts/verify-retroactive-init.mjs", "--expect-failed-init"]);
+    command(process.execPath, [
+      "scripts/verify-retroactive-init.mjs",
+      "--expect-failed-init",
+      "--require-schema"
+    ]);
+    console.log("Preconditions satisfied: migration history matches and schema objects are present.");
   } catch (error) {
-    // If verification fails (e.g., DB connection issues), attempt recovery anyway.
-    // The resolve commands will validate the state.
-    console.warn("Failed to verify expected init migration failure; proceeding with recovery attempt");
-    console.warn("Error details:", errorText(error).slice(0, 500));
+    const details = errorText(error);
+    console.error("Failed to verify failed-init recovery preconditions.");
+    console.error("Recovery is only safe if required schema objects already exist in the database.");
+    console.error("Verification output:", details.slice(0, 1000));
+    throw new Error("Safety check failed: cannot resolve failed-init because schema preconditions are not met.");
   }
 }
 
 function recoverFailedInit() {
-  verifyFailedInit();
+  verifyFailedInitPreconditions();
   console.log(`Repairing ${INIT_MIGRATION} migration history.`);
   try {
     prisma(["migrate", "resolve", "--rolled-back", INIT_MIGRATION], { capture: true });
@@ -117,11 +129,12 @@ if (initialResult === "failed-init") {
   throw new Error(`Migration deployment did not complete safely: ${initialResult}`);
 }
 
+// Final verification of the applied state
 try {
   command(process.execPath, ["scripts/verify-retroactive-init.mjs"]);
 } catch (error) {
   console.warn("Final retroactive init verification encountered an issue (may be transient)");
-  console.warn("Error:", errorText(error).slice(0, 300));
+  console.warn("Error:", errorText(error).slice(0, 500));
   // Don't throw - migrations are deployed; verification warnings are non-fatal
 }
 
@@ -131,7 +144,7 @@ try {
   });
 } catch (error) {
   console.warn("Critical schema check encountered an issue");
-  console.warn("Error:", errorText(error).slice(0, 300));
+  console.warn("Error:", errorText(error).slice(0, 500));
   // Non-fatal for Vercel build - schema is already deployed
 }
 
