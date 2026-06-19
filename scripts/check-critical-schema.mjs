@@ -22,7 +22,7 @@ const REQUIRED_TABLES = [
 
 const REQUIRED_COLUMNS = {
   Tender: ["id", "userId", "status", "stage", "analysisExtractionStatus"],
-  TenderFile: ["id", "tenderId", "storagePath", "fileContent", "extractedText", "deletionStatus"],
+  TenderFile: ["id", "tenderId", "storagePath", "fileContent", "extractedText", "deletionStatus", "lastDeletionError", "deletedAt"],
   TenderRequirement: ["id", "tenderId", "sourceTenderFileId", "sourcePageNumber", "sourceExactQuote"],
   GeneratedDocument: ["id", "tenderId", "fileContent", "reviewStatus", "generationStatus"],
   DocumentReview: ["id", "documentId", "reviewerId", "action", "priorStatus", "newStatus"],

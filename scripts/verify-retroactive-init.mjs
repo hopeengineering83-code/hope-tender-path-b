@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 
 const INIT_MIGRATION = "20260601000000_init";
 const expectFailedInit = process.argv.includes("--expect-failed-init");
+const requireSchema = process.argv.includes("--require-schema");
 const prisma = new PrismaClient();
 
 function redact(value) {
@@ -44,7 +45,9 @@ async function main() {
   const migrationSql = migrationBytes.toString("utf8");
   const checksum = createHash("sha256").update(migrationBytes).digest("hex");
   const expected = parseInitMigration(migrationSql);
-  const failures = [];
+
+  const historyFailures = [];
+  const schemaFailures = [];
 
   let tableRows;
   try {
@@ -87,29 +90,28 @@ async function main() {
   `;
   const actualConstraints = new Set(constraintRows.map((row) => row.constraintName));
 
-  // Only validate actual database schema when NOT expecting a failed init.
-  // If init migration failed, the schema from that migration won't exist yet.
-  if (!expectFailedInit) {
+  // Validate schema if NOT expecting failed init OR if schema is explicitly required
+  if (!expectFailedInit || requireSchema) {
     for (const [tableName, expectedColumns] of expected.tables) {
       if (!actualTables.has(tableName)) {
-        failures.push(`Missing initialization table: ${tableName}`);
+        schemaFailures.push(`Missing initialization table: ${tableName}`);
         continue;
       }
       const actualColumns = columnsByTable.get(tableName) ?? new Set();
       for (const columnName of expectedColumns) {
-        if (!actualColumns.has(columnName)) failures.push(`Missing initialization column: ${tableName}.${columnName}`);
+        if (!actualColumns.has(columnName)) schemaFailures.push(`Missing initialization column: ${tableName}.${columnName}`);
       }
     }
     for (const name of expected.indexes) {
-      if (!actualIndexes.has(name)) failures.push(`Missing initialization index: ${name}`);
+      if (!actualIndexes.has(name)) schemaFailures.push(`Missing initialization index: ${name}`);
     }
     for (const name of expected.constraints) {
-      if (!actualConstraints.has(name)) failures.push(`Missing initialization constraint: ${name}`);
+      if (!actualConstraints.has(name)) schemaFailures.push(`Missing initialization constraint: ${name}`);
     }
   }
 
   if (!actualTables.has("_prisma_migrations")) {
-    failures.push("Prisma migration history table is missing");
+    historyFailures.push("Prisma migration history table is missing");
   } else {
     const rows = await prisma.$queryRaw`
       SELECT migration_name AS "migrationName", checksum,
@@ -124,27 +126,31 @@ async function main() {
 
     if (expectFailedInit) {
       if (unfinished.length !== 1 || unfinished[0]?.migrationName !== INIT_MIGRATION) {
-        failures.push(`Expected exactly one unfinished migration named ${INIT_MIGRATION}`);
+        historyFailures.push(`Expected exactly one unfinished migration named ${INIT_MIGRATION}`);
       } else if (unfinished[0].checksum !== checksum) {
-        failures.push(`Checksum mismatch for unfinished ${INIT_MIGRATION}`);
+        historyFailures.push(`Checksum mismatch for unfinished ${INIT_MIGRATION}`);
       }
     } else {
       if (unfinished.length > 0) {
-        failures.push(`Unfinished migrations: ${unfinished.map((row) => row.migrationName).join(", ")}`);
+        historyFailures.push(`Unfinished migrations: ${unfinished.map((row) => row.migrationName).join(", ")}`);
       }
       const appliedInit = activeInit.find((row) => row.finishedAt !== null && row.checksum === checksum);
-      if (!appliedInit) failures.push(`No completed, checksum-matching ${INIT_MIGRATION} record was found`);
+      if (!appliedInit) historyFailures.push(`No completed, checksum-matching ${INIT_MIGRATION} record was found`);
     }
   }
 
+  const failures = [...historyFailures, ...schemaFailures];
   const summary = {
     ok: failures.length === 0,
     migration: INIT_MIGRATION,
     mode: expectFailedInit ? "expect-failed-init" : "applied",
+    requireSchema,
     expectedTables: expected.tables.size,
     expectedColumns: Array.from(expected.tables.values()).reduce((total, columns) => total + columns.size, 0),
     expectedIndexes: expected.indexes.size,
     expectedConstraints: expected.constraints.size,
+    historyFailures,
+    schemaFailures,
     failures,
   };
   console.log(JSON.stringify(summary, null, 2));
