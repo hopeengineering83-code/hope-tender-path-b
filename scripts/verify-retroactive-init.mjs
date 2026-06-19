@@ -46,11 +46,19 @@ async function main() {
   const expected = parseInitMigration(migrationSql);
   const failures = [];
 
-  const tableRows = await prisma.$queryRaw`
-    SELECT table_name AS "tableName"
-    FROM information_schema.tables
-    WHERE table_schema = current_schema()
-  `;
+  let tableRows;
+  try {
+    tableRows = await prisma.$queryRaw`
+      SELECT table_name AS "tableName"
+      FROM information_schema.tables
+      WHERE table_schema = current_schema()
+    `;
+  } catch (error) {
+    throw new Error(
+      `Failed to query database tables during ${expectFailedInit ? "expect-failed-init" : "applied"} verification. ` +
+      `Database may be initializing. Error: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   const actualTables = new Set(tableRows.map((row) => row.tableName));
 
   const columnRows = await prisma.$queryRaw`
