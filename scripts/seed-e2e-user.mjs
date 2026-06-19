@@ -57,12 +57,25 @@ try {
     },
   });
 
-  // Secondary Owner Private Tender for isolation testing
+  // Primary Owner Fixture Tender
+  const PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
   await prisma.tender.upsert({
-    where: { id: "secondary-owner-private-tender-fixture" },
+    where: { id: PRIMARY_TENDER_ID },
+    update: { title: "Primary Owner Fixture" },
+    create: {
+      id: PRIMARY_TENDER_ID,
+      userId: primaryUser.id,
+      title: "Primary Owner Fixture",
+    },
+  });
+
+  // Secondary Owner Private Tender for cross-user isolation tests
+  const SECONDARY_TENDER_ID = "22222222-2222-4222-8222-222222222222";
+  await prisma.tender.upsert({
+    where: { id: SECONDARY_TENDER_ID },
     update: { title: "Secondary Owner Private Tender" },
     create: {
-      id: "secondary-owner-private-tender-fixture",
+      id: SECONDARY_TENDER_ID,
       userId: secondaryUser.id,
       title: "Secondary Owner Private Tender",
     },
