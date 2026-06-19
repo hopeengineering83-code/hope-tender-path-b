@@ -29,9 +29,11 @@ type Props = {
   tenderId: string;
   initialContinueJobId?: string | null;
   aiEnabled: boolean;
+  readyForAnalysis?: boolean;
+  analysisBlockers?: string[];
 };
 
-export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Props) {
+export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled, readyForAnalysis = true, analysisBlockers = [] }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);
@@ -99,7 +101,6 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
       });
 
       if (!res.ok || !res.body) {
-        // Fall back to non-streaming path or show error
         const data = await res.json().catch(() => ({}));
         setError(data.error || "Analysis failed to start");
         setAnalyzing(false);
@@ -211,8 +212,9 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
           {aiEnabled ? (
             <button
               onClick={handleAnalyzeStreaming}
-              disabled={analyzing}
-              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+              disabled={analyzing || !readyForAnalysis}
+              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!readyForAnalysis ? "AI Analysis is blocked. Resolve prerequisites below." : undefined}
             >
               {analyzing ? (analyzePhase || "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ Run AI Analyze"}
             </button>
@@ -221,6 +223,18 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
           )}
         </div>
       </div>
+
+      {!analyzing && !readyForAnalysis && analysisBlockers.length > 0 && (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Analysis Prerequisites Missing:</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">
+            {analysisBlockers.map((blocker, idx) => (
+              <li key={idx}>{blocker}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-red-600 italic">Resolve these issues in Stage 1 before running AI Analysis.</p>
+        </div>
+      )}
 
       {analyzing && (
         <div className="mt-4">

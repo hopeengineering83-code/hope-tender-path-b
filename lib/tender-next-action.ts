@@ -16,6 +16,10 @@ export type TenderNextActionDecision = {
   reason: string;
   blockers: string[];
   tone: "green" | "amber" | "red";
+  readyForAnalysis: boolean;
+  readyForGeneration: boolean;
+  readyForExport: boolean;
+  readyForShare: boolean;
   rawVsTrustedRequirements?: {
     raw: number;
     trusted: number;
@@ -86,43 +90,72 @@ function extractionBlockers(input: TenderNextActionInput["extraction"]): string[
 }
 
 export function resolveTenderNextAction(input: TenderNextActionInput): TenderNextActionDecision {
+  const readyForAnalysis = input.hasFiles && !input.extraction.corrupted && !input.extraction.ocrRequired;
+  const requirementsTrusted = input.requirements.rawCount > 0 &&
+    input.requirements.trustedTracedCount > 0 &&
+    (input.requirements.mandatoryCount === 0 || input.requirements.mandatoryTracedCount >= input.requirements.mandatoryCount);
+  const readyForGeneration = input.hasFiles &&
+    !extractionIsNotReady(input.extraction) &&
+    input.aiAnalysis.exists &&
+    input.metadata.trusted &&
+    requirementsTrusted &&
+    input.submissionPlanBuilt;
+  const readyForExport = readyForGeneration && input.documents.current && input.exportBlockersCount === 0;
+  const readyForShare = input.documents.hasGeneratedDocuments || readyForExport;
+
   if (!input.hasFiles) {
     return {
       primary: "UPLOAD_TENDER",
       label: "Upload tender document",
-      reason: "No tender file has been uploaded. Upload a PDF or DOCX to begin.",
-      blockers: ["No tender file uploaded"],
+      reason: "Upload at least one tender source file (PDF or DOCX) to begin the workflow.",
+      blockers: ["No tender files uploaded yet"],
       tone: "amber",
+      readyForAnalysis: false,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare: false,
     };
   }
 
   if (extractionIsNotReady(input.extraction)) {
     return {
       primary: "FIX_EXTRACTION",
-      label: "Fix Extraction First",
-      reason: "Extraction is weak, partial, corrupted, or below readiness coverage. Run OCR / re-extract before AI Analyze.",
+      label: "Fix Extraction Quality",
+      reason: "Tender document extraction is weak, partial, or corrupted. Run OCR or re-extract to ensure AI analysis is reliable.",
       blockers: extractionBlockers(input.extraction),
       tone: input.extraction.corrupted ? "red" : "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
   if (input.resumableAnalysisAvailable) {
     return {
       primary: "RESUME_AI_ANALYZE",
-      label: "Resume AI Analyze",
-      reason: "A previous AI Analyze run has saved partial progress. Resume it so completed chunks are reused instead of starting from zero.",
+      label: "Resume AI Analysis",
+      reason: "A previous analysis run was interrupted. Resume to complete the requirement extraction.",
       blockers: [],
       tone: "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
   if (!input.aiAnalysis.exists) {
     return {
       primary: "RUN_AI_ANALYZE",
-      label: "Run AI Analyze",
-      reason: "Extraction is ready, but AI Analyze has not been run yet.",
-      blockers: ["AI Analyze not run"],
+      label: "Run AI Analysis",
+      reason: "Tender documents are extracted. Run AI Analysis to identify requirements and metadata.",
+      blockers: ["AI Analysis has not been performed yet"],
       tone: "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
@@ -137,15 +170,19 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
       : undefined;
     return {
       primary: "REVIEW_REQUIREMENTS",
-      label: input.aiAnalysis.regexFallback ? "Review fallback requirements" : "Review AI analysis",
+      label: input.aiAnalysis.regexFallback ? "Review Fallback Requirements" : "Review AI Analysis",
       reason: input.aiAnalysis.regexFallback
-        ? "Regex fallback is draft-only. Review source tracing and do not treat it as final-export ready unless there is an explicit admin override."
-        : "AI analysis is partial or untrusted. Review it before continuing downstream.",
+        ? "Analysis used a search-based fallback due to weak extraction. Review and trace requirements before proceeding."
+        : "AI analysis is incomplete or requires review. Confirm the extracted requirements.",
       blockers: [
-        input.aiAnalysis.regexFallback ? "Analysis used regex fallback (weak extraction) — re-extract and re-run AI Analyze for a trusted result" : "Analysis is partial or untrusted",
+        input.aiAnalysis.regexFallback ? "Analysis used regex fallback — re-extract after OCR for better results" : "Analysis is partial or requires manual review",
         ...(input.requirements.mandatoryCount > input.requirements.mandatoryTracedCount ? [`Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`] : []),
       ],
       tone: "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
       rawVsTrustedRequirements,
     };
   }
@@ -153,14 +190,18 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
   if (!input.metadata.trusted) {
     return {
       primary: "EDIT_METADATA",
-      label: "Edit metadata",
-      reason: "Critical tender metadata is missing, contaminated, or contains placeholder values.",
+      label: "Edit Tender Metadata",
+      reason: "Essential tender details like client name, reference, or deadline are missing or contain placeholders.",
       blockers: [
-        ...(input.metadata.missingFields ?? []).slice(0, 4).map((field) => `Missing: ${field}`),
-        ...(input.metadata.contaminated ? ["Metadata appears contaminated by portal/noise text"] : []),
-        ...((input.metadata.placeholderCount ?? 0) > 0 ? [`${input.metadata.placeholderCount} metadata field(s) contain placeholder text`] : []),
+        ...(input.metadata.missingFields ?? []).slice(0, 4).map((field) => `Missing field: ${field}`),
+        ...(input.metadata.contaminated ? ["Metadata is contaminated with website/portal noise"] : []),
+        ...((input.metadata.placeholderCount ?? 0) > 0 ? [`${input.metadata.placeholderCount} field(s) contain 'TBC' or placeholders`] : []),
       ],
       tone: "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
@@ -168,25 +209,29 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
     ? {
         raw: input.requirements.rawCount,
         trusted: input.requirements.trustedTracedCount,
-        mandatory: input.requirements.mandatoryCount,
-        mandatoryTraced: input.requirements.mandatoryTracedCount,
+        mandatory: number(input.requirements.mandatoryCount),
+        mandatoryTraced: number(input.requirements.mandatoryTracedCount),
       }
     : undefined;
-  const requirementsTrusted = input.requirements.rawCount > 0 &&
-    input.requirements.trustedTracedCount > 0 &&
-    (input.requirements.mandatoryCount === 0 || input.requirements.mandatoryTracedCount >= input.requirements.mandatoryCount);
 
   if (!requirementsTrusted) {
     return {
       primary: "REVIEW_REQUIREMENTS",
-      label: "Review requirements",
+      label: "Review Tender Requirements",
       reason: input.requirements.rawCount === 0
-        ? "No requirements are available. Run AI Analyze only after extraction is ready, or add requirements manually."
-        : "Raw requirements exist, but trusted source-traced requirements are not ready.",
+        ? "No requirements found. Run AI Analysis or add requirements manually to proceed."
+        : "Some requirements lack source traceability or mandatory evidence links.",
       blockers: input.requirements.rawCount === 0
-        ? ["No requirements available"]
-        : [`Trusted traced requirements: ${input.requirements.trustedTracedCount}/${input.requirements.rawCount}`, `Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`],
+        ? ["No requirements found in the tender"]
+        : [
+            `Traced requirements: ${input.requirements.trustedTracedCount}/${input.requirements.rawCount}`,
+            `Mandatory requirements traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`,
+          ],
       tone: "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
       rawVsTrustedRequirements,
     };
   }
@@ -194,42 +239,62 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
   if (!input.submissionPlanBuilt) {
     return {
       primary: "BUILD_SUBMISSION_PLAN",
-      label: "Build submission plan",
-      reason: "Extraction, analysis, metadata, and requirements are ready. Build the submission plan before generating documents.",
-      blockers: ["No submission plan"],
+      label: "Approve Submission Plan",
+      reason: "Prerequisites are met. Review and approve the submission plan before generating the proposal.",
+      blockers: ["Submission plan is not yet approved"],
       tone: "amber",
+      readyForAnalysis,
+      readyForGeneration: false,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
   if (!input.documents.current) {
     return {
       primary: "GENERATE_DOCUMENTS",
-      label: input.documents.stale ? "Regenerate stale documents" : "Generate proposal documents",
+      label: input.documents.stale ? "Regenerate Proposal" : "Generate Proposal Documents",
       reason: input.documents.stale
-        ? "Generated documents are stale against the current analysis/readiness state."
-        : "All pre-generation gates pass. Generate proposal documents.",
-      blockers: input.documents.stale ? ["Generated documents are stale"] : [],
+        ? "The analysis or plan has changed. Regenerate documents to keep them up to date."
+        : "Everything is ready. Generate the draft proposal documents.",
+      blockers: input.documents.stale ? ["Generated documents are out of date"] : [],
       tone: input.documents.stale ? "amber" : "green",
+      readyForAnalysis,
+      readyForGeneration: true,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
   if (input.exportBlockersCount > 0) {
     return {
       primary: "FIX_EXPORT_BLOCKERS",
-      label: "Fix export blockers",
-      reason: "Documents exist, but validation/compliance/export blockers remain.",
-      blockers: [`${input.exportBlockersCount} export blocker(s)`],
+      label: "Resolve Export Blockers",
+      reason: "Documents are generated, but some critical validation errors or compliance gaps remain.",
+      blockers: [`${input.exportBlockersCount} critical export blocker(s) found`],
       tone: "red",
+      readyForAnalysis,
+      readyForGeneration: true,
+      readyForExport: false,
+      readyForShare,
     };
   }
 
   return {
     primary: "EXPORT_READY",
-    label: input.exported ? "Submission package exported" : "Export ready",
+    label: input.exported ? "Tender Exported" : "Ready for Export",
     reason: input.exported
-      ? "This tender has already been exported."
-      : "All visible gates pass. Review the final package manifest and export the submission ZIP.",
+      ? "The final submission package has been exported."
+      : "All checks passed. Review the final manifest and export the submission package.",
     blockers: [],
     tone: "green",
+    readyForAnalysis,
+    readyForGeneration: true,
+    readyForExport: true,
+    readyForShare: true,
   };
+}
+
+function number(val: unknown): number {
+  return typeof val === "number" ? val : 0;
 }

@@ -1,141 +1,77 @@
-// Next Required Action panel — server component.
-//
-// Shows the current workflow step + the single most important action the
-// user must take next. Uses the shared tender-next-action resolver so visible
-// UI guidance cannot contradict extraction/analysis readiness.
-
+import { redirect } from "next/navigation";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
+import { resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
-import { resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 
-const STEPS = [
-  "Upload Tender",
-  "Fix Extraction",
-  "Run AI Analyze",
-  "Confirm Metadata",
-  "Confirm Requirements",
-  "Build Plan",
-  "Generate Docs",
-  "Validate & Approve Docs",
-  "Review Manifest",
-  "Export ZIP",
-] as const;
+type WorkflowStep = "INTAKE" | "ANALYSIS" | "REQUIREMENTS" | "PLAN" | "GENERATION" | "EXPORT" | "COMPLETE";
 
-type WorkflowStep =
-  | "UPLOAD_TENDER"
-  | "FIX_EXTRACTION"
-  | "RUN_AI_ANALYZE"
-  | "CONFIRM_METADATA"
-  | "CONFIRM_REQUIREMENTS"
-  | "BUILD_PLAN"
-  | "GENERATE_DOCUMENTS"
-  | "VALIDATE_DOCUMENTS"
-  | "REVIEW_MANIFEST"
-  | "EXPORT_ZIP"
-  | "COMPLETE";
-
-const STEP_INDEX: Record<WorkflowStep, number> = {
-  UPLOAD_TENDER: 0,
-  FIX_EXTRACTION: 1,
-  RUN_AI_ANALYZE: 2,
-  CONFIRM_METADATA: 3,
-  CONFIRM_REQUIREMENTS: 4,
-  BUILD_PLAN: 5,
-  GENERATE_DOCUMENTS: 6,
-  VALIDATE_DOCUMENTS: 7,
-  REVIEW_MANIFEST: 8,
-  EXPORT_ZIP: 9,
-  COMPLETE: 10,
-};
-
+const STEPS: WorkflowStep[] = ["INTAKE", "ANALYSIS", "REQUIREMENTS", "PLAN", "GENERATION", "EXPORT", "COMPLETE"];
 const STEP_TARGETS = [
-  "#tender-files",
-  "#tender-files",
+  "#tender-source-files",
   "#ai-analyze-section",
-  "#tender-edit-form",
   "#requirement-coverage",
-  "#submission-plan-completeness",
-  "#generated-documents",
+  "#submission-plan",
   "#generated-documents",
   "#final-package-manifest",
-  "#export-package",
-] as const;
+  "#export-ready",
+];
 
 function stepFromPrimary(primary: TenderNextActionPrimary): WorkflowStep {
-  switch (primary) {
-    case "UPLOAD_TENDER": return "UPLOAD_TENDER";
-    case "FIX_EXTRACTION": return "FIX_EXTRACTION";
-    case "RESUME_AI_ANALYZE":
-    case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
-    case "EDIT_METADATA": return "CONFIRM_METADATA";
-    case "REVIEW_REQUIREMENTS": return "CONFIRM_REQUIREMENTS";
-    case "BUILD_SUBMISSION_PLAN": return "BUILD_PLAN";
-    case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
-    case "FIX_EXPORT_BLOCKERS": return "VALIDATE_DOCUMENTS";
-    case "EXPORT_READY": return "EXPORT_ZIP";
-  }
+  if (primary === "UPLOAD_TENDER" || primary === "FIX_EXTRACTION") return "INTAKE";
+  if (primary === "RUN_AI_ANALYZE" || primary === "RESUME_AI_ANALYZE") return "ANALYSIS";
+  if (primary === "EDIT_METADATA" || primary === "REVIEW_REQUIREMENTS") return "REQUIREMENTS";
+  if (primary === "BUILD_SUBMISSION_PLAN") return "PLAN";
+  if (primary === "GENERATE_DOCUMENTS") return "GENERATION";
+  if (primary === "FIX_EXPORT_BLOCKERS") return "EXPORT";
+  if (primary === "EXPORT_READY") return "COMPLETE";
+  return "INTAKE";
+}
+
+const STEP_INDEX: Record<WorkflowStep, number> = {
+  INTAKE: 0,
+  ANALYSIS: 1,
+  REQUIREMENTS: 2,
+  PLAN: 3,
+  GENERATION: 4,
+  EXPORT: 5,
+  COMPLETE: 6,
+};
+
+function stepIcon(step: WorkflowStep) {
+  if (step === "INTAKE") return "📄";
+  if (step === "ANALYSIS") return "✦";
+  if (step === "REQUIREMENTS") return "⚖";
+  if (step === "PLAN") return "📋";
+  if (step === "GENERATION") return "⚙";
+  if (step === "EXPORT") return "📦";
+  if (step === "COMPLETE") return "✓";
+  return "○";
 }
 
 function stepColor(step: WorkflowStep) {
-  if (step === "COMPLETE" || step === "EXPORT_ZIP") return "border-emerald-200 bg-emerald-50";
-  if (step === "RUN_AI_ANALYZE" || step === "BUILD_PLAN" || step === "GENERATE_DOCUMENTS" || step === "REVIEW_MANIFEST") return "border-amber-200 bg-amber-50";
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return "border-red-200 bg-red-50";
-  return "border-amber-200 bg-amber-50";
-}
-
-function stepIcon(step: WorkflowStep) {
-  if (step === "COMPLETE" || step === "EXPORT_ZIP") return "✓";
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return "⚠";
-  return "→";
+  if (step === "COMPLETE") return "border-emerald-200 bg-emerald-50";
+  return "border-slate-200 bg-slate-50";
 }
 
 export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
-  if (!userId) return null;
+  if (!userId) redirect("/login");
 
   await prismaReady;
-
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    select: {
-      id: true, title: true, status: true,
-      analysisSummary: true, analysisExtractionStatus: true,
-      metadataContaminated: true,
-      clientName: true, procuringEntityName: true, country: true,
-      clientContactName: true, clientContactEmail: true,
-      submissionAddress: true, submissionEmails: true,
-      submissionMethod: true, deadline: true, currency: true,
-      exactFileNaming: true,
-      metadataOverrides: {
-        select: { field: true, fieldState: true, overrideValue: true },
-      },
-      files: {
-        select: {
-          extractedText: true, originalFileName: true, fileName: true,
-          totalPages: true, extractedPages: true, ocrPages: true,
-          failedPages: true, extractionScore: true,
-        },
-      },
-      requirements: {
-        select: {
-          id: true, priority: true,
-          sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true,
-        },
-      },
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, generationStatus: true, validationStatus: true },
-      },
-      complianceGaps: {
-        where: { isResolved: false, severity: "CRITICAL" },
-        select: { id: true },
-      },
+    include: {
+      files: { select: { id: true, fileName: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true } },
+      requirements: { select: { id: true, priority: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true } },
+      generatedDocuments: { select: { id: true, generationStatus: true, validationStatus: true } },
+      complianceGaps: { select: { id: true, severity: true, isResolved: true }, where: { isResolved: false, severity: "CRITICAL" } },
+      metadataOverrides: true,
     },
-  }).catch(() => null);
+  });
 
   if (!tender) return null;
 
@@ -147,7 +83,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   const hasFiles = tender.files.length > 0;
   const fileQuality = tender.files.map((f) => {
-    const q = assessExtractionQuality(f.extractedText, f.originalFileName || f.fileName);
+    const q = assessExtractionQuality(f.extractedText ?? "", f.originalFileName || f.fileName);
     const totalPages = f.totalPages ?? 0;
     const extractedPages = f.extractedPages ?? 0;
     const failedPages = f.failedPages ?? 0;
@@ -312,6 +248,25 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           </ul>
         </div>
       )}
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className={`rounded-xl border p-3 text-center ${decision.readyForAnalysis ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-slate-100 bg-slate-50 text-slate-400"}`}>
+            <p className="text-[10px] font-bold uppercase tracking-widest">Analysis</p>
+            <p className="mt-1 text-xs font-semibold">{decision.readyForAnalysis ? "Ready" : "Blocked"}</p>
+        </div>
+        <div className={`rounded-xl border p-3 text-center ${decision.readyForGeneration ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-slate-100 bg-slate-50 text-slate-400"}`}>
+            <p className="text-[10px] font-bold uppercase tracking-widest">Generation</p>
+            <p className="mt-1 text-xs font-semibold">{decision.readyForGeneration ? "Ready" : "Blocked"}</p>
+        </div>
+        <div className={`rounded-xl border p-3 text-center ${decision.readyForExport ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-slate-100 bg-slate-50 text-slate-400"}`}>
+            <p className="text-[10px] font-bold uppercase tracking-widest">Export</p>
+            <p className="mt-1 text-xs font-semibold">{decision.readyForExport ? "Ready" : "Blocked"}</p>
+        </div>
+        <div className={`rounded-xl border p-3 text-center ${decision.readyForShare ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-slate-100 bg-slate-50 text-slate-400"}`}>
+            <p className="text-[10px] font-bold uppercase tracking-widest">Sharing</p>
+            <p className="mt-1 text-xs font-semibold">{decision.readyForShare ? "Ready" : "Blocked"}</p>
+        </div>
+      </div>
 
       {decision.primary === "FIX_EXTRACTION" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">

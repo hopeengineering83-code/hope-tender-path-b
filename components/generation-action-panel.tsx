@@ -1,52 +1,42 @@
 "use client";
 
-import React from "react";
+import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { GenerationProgressPanel } from "./generation-progress-panel";
 import { CanonicalStatusBadge } from "./canonical-status-badge";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
-import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
-
-type GenerationReadiness = {
-  ready: boolean;
-  supportPackageReady?: boolean;
-  fullProposalReady?: boolean;
-  fullProposalBlockers?: Array<{ code: string; message: string; nextAction?: string }>;
-  blockers?: Array<{ code: string; message: string; nextAction?: string }>;
-  warnings?: Array<{ code: string; message: string; nextAction?: string }>;
-  counts?: {
-    selectedExperts?: number;
-    reviewedExpertMatches?: number;
-    selectedProjects?: number;
-    reviewedProjectMatches?: number;
-  };
-};
+import { GenerationProgressPanel } from "./generation-progress-panel";
 
 type GenerateResponse = {
+  success?: boolean;
   jobId?: string;
   error?: string;
+  code?: string;
   nextAction?: string;
-  warnings?: string[];
   diagnosticId?: string;
+  warnings?: string[];
+  plannedRecordCount?: number;
+  supportDocumentCount?: number;
+  letterheadAppliedCount?: number;
+  promotedExpertCount?: number;
+  promotedProjectCount?: number;
+  readiness?: Record<string, number>;
 };
 
-function shortAction(action?: string): string {
-  if (action === "RUN_ENGINE") return "Run Engine first.";
-  if (action === "REVIEW_MATCHES") return "Review/select matching evidence.";
-  if (action === "EDIT_TENDER_METADATA") return "Open Tender Detail and fill missing metadata.";
-  if (action === "BUILD_SUBMISSION_PLAN") return "Run Build Plan first.";
-  if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "Run OCR or upload a clearer scan.";
-  if (action === "OPEN_EXTRACTION_QUALITY") return "Check Extraction Quality.";
-  return "Resolve the readiness blockers first.";
+function shortAction(action: string): string {
+  if (action === "OPEN_COMPANY_READINESS") return "(Open Company Readiness)";
+  if (action === "EDIT_TENDER") return "(Edit Tender)";
+  if (action === "RERUN_AI_ANALYZE") return "(Re-run AI Analyze)";
+  if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "(Run OCR or Upload Clearer Scan)";
+  if (action === "OPEN_EXTRACTION_QUALITY") return "(Check Extraction Quality)";
+  return `(${action})`;
 }
 
-export function isGenerationActionEnabled(canonicalGenerationState: CanonicalModuleStatus, serverGateAllowsGeneration: boolean): boolean {
-  return canonicalGenerationState === "READY" || (canonicalGenerationState === "WARNING" && serverGateAllowsGeneration);
+export function isGenerationActionEnabled(canonicalGenerationState: string, fullProposalReady: boolean): boolean {
+    return (canonicalGenerationState === "READY" || canonicalGenerationState === "WARNING") && fullProposalReady;
 }
 
 type GenerationActionButtonProps = {
-  canonicalGenerationState: CanonicalModuleStatus;
+  canonicalGenerationState: string;
   fullProposalReady: boolean;
   busy: boolean;
   blockedReason?: string;
@@ -54,24 +44,32 @@ type GenerationActionButtonProps = {
 };
 
 export function GenerationActionButton({ canonicalGenerationState, fullProposalReady, busy, blockedReason, onClick }: GenerationActionButtonProps) {
-  const blocked = !fullProposalReady;
+  const disabled = !isGenerationActionEnabled(canonicalGenerationState, fullProposalReady) || busy;
+  const label = busy ? "Generating…" : canonicalGenerationState === "READY" ? "Generate Docs" : "Resolve blockers first";
+
   return (
     <button
-      type="button"
       onClick={onClick}
-      disabled={blocked || busy}
-      aria-disabled={blocked || busy}
-      className={fullProposalReady
-        ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-        : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
-      title={blocked ? blockedReason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
+      disabled={disabled}
+      title={blockedReason}
+      className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+        fullProposalReady ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-slate-200 text-slate-500"
+      }`}
     >
-      {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
+      {label}
     </button>
   );
 }
 
-export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null }) {
+export function GenerationActionPanel({
+  tenderId,
+  readiness,
+  canonicalReadiness,
+}: {
+  tenderId: string;
+  readiness: any;
+  canonicalReadiness: any;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
@@ -79,15 +77,15 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
   const [kind, setKind] = useState<"success" | "error" | "info">("info");
   const [jobId, setJobId] = useState<string | null>(null);
 
+  const fullProposalReady = Boolean(readiness?.fullProposalReady);
+  const supportReady = Boolean(readiness?.supportPackageReady);
+  const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
   const blockers = readiness?.blockers ?? [];
   const warnings = readiness?.warnings ?? [];
-  const supportReady = readiness?.supportPackageReady ?? readiness?.ready ?? false;
-  const serverGateAllowsGeneration = readiness?.fullProposalReady ?? readiness?.ready ?? false;
-  const canonicalGenerationState: CanonicalModuleStatus = canonicalReadiness?.modules.generation.state ?? (serverGateAllowsGeneration ? "READY" : "BLOCKED");
-  const fullProposalReady = isGenerationActionEnabled(canonicalGenerationState, serverGateAllowsGeneration);
-  const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
-  const blocked = !fullProposalReady;
-  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
+  const canonicalGenerationState = (canonicalReadiness?.modules.generation.status ?? "NOT_RUN") as CanonicalModuleStatus;
+  const blocked = canonicalGenerationState === "BLOCKED";
+
+  const metadataBlockerPresent = readiness?.blockers?.some((b: any) => b.code === "TENDER_METADATA_INCOMPLETE");
 
   const autoPromotionAvailable = Boolean(
     readiness?.counts &&
@@ -205,7 +203,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
     }
   }
 
-  const canonicalConfig = CANONICAL_STATUS_CONFIG[canonicalGenerationState];
+  const canonicalConfig = CANONICAL_STATUS_CONFIG[canonicalGenerationState] || CANONICAL_STATUS_CONFIG.NOT_RUN;
   const panelClass = `${canonicalConfig.borderClass} ${canonicalConfig.bgClass}`;
   const labelClass = canonicalConfig.textClass;
   const headlineText = canonicalGenerationState === "READY"
@@ -234,34 +232,37 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
               <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Full proposal: {fullProposalReady ? "ready" : "blocked"}</span>
             </div>
           </div>
-          {/* Generate Docs disable invariant: disabled={!fullProposalReady || running || isPending} */}
           <GenerationActionButton
             canonicalGenerationState={canonicalGenerationState}
             fullProposalReady={fullProposalReady}
             busy={running || isPending}
-            blockedReason={blocked ? canonicalReadiness?.modules.generation.reason : undefined}
+            blockedReason={blocked ? (canonicalReadiness?.modules.generation.reason as string) : undefined}
             onClick={runGenerate}
           />
         </div>
 
-        {!fullProposalReady && fullProposalBlockers.length > 0 && (
-          <div className="mt-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blocked because:</p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">
-              {fullProposalBlockers.slice(0, 6).map((item, index) => <li key={`fp-${item.code}-${index}`}>{item.message}</li>)}
-            </ul>
-          </div>
-        )}
+        {!fullProposalReady && (
+            <div className="mt-4 rounded-xl border border-red-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Proposal Generation Blocked:</p>
+                <p className="mt-1 text-sm text-red-800">Prerequisites are not met. Review and resolve the blockers below before generating the proposal documents.</p>
 
-        {fullProposalReady && !supportReady && blockers.length > 0 && (
-          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
-            {blockers.slice(0, 4).map((item, index) => <li key={`b-${item.code}-${index}`}>{item.message}</li>)}
-          </ul>
+                {fullProposalBlockers.length > 0 && (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
+                        {fullProposalBlockers.slice(0, 6).map((item: any, index: number) => <li key={`fp-${item.code}-${index}`}>{item.message}</li>)}
+                    </ul>
+                )}
+
+                {!fullProposalBlockers.length && blockers.length > 0 && (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
+                        {blockers.slice(0, 4).map((item: any, index: number) => <li key={`b-${item.code}-${index}`}>{item.message}</li>)}
+                    </ul>
+                )}
+            </div>
         )}
 
         {(fullProposalReady || supportReady) && warnings.length > 0 && (
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-emerald-800">
-            {warnings.slice(0, 3).map((item, index) => <li key={`w-${item.code}-${index}`}>{item.message}</li>)}
+            {warnings.slice(0, 3).map((item: any, index: number) => <li key={`w-${item.code}-${index}`}>{item.message}</li>)}
           </ul>
         )}
 

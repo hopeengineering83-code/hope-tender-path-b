@@ -1,6 +1,9 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { safeParseJsonObject } from "../lib/safe-json";
+import { AIAnalyzePanel } from "./ai-analyze-panel";
+import { isAIEnabled } from "../lib/ai";
+import { assessExtractionQuality } from "../lib/extraction-quality";
 
 const PROBLEM_STATES = new Set([
   "OCR_REQUIRED",
@@ -34,7 +37,11 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
     const [tender, job] = await Promise.all([
       prisma.tender.findFirst({
         where: { id: tenderId, userId },
-        select: { analysisSummary: true, analysisExtractionStatus: true },
+        include: {
+          files: {
+            select: { id: true, originalFileName: true, fileName: true, extractedText: true },
+          },
+        },
       }),
       prisma.aiJob.findFirst({
         where: { tenderId, userId, jobType: "AI_ANALYZE", stagedMergedResult: { not: null }, promotedAt: null },
@@ -44,9 +51,44 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
     ]);
     if (!tender) return null;
 
+    const aiEnabled = isAIEnabled();
     const staged = stagedView(job?.stagedMergedResult ?? null);
     const status = tender.analysisExtractionStatus;
     const hasCanonical = Boolean(tender.analysisSummary);
+
+    const extractionReports = tender.files.map((file) => ({
+      fileName: file.originalFileName || file.fileName,
+      quality: assessExtractionQuality(file.extractedText ?? "", file.originalFileName || file.fileName),
+    }));
+
+    const analysisBlockers: string[] = [];
+    if (tender.files.length === 0) {
+      analysisBlockers.push("No tender files uploaded yet.");
+    } else {
+      const corrupted = extractionReports.filter(r => r.quality.corrupted);
+      if (corrupted.length > 0) {
+        analysisBlockers.push(`Extraction corrupted in ${corrupted.length} file(s) — run OCR.`);
+      }
+      const poor = extractionReports.filter(r => r.quality.severity === "FAILED" || r.quality.severity === "POOR");
+      if (poor.length > 0) {
+        analysisBlockers.push(`Poor extraction quality in ${poor.length} file(s) — re-upload or run OCR.`);
+      }
+    }
+
+    const readyForAnalysis = analysisBlockers.length === 0;
+
+    // Show the primary analysis panel if no analysis exists yet
+    if (!hasCanonical && !staged) {
+      return (
+        <AIAnalyzePanel
+          tenderId={tenderId}
+          aiEnabled={aiEnabled}
+          readyForAnalysis={readyForAnalysis}
+          analysisBlockers={analysisBlockers}
+        />
+      );
+    }
+
     if (!staged && hasCanonical && (!status || !PROBLEM_STATES.has(status))) return null;
 
     const highRisk = Boolean(staged?.source === "FALLBACK_DRAFT") || status === "OCR_REQUIRED" || status === "EXTRACTION_CORRUPTED_AI_SKIPPED" || status === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
@@ -54,26 +96,36 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
     const text = highRisk ? "text-red-700" : "text-amber-700";
 
     return (
-      <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${shell}`}>
-        <p className={`text-xs font-semibold uppercase tracking-wide ${text}`}>AI Analyze — recovery</p>
-        <h2 className="mt-1 text-lg font-bold text-slate-900">
-          {staged ? staged.source === "FALLBACK_DRAFT" ? "Fallback draft awaiting review" : "Partial AI analysis awaiting completion" : !hasCanonical ? "AI Analyze has not been run" : "Analysis requires recovery"}
-        </h2>
-        <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
-          {status && <span className="rounded-full bg-white px-2 py-1">{status}</span>}
-          {staged && <span className="rounded-full bg-white px-2 py-1">{staged.source}</span>}
-        </div>
-        {staged ? (
-          <div className="mt-3 rounded-xl border border-white bg-white p-3 text-sm text-slate-700">
-            <p className="font-semibold text-slate-900">This staged result is not canonical and cannot enable generation or export.</p>
-            <p className="mt-1">{staged.requirementCount} requirement(s){staged.totalChunks !== null ? ` · ${staged.completedChunks ?? 0}/${staged.totalChunks} chunks` : ""}</p>
-            <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{staged.summary.slice(0, 1000)}</p>
-            <p className="mt-2 text-xs">{staged.source === "FALLBACK_DRAFT" ? "Re-run with a healthy provider or explicitly review the fallback. Trusted analysis remains unchanged." : "Resume AI Analyze to complete the missing chunks. Trusted analysis remains unchanged."}</p>
+      <div className="space-y-4">
+        <section className={`rounded-2xl border p-5 shadow-sm ${shell}`}>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${text}`}>AI Analyze — recovery</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">
+            {staged ? staged.source === "FALLBACK_DRAFT" ? "Fallback draft awaiting review" : "Partial AI analysis awaiting completion" : "Analysis requires recovery"}
+          </h2>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+            {status && <span className="rounded-full bg-white px-2 py-1">{status}</span>}
+            {staged && <span className="rounded-full bg-white px-2 py-1">{staged.source}</span>}
           </div>
-        ) : (
-          <p className="mt-3 text-sm text-slate-700">Check extraction quality and provider health, then run or resume AI Analyze. Do not generate final documents while this state remains unresolved.</p>
-        )}
-      </section>
+          {staged ? (
+            <div className="mt-3 rounded-xl border border-white bg-white p-3 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">This staged result is not canonical and cannot enable generation or export.</p>
+              <p className="mt-1">{staged.requirementCount} requirement(s){staged.totalChunks !== null ? ` · ${staged.completedChunks ?? 0}/${staged.totalChunks} chunks` : ""}</p>
+              <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{staged.summary.slice(0, 1000)}</p>
+              <p className="mt-2 text-xs">{staged.source === "FALLBACK_DRAFT" ? "Re-run with a healthy provider or explicitly review the fallback. Trusted analysis remains unchanged." : "Resume AI Analyze to complete the missing chunks. Trusted analysis remains unchanged."}</p>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-700">Check extraction quality and provider health, then run or resume AI Analyze. Do not generate final documents while this state remains unresolved.</p>
+          )}
+        </section>
+
+        <AIAnalyzePanel
+          tenderId={tenderId}
+          initialContinueJobId={staged?.source === "PARTIAL_AI" ? job?.id : null}
+          aiEnabled={aiEnabled}
+          readyForAnalysis={readyForAnalysis}
+          analysisBlockers={analysisBlockers}
+        />
+      </div>
     );
   } catch (error) {
     console.error("[AIAnalyzeRecoveryPanel] render error", {

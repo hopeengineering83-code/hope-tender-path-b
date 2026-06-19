@@ -18,7 +18,7 @@ const base = {
 };
 
 describe("resolveTenderNextAction", () => {
-  it("weak extraction shows Fix Extraction First before AI Analyze", () => {
+  it("weak extraction shows Fix Extraction Quality before AI Analysis", () => {
     const decision = resolveTenderNextAction({
       ...base,
       extraction: { averageScore: 90, pageCoveragePercent: 31, partial: true },
@@ -26,18 +26,18 @@ describe("resolveTenderNextAction", () => {
       aiAnalysis: { exists: false },
     });
     assert.equal(decision.primary, "FIX_EXTRACTION");
-    assert.match(decision.label, /Fix Extraction First/);
-    assert.match(decision.reason, /Run OCR \/ re-extract before AI Analyze/);
+    assert.match(decision.label, /Fix Extraction Quality/);
+    assert.match(decision.reason, /Run OCR or re-extract to ensure AI analysis is reliable/);
   });
 
-  it("resumable analysis shows Resume AI Analyze when extraction is ready", () => {
+  it("resumable analysis shows Resume AI Analysis when extraction is ready", () => {
     const decision = resolveTenderNextAction({
       ...base,
       resumableAnalysisAvailable: true,
       aiAnalysis: { exists: false },
     });
     assert.equal(decision.primary, "RESUME_AI_ANALYZE");
-    assert.match(decision.label, /Resume AI Analyze/);
+    assert.match(decision.label, /Resume AI Analysis/);
   });
 
   it("regex fallback weak extraction does not show final-approved wording", () => {
@@ -47,7 +47,7 @@ describe("resolveTenderNextAction", () => {
       requirements: { rawCount: 13, trustedTracedCount: 0, mandatoryCount: 6, mandatoryTracedCount: 0 },
     });
     assert.equal(decision.primary, "REVIEW_REQUIREMENTS");
-    assert.match(decision.reason, /draft-only/);
+    assert.match(decision.reason, /Review and trace requirements before proceeding/);
     assert.doesNotMatch(decision.reason, /approved as sufficient/i);
   });
 
@@ -71,7 +71,7 @@ describe("resolveTenderNextAction", () => {
       documents: { current: false, hasGeneratedDocuments: true, stale: true },
     });
     assert.equal(decision.primary, "GENERATE_DOCUMENTS");
-    assert.match(decision.label, /stale/i);
+    assert.match(decision.label, /Regenerate Proposal/i);
     assert.notEqual(decision.tone, "green");
   });
 });
