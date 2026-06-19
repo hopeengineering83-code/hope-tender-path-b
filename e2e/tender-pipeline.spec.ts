@@ -1,18 +1,48 @@
-import { test, expect } from "@playwright/test";
-
-// Pipeline E2E tests — cover the tender workflow from upload through export.
-//
-// Two modes:
-//   SMOKE (default): anonymous contract and basic UI availability. This mode is
-//                    deterministic in CI and does not require a seeded account.
-//   FULL (E2E_FULL_AUTH=true): authenticated workflow checks for seeded test DBs.
+import { test, expect, type APIResponse, type Page } from "@playwright/test";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 
-// ─── Smoke tests (always run) ────────────────────────────────────────────────
+async function preserveLoopbackSession(page: Page, response: APIResponse) {
+  const origin = new URL(baseURL);
+  if (origin.protocol !== "http:") return;
 
-test.describe("Pipeline API — anonymous protection contract", () => {
-  test("protected tender APIs do not succeed without a session", async ({ request }) => {
+  const sessionHeader = response.headersArray().find(
+    ({ name, value }) => name.toLowerCase() === "set-cookie" && value.startsWith("hope_session="),
+  );
+  expect(sessionHeader, "login response must set the session cookie").toBeTruthy();
+  expect(sessionHeader?.value, "production-like login must retain the Secure cookie attribute").toMatch(/;\s*Secure(?:;|$)/i);
+
+  const cookiePair = sessionHeader!.value.split(";", 1)[0];
+  const separator = cookiePair.indexOf("=");
+  expect(separator).toBeGreaterThan(0);
+  const value = cookiePair.slice(separator + 1);
+  expect(value).not.toBe("");
+
+  // `next start` correctly emits a Secure production cookie, but CI serves the
+  // isolated app over loopback HTTP. Clone only that cookie into the browser
+  // context for the test; production cookie policy remains unchanged.
+  await page.context().addCookies([{
+    name: "hope_session",
+    value,
+    url: origin.origin,
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: false,
+  }]);
+}
+
+async function login(page: Page) {
+  const email = process.env.E2E_TEST_EMAIL ?? "";
+  const password = process.env.E2E_TEST_PASSWORD ?? "";
+  const response = await page.request.post("/api/auth/login", { data: { email, password } });
+  const body = await response.text().catch(() => "(unreadable)");
+  expect(response.status(), `login failed: ${body}`).toBe(200);
+  await preserveLoopbackSession(page, response);
+}
+
+test.describe("tender API anonymous protection", () => {
+  test("protected tender APIs never return anonymous success", async ({ request }) => {
     const endpoints: Array<["get" | "post", string]> = [
       ["post", "/api/tenders/upload-first"],
       ["post", "/api/tenders/fake-id/ai-analyze"],
@@ -20,114 +50,75 @@ test.describe("Pipeline API — anonymous protection contract", () => {
       ["post", "/api/tenders/fake-id/export"],
       ["get", "/api/tenders/fake-id/extraction-quality"],
     ];
-
     for (const [method, endpoint] of endpoints) {
-      const res = method === "get" ? await request.get(endpoint) : await request.post(endpoint);
-      expect(res.status(), `${method.toUpperCase()} ${endpoint} should not return anonymous success`).not.toBeLessThan(300);
+      const response = method === "get" ? await request.get(endpoint) : await request.post(endpoint);
+      expect(response.status(), `${method.toUpperCase()} ${endpoint}`).not.toBeLessThan(300);
     }
   });
 });
 
-test.describe("Pipeline UI — structural smoke tests", () => {
-  test("home page responds", async ({ page }) => {
-    const response = await page.goto("/", { waitUntil: "domcontentloaded" });
-    expect(response?.status() ?? 0).toBeLessThan(500);
+test.describe("public application smoke", () => {
+  test("home and login pages render without a server error", async ({ page }) => {
+    for (const path of ["/", "/login"]) {
+      const response = await page.goto(path, { waitUntil: "domcontentloaded" });
+      expect(response?.status() ?? 0, path).toBeLessThan(500);
+    }
+    await expect(
+      page.locator("input[type=email], input[name=email], input[type=password], input[name=password], form").first(),
+    ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("unauthenticated dashboard access is blocked or redirected", async ({ page }) => {
+  test("unauthenticated dashboard access is blocked", async ({ page }) => {
     const response = await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     expect(response?.status() ?? 0).toBeLessThan(500);
     await expect(page).toHaveURL(/login|dashboard/);
     if (/dashboard/.test(page.url())) {
-      await expect(page.locator("text=/login|sign in|unauthorized/i").first()).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText(/login|sign in|unauthorized/i).first()).toBeVisible({ timeout: 5_000 });
     }
-  });
-
-  test("login page renders an authentication surface", async ({ page }) => {
-    const response = await page.goto("/login", { waitUntil: "domcontentloaded" });
-    expect(response?.status() ?? 0).toBeLessThan(500);
-    const authSurface = page
-      .locator("input[type=email], input[name=email], input[type=password], input[name=password], form")
-      .or(page.getByText(/sign in|login/i))
-      .first();
-    await expect(authSurface).toBeVisible({ timeout: 10000 });
   });
 });
 
-// ─── Full authenticated pipeline (requires E2E_FULL_AUTH=true + test DB) ─────
+test.describe("authenticated intake and precondition gates", () => {
+  test.skip(!FULL, "Set E2E_FULL_AUTH=true with an isolated seeded database");
 
-test.describe("Full pipeline — upload → analyze → generate → export", () => {
-  test.skip(!FULL, "Set E2E_FULL_AUTH=true to run full pipeline tests");
+  test("validated source intake persists and generation remains gated before analysis", async ({ page }) => {
+    await login(page);
 
-  const email = process.env.E2E_TEST_EMAIL ?? "test@example.com";
-  const password = process.env.E2E_TEST_PASSWORD ?? "testpassword";
+    const sourceText = [
+      "REQUEST FOR PROPOSAL — ENGINEERING CONSULTANCY SERVICES",
+      "Reference: E2E-RFP-2026-001",
+      "The consultant shall submit a technical proposal and a separate financial proposal.",
+      "The submission deadline and client details must be verified from the tender document.",
+    ].join("\n");
 
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/login");
-    await page.fill("input[type=email], input[name=email]", email);
-    await page.fill("input[type=password], input[name=password]", password);
-    await page.click("button[type=submit]");
-    await expect(page).toHaveURL(/dashboard/);
-  });
-
-  test("Step 1 — Upload creates tender and shows Extraction Quality panel", async ({ page }) => {
-    await page.goto("/dashboard/tenders/new");
-    const fileInput = page.locator("input[type=file]");
-    await fileInput.setInputFiles({
-      name: "sample.pdf",
-      mimeType: "application/pdf",
-      buffer: Buffer.from(
-        "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
-        "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
-        "3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n" +
-        "4 0 obj<</Length 44>>stream\nBT /F1 12 Tf 100 700 Td (Tender Document) Tj ET\nendstream\nendobj\n" +
-        "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n" +
-        "xref\n0 6\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000274 00000 n\n0000000369 00000 n\n" +
-        "trailer<</Size 6/Root 1 0 R>>\nstartxref\n441\n%%EOF",
-      ),
+    const upload = await page.request.post("/api/tenders/upload-first", {
+      multipart: {
+        title: "Authenticated E2E Intake",
+        reference: "E2E-RFP-2026-001",
+        file: {
+          name: "authenticated-intake.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from(sourceText, "utf8"),
+        },
+      },
     });
-    await page.fill("input[name=title], input[placeholder*=title i]", "E2E Test Tender");
-    await page.click("button[type=submit], button:has-text('Upload'), button:has-text('Create')");
-    await expect(page).toHaveURL(/\/dashboard\/tenders\/[a-z0-9-]+/);
-    await expect(page.locator("text=Extraction quality")).toBeVisible({ timeout: 15000 });
-  });
+    const uploadBody = await upload.json().catch(() => null);
+    expect(upload.status(), JSON.stringify(uploadBody)).toBe(201);
+    expect(uploadBody).toMatchObject({ success: true, uploadedFiles: 1 });
+    expect(typeof uploadBody.tenderId).toBe("string");
 
-  test("Step 2 — AI Analyze button is present and gate state shown", async ({ page }) => {
-    await page.goto("/dashboard");
-    await page.locator("a[href*='/dashboard/tenders/']").first().click();
-    await expect(page).toHaveURL(/\/dashboard\/tenders\/[a-z0-9-]+/);
-    await expect(page.locator("button:has-text('AI Analyze'), button:has-text('Run Analysis'), button:has-text('Analyze')")).toBeVisible({ timeout: 5000 });
-  });
+    const tender = await page.request.get(`/api/tenders/${uploadBody.tenderId}`);
+    expect(tender.status()).toBe(200);
+    const tenderBody = await tender.json();
+    expect(tenderBody.title).toBe("Authenticated E2E Intake");
+    expect(tenderBody.stage).toBe("TENDER_INTAKE");
+    expect(tenderBody.files).toHaveLength(1);
+    expect(tenderBody.files[0].originalFileName).toBe("authenticated-intake.txt");
 
-  test("Step 3 — Generate Docs is gated before AI Analyze runs", async ({ page }) => {
-    await page.goto("/dashboard");
-    await page.locator("a[href*='/dashboard/tenders/']").first().click();
-    const generateBtn = page.locator("button:has-text('Generate'), button:has-text('Generate Docs')");
-    if (await generateBtn.isVisible()) {
-      const isDisabled = await generateBtn.isDisabled();
-      if (!isDisabled) {
-        const [response] = await Promise.all([
-          page.waitForResponse((r) => r.url().includes("/generate")),
-          generateBtn.click(),
-        ]);
-        expect([400, 422]).toContain(response.status());
-      }
-    }
-  });
+    const generate = await page.request.post(`/api/tenders/${uploadBody.tenderId}/generate`, { data: {} });
+    expect([400, 409, 422]).toContain(generate.status());
 
-  test("Step 4 — Export is gated before documents are generated", async ({ page }) => {
-    await page.goto("/dashboard");
-    await page.locator("a[href*='/dashboard/tenders/']").first().click();
-    const exportBtn = page.locator("button:has-text('Export'), button:has-text('Prepare Export'), button:has-text('ZIP')");
-    if (await exportBtn.isVisible()) {
-      const isDisabled = await exportBtn.isDisabled();
-      if (!isDisabled) {
-        const [response] = await Promise.all([
-          page.waitForResponse((r) => r.url().includes("/export")),
-          exportBtn.click(),
-        ]);
-        expect([400, 409, 422]).toContain(response.status());
-      }
-    }
+    const exportResponse = await page.request.post(`/api/tenders/${uploadBody.tenderId}/export`, { data: {} });
+    expect([400, 409, 422]).toContain(exportResponse.status());
   });
 });

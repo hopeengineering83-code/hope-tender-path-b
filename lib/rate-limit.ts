@@ -38,32 +38,38 @@ export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Pr
   const nextReset = new Date(now.getTime() + cfg.windowMs);
   try {
     await prismaReady;
-    const rows = await prisma.$queryRawUnsafe<Array<{ count: number; resetAt: Date }>>(
-      `INSERT INTO "RateLimitBucket" ("keyHash", "count", "resetAt", "createdAt", "updatedAt")
-       VALUES ($1, 1, $2, NOW(), NOW())
-       ON CONFLICT ("keyHash") DO UPDATE SET
-         "count" = CASE WHEN "RateLimitBucket"."resetAt" <= NOW() THEN 1 ELSE "RateLimitBucket"."count" + 1 END,
-         "resetAt" = CASE WHEN "RateLimitBucket"."resetAt" <= NOW() THEN $2 ELSE "RateLimitBucket"."resetAt" END,
-         "updatedAt" = NOW()
-       RETURNING "count", "resetAt"`,
-      hashKey(key),
-      nextReset,
-    );
+    const rows = await prisma.$queryRaw<Array<{ count: number; resetAt: Date }>>`
+      INSERT INTO "RateLimitBucket" ("keyHash", "count", "resetAt", "createdAt", "updatedAt")
+      VALUES (${hashKey(key)}, 1, ${nextReset}, NOW(), NOW())
+      ON CONFLICT ("keyHash") DO UPDATE SET
+        "count" = CASE WHEN "RateLimitBucket"."resetAt" <= NOW() THEN 1 ELSE "RateLimitBucket"."count" + 1 END,
+        "resetAt" = CASE WHEN "RateLimitBucket"."resetAt" <= NOW() THEN ${nextReset} ELSE "RateLimitBucket"."resetAt" END,
+        "updatedAt" = NOW()
+      RETURNING "count", "resetAt"
+    `;
     const row = rows[0];
     if (!row) throw new Error("rate limiter did not return a bucket");
     const count = Number(row.count);
     const resetAt = new Date(row.resetAt).getTime();
     return { allowed: count <= cfg.limit, remaining: Math.max(0, cfg.limit - count), resetAt };
   } catch (error) {
-    // Gracefully degrade on any DB error so uploads aren't blocked by transient
-    // connectivity issues, cold-start timeouts, or missing-table errors (42P01).
-    // Only rethrow permission errors (42501) which indicate a config problem
-    // that needs operator attention, not a transient degradation.
-    const msg = error instanceof Error ? error.message : String(error);
-    const isPermissionError = msg.includes("42501") || msg.includes("permission denied");
+    const message = error instanceof Error ? error.message : String(error);
+    const isPermissionError = message.includes("42501") || message.includes("permission denied");
     if (isPermissionError) throw error;
-    if (process.env.NODE_ENV === "production") {
-      console.warn("[rate-limit] DB error, falling back to in-memory:", msg.slice(0, 120));
+
+    const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
+    const emergencyFailOpen = process.env.RATE_LIMIT_ALLOW_DEGRADED === "true";
+    if (production && !emergencyFailOpen) {
+      console.error("[rate-limit] Persistent limiter unavailable; request denied:", message.slice(0, 120));
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: Date.now() + Math.min(cfg.windowMs, 60_000),
+      };
+    }
+
+    if (production) {
+      console.warn("[rate-limit] Emergency degraded in-memory limiter enabled:", message.slice(0, 120));
     }
     return rateLimit(key, cfg);
   }

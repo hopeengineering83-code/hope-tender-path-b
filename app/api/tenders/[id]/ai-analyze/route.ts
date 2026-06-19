@@ -391,6 +391,13 @@ async function handleStreamingAnalyze(
           return;
         }
         const tenderRecord = tender;
+        // Pre-build the set of real TenderFile IDs so we can validate the
+        // AI-returned sourceFileToken before storing it as sourceTenderFileId.
+        // The AI prompt embeds [FILE_ID:{uuid}] markers and asks the model to
+        // copy the exact UUID, but LLMs sometimes return garbled values or file
+        // names instead. Storing a garbage ID would make the export-readiness
+        // SOURCE_REFERENCES_MISSING gate pass when it should block.
+        const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
 
         const extractionReports = tenderRecord.files.map((file) => ({
           fileName: file.originalFileName || file.fileName,
@@ -436,8 +443,17 @@ async function handleStreamingAnalyze(
             : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
           .join("\n\n");
 
+        // Include a short digest of each company document's extracted text so
+        // that the contentHash changes when vault content is updated (not just
+        // when document names change). The digest is compact (8 hex chars) so
+        // it doesn't inflate the AI input budget.
         const companyContext = company?.documents?.length
-          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
+          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
+              const textDigest = d.extractedText
+                ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
+                : "no-text";
+              return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
+            }).join("\n")}`
           : "";
 
         const tenderContent = [
@@ -673,7 +689,7 @@ async function handleStreamingAnalyze(
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
                       sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
                       sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
-                      sourceTenderFileId: req.sourceFileToken ?? null,
+                      sourceTenderFileId: (req.sourceFileToken && validTenderFileIds.has(req.sourceFileToken)) ? req.sourceFileToken : null,
                       sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethod,
                       sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
                     },
@@ -962,6 +978,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const tenderRecord = tender;
+  const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
 
   const extractionReports = tenderRecord.files.map((file) => ({
     fileName: file.originalFileName || file.fileName,
@@ -1070,8 +1087,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
           .join("\n\n");
 
+        // Include a short digest of each company document's extracted text so
+        // that the contentHash changes when vault content is updated (not just
+        // when document names change). Mirrors the streaming path companyContext.
         const companyContext = company?.documents?.length
-          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
+          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
+              const textDigest = d.extractedText
+                ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
+                : "no-text";
+              return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
+            }).join("\n")}`
           : "";
 
         const tenderContent = [
@@ -1293,7 +1318,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   sourceSectionHeading: req.sectionReference ?? null,
                   sourcePageNumber: req.sourcePage ?? null,
                   sourceExactQuote: req.sourceQuote ?? null,
-                  sourceTenderFileId: req.sourceFileToken ?? null,
+                  sourceTenderFileId: (req.sourceFileToken && validTenderFileIds.has(req.sourceFileToken)) ? req.sourceFileToken : null,
                   sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethodNonStreaming,
                   sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
                 },

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
-import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { simulateEvaluatorPanel } from "../../../../../lib/engine/evaluator-simulator";
 import { scoreProposalQuality } from "../../../../../lib/engine/proposal-quality-scorer";
 import { logAction } from "../../../../../lib/audit";
 import { isDeepReasoningEnabled } from "../../../../../lib/engine/feature-flags";
 import { extractDeepTenderComprehension } from "../../../../../lib/engine/evaluation-criteria-extractor";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -44,11 +45,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   } catch {
     return unauthorizedResponse();
   }
-  const canSimulate = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
-  if (!canSimulate) return forbiddenResponse();
+  if (!["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role)) return forbiddenResponse();
 
-  const rl = rateLimit(`eval-sim:${actor.id}`, AI_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before running the simulation again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
+  const rl = await rateLimitPersistent(`eval-sim:${actor.id}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests. Please wait before running the simulation again.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   const { id } = await params;
   await prismaReady;
@@ -64,24 +67,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" } },
       },
     }),
-    prisma.proposalVersion.findFirst({
-      where: { tenderId: id },
-      orderBy: { version: "desc" },
-      select: { version: true },
-    }),
+    prisma.proposalVersion.findFirst({ where: { tenderId: id }, orderBy: { version: "desc" }, select: { version: true } }),
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const currentProposalVersion = latestProposalVersion?.version ?? 1;
 
   const proposalContext = generatedDocTextFromTender(tender);
   if (!proposalContext || proposalContext.trim().length < 500) {
-    return NextResponse.json({
-      error: "Proposal/package context is too short to simulate. Run AI Proposal or Generate Docs first to produce a substantive proposal/package.",
-      code: "NO_PROPOSAL",
-    }, { status: 400 });
+    return NextResponse.json({ error: "Proposal/package context is too short to simulate. Run AI Proposal or Generate Docs first to produce a substantive proposal/package.", code: "NO_PROPOSAL" }, { status: 400 });
   }
 
-  // Run quality scorer on proposal text to surface weak axes for evaluators.
   const qualityScore = (() => {
     try {
       return scoreProposalQuality({ markdown: proposalContext, primarySector: "", topProjects: [] });
@@ -95,39 +90,21 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       ? `Quality scorer: ${qualityScore.total}/100 — all axes passing`
       : "";
 
-  // Deep-comprehension cross-persona calibration (TENDER_DEEP_REASONING).
-  // When the flag is ON, extract evaluation criteria from the tender
-  // (or use already-stored evaluationMethodology as input) and pass
-  // them as `sharedCriteria` so every persona scores against the
-  // same canonical criterion names. This is what enables the spread
-  // detection in computeCalibrationNotes — without shared criteria
-  // each persona invents its own names and calibration can't join
-  // them. No-ops silently when AI is unavailable.
   let sharedCriteria: Array<{ id: string; criterion: string; weight: number | null }> | undefined;
   if (isDeepReasoningEnabled()) {
     try {
-      const tenderTextForExtraction = [
-        tender.intakeSummary ?? "",
-        tender.analysisSummary ?? "",
-        tender.evaluationMethodology ?? "",
-        tender.description ?? "",
-      ].filter(Boolean).join("\n\n");
+      const tenderTextForExtraction = [tender.intakeSummary ?? "", tender.analysisSummary ?? "", tender.evaluationMethodology ?? "", tender.description ?? ""].filter(Boolean).join("\n\n");
       const comprehension = await extractDeepTenderComprehension(tenderTextForExtraction);
       if (comprehension && comprehension.criteria.length > 0) {
-        sharedCriteria = comprehension.criteria.map((c) => ({
-          id: c.id,
-          criterion: c.criterion,
-          weight: c.weight,
-        }));
-        console.info(`[evaluator-simulation:route] Deep-reasoning ON — passing ${sharedCriteria.length} shared criteria to the panel for cross-persona calibration.`);
+        sharedCriteria = comprehension.criteria.map((criterion) => ({ id: criterion.id, criterion: criterion.criterion, weight: criterion.weight }));
       }
-    } catch (err) {
-      console.warn(`[evaluator-simulation:route] Deep-reasoning comprehension threw (non-critical): ${err instanceof Error ? err.message : String(err)}`);
+    } catch (error) {
+      console.warn(`[evaluator-simulation] Deep comprehension unavailable: ${sanitizeError(error)}`);
     }
   }
 
   const context = {
-    requirements: tender.requirements.map((req) => `[${req.priority}] ${req.requirementType}: ${req.title} — ${short(req.description, 360)}`),
+    requirements: tender.requirements.map((requirement) => `[${requirement.priority}] ${requirement.requirementType}: ${requirement.title} — ${short(requirement.description, 360)}`),
     complianceGaps: tender.complianceGaps.map((gap) => `[${gap.severity}] ${gap.title} — ${short(gap.description, 360)}${gap.mitigationPlan ? ` | Mitigation: ${short(gap.mitigationPlan, 220)}` : ""}`),
     selectedExperts: tender.expertMatches.map((match) => `${match.expert.fullName}${match.expert.title ? ` — ${match.expert.title}` : ""}; score=${Math.round(match.score * 100)}%; trust=${match.expert.trustLevel}; ${short(match.expert.profile, 260)}`),
     selectedProjects: tender.projectMatches.map((match) => `${match.project.name}${match.project.clientName ? ` — ${match.project.clientName}` : ""}; score=${Math.round(match.score * 100)}%; trust=${match.project.trustLevel}; ${short(match.project.summary, 300)}`),
@@ -151,18 +128,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     metadata: { tenderId: id, proposalLength: proposalContext.length, requirements: tender.requirements.length, gaps: tender.complianceGaps.length, selectedExperts: tender.expertMatches.length, selectedProjects: tender.projectMatches.length },
   });
 
-  const result = await simulateEvaluatorPanel({
-    tenderTitle: tender.title,
-    proposalMarkdown: proposalContext,
-    evaluationCriteria: tender.evaluationMethodology ?? "",
-    context,
-  });
+  let result;
+  try {
+    result = await simulateEvaluatorPanel({ tenderTitle: tender.title, proposalMarkdown: proposalContext, evaluationCriteria: tender.evaluationMethodology ?? "", context });
+  } catch (error) {
+    console.error(`[evaluator-simulation] Provider failure for tender ${id}: ${sanitizeError(error)}`);
+    return NextResponse.json({ error: "Evaluator simulation failed. Retry or review provider configuration.", code: "EVALUATOR_PROVIDER_FAILED" }, { status: 502 });
+  }
 
   if (!result) {
-    return NextResponse.json({
-      error: "All evaluator personas failed. Check AI provider configuration and rate-limit status, then retry.",
-      code: "ALL_PERSONAS_FAILED",
-    }, { status: 502 });
+    return NextResponse.json({ error: "All evaluator personas failed. Check AI provider configuration and rate-limit status, then retry.", code: "ALL_PERSONAS_FAILED" }, { status: 502 });
   }
 
   await logAction({
@@ -171,31 +146,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     entityType: "Tender",
     entityId: id,
     description: `Evidence-aware evaluator committee scored "${tender.title}" ${result.predictedOverallScore}/100 (${result.verdict})`,
-    metadata: {
-      tenderId: id,
-      predictedOverallScore: result.predictedOverallScore,
-      verdict: result.verdict,
-      topObjections: result.topObjections,
-      actionPlan: result.actionPlan,
-      riskRegister: result.riskRegister,
-    },
+    metadata: { tenderId: id, predictedOverallScore: result.predictedOverallScore, verdict: result.verdict, topObjections: result.topObjections, actionPlan: result.actionPlan, riskRegister: result.riskRegister },
   });
 
-  // Persist evaluator objections so the EvaluatorObjectionsPanel can display
-  // and resolve them. Wrapped in a transaction so a concurrent re-run can't
-  // leave the table in a partially-cleared state. RESOLVED and WAIVED
-  // objections are preserved across re-runs.
   await prisma.$transaction(async (tx) => {
     await tx.evaluatorObjection.deleteMany({ where: { tenderId: id, status: "OPEN" } });
     if (result.topObjections.length > 0) {
       await tx.evaluatorObjection.createMany({
-        data: result.topObjections.map((o) => ({
+        data: result.topObjections.map((objection) => ({
           tenderId: id,
           proposalVersion: currentProposalVersion,
-          severity: o.severity,
-          category: inferObjectionCategory(o.persona, o.detail),
-          title: o.title.slice(0, 300),
-          description: `[${o.persona}] ${o.detail}`.slice(0, 2000),
+          severity: objection.severity,
+          category: inferObjectionCategory(objection.persona, objection.detail),
+          title: objection.title.slice(0, 300),
+          description: `[${objection.persona}] ${objection.detail}`.slice(0, 2000),
           status: "OPEN",
         })),
       });
@@ -204,12 +168,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   await prisma.tender.update({
     where: { id },
-    data: {
-      notes: [
-        tender.notes?.trim(),
-        `Evaluator committee: ${result.predictedOverallScore}/100 (${result.verdict}). ${result.topObjections.length} objection(s), ${result.actionPlan.length} action(s).`,
-      ].filter(Boolean).join("\n"),
-    },
+    data: { notes: [tender.notes?.trim(), `Evaluator committee: ${result.predictedOverallScore}/100 (${result.verdict}). ${result.topObjections.length} objection(s), ${result.actionPlan.length} action(s).`].filter(Boolean).join("\n") },
   });
 
   return NextResponse.json({ simulation: result });

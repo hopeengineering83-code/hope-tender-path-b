@@ -17,8 +17,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "TenderShare_token_key" ON "TenderShare"("toke
 CREATE INDEX IF NOT EXISTS "TenderShare_tenderId_idx" ON "TenderShare"("tenderId");
 CREATE INDEX IF NOT EXISTS "TenderShare_token_idx" ON "TenderShare"("token");
 
-ALTER TABLE "TenderShare" ADD CONSTRAINT "TenderShare_tenderId_fkey"
-  FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TenderShare_tenderId_fkey') THEN
+    ALTER TABLE "TenderShare" ADD CONSTRAINT "TenderShare_tenderId_fkey" FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
-ALTER TABLE "TenderShare" ADD CONSTRAINT "TenderShare_createdById_fkey"
-  FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TenderShare_createdById_fkey') THEN
+    ALTER TABLE "TenderShare" ADD CONSTRAINT "TenderShare_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;

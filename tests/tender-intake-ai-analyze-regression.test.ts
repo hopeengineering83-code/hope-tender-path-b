@@ -20,10 +20,10 @@ describe("tender intake and AI analysis regression guards", () => {
     assert.match(source, /Prisma\.join/);
   });
 
-  it("routes upload-first through secure validation and atomic persistence", () => {
+  it("routes upload-first through secure validation and atomic persistence without mutating process policy", () => {
     const route = readFileSync("app/api/tenders/upload-first/route.ts", "utf8");
     const handler = readFileSync("lib/tender-upload-first.ts", "utf8");
-    assert.match(route, /ALLOW_DB_FILE_STORAGE/);
+    assert.equal(route.includes("process.env.ALLOW_DB_FILE_STORAGE ="), false);
     assert.match(route, /handleUploadFirstTender/);
     assert.match(handler, /validateUploadBatch/);
     assert.match(handler, /validateUploadFile/);
