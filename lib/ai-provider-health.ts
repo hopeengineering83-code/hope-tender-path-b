@@ -43,6 +43,40 @@ export type AiProviderFailureCategory =
   | "MALFORMED_RESPONSE"
   | "UNKNOWN";
 
+// Unified operator-facing status enum. Surfaced via /api/ai/health and the
+// dashboard provider-health panel. Intentionally distinct from
+// AiProviderFailureCategory — this enum is about "what should the UI show",
+// not about the raw HTTP-level classification.
+//
+// Invariants:
+//   - `not_configured`    — env var missing/empty. Never shown as healthy.
+//   - `configured`        — key present, no recorded runtime success yet on
+//                            this instance. NOT healthy. Not green.
+//   - `runtime_verified`  — recent real generation success. The ONLY state
+//                            that may be shown as Ready/Usable/green.
+//   - `rate_limited`      — most recent failure was RATE_LIMIT. In cooldown.
+//   - `unauthorized`      — most recent failure was AUTH (401/403/invalid key).
+//                            In cooldown. Operator action required.
+//   - `timeout`           — most recent failure was TIMEOUT. In short cooldown.
+//   - `unavailable`       — most recent failure was MODEL_UNAVAILABLE, BILLING,
+//                            NETWORK, or MALFORMED_RESPONSE. In cooldown.
+//   - `unknown`           — most recent failure was UNKNOWN, OR configured but
+//                            no success and no failure recorded yet. NOT green.
+//
+// `configured` and `unknown` (with no failure) collapse to the same UI pill
+// ("Configured — not yet tested on this instance") but the enum keeps them
+// distinct so callers can distinguish "key-only, never tried" from
+// "key + unclassified failure" if they need to.
+export type AiProviderStatus =
+  | "not_configured"
+  | "configured"
+  | "runtime_verified"
+  | "rate_limited"
+  | "unauthorized"
+  | "timeout"
+  | "unavailable"
+  | "unknown";
+
 export type AiProviderHealth = {
   provider: AiProviderName;
   configured: boolean;
@@ -427,7 +461,61 @@ export type ProviderRuntimeSnapshot = {
   rateLimited: boolean;
   runtimeVerified: boolean;
   available: boolean;
+  // Unified operator-facing status. See AiProviderStatus doc above.
+  // `available` (legacy field) is true for "configured + not currently cooling"
+  // — this is intentionally weaker than `status === "runtime_verified"` and is
+  // kept for backwards compatibility with the chain scheduler. UI MUST use
+  // `status`, not `available`, to decide whether to show a green pill.
+  status: AiProviderStatus;
 };
+
+/** Derives the unified operator-facing status for a provider from its current
+ * health + cooldown state. Rules:
+ *   1. not configured           -> "not_configured"
+ *   2. configured + recent success + not cooling -> "runtime_verified"
+ *   3. configured + cooling + RATE_LIMIT         -> "rate_limited"
+ *   4. configured + cooling + AUTH               -> "unauthorized"
+ *   5. configured + cooling + TIMEOUT            -> "timeout"
+ *   6. configured + cooling + (BILLING | MODEL_UNAVAILABLE | NETWORK |
+ *                              MALFORMED_RESPONSE) -> "unavailable"
+ *   7. configured + UNKNOWN failure (cooling or not) -> "unknown"
+ *   8. configured + no failure + no success      -> "configured"
+ *
+ * The ONLY state that may be displayed as Ready / green is "runtime_verified".
+ * "configured" and "unknown" must NOT be shown as healthy.
+ */
+export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
+  const h = getProviderHealth(provider);
+  if (!h.configured) return "not_configured";
+  const cooling = isProviderCooledDown(provider);
+  // A real generation success is authoritative — once recorded, the provider
+  // is "runtime_verified" until a new failure puts it back in cooldown.
+  // (Ping-only successes are tracked separately and do NOT flip this.)
+  if (h.lastGenerationSucceededAt && !cooling) return "runtime_verified";
+  // Failure-driven states (provider is currently in cooldown OR has a recorded
+  // failure category even if the cooldown window has expired).
+  const category = h.lastFailureCategory;
+  if (cooling || category) {
+    switch (category) {
+      case "RATE_LIMIT":
+        return "rate_limited";
+      case "AUTH":
+        return "unauthorized";
+      case "TIMEOUT":
+        return "timeout";
+      case "BILLING":
+      case "MODEL_UNAVAILABLE":
+      case "NETWORK":
+      case "MALFORMED_RESPONSE":
+        return "unavailable";
+      case "UNKNOWN":
+      default:
+        return "unknown";
+    }
+  }
+  // Configured, never failed, never succeeded on this instance.
+  return "configured";
+}
 
 /** Route/UI-friendly runtime view. Field names match the public API contract
  * (lastErrorCategory / lastSafeErrorMessage). The message is already redacted
@@ -437,10 +525,16 @@ export type ProviderRuntimeSnapshot = {
  * lastSuccessAt field in the snapshot is set only by recordProviderSuccess
  * (real generation calls), so runtimeVerified accurately reflects this.
  * Ping-only successes are tracked separately in lastPingSucceededAt on the
- * AiProviderHealth type but intentionally omitted from this compact view. */
+ * AiProviderHealth type but intentionally omitted from this compact view.
+ *
+ * `status` is the unified operator-facing enum — UI MUST use this field,
+ * not the legacy `available` boolean, to decide whether to show a green pill.
+ * `available` is kept only for backwards compatibility with the chain
+ * scheduler (which needs "configured + not currently cooling"). */
 export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
   const h = getProviderHealth(provider);
   const coolingDown = isProviderCooledDown(provider);
+  const status = deriveProviderStatus(provider);
   return {
     lastSuccessAt: h.lastSuccessAt,
     lastFailureAt: h.lastFailureAt,
@@ -455,7 +549,10 @@ export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRu
     // recordProviderSuccess (real generation) sets it; recordProviderPingSuccess
     // (connectivity check only) does not.
     runtimeVerified: Boolean(h.lastGenerationSucceededAt),
+    // Legacy field: "configured + not currently cooling". Kept for the chain
+    // scheduler. NOT a health statement — UI must use `status` instead.
     available: h.configured && !coolingDown,
+    status,
   };
 }
 

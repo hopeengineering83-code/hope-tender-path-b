@@ -1,6 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
 import { protectPrompt } from "./ai-trust-boundary";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -377,6 +377,98 @@ const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
   reasoning:  ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
 };
 
+// ─── Structured "no AI provider ready" error ─────────────────────────────────
+// Thrown by generateWithFallback() when every configured provider is either
+// unconfigured, in cooldown, or returned no usable result. Mirrors the
+// noAiProviderReady contract surfaced by /api/ai/health so client and server
+// share a single error vocabulary. Callers can catch this with
+// `if (err instanceof NoAiProviderReadyError)` and surface the structured
+// payload to the dashboard without parsing free-text error strings.
+//
+// Fields:
+//   - code            — always "NO_AI_PROVIDER_READY" (matches the
+//                       /api/ai/health `noAiProviderReadyCode` field).
+//   - ok              — always false. Mirrors /api/ai/health `ok`.
+//   - useCase         — which AiUseCase the call was for.
+//   - providerAttempts— per-provider safe failure summary (provider name,
+//                       configured flag, lastErrorCategory, cooldownUntil).
+//                       Never contains API keys or raw provider responses —
+//                       messages are already redacted by recordProviderFailure.
+//   - failureDetails  — human-readable per-provider failure strings, in the
+//                       same order as providerAttempts. Each entry is of the
+//                       form "<provider>: <safe reason>". Preserved for
+//                       compatibility with PR #775/#778 diagnostics that
+//                       build a human-readable error from this list. The
+//                       safe reason comes from the same redacted snapshot
+//                       used by providerAttempts.
+//   - errorKind       — discriminator that mirrors the legacy string-prefix
+//                       contract from PR #775/#778 so downstream diagnostics
+//                       (e.g. lib/engine/analysis-fallback-diagnostics.ts)
+//                       that branch on `AI_PROVIDERS_RATE_LIMITED` vs the
+//                       generic "all providers exhausted" path continue to
+//                       work without parsing free-text error strings.
+//                       Values: "NO_PROVIDER_CONFIGURED" |
+//                       "ALL_PROVIDERS_COOLING" | "ALL_PROVIDERS_EXHAUSTED".
+//   - nextAction      — operator-facing hint. Mirrors /api/ai/health
+//                       `nextAction` values (CONFIGURE_AI_KEYS,
+//                       ALL_PROVIDERS_COOLING, RETRY_AFTER_PROVIDER_FIX).
+export type AiProviderAttempt = {
+  provider: AiProviderName;
+  configured: boolean;
+  tried: boolean;
+  lastErrorCategory: string | null;
+  coolingDown: boolean;
+  cooldownUntil: string | null;
+};
+
+export type NoAiProviderReadyErrorKind =
+  | "NO_PROVIDER_CONFIGURED"
+  | "ALL_PROVIDERS_COOLING"
+  | "ALL_PROVIDERS_EXHAUSTED";
+
+export class NoAiProviderReadyError extends Error {
+  readonly code = "NO_AI_PROVIDER_READY" as const;
+  readonly ok = false as const;
+  readonly useCase: AiUseCase;
+  readonly providerAttempts: AiProviderAttempt[];
+  readonly failureDetails: string[];
+  readonly errorKind: NoAiProviderReadyErrorKind;
+  readonly nextAction:
+    | "CONFIGURE_AI_KEYS"
+    | "ALL_PROVIDERS_COOLING"
+    | "RUNTIME_NOT_VERIFIED"
+    | "RETRY_AFTER_PROVIDER_FIX";
+
+  constructor(params: {
+    useCase: AiUseCase;
+    providerAttempts: AiProviderAttempt[];
+    failureDetails?: string[];
+    errorKind: NoAiProviderReadyErrorKind;
+    nextAction: NoAiProviderReadyError["nextAction"];
+    message?: string;
+  }) {
+    const failureDetails = params.failureDetails ?? [];
+    const message = params.message ?? (
+      params.errorKind === "NO_PROVIDER_CONFIGURED"
+        ? `No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.`
+        : params.errorKind === "ALL_PROVIDERS_COOLING"
+          // Preserve the AI_PROVIDERS_RATE_LIMITED prefix so legacy diagnostics
+          // (lib/engine/analysis-fallback-diagnostics.ts in PR #775/#778) that
+          // string-match on this prefix continue to classify the error as
+          // AI_PROVIDERS_RATE_LIMITED rather than ALL_PROVIDERS_EXHAUSTED.
+          ? `AI_PROVIDERS_RATE_LIMITED: all ${params.providerAttempts.filter((a) => a.coolingDown).length} configured provider(s) are in cooldown after recent rate-limit/quota errors for use-case "${params.useCase}". Details: ${failureDetails.join(" | ")}. Wait for cooldowns to expire and re-run.`
+          : `All configured AI providers exhausted for use-case "${params.useCase}" (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none — all in cooldown"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
+    );
+    super(message);
+    this.name = "NoAiProviderReadyError";
+    this.useCase = params.useCase;
+    this.providerAttempts = params.providerAttempts;
+    this.failureDetails = failureDetails;
+    this.errorKind = params.errorKind;
+    this.nextAction = params.nextAction;
+  }
+}
+
 function isProviderEnabled(name: AiProviderName): boolean {
   switch (name) {
     case "anthropic":  return isClaudeEnabled();
@@ -528,13 +620,36 @@ export async function generateWithFallback(
     console.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
   }
   const tried: string[] = [];
+  // Per-provider attempt log. Built as we iterate so the NoAiProviderReadyError
+  // payload reflects EXACTLY what the chain did, not just a guess from env.
+  const providerAttempts: AiProviderAttempt[] = [];
+  // Human-readable per-provider failure strings (PR #775/#778 compatibility).
+  // Each entry is "<provider>: <safe reason>". The safe reason comes from the
+  // same redacted snapshot used by providerAttempts.
   const failureDetails: string[] = [];
-  let cooledDownCount = 0;
 
   for (const provider of chain) {
-    if (!isProviderEnabled(provider)) continue;
-    if (isProviderCooledDown(provider)) {
-      cooledDownCount++;
+    const configured = isProviderEnabled(provider);
+    const coolingDown = isProviderCooledDown(provider);
+    // Read the safe runtime snapshot for lastErrorCategory + cooldownUntil.
+    // We re-read it AFTER the attempt as well, because a fresh failure will
+    // have updated the in-memory state via recordProviderFailure inside
+    // callProvider. We capture the pre-attempt snapshot here, and the
+    // post-attempt snapshot below — the post-attempt one wins for the error
+    // payload so callers see the most recent failure category.
+    const pre = getProviderRuntimeSnapshot(provider);
+    if (!configured) {
+      providerAttempts.push({
+        provider, configured: false, tried: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: pre.coolingDown, cooldownUntil: pre.cooldownUntil,
+      });
+      continue;
+    }
+    if (coolingDown) {
+      providerAttempts.push({
+        provider, configured: true, tried: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: true, cooldownUntil: pre.cooldownUntil,
+      });
       failureDetails.push(`${provider}: in cooldown`);
       continue;
     }
@@ -547,28 +662,45 @@ export async function generateWithFallback(
     // callProvider returned null — capture the real reason recorded in the
     // health store (HTTP 400 max_tokens, 429 rate limit, timeout, etc.) so the
     // thrown error and downstream diagnostics are actionable rather than a bare
-    // "all providers exhausted".
-    const snap = getProviderStateSnapshot(provider);
-    failureDetails.push(`${provider}: ${snap.lastFailureMessage ?? snap.lastFailureCategory ?? "no response"}`);
+    // "all providers exhausted". (Mirrors PR #775/#778 intent.)
+    const stateSnap = getProviderStateSnapshot(provider);
+    const safeReason = stateSnap.lastFailureMessage ?? stateSnap.lastFailureCategory ?? "no response";
+    failureDetails.push(`${provider}: ${safeReason}`);
+    // callProvider already recorded the failure via recordProviderFailure
+    // (which redacts messages). Capture the post-attempt snapshot for the
+    // error payload, in case this is the last attempt.
+    const post = getProviderRuntimeSnapshot(provider);
+    providerAttempts.push({
+      provider, configured: true, tried: true,
+      lastErrorCategory: post.lastErrorCategory, coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
+    });
   }
 
-  const configured = chain.filter(isProviderEnabled);
-  if (configured.length === 0) {
-    throw new Error(
-      "No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.",
-    );
-  }
-  // When every enabled provider was skipped because it is still cooling down
-  // after a 429/quota, signal that distinctly so the diagnostics recommend a
-  // short wait + retry rather than a key/billing change.
-  if (tried.length === 0 && cooledDownCount > 0) {
-    throw new Error(
-      `AI_PROVIDERS_RATE_LIMITED: all ${cooledDownCount} configured provider(s) are in cooldown after recent rate-limit/quota errors for use-case "${useCase}". Details: ${failureDetails.join(" | ")}. Wait for cooldowns to expire and re-run.`,
-    );
-  }
-  throw new Error(
-    `All configured AI providers exhausted for use-case "${useCase}" (tried: ${tried.join(", ") || "none — all in cooldown"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.`,
-  );
+  // All configured providers either unconfigured, cooling down, or returned
+  // no usable result. Throw a structured NoAiProviderReadyError so callers
+  // can branch on `err.code` / `err.errorKind` / `err.nextAction` instead of
+  // parsing strings.
+  const configuredCount = providerAttempts.filter((a) => a.configured).length;
+  const allConfiguredCooling = configuredCount > 0 && providerAttempts.filter((a) => a.configured).every((a) => a.coolingDown);
+  const errorKind: NoAiProviderReadyErrorKind =
+    configuredCount === 0
+      ? "NO_PROVIDER_CONFIGURED"
+      : allConfiguredCooling
+        ? "ALL_PROVIDERS_COOLING"
+        : "ALL_PROVIDERS_EXHAUSTED";
+  const nextAction: NoAiProviderReadyError["nextAction"] =
+    configuredCount === 0
+      ? "CONFIGURE_AI_KEYS"
+      : allConfiguredCooling
+        ? "ALL_PROVIDERS_COOLING"
+        : "RETRY_AFTER_PROVIDER_FIX";
+  throw new NoAiProviderReadyError({
+    useCase,
+    providerAttempts,
+    failureDetails,
+    errorKind,
+    nextAction,
+  });
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
@@ -3497,9 +3629,23 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   lastProposalProvider = null;
   const configured = [Boolean(apiKey), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
   if (!configured.some(Boolean)) {
-    throw new Error("No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in environment variables.");
+    throw new NoAiProviderReadyError({
+      useCase: "proposal",
+      providerAttempts: [],
+      failureDetails: [],
+      errorKind: "NO_PROVIDER_CONFIGURED",
+      nextAction: "CONFIGURE_AI_KEYS",
+      message: "No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in environment variables.",
+    });
   }
-  throw new Error("All configured AI providers exhausted for proposal generation. Check provider API keys and rate limits, or wait for cooldown periods to expire.");
+  throw new NoAiProviderReadyError({
+    useCase: "proposal",
+    providerAttempts: [],
+    failureDetails: [],
+    errorKind: "ALL_PROVIDERS_EXHAUSTED",
+    nextAction: "RETRY_AFTER_PROVIDER_FIX",
+    message: "All configured AI providers exhausted for proposal generation. Check provider API keys and rate limits, or wait for cooldown periods to expire.",
+  });
 }
 
 // ─── Section-parallel proposal generation ────────────────────────────────────

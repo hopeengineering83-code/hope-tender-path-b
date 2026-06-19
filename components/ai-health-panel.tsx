@@ -16,10 +16,14 @@ import {
   isOpenRouterConfigured,
   getOpenRouterModel,
   type ProviderRuntimeSnapshot,
+  type AiProviderStatus,
 } from "../lib/ai-provider-health";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-const AI_FALLBACK_CHAIN = "Canonical: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude. Claude remains last.";
+// Mirrors app/api/ai/health/route.ts AI_FALLBACK_CHAIN. The deterministic
+// draft fallback is intentionally listed as the final non-AI step so the
+// dashboard text matches the runtime chain exactly.
+const AI_FALLBACK_CHAIN = "Canonical: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback. Claude is the last AI provider. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.";
 
 type ProviderCardData = {
   key: string;
@@ -32,6 +36,8 @@ type ProviderCardData = {
   detail: string | null;
   modelHint: string | null;
   runtime: ProviderRuntimeSnapshot;
+  status: AiProviderStatus;
+  isAi: boolean;
 };
 
 type AIHealthResponse = {
@@ -66,20 +72,32 @@ function getAIHealth(): AIHealthResponse {
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const openRouterModel = getOpenRouterModel();
 
-  // Provider order IS the default fallback priority (rank 1..8). Claude is LAST so
-  // Anthropic rate limits do not block the app when other providers are available.
-  // Order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+  // Provider order IS the canonical runtime fallback priority (rank 1..8):
+  //   Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+  // Claude is the LAST AI provider so Anthropic rate limits do not block the
+  // app when other providers are available. A final non-AI entry (rank 9)
+  // represents the deterministic draft fallback that runs only after every
+  // configured AI provider has failed or is unavailable.
+  const mistralRuntime = getProviderRuntimeSnapshot("mistral");
+  const groqRuntime = getProviderRuntimeSnapshot("groq");
+  const openrouterRuntime = getProviderRuntimeSnapshot("openrouter");
+  const geminiRuntime = getProviderRuntimeSnapshot("gemini");
+  const openaiRuntime = getProviderRuntimeSnapshot("openai");
+  const togetherRuntime = getProviderRuntimeSnapshot("together");
+  const deepseekRuntime = getProviderRuntimeSnapshot("deepseek");
+  const claudeRuntime = getProviderRuntimeSnapshot("anthropic");
+
   const providers: ProviderCardData[] = [
     {
       key: "mistral", label: "Mistral", rank: 1, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
       model: getMistralProposalModel(), note: "First-tier provider (also analysis/fast capable)",
       detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("mistral"),
+      runtime: mistralRuntime, status: mistralRuntime.status, isAi: true,
     },
     {
       key: "groq", label: "Groq", rank: 2, configured: groqConfigured, envVar: "GROQ_API_KEY",
       model: getGroqModel(), note: "Second-tier provider", detail: null, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("groq"),
+      runtime: groqRuntime, status: groqRuntime.status, isAi: true,
     },
     {
       key: "openrouter", label: "OpenRouter", rank: 3, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
@@ -87,41 +105,69 @@ function getAIHealth(): AIHealthResponse {
       modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
         ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
         : null,
-      runtime: getProviderRuntimeSnapshot("openrouter"),
+      runtime: openrouterRuntime, status: openrouterRuntime.status, isAi: true,
     },
     {
       key: "gemini", label: "Gemini", rank: 4, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
       model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Fourth-tier provider",
       detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
+      modelHint: null, runtime: geminiRuntime, status: geminiRuntime.status, isAi: true,
     },
     {
       key: "openai", label: "OpenAI", rank: 5, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
       model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Fifth-tier provider",
-      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
+      detail: null, modelHint: null, runtime: openaiRuntime, status: openaiRuntime.status, isAi: true,
     },
     {
       key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
       model: getTogetherProposalModel(), note: "Sixth-tier provider",
       detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("together"),
+      runtime: togetherRuntime, status: togetherRuntime.status, isAi: true,
     },
     {
       key: "deepseek", label: "DeepSeek", rank: 7, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
       model: getDeepSeekModel(), note: "Seventh-tier provider",
       detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
+      modelHint: null, runtime: deepseekRuntime, status: deepseekRuntime.status, isAi: true,
     },
     {
       key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
-      model: claudeModels[0] ?? null, note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+      model: claudeModels[0] ?? null, note: "Eighth-tier (last) AI provider — placed last to avoid Anthropic rate-limit blocking",
       detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("anthropic"),
+      modelHint: null, runtime: claudeRuntime, status: claudeRuntime.status, isAi: true,
+    },
+    {
+      // Final non-AI fallback. NOT a healthy AI provider — never shown as
+      // green. The deterministic draft fallback runs only after every
+      // configured AI provider has failed, returned no usable result, or is
+      // in cooldown. Its output cannot be exported as a final proposal.
+      key: "deterministic", label: "Deterministic draft fallback", rank: 9, configured: true, envVar: "(none — always available)",
+      model: null, note: "Final non-AI fallback (not an AI provider). Output is never exportable as a final proposal.",
+      detail: null, modelHint: null,
+      runtime: {
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        lastErrorCategory: null,
+        lastSafeErrorMessage: null,
+        lastFailureReason: null,
+        cooldownUntil: null,
+        consecutiveFailures: 0,
+        coolingDown: false,
+        rateLimited: false,
+        runtimeVerified: false,
+        available: true,
+        status: "unknown",
+      },
+      status: "unknown",
+      isAi: false,
     },
   ];
 
-  const anyConfigured = providers.some((p) => p.configured);
-  const preferredProvider = providers.find((p) => p.configured)?.key ?? "none";
+  const aiProviders = providers.filter((p) => p.isAi);
+  const anyConfigured = aiProviders.some((p) => p.configured);
+  // preferredProvider is the first CONFIGURED AI provider in the canonical
+  // runtime chain order. Mirrors /api/ai/health preferredProvider logic.
+  const preferredProvider = aiProviders.find((p) => p.configured)?.key ?? "none";
 
   const warnings: string[] = [];
   const blockers: string[] = [];
@@ -135,14 +181,9 @@ function getAIHealth(): AIHealthResponse {
   if (cooling.length > 0) warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
 
   // Configured ≠ verified runtime. The pill must not claim READY purely
-  // because keys exist — the screenshot bug. Reflect three new states:
-  //  • ALL_PROVIDERS_COOLING — every configured provider is in cooldown;
-  //    AI Analyze cannot proceed until at least one window expires.
-  //  • RUNTIME_NOT_VERIFIED — keys present but no provider has produced
-  //    a successful response yet on this instance, so runtime is unknown.
-  //  • READY — at least one configured provider has a recorded success
-  //    and no warnings; only state worth a green pill.
-  const configuredProviders = providers.filter((p) => p.configured);
+  // because keys exist — the screenshot bug. The unified `status` field on
+  // each provider is the single source of truth for pill colour.
+  const configuredProviders = aiProviders.filter((p) => p.configured);
   const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
   const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
   if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
@@ -169,16 +210,42 @@ function getAIHealth(): AIHealthResponse {
 }
 
 function ProviderCard({ p }: { p: ProviderCardData }) {
-  const pill = !p.configured
+  // The deterministic draft fallback is the final non-AI entry. It is never
+  // shown as a healthy AI provider — it always renders as a neutral,
+  // non-green "final fallback" card.
+  if (!p.isAi) {
+    return (
+      <div className="rounded-xl bg-slate-50 p-3 shadow-sm border border-slate-200">
+        <div className="flex items-center justify-between">
+          <p className="font-semibold text-slate-900">{p.label}</p>
+          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Final fallback (non-AI)</span>
+        </div>
+        <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Fallback rank {p.rank}</p>
+        <p className="mt-1 text-xs text-slate-600">{p.note}</p>
+        <p className="mt-1 text-xs text-slate-500">Runs only after every configured AI provider has failed, returned no usable result, or is in cooldown.</p>
+      </div>
+    );
+  }
+  // AI providers render the unified `status` field as the pill colour.
+  // Only `runtime_verified` is shown as green. `configured` / `unknown`
+  // are neutral. `rate_limited` / `unauthorized` / `timeout` / `unavailable`
+  // are amber/red depending on whether operator action is required.
+  const pill = p.status === "not_configured"
     ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Not configured</span>
-    : p.runtime.coolingDown
-      ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
-      : p.runtime.consecutiveFailures > 0
-        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
-        : p.runtime.lastSuccessAt
-          ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available</span>
-          : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured — not yet tested on this instance</span>;
-  const failing = p.configured && (p.runtime.coolingDown || p.runtime.consecutiveFailures > 0);
+    : p.status === "runtime_verified"
+      ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available (runtime verified)</span>
+      : p.status === "rate_limited"
+        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
+        : p.status === "unauthorized"
+          ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Unauthorized — fix API key</span>
+          : p.status === "timeout"
+            ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Timeout — retrying shortly</span>
+            : p.status === "unavailable"
+              ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Unavailable{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}</span>
+              : p.status === "configured"
+                ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured — not yet tested on this instance</span>
+                : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Unknown — not yet verified</span>;
+  const failing = p.configured && p.status !== "runtime_verified" && p.status !== "configured" && p.status !== "not_configured";
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
       <div className="flex items-center justify-between">
@@ -195,7 +262,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
         </p>
       )}
       {p.configured && p.modelHint && <p className="mt-1 text-xs text-slate-500">{p.modelHint}</p>}
-      {p.configured && !p.runtime.lastSuccessAt && !p.runtime.coolingDown && p.runtime.consecutiveFailures === 0 && (
+      {p.configured && p.status === "configured" && (
         <p className="mt-1 text-xs text-slate-400">Providers are tested automatically when AI Analyze or proposal generation is first run.</p>
       )}
     </div>
