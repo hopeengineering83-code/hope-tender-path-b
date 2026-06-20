@@ -919,12 +919,24 @@ model AiAnalyzeChunk {
   errorMessage String?
   startedAt    DateTime?
   finishedAt   DateTime?
+  // Durable AI Analyze jobs (PR: durable-ai-analysis-jobs).
+  // claimedAt is set atomically when a worker claims the chunk via
+  // FOR UPDATE SKIP LOCKED. A stale claim (claimedAt older than the
+  // stuck threshold) can be re-claimed by another worker, making the
+  // system resilient to browser interruptions and Vercel function timeouts.
+  claimedAt    DateTime?
+  // failureCategory stores the SAFE classification only (never raw provider
+  // error bodies). Values: RATE_LIMITED | TIMEOUT | UNAUTHORIZED |
+  // MODEL_UNAVAILABLE | NETWORK_ERROR | UNKNOWN.
+  failureCategory String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@unique([tenderId, userId, contentHash, chunkIndex])
   @@index([tenderId, userId, contentHash])
   @@index([status])
+  // Index for the atomic claim query: find oldest QUEUED chunk for a job.
+  @@index([tenderId, userId, contentHash, status])
 }
 
 // ─── ProviderHealthSnapshot ───────────────────────────────────────────────────

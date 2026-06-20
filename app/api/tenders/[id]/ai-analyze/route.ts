@@ -1733,6 +1733,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         : null,
       tender: updatedForResponse,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
+      // Backward-compatible pointer to the new durable AI Analyze jobs workflow.
+      // New clients should POST to this endpoint to create a durable job instead
+      // of running the entire analysis synchronously in the request. The old
+      // synchronous behavior remains for existing clients.
+      durableJobEndpoint: `/api/tenders/${id}/ai-analyze/jobs`,
+      durableJobMethod: "POST",
     });
   } catch (error) {
     if (error instanceof AiAnalyzeCheckpointPersistenceError) {

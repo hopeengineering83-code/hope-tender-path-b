@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse } from "../../../../lib/auth";
 import { getJob, recoverIfStuck } from "../../../../lib/ai-jobs";
+import { getJobProgress } from "../../../../lib/ai-jobs/durable-analyze";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const accessRow = await prisma.aiJob.findUnique({
     where: { id },
-    select: { id: true, userId: true, tenderId: true },
+    select: { id: true, userId: true, tenderId: true, jobType: true },
   });
   if (!accessRow) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
@@ -41,5 +42,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const job = await getJob(id);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  return NextResponse.json({ job });
+
+  // For AI_ANALYZE jobs, include chunk progress from the durable analyze library.
+  let chunkProgress = null;
+  if (accessRow.jobType === "AI_ANALYZE") {
+    chunkProgress = await getJobProgress(id).catch(() => null);
+  }
+
+  return NextResponse.json({ job, ...(chunkProgress ? { chunkProgress } : {}) });
 }
