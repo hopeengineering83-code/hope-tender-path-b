@@ -138,6 +138,28 @@ test("Fix C: cutAtNextFieldLabel stops at 'Implementing Partner:'", () => {
   assert.equal(cut, "Roads Authority");
 });
 
+// ─── #793 salvage: additional non-client boundary labels ─────────────
+
+test("boundary cut stops at 'Recipient:' (from #793)", () => {
+  const raw = "National Health Ministry Recipient: District Clinics Deadline: 30 March";
+  assert.equal(cutAtNextFieldLabel(raw), "National Health Ministry");
+});
+
+test("boundary cut stops at 'Grantee:' (from #793)", () => {
+  const raw = "Water Authority Grantee: Rural Cooperative Email: a@b.com";
+  assert.equal(cutAtNextFieldLabel(raw), "Water Authority");
+});
+
+test("boundary cut stops at 'Consultant:' (from #793)", () => {
+  const raw = "City Procurement Office Consultant: ACME Advisors Reference: RFP-1";
+  assert.equal(cutAtNextFieldLabel(raw), "City Procurement Office");
+});
+
+test("boundary cut stops at 'Financier:' (from #793)", () => {
+  const raw = "Energy Authority Financier: Green Bank Country: Kenya";
+  assert.equal(cutAtNextFieldLabel(raw), "Energy Authority");
+});
+
 test("Fix C: extractClientName correctly cuts flattened line at generic Donor", () => {
   const text = `Request for Proposals\nName of Procuring Entity: Capital City Procurement Authority Donor: Green Fund Submission Deadline: 30 March 2027 ${"scope ".repeat(60)}`;
   const result = extractClientName({
