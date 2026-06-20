@@ -28,6 +28,7 @@ import {
   canonicalizeCountry,
   isValidClientContact,
 } from "./metadata-validators";
+import { cutAtNextFieldLabel } from "./tender-field-extractors";
 
 export type TenderMetadataDraft = {
   title: string;
@@ -117,10 +118,14 @@ function inferReference(text: string): string | null {
 }
 
 function inferClient(text: string): string | null {
-  const raw = firstMatch(text, [
+  const rawMatch = firstMatch(text, [
     /(?:name\s+of\s+procuring\s+entity|client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
     /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]\s*([^\n\r]{3,120})/i,
   ]);
+  // Flattened single-line pages (pdf2json/pdfjs) bleed the next labelled field
+  // into the capture; cut at the first secondary field label and the first
+  // comma (address often follows) to recover a clean organisation name.
+  const raw = rawMatch ? cutAtNextFieldLabel(rawMatch).split(/[,;]/)[0].trim() : null;
   if (raw && isValidClientName(raw)) return raw;
 
   // Fallback: look for a standalone organization-name header near the top
