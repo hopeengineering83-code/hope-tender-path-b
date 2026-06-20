@@ -153,10 +153,10 @@ export async function runNextChunk(jobId: string, userId: string) {
       },
     });
 
-    if (job.status === "QUEUED") {
+    if (job.status === "QUEUED" || job.status === "PARTIAL_SUCCESS") {
         await tx.aiJob.update({
             where: { id: jobId },
-            data: { status: "RUNNING", startedAt: new Date() }
+            data: { status: "RUNNING", startedAt: job.startedAt || new Date() }
         });
     }
 
@@ -307,7 +307,15 @@ export async function finalizeJob(jobId: string, userId: string) {
         return { status: "FAILED", reason: "WEAK_SOURCING" };
     }
 
+    // Atomically promote canonical requirements
     await prisma.$transaction(async (tx) => {
+        // Ensure the job status remains RUNNING during the requirements promotion
+        // so the database trigger guard_canonical_requirement_set_delete doesn't block it.
+        await tx.aiJob.update({
+            where: { id: jobId },
+            data: { status: "RUNNING", updatedAt: new Date() }
+        });
+
         const drafts = merged.requirements.map(mapToDraft);
         await upsertRequirements(tx, job.tenderId!, drafts);
 
