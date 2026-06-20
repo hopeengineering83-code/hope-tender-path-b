@@ -287,9 +287,39 @@ function ensureState(provider: AiProviderName): InternalState {
 }
 
 function redactMessage(message: string | null | undefined): string {
+  // Audit AI-001 (2026-06-20): the previous implementation only stripped
+  // `sk-*` and `Bearer XXX`. Provider error responses that echo the
+  // Authorization header can leak live API keys into
+  // ProviderHealthSnapshot.lastSafeErrorMessage, AiJob.errorMessage, and the
+  // /api/admin/ai-provider-health operator panel. Extended to cover ALL 8
+  // provider key prefixes used by this app:
+  //   - OpenAI / Together / OpenRouter (legacy): `sk-`
+  //   - Anthropic:                          `sk-ant-`
+  //   - OpenRouter (current):               `sk-or-`
+  //   - Groq:                               `gsk_`
+  //   - DeepSeek:                           `dsk-` (also covers `dsk_` variant)
+  //   - Google Gemini (AI Studio legacy):   `AIza` (39 chars) + `AQ` (new format)
+  //   - Mistral:                            no canonical prefix — covered by
+  //                                          the `Bearer XXX` rule below.
   return (message ?? "")
+    // Anthropic keys (sk-ant-...) — must be matched BEFORE the generic sk- rule
+    .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
+    // OpenRouter keys (sk-or-...) — must be matched BEFORE the generic sk- rule
+    .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
+    // OpenAI / Together / legacy OpenRouter keys (sk-...)
     .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
+    // Groq keys (gsk_...)
+    .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
+    // DeepSeek keys (dsk-... or dsk_...)
+    .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
+    // Google Gemini API keys — AIza... (legacy, 39 chars total) or AQ... (new format)
+    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
+    .replace(/\bAQ[A-Za-z0-9_-]{30,}\b/g, "[REDACTED]")
+    // Authorization: Bearer <token> — catches Mistral and any OpenAI-compatible
+    // provider that echoes the header in its error response
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+    // Authorization header name + value (e.g. "authorization: sk-...")
+    .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);

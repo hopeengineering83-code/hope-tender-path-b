@@ -183,6 +183,29 @@ const DEMO_PROJECTS = [
 ];
 
 async function main() {
+  // Production guard (audit DB-001 / TEST-010, 2026-06-20). This seeder
+  // destructively wipes Experts and Projects on the seed admin's company
+  // (see `prisma.expert.deleteMany` / `prisma.project.deleteMany` below).
+  // If an operator accidentally runs `npm run db:demo-seed` against a
+  // production DATABASE_URL, real Experts and Projects are irrecoverably
+  // deleted and replaced with "Acme Engineering" demo data.
+  //
+  // The guard refuses to run unless either:
+  //   - NODE_ENV is "development" or "test", OR
+  //   - the operator explicitly sets DEMO_SEED_ALLOWED=1 (escape hatch for
+  //     staging environments that intentionally want demo data).
+  const isDevOrTest = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+  const explicitAllow = ["1", "true", "yes"].includes((process.env.DEMO_SEED_ALLOWED || "").trim().toLowerCase());
+  if (!isDevOrTest && !explicitAllow) {
+    console.error(
+      "Demo seeder REFUSED: NODE_ENV is not 'development'/'test' and DEMO_SEED_ALLOWED is not set.\n" +
+      "This seeder destructively wipes Experts and Projects on the seed admin's company.\n" +
+      "If you are sure you want to run it against this database, set DEMO_SEED_ALLOWED=1 and re-run.\n" +
+      "Aborting to protect production data."
+    );
+    process.exit(2);
+  }
+
   console.log("Demo seeder starting...");
 
   const adminEmail = "admin@hope.local";
