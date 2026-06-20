@@ -53,6 +53,12 @@ export async function POST(req: Request) {
     expectedInitialScore: optionalNum(b.expectedInitialScore),
     refinementThreshold: optionalNum(b.refinementThreshold),
     maxRefinementAttempts: optionalNum(b.maxRefinementAttempts),
+    // Optional auto-trigger context — when the UI supplies tender
+    // complexity, the estimate reflects auto-triggered deep reasoning.
+    requirementCount: optionalNum(b.requirementCount),
+    mandatoryRequirementCount: optionalNum(b.mandatoryRequirementCount),
+    budget: typeof b.budget === "number" && Number.isFinite(b.budget) ? b.budget : undefined,
+    totalPages: optionalNum(b.totalPages),
   });
 
   return NextResponse.json(estimate);

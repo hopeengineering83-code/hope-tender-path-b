@@ -12,7 +12,13 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { __testing__ as flagInternals, isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../lib/engine/feature-flags";
+import {
+  __testing__ as flagInternals,
+  isDeepReasoningEnabled,
+  isToolUseGenerationEnabled,
+  shouldAutoTriggerDeepReasoning,
+  shouldUseDeepReasoning,
+} from "../lib/engine/feature-flags";
 import {
   parseComprehensionJson,
   formatComprehensionForPrompt,
@@ -58,6 +64,83 @@ describe("feature-flags — isDeepReasoningEnabled", () => {
     delete process.env.TENDER_TOOL_USE_GENERATION;
     assert.equal(isToolUseGenerationEnabled(), false);
     if (prev !== undefined) process.env.TENDER_TOOL_USE_GENERATION = prev;
+  });
+});
+
+describe("feature-flags — deep reasoning auto-trigger", () => {
+  const baseCtx = {
+    requirementCount: 3,
+    mandatoryRequirementCount: 1,
+    budget: null as number | null,
+    tenderTextLength: 5_000,
+    totalPages: 4 as number | null,
+  };
+
+  function withFlags(env: Record<string, string | undefined>, fn: () => void) {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of Object.keys(env)) {
+      saved[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      fn();
+    } finally {
+      for (const key of Object.keys(saved)) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    }
+  }
+
+  it("does not auto-trigger for a small, low-value tender", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: undefined }, () => {
+      assert.equal(shouldAutoTriggerDeepReasoning(baseCtx), false);
+    });
+  });
+
+  it("auto-triggers when requirement count is high (>= 15)", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: undefined }, () => {
+      assert.equal(shouldAutoTriggerDeepReasoning({ ...baseCtx, requirementCount: 15 }), true);
+    });
+  });
+
+  it("auto-triggers when mandatory/critical count is high (>= 8)", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: undefined }, () => {
+      assert.equal(shouldAutoTriggerDeepReasoning({ ...baseCtx, mandatoryRequirementCount: 8 }), true);
+    });
+  });
+
+  it("auto-triggers on a large budget (>= 1,000,000)", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: undefined }, () => {
+      assert.equal(shouldAutoTriggerDeepReasoning({ ...baseCtx, budget: 1_000_000 }), true);
+    });
+  });
+
+  it("auto-triggers on a long document (>= 60k chars or >= 30 pages)", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: undefined }, () => {
+      assert.equal(shouldAutoTriggerDeepReasoning({ ...baseCtx, tenderTextLength: 60_000 }), true);
+      assert.equal(shouldAutoTriggerDeepReasoning({ ...baseCtx, totalPages: 30 }), true);
+    });
+  });
+
+  it("respects the auto kill switch", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: "true" }, () => {
+      assert.equal(shouldAutoTriggerDeepReasoning({ ...baseCtx, requirementCount: 50, budget: 9_000_000 }), false);
+    });
+  });
+
+  it("shouldUseDeepReasoning is true when the explicit flag is on, regardless of complexity", () => {
+    withFlags({ TENDER_DEEP_REASONING: "true", TENDER_DEEP_REASONING_DISABLE_AUTO: "true" }, () => {
+      assert.equal(shouldUseDeepReasoning(baseCtx), true);
+    });
+  });
+
+  it("shouldUseDeepReasoning falls back to auto-trigger when the flag is off", () => {
+    withFlags({ TENDER_DEEP_REASONING: undefined, TENDER_DEEP_REASONING_DISABLE_AUTO: undefined }, () => {
+      assert.equal(shouldUseDeepReasoning(baseCtx), false);
+      assert.equal(shouldUseDeepReasoning({ ...baseCtx, requirementCount: 20 }), true);
+    });
   });
 });
 

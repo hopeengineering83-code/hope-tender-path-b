@@ -20,7 +20,7 @@
  * is at-most the estimate.
  */
 
-import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "./feature-flags";
+import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldAutoTriggerDeepReasoning } from "./feature-flags";
 
 export type DeepReasoningEstimate = {
   /** Whether deep reasoning will actually run given the current config. */
@@ -50,6 +50,19 @@ export type EstimateInput = {
   refinementThreshold?: number;
   /** Max critique→rewrite iterations from env (defaults to 1 on Tier 2). */
   maxRefinementAttempts?: number;
+  // ─── Optional auto-trigger context ──────────────────────────────────────
+  // When any of these are supplied, the estimate reflects whether deep
+  // reasoning would AUTO-trigger for this tender (complexity/value
+  // heuristics) even when TENDER_DEEP_REASONING is off. Omit them to keep
+  // the legacy flag-only behaviour.
+  /** Total extracted requirements for the tender. */
+  requirementCount?: number;
+  /** Requirements classified MANDATORY or CRITICAL. */
+  mandatoryRequirementCount?: number;
+  /** Tender budget / estimated value, or null. */
+  budget?: number | null;
+  /** Total detected tender pages, or null when unknown. */
+  totalPages?: number | null;
 };
 
 /**
@@ -97,6 +110,22 @@ function isClaudeKeyPresent(): boolean {
 
 export function estimateDeepReasoningCost(input: EstimateInput): DeepReasoningEstimate {
   const flagOn = isDeepReasoningEnabled();
+  // Auto-trigger only considered when caller supplies complexity context.
+  const hasAutoContext =
+    input.requirementCount !== undefined ||
+    input.mandatoryRequirementCount !== undefined ||
+    input.budget !== undefined ||
+    input.totalPages !== undefined;
+  const autoOn = hasAutoContext
+    ? shouldAutoTriggerDeepReasoning({
+        requirementCount: input.requirementCount ?? 0,
+        mandatoryRequirementCount: input.mandatoryRequirementCount ?? 0,
+        budget: input.budget ?? null,
+        tenderTextLength: input.tenderTextLength,
+        totalPages: input.totalPages ?? null,
+      })
+    : false;
+  const willRunGate = flagOn || autoOn;
   const aiOn = isAnyProviderKeyPresent();
   const toolUseGen = isToolUseGenerationEnabled() && isClaudeKeyPresent();
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
@@ -104,10 +133,12 @@ export function estimateDeepReasoningCost(input: EstimateInput): DeepReasoningEs
   const maxCallsParsed = maxCallsRaw ? Number(maxCallsRaw) : null;
   const maxCalls = maxCallsParsed && Number.isFinite(maxCallsParsed) && maxCallsParsed > 0 ? maxCallsParsed : null;
 
-  if (!flagOn) {
+  if (!willRunGate) {
     return {
       willRun: false,
-      blocker: "TENDER_DEEP_REASONING is not enabled",
+      blocker: hasAutoContext
+        ? "TENDER_DEEP_REASONING is not enabled and tender does not meet auto-trigger thresholds"
+        : "TENDER_DEEP_REASONING is not enabled",
       worstCaseCalls: 0,
       typicalCalls: 0,
       steps: [],

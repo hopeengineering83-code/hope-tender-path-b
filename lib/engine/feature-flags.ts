@@ -48,6 +48,68 @@ export function isDeepReasoningEnabled(): boolean {
 }
 
 /**
+ * Context used to decide whether a specific tender is complex/high-value
+ * enough to auto-trigger deep reasoning even when the global env flag is
+ * off. All fields are best-effort — missing data simply means the
+ * corresponding signal does not fire.
+ */
+export type DeepReasoningAutoContext = {
+  /** Total extracted requirements for the tender. */
+  requirementCount: number;
+  /** Requirements classified MANDATORY or CRITICAL. */
+  mandatoryRequirementCount: number;
+  /** Tender budget / estimated value in its own currency, or null. */
+  budget: number | null;
+  /** Length of the combined extracted tender text, in characters. */
+  tenderTextLength: number;
+  /** Total detected tender pages across all files, or null when unknown. */
+  totalPages: number | null;
+};
+
+/**
+ * Auto-trigger kill switch. When set truthy, deep reasoning only runs
+ * when the explicit TENDER_DEEP_REASONING flag is on — the complexity
+ * heuristics below are skipped. Lets cost-sensitive operators keep the
+ * legacy behaviour (manual flag only).
+ */
+export function isDeepReasoningAutoDisabled(): boolean {
+  return isTruthy(process.env.TENDER_DEEP_REASONING_DISABLE_AUTO);
+}
+
+/**
+ * Heuristic auto-trigger: returns true when a tender is complex or
+ * high-value enough that the extra deep-reasoning passes are worth their
+ * AI cost, even without the global flag. Any single strong signal fires:
+ *
+ *  - many requirements (>= 15) — a large compliance surface
+ *  - many mandatory/critical requirements (>= 8) — high disqualification risk
+ *  - large budget (>= 1,000,000) — high commercial stakes
+ *  - long document (>= 60k chars or >= 30 pages) — too much to reason about
+ *    reliably with regex-only comprehension
+ *
+ * Returns false when the auto kill switch is set.
+ */
+export function shouldAutoTriggerDeepReasoning(ctx: DeepReasoningAutoContext): boolean {
+  if (isDeepReasoningAutoDisabled()) return false;
+  const manyRequirements = ctx.requirementCount >= 15;
+  const manyMandatory = ctx.mandatoryRequirementCount >= 8;
+  const largeBudget = ctx.budget !== null && Number.isFinite(ctx.budget) && ctx.budget >= 1_000_000;
+  const longDocument =
+    ctx.tenderTextLength >= 60_000 ||
+    (ctx.totalPages !== null && Number.isFinite(ctx.totalPages) && ctx.totalPages >= 30);
+  return manyRequirements || manyMandatory || largeBudget || longDocument;
+}
+
+/**
+ * Combined decision used by the generator: deep reasoning runs when the
+ * explicit env flag is on OR the tender meets the auto-trigger heuristics.
+ * This is the function product code should call.
+ */
+export function shouldUseDeepReasoning(ctx: DeepReasoningAutoContext): boolean {
+  return isDeepReasoningEnabled() || shouldAutoTriggerDeepReasoning(ctx);
+}
+
+/**
  * Tool-use during proposal GENERATION (round 5). When ON AND
  * TENDER_DEEP_REASONING is ON AND the proposal generation mode is
  * "single", Claude is given access to `search_company_knowledge`,
