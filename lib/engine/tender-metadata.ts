@@ -28,12 +28,17 @@ import {
   canonicalizeCountry,
   isValidClientContact,
 } from "./metadata-validators";
-import { extractClientName } from "./tender-field-extractors";
+import { extractClientName, cutAtNextFieldLabel } from "./tender-field-extractors";
 
 export type TenderMetadataDraft = {
   title: string;
   reference: string | null;
   clientName: string | null;
+  procuringEntityName: string | null;
+  donorAgency: string | null;
+  implementingAgency: string | null;
+  submissionEmailSubject: string | null;
+  clientWebsite: string | null;
   // ─── new fields (returned but only mapped to DB when columns exist) ───
   clientContactName: string | null;
   clientContactTitle: string | null;
@@ -127,6 +132,57 @@ function inferClient(text: string): string | null {
   const result = extractClientName({ files: [{ fileName: "tender", extractedText: text }] });
   if (result.found && isValidClientName(result.value)) return result.value;
   return null;
+}
+
+// Donor / funding agency. CLAUDE.md requires distinguishing the funder from
+// the procuring entity. Matches explicit "funded by / financed by" labels and
+// direct mentions of well-known development donors.
+const KNOWN_DONORS = /\b(World Bank|African Development Bank|AfDB|Asian Development Bank|European Union|USAID|KfW|GIZ|UNDP|UNICEF|UNHCR|FCDO|DFID|SIDA|NORAD|DANIDA|JICA|Agence Française de Développement|AFD|IFAD|Global Fund|Islamic Development Bank|Gates Foundation|Pharo Foundation)\b/;
+function inferDonorAgency(text: string): string | null {
+  const labelled = firstMatch(text, [
+    /(?:funded|financed)\s+by\s*[:\-]?\s*([^\n\r.]{3,80})/i,
+    /(?:with\s+(?:funding|financing)\s+from|grant\s+from|loan\s+from|donor\s+agency|financing\s+agency)\s*[:\-]?\s*([^\n\r.]{3,80})/i,
+  ]);
+  if (labelled) {
+    const v = cutAtNextFieldLabel(labelled).split(/[,;]/)[0].trim();
+    if (v.length >= 3) return v.slice(0, 120);
+  }
+  const m = KNOWN_DONORS.exec(text);
+  return m ? m[1] : null;
+}
+
+// Project owner / implementing agency, when different from the procuring entity.
+function inferImplementingAgency(text: string): string | null {
+  // Exclude periods from the capture so the value stops at the end of the
+  // sentence rather than bleeding into the next one on a flattened page.
+  const v = firstMatch(text, [
+    /(?:implementing\s+agency|implementing\s+partner|project\s+(?:owner|management\s+unit|implementation\s+unit)|executing\s+agency)\s*[:\-]?\s*([^\n\r.]{3,100})/i,
+  ]);
+  if (!v) return null;
+  const cut = cutAtNextFieldLabel(v).split(/[,;]/)[0].trim();
+  return cut.length >= 3 && isValidClientName(cut) ? cut : null;
+}
+
+// Required email subject line for submissions ("subject line must read: …").
+function inferSubmissionEmailSubject(text: string): string | null {
+  const v = firstMatch(text, [
+    /(?:e-?mail\s+)?subject\s+line\s+(?:must|should|shall)\s+(?:read|be|state|contain)\s*[:\-]?\s*["']?([^\n\r"']{3,140})/i,
+    /(?:e-?mail\s+)?subject\s*(?:line)?\s*[:\-]\s*["']?([^\n\r"']{3,140})/i,
+  ]);
+  if (!v) return null;
+  const cut = v.split(/[.;]/)[0].trim();
+  return cut.length >= 3 ? cut.slice(0, 160) : null;
+}
+
+// Client / procurement portal website or link.
+function inferClientWebsite(text: string): string | null {
+  const v = firstMatch(text, [
+    /(?:website|web\s*site|portal|e-procurement\s+portal|online\s+portal|tender\s+portal)\s*(?:link|address|url)?\s*[:\-]?\s*((?:https?:\/\/|www\.)[^\s)\]]+)/i,
+  ]);
+  if (v) return v.replace(/[.,;]+$/, "").slice(0, 200);
+  // Bare URL anywhere as a weak fallback.
+  const bare = text.match(/\b(https?:\/\/[^\s)\]]+|www\.[a-z0-9.-]+\.[a-z]{2,}[^\s)\]]*)/i);
+  return bare ? bare[1].replace(/[.,;]+$/, "").slice(0, 200) : null;
 }
 
 function inferClientContactName(text: string): string | null {
@@ -456,6 +512,11 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       title: `[REVIEW NEEDED] ${baseFileName}`,
       reference: null,
       clientName: null,
+      procuringEntityName: null,
+      donorAgency: null,
+      implementingAgency: null,
+      submissionEmailSubject: null,
+      clientWebsite: null,
       clientContactName: null,
       clientContactTitle: null,
       clientContactEmail: null,
@@ -489,6 +550,12 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
   const title = inferTitle(text, fallbackFileName);
   const reference = inferReference(text);
   const clientName = inferClient(text);
+  // Extended client/entity fields (CLAUDE.md items 2-4, 15, 17). procuringEntityName
+  // mirrors the extracted procuring entity; the rest fill from explicit labels.
+  const donorAgency = inferDonorAgency(text);
+  const implementingAgency = inferImplementingAgency(text);
+  const submissionEmailSubject = inferSubmissionEmailSubject(text);
+  const clientWebsite = inferClientWebsite(text);
   const country = inferCountry(text);
   const category = inferCategory(text);
   const deadline = inferDeadline(text);
@@ -523,6 +590,13 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     title,
     reference,
     clientName,
+    // procuringEntityName mirrors clientName at upload time (inferClient
+    // extracts the procuring entity). AI Analyze may later refine/distinguish it.
+    procuringEntityName: clientName,
+    donorAgency,
+    implementingAgency,
+    submissionEmailSubject,
+    clientWebsite,
     clientContactName,
     clientContactTitle,
     clientContactEmail,

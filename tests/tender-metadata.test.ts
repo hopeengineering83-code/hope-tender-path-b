@@ -246,3 +246,40 @@ describe("inferTenderMetadata — flattened single-line pages", () => {
     assert.equal(m.deadline?.getDate(), 30);
   });
 });
+
+describe("inferTenderMetadata — extended client/entity fields", () => {
+  const EXTENDED = (
+    "REQUEST FOR PROPOSAL for consulting services under this assignment described here. ".repeat(3) +
+    "Procuring Entity: Nairobi Water and Sewerage Authority Donor: African Development Bank " +
+    "Implementing Agency: Project Management Unit Reference: RFP-2026-014 " +
+    "Proposals must be submitted by email no later than 30 March 2026. " +
+    "The email subject line must read: RFP-2026-014 Construction Supervision. " +
+    "Portal: https://eprocurement.nairobiwater.go.ke/rfp Background and scope follow in later sections."
+  );
+
+  it("mirrors the procuring entity into procuringEntityName", () => {
+    const m = inferTenderMetadata(EXTENDED, "rfp.pdf");
+    assert.equal(m.procuringEntityName, "Nairobi Water and Sewerage Authority");
+    assert.equal(m.clientName, "Nairobi Water and Sewerage Authority");
+  });
+
+  it("extracts the donor/funding agency distinctly from the procuring entity", () => {
+    const m = inferTenderMetadata(EXTENDED, "rfp.pdf");
+    assert.equal(m.donorAgency, "African Development Bank");
+  });
+
+  it("extracts the implementing agency without bleeding into the next field", () => {
+    const m = inferTenderMetadata(EXTENDED, "rfp.pdf");
+    assert.equal(m.implementingAgency, "Project Management Unit");
+  });
+
+  it("extracts the required email subject line", () => {
+    const m = inferTenderMetadata(EXTENDED, "rfp.pdf");
+    assert.equal(m.submissionEmailSubject, "RFP-2026-014 Construction Supervision");
+  });
+
+  it("extracts the client/procurement portal website", () => {
+    const m = inferTenderMetadata(EXTENDED, "rfp.pdf");
+    assert.equal(m.clientWebsite, "https://eprocurement.nairobiwater.go.ke/rfp");
+  });
+});
