@@ -23,3 +23,24 @@ test("explicit procuring entity label remains accepted on flattened one-line tex
   const metadata = inferTenderMetadata(text, "rfp.pdf");
   assert.equal(metadata.clientName, "Capital City Procurement Authority");
 });
+
+test("explicit donor implementing portal and email-subject labels are grounded while narrative mentions stay null", () => {
+  const text = `[Page 1]\nRequest for Proposals for Water Works\nReference No: RFP-2026-102\nProcuring Entity: Ministry of Water Procurement Directorate\nDonor Agency: World Bank Group\nImplementing Agency: National Water PMU\nTender Portal: https://procurement.example.gov/tenders\nEmail Subject: RFP-2026-102 Technical Proposal\nBackground: This country has worked with UNDP and AfDB on prior unrelated projects. Consultant website: https://consultant.example.com\n${"technical requirement ".repeat(80)}`;
+  const metadata = inferTenderMetadata(text, "rfp.pdf");
+  assert.equal(metadata.procuringEntityName, "Ministry of Water Procurement Directorate");
+  assert.equal(metadata.donorAgency, "World Bank Group");
+  assert.equal(metadata.implementingAgency, "National Water PMU");
+  assert.equal(metadata.clientWebsite, "https://procurement.example.gov/tenders");
+  assert.equal(metadata.submissionEmailSubject, "RFP-2026-102 Technical Proposal");
+  assert.equal(metadata.contactDetailsSource?.donorAgency?.page, 1);
+  assert.match(metadata.contactDetailsSource?.submissionEmailSubject?.quote ?? "", /Email Subject/i);
+});
+
+test("unlabelled donor names and first URLs are not persisted as tender metadata", () => {
+  const text = `[Page 2]\nRequest for Proposals for Advisory Services\nReference No: RFP-2026-103\nProcuring Entity: Roads Procurement Authority\nBackground narrative mentions World Bank, UNDP, and AfDB from earlier assignments. See consultant profile at https://consultant.example.com and archived project at https://archive.example.org.\nSubmit proposals by email.\n${"scope requirement ".repeat(80)}`;
+  const metadata = inferTenderMetadata(text, "rfp.pdf");
+  assert.equal(metadata.procuringEntityName, "Roads Procurement Authority");
+  assert.equal(metadata.donorAgency, null);
+  assert.equal(metadata.clientWebsite, null);
+  assert.equal(metadata.submissionEmailSubject, null);
+});
