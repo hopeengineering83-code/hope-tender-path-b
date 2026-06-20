@@ -1862,11 +1862,18 @@ export const CHUNK_DEADLINE_MARGIN_MS = 8_000;
 // failed → downstream consumers treated the analysis as "AI-unverified" and
 // the regex-fallback gate fired. A single, bounded retry-once recovers nearly
 // every transient failure without changing the deadline contract.
+// However, if ALL providers are rate-limited or exhausted, don't retry since
+// the cooldown period (60s) is much longer than CHUNK_RETRY_BACKOFF (1.5s).
 const CHUNK_RETRY_BACKOFF_MS = 1500;
 const TRANSIENT_CHUNK_ERROR_PATTERN = /429|rate.?limit|quota|tokens?\s+per\s+minute|timed?\s*out|timeout|aborted|malformed json|no json|json object|json parse|empty\s+response/i;
+const PROVIDER_EXHAUSTED_PATTERN = /AI_PROVIDERS_RATE_LIMITED|all.*provider.*exhausted|all.*provider.*in cooldown/i;
 export function isTransientChunkError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return TRANSIENT_CHUNK_ERROR_PATTERN.test(msg);
+}
+export function isProviderExhaustedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return PROVIDER_EXHAUSTED_PATTERN.test(msg);
 }
 async function analyzeOneChunkWithRetry(content: string, index: number, total: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
   try {
@@ -1874,6 +1881,11 @@ async function analyzeOneChunkWithRetry(content: string, index: number, total: n
   } catch (err) {
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
+    // Don't retry if all providers are exhausted/cooled down — waiting 1.5s won't help
+    if (isProviderExhaustedError(err)) {
+      console.warn(`[ai] chunk ${index + 1}/${total} hit provider exhaustion error (all in cooldown) — not retrying. Error: ${msg.slice(0, 200)}`);
+      throw err;
+    }
     console.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
     return await analyzeOneChunk(content, index, total, onProviderUsed);
