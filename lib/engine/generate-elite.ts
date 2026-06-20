@@ -1,6 +1,7 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
+import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { runDeepRefinement } from "./deep-reasoning-refiner";
@@ -93,13 +94,6 @@ const LIGHT_BLUE = "D9EAF7";
 // Tier-aware defaults:
 //   Tier 1  (Vercel Hobby  60s):  45s — 15s buffer for enrichers + DOCX
 //   Tier 2+ (Vercel Pro  300s): 220s — 80s buffer; accommodates 16K output
-// Override via AI_PROPOSAL_TIMEOUT_MS.
-const PROPOSAL_AI_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.AI_PROPOSAL_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
-  const tier = (process.env.ANTHROPIC_TIER || "").trim();
-  return tier === "1" ? 45_000 : 220_000;
-})();
 
 async function withProposalAiTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

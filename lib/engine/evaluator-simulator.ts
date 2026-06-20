@@ -9,6 +9,7 @@ import { safeParseJsonObject } from "../safe-json";
  */
 
 import { generateWithFallback } from "../ai";
+import { SIMULATION_TIMEOUT_MS } from "../timeout-config";
 
 const UNIVERSAL_EVALUATOR_RULES = `Universal evaluator rules:
 - Score like a real evaluation panel, not a friendly writing assistant.
@@ -431,11 +432,6 @@ function synthesizeRationale(score: number, verdict: SimulationResult["verdict"]
 // could exceed Vercel's function limit. This guard races the entire panel
 // against a timeout so the route can return a partial or null result rather
 // than a 504. Override via EVALUATOR_SIMULATION_TIMEOUT_MS.
-const SIMULATION_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.EVALUATOR_SIMULATION_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 300_000) return raw;
-  return 50_000;
-})();
 
 export async function simulateEvaluatorPanel(input: {
   tenderTitle: string;
