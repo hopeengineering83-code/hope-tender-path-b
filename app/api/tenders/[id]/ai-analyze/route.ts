@@ -583,6 +583,23 @@ async function handleStreamingAnalyze(
         let analysisJobId: string | null = null;
         let analysisMeta: AnalysisWithMeta | null = null;
 
+        const fileQualitySnapshotsForPreCheck = tenderRecord.files.map((f) => ({
+          totalPages: (f as any).totalPages ?? null,
+          extractedPages: (f as any).extractedPages ?? null,
+          ocrPages: (f as any).ocrPages ?? null,
+          failedPages: (f as any).failedPages ?? null,
+          corruptedPages: (f as any).corruptedPages ?? null,
+          extractionScore: (f as any).extractionScore ?? null,
+        }));
+        const extractionCorrupted = tenderRecord.files.some(f => f.extractedText && isExtractionCorrupted(f.extractedText));
+
+        if (extractionCorrupted) {
+          await prisma.tender.update({
+            where: { id },
+            data: { analysisExtractionStatus: "EXTRACTION_CORRUPTED_AI_SKIPPED" }
+          }).catch(() => {});
+        }
+
         if (isAIEnabled()) {
           const onChunkStart = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
             await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
@@ -716,8 +733,10 @@ async function handleStreamingAnalyze(
                       requirementType: req.requirementType, priority: req.priority,
                       exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
-                      sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
-                      sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
+                      sectionReference: req.sectionReference ?? null,
+                      sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
+                      sourcePageNumber: req.sourcePage ?? null,
+                      sourceExactQuote: req.sourceQuote ?? null,
                       sourceTenderFileId: (req.sourceFileToken && validTenderFileIds.has(req.sourceFileToken)) ? req.sourceFileToken : null,
                       sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethod,
                       sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
@@ -728,6 +747,7 @@ async function handleStreamingAnalyze(
                   where: { id },
                   data: {
                     analysisSummary: aiResult.summary,
+                    title: aiResult.tenderTitle || tenderRecord.title,
                     evaluationMethodology: aiResult.evaluationMethodology || null,
                     exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
                     exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
@@ -803,7 +823,8 @@ async function handleStreamingAnalyze(
               failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
               extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
             }));
-            const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+            const textSamples = tenderRecord.files.map(f => f.extractedText);
+            const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
             // When AI analysis was only partial (some chunks failed or the deadline
             // was reached before all chunks completed), cap the persisted status to
             // PARTIAL so downstream gates (Generate Docs, Export) cannot treat an
