@@ -217,3 +217,32 @@ Minimum Requirements:
     );
   });
 });
+
+describe("inferTenderMetadata — flattened single-line pages", () => {
+  // Mirrors how pdf2json / pdfjs flatten a page: all fields on one line with
+  // no newlines between them. The client-name and deadline extractors must
+  // not bleed past their values into the following fields.
+  const FLATTENED = (
+    "[Page 1] REQUEST FOR PROPOSAL Procuring Entity: Nairobi Water and Sewerage Authority " +
+    "Reference: RFP-2026-014 Project: Construction Supervision Services for Bulk Water Supply Country: Kenya. " +
+    "The procuring entity invites sealed proposals from qualified and experienced consulting firms for the " +
+    "supervision of construction works under this assignment described throughout this document. " +
+    "[Page 2] SUBMISSION INSTRUCTIONS Proposals must be submitted by email to tenders@nairobiwater.go.ke " +
+    "no later than 30 March 2026 at 15:00 East Africa Time. The email subject line must read RFP-2026-014. " +
+    "Contact person Eng. Jane Mwangi, Procurement Officer. Background and scope follow in later sections here. " +
+    "[Page 3] EVALUATION CRITERIA Technical proposal weight eighty percent and financial proposal weight twenty percent."
+  );
+
+  it("extracts a clean procuring-entity name (cut at the next field label)", () => {
+    const m = inferTenderMetadata(FLATTENED, "rfp.pdf");
+    assert.equal(m.clientName, "Nairobi Water and Sewerage Authority");
+  });
+
+  it("extracts a 'no later than <date>' deadline that earlier patterns miss", () => {
+    const m = inferTenderMetadata(FLATTENED, "rfp.pdf");
+    assert.ok(m.deadline !== null, "deadline should be parsed from 'no later than 30 March 2026'");
+    assert.equal(m.deadline?.getFullYear(), 2026);
+    assert.equal(m.deadline?.getMonth(), 2); // March
+    assert.equal(m.deadline?.getDate(), 30);
+  });
+});
