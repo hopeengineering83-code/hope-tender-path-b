@@ -82,6 +82,11 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
       setAutoRetryAt(null);
       return;
     }
+    if (!autoRetryEnabled) {
+      setAutoRetrySecondsLeft(null);
+      setAutoRetryAt(null);
+      return;
+    }
     autoRetryTimerRef.current = setTimeout(() => {
       autoRetryTimerRef.current = null;
       setAutoRetryAt(null);
@@ -141,7 +146,6 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
               const pct = event.totalChunks ? Math.round(20 + (event.chunk / event.totalChunks) * 55) : 50;
               setAnalyzeProgress(pct);
             } else if (event.phase === "analyzing_error") {
-              // Non-fatal chunk error in parallel mode
               console.warn("AI Analysis Chunk Error:", event.message);
             } else if (event.phase === "extracting") {
               setAnalyzePhase(event.message?.slice(0, 50) ?? "Extracting…");
@@ -162,14 +166,9 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
               if (event.fallback) {
                 streamedFallback = true;
                 setAnalyzeResult({
-                  ai: false,
-                  fallback: true,
-                  jobId: event.jobId ?? null,
-                  chunks: null,
-                  code: event.code ?? null,
-                  nextAction: event.nextAction ?? null,
-                  extractionWarnings: null,
-                  providerDiagnostics: event.providerDiagnostics ?? null,
+                  ai: false, fallback: true, jobId: event.jobId ?? null, chunks: null,
+                  code: event.code ?? null, nextAction: event.nextAction ?? null,
+                  extractionWarnings: null, providerDiagnostics: event.providerDiagnostics ?? null,
                   providerRetryAfterMs: typeof event.providerRetryAfterMs === "number" ? event.providerRetryAfterMs : null,
                   resumableJobId: event.resumableJobId ?? null,
                 });
@@ -184,16 +183,12 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
               } else if (event.resumableJobId) {
                 setContinueJobId(event.resumableJobId);
               }
-                setContinueJobId(null);
-              } else if (event.jobId) {
-                setContinueJobId(event.jobId);
-              }
               done = true;
             } else if (event.phase === "error") {
               setError(event.message ?? "Analysis failed");
               done = true;
             }
-          } catch { /* ignore */ }
+          } catch (e) { /* ignore */ }
         }
       }
 
