@@ -35,6 +35,7 @@ function chunk(status: string, provider: string | null = "Mistral"): ResolverChu
 function makeInput(overrides: Partial<DeriveAnalysisStateInput> = {}): DeriveAnalysisStateInput {
   return {
     job: null,
+    canonicalJob: null,
     chunks: [],
     legacyNotesAiAnalyzed: false,
     requirementsExtracted: 0,

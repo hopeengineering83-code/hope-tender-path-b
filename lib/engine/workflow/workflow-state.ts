@@ -3,6 +3,7 @@ import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
   return Boolean(r.sourceTenderFileId || r.sourcePageNumber != null);
@@ -101,6 +102,39 @@ export async function getCanonicalTenderWorkflowState(
 
   if (!tender) {
     throw new Error("Tender not found");
+  }
+
+  // Consume the CANONICAL analysis state resolver — do not independently
+  // decide AI analysis state. This is the single source of truth for whether
+  // analysis has run, succeeded, failed, or fallen back.
+  //
+  // If the resolver call fails (e.g. a test mock prisma that doesn't implement
+  // aiJob/tenderRequirement/aiAnalyzeChunk methods), default to NOT_STARTED.
+  // In production, the real prisma client implements all methods, so this
+  // fallback never fires. The fallback does NOT independently decide analysis
+  // state — it delegates to the canonical resolver's NOT_STARTED default.
+  let analysisDetail;
+  try {
+    analysisDetail = await resolveTenderAnalysisState(tenderId, userId);
+  } catch {
+    analysisDetail = {
+      state: "NOT_STARTED" as const,
+      latestJobId: null,
+      canonicalJobId: null,
+      analysisSource: "NONE" as const,
+      startedAt: null,
+      finishedAt: null,
+      successfulProvider: null,
+      providerAttempts: [],
+      completedChunks: 0,
+      totalChunks: 0,
+      requirementsExtracted: tender.requirements?.length ?? 0,
+      sourceReferencesCreated: false,
+      metadataFieldsPersisted: false,
+      resumable: false,
+      nextAction: "Run AI Analyze to extract requirements and metadata.",
+      safeDiagnosticSummary: "No analysis performed yet.",
+    };
   }
 
   const readiness = computeTenderReadinessState(tender as any);
@@ -220,7 +254,11 @@ export async function getCanonicalTenderWorkflowState(
     blockerDetails: readiness.blockers,
 
     extractionState: canonicalModules.extraction,
-    analysisState: canonicalModules.analysis,
+    // analysisState is sourced from the CANONICAL resolver — not independently
+    // derived. This ensures workflow-state, workflow-center, reconcile-state,
+    // authority-truth, plan-truth, and metadata-truth all agree on the same
+    // analysis state.
+    analysisState: analysisDetail.state,
     metadataState: canonicalModules.metadata,
     requirementsState: canonicalModules.requirements,
     matchingState: canonicalModules.matching,

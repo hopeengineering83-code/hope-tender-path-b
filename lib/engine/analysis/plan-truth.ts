@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus, SubmissionPlanStatus } from "../submission-plan";
-import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 
 export type PlanTruthStatus =
   | "NO_PLAN"
@@ -9,9 +9,18 @@ export type PlanTruthStatus =
   | "CANONICAL_APPROVED"
   | "STALE";
 
+/**
+ * Resolve the plan truth for a tender. Consumes the CANONICAL analysis
+ * state resolver — does not independently decide AI analysis state.
+ *
+ * @param prisma - Prisma client
+ * @param tenderId - Tender ID
+ * @param userId - Actor's user ID (for tenant isolation in the canonical resolver)
+ */
 export async function resolvePlanTruth(
   prisma: PrismaClient,
-  tenderId: string
+  tenderId: string,
+  userId: string
 ): Promise<{
   status: PlanTruthStatus;
   isVerified: boolean;
@@ -29,11 +38,14 @@ export async function resolvePlanTruth(
 
   if (!tender) throw new Error("Tender not found");
 
-  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId);
+  // Consume the CANONICAL analysis state — do not independently decide.
+  const analysisInfo = await resolveTenderAnalysisState(tenderId, userId);
   const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
   const status = deriveSubmissionPlanStatus(tender, plan);
 
   const isVerified = status === "CANONICAL_APPROVED";
+  // analysisTrusted is derived from the canonical state — only AI_SUCCEEDED
+  // and HUMAN_APPROVED_FALLBACK are trusted for plan verification.
   const analysisTrusted = analysisInfo.state === "AI_SUCCEEDED" || analysisInfo.state === "HUMAN_APPROVED_FALLBACK";
 
   let reason = "Plan status: " + status;

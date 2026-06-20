@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { runAuthorityReview, AuthorityReviewResult } from "../authority-review";
-import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
 
 export type AuthorityTruthStatus =
@@ -10,9 +10,18 @@ export type AuthorityTruthStatus =
   | "AUTHORITY_READY"
   | "BLOCKED";
 
+/**
+ * Resolve the authority truth for a tender. Consumes the CANONICAL analysis
+ * state resolver — does not independently decide AI analysis state.
+ *
+ * @param prisma - Prisma client
+ * @param tenderId - Tender ID
+ * @param userId - Actor's user ID (for tenant isolation in the canonical resolver)
+ */
 export async function resolveAuthorityTruth(
   prisma: PrismaClient,
-  tenderId: string
+  tenderId: string,
+  userId: string
 ): Promise<{
   status: AuthorityTruthStatus;
   score: number;
@@ -29,12 +38,15 @@ export async function resolveAuthorityTruth(
 
   if (!tender) throw new Error("Tender not found");
 
-  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId);
+  // Consume the CANONICAL analysis state — do not independently decide.
+  const analysisInfo = await resolveTenderAnalysisState(tenderId, userId);
   const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
   const planStatus = deriveSubmissionPlanStatus(tender, plan);
 
   const hasDocs = tender.generatedDocuments.length > 0;
   const planVerified = planStatus === "CANONICAL_APPROVED";
+  // analysisTrusted is derived from the canonical state — only AI_SUCCEEDED
+  // and HUMAN_APPROVED_FALLBACK are trusted for authority review.
   const analysisTrusted = analysisInfo.state === "AI_SUCCEEDED" || analysisInfo.state === "HUMAN_APPROVED_FALLBACK";
 
   if (!hasDocs && !planVerified) {

@@ -84,12 +84,21 @@ export interface ResolverChunkInput {
 }
 
 export interface DeriveAnalysisStateInput {
+  // The latest AiJob record (by createdAt). May be a failure that does NOT
+  // hide a prior promoted success — see `canonicalJob` below.
   job: ResolverJobInput | null;
+  // The latest PROMOTED AiJob record (promotedAt != null, supersededBy == null).
+  // This is the job whose results are currently "live" for export/generation.
+  // When the latest job is a non-promoted failure but this is a prior success,
+  // the state must reflect the prior success (AI_SUCCEEDED), NOT the latest
+  // failure. This enforces the rule: "A latest failed job must never hide a
+  // prior promoted AI success."
+  canonicalJob: ResolverJobInput | null;
   chunks: ResolverChunkInput[];
   // Legacy notes flag — true when Tender.notes records a prior AI analysis
-  // and there is no AiJob record.
+  // and there is no usable AiJob record.
   legacyNotesAiAnalyzed: boolean;
-  // Persisted artefact counts (queried from canonical tables)
+  // Persisted artefact counts (queried from canonical tables — never placeholder)
   requirementsExtracted: number;
   sourceReferencesCreated: boolean;
   metadataFieldsPersisted: boolean;
@@ -121,9 +130,16 @@ function parseStagedSource(stagedMergedResult: string | null): "PARTIAL_AI" | "F
 /**
  * PURE state derivation. Takes all gathered data and returns a single
  * TenderAnalysisStateDetail. No database access — fully unit-testable.
+ *
+ * Critical rule: A latest failed job must never hide a prior promoted AI
+ * success. When `job` (latest) is a non-promoted failure AND `canonicalJob`
+ * is a prior promoted success, the state reflects the prior success
+ * (AI_SUCCEEDED) with canonicalJobId pointing to the canonical job. The
+ * latestJobId still points to the latest job so the UI can show "a newer
+ * run failed, but your prior analysis is still valid."
  */
 export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): TenderAnalysisStateDetail {
-  const { job, chunks, legacyNotesAiAnalyzed, requirementsExtracted, sourceReferencesCreated, metadataFieldsPersisted } = input;
+  const { job, canonicalJob, chunks, legacyNotesAiAnalyzed, requirementsExtracted, sourceReferencesCreated, metadataFieldsPersisted } = input;
 
   // ─── No job: legacy notes or not started ───────────────────────────────
   if (!job) {
@@ -200,8 +216,43 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
   // ─── State machine ────────────────────────────────────────────────────
   let state: AnalysisState;
   let analysisSource: TenderAnalysisStateDetail["analysisSource"];
+  // The canonicalJobId is the promoted job whose results are "live".
+  // Defaults to the canonicalJob if present, otherwise the current job
+  // if it is promoted.
+  let canonicalJobId: string | null = canonicalJob?.promotedAt && !canonicalJob.supersededBy
+    ? canonicalJob.id
+    : (job.promotedAt ? job.id : null);
+  // The startedAt/finishedAt for the detail should reflect the canonical
+  // (promoted) job when one exists, so the UI shows the timestamps of the
+  // analysis that actually produced the current results.
+  let detailStartedAt = job.startedAt;
+  let detailFinishedAt = job.finishedAt;
 
-  if (job.supersededBy) {
+  // ─── Prior-promoted-success rule ──────────────────────────────────────
+  // If the latest job is a non-promoted failure (FAILED, not promoted, not
+  // superseded) BUT there is a prior promoted canonical job that is an AI
+  // success, the state must reflect the prior success — NOT the latest
+  // failure. The latest failure is surfaced via latestJobId +
+  // safeDiagnosticSummary, but it does NOT override the canonical state.
+  const latestIsNonPromotedFailure =
+    job.status === "FAILED" && !job.promotedAt && !job.supersededBy;
+  const canonicalIsPromotedSuccess =
+    canonicalJob &&
+    canonicalJob.promotedAt &&
+    !canonicalJob.supersededBy &&
+    (canonicalJob.status === "SUCCEEDED" || canonicalJob.status === "PARTIAL_SUCCESS");
+
+  if (canonicalIsPromotedSuccess && latestIsNonPromotedFailure) {
+    // The prior promoted success wins. Determine whether it was full or partial.
+    // We don't have the canonical job's chunks here (they were loaded for the
+    // latest job's contentHash), but the promoted status tells us it was
+    // trusted enough to promote — treat as AI_SUCCEEDED.
+    state = "AI_SUCCEEDED";
+    analysisSource = "AI";
+    canonicalJobId = canonicalJob!.id;
+    detailStartedAt = canonicalJob!.startedAt;
+    detailFinishedAt = canonicalJob!.finishedAt;
+  } else if (job.supersededBy) {
     state = "SUPERSEDED";
     analysisSource = "AI";
   } else if (job.status === "SUCCEEDED") {
@@ -246,7 +297,6 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     analysisSource = "NONE";
   }
 
-  const canonicalJobId = job.promotedAt ? job.id : null;
   const resumable =
     state === "PARTIAL_NEEDS_RESUME" ||
     state === "REGEX_FALLBACK_UNAPPROVED" ||
@@ -268,7 +318,10 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
 
   // ─── Safe diagnostic summary (no secrets, no raw errors) ─────────────────
   let safeDiagnosticSummary: string;
-  if (job.errorMessage && (state === "FAILED" || state === "REGEX_FALLBACK_UNAPPROVED")) {
+  if (canonicalIsPromotedSuccess && latestIsNonPromotedFailure) {
+    // Special case: latest failed but prior success is still canonical.
+    safeDiagnosticSummary = `Prior AI analysis (job ${canonicalJob!.id.slice(0, 8)}) remains valid. Latest run (job ${job.id.slice(0, 8)}) failed: ${redactSafe(job.errorMessage ?? "unknown error")}`;
+  } else if (job.errorMessage && (state === "FAILED" || state === "REGEX_FALLBACK_UNAPPROVED")) {
     safeDiagnosticSummary = `Last error: ${redactSafe(job.errorMessage)}`;
   } else {
     safeDiagnosticSummary = `Job status: ${job.status}. Chunks: ${succeededChunks} succeeded, ${failedChunks} failed, ${pendingChunks} pending.`;
@@ -279,8 +332,8 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     latestJobId: job.id,
     canonicalJobId,
     analysisSource,
-    startedAt: job.startedAt,
-    finishedAt: job.finishedAt,
+    startedAt: detailStartedAt,
+    finishedAt: detailFinishedAt,
     successfulProvider: succeededChunks > 0 ? successfulProvider : null,
     providerAttempts,
     completedChunks: succeededChunks,
@@ -298,6 +351,10 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
  * Resolve the canonical AI Analyze state for a tender.
  * Gathers raw data from the database and delegates all logic to the pure
  * `deriveAnalysisStateDetail`.
+ *
+ * Tenant isolation: both the latest job and the canonical (promoted) job
+ * are scoped by `userId` — a user from company A cannot see or resolve
+ * analysis state for company B's tender.
  */
 export async function resolveTenderAnalysisState(
   tenderId: string,
@@ -307,6 +364,32 @@ export async function resolveTenderAnalysisState(
   const latestJob = await prisma.aiJob.findFirst({
     where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE },
     orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      analysisInputHash: true,
+      stagedMergedResult: true,
+      promotedAt: true,
+      supersededBy: true,
+      startedAt: true,
+      finishedAt: true,
+      errorMessage: true,
+    },
+  });
+
+  // Load the latest PROMOTED job (the canonical "live" analysis). This is
+  // distinct from the latest job — the latest job may be a non-promoted
+  // failure, while the canonical promoted job is a prior success whose
+  // results are still valid for export/generation.
+  const canonicalJob = await prisma.aiJob.findFirst({
+    where: {
+      tenderId,
+      userId,
+      jobType: AI_ANALYZE_JOB_TYPE,
+      promotedAt: { not: null },
+      supersededBy: null,
+    },
+    orderBy: { promotedAt: "desc" },
     select: {
       id: true,
       status: true,
@@ -343,7 +426,8 @@ export async function resolveTenderAnalysisState(
 
   // When the job has no content hash there are no meaningful chunk rows to
   // attribute to it — querying with an empty hash would match foreign/corrupt
-  // rows, so we treat it as no chunks.
+  // rows, so we treat it as no chunks. (Rule: do not use empty-string
+  // contentHash fallback.)
   let chunks: ResolverChunkInput[] = [];
   if (latestJob?.analysisInputHash) {
     chunks = await prisma.aiAnalyzeChunk.findMany({
@@ -354,6 +438,7 @@ export async function resolveTenderAnalysisState(
 
   return deriveAnalysisStateDetail({
     job: latestJob,
+    canonicalJob,
     chunks,
     legacyNotesAiAnalyzed,
     requirementsExtracted,
