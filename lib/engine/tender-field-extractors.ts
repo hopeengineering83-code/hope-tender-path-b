@@ -1,3 +1,5 @@
+import { nonClientEntityLabelPattern } from "./metadata-validators";
+
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 //
 // When AI Analyze is unavailable (rate-limited, providers exhausted, malformed
@@ -395,7 +397,10 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
 // ─── 10. Client / procuring entity name ──────────────────────────────────────
 const CLIENT_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
   // Explicit label: "Procuring Entity: Ministry of Health"
-  { rx: /\b(?:name\s+of\s+)?(?:procuring\s+entity|procurement\s+entity|contracting\s+authority|client|employer|owner|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
+  // Only match procuring entity / client labels. Beneficiary / Employer / Owner are
+  // handled by separate extractors. This prevents non-client entities from becoming
+  // the official client/procuring entity.
+  { rx: /\b(?:name\s+of\s+)?(?:procuring\s+entity|procurement\s+entity|contracting\s+authority|client|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
   // "Issued by / Prepared by / Invitation by: <org>"
   { rx: /\b(?:issued|prepared|invitation)\s+by\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
   // "On behalf of: <org>"
@@ -407,7 +412,10 @@ const CLIENT_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }>
 // one line, so the `[^\n\r]` capture runs straight past the org name into the
 // next labelled field). Cutting the captured value at the first such label
 // recovers a clean organisation name instead of a contaminated run.
-const SECONDARY_FIELD_LABEL = /\s+(?:reference|ref\.?|procurement\s+(?:no|number|ref)|tender\s+(?:no|number|ref)|rfp|rfq|rfb|itb|project|programme|program|country|city|location|region|tel|telephone|phone|mobile|fax|e-?mail|email|website|web|date|closing|deadline|submission|delivery|address|contact|attention|attn|title|sector|budget|currency|duration|validity|issued|published|beneficiary|employer|owner|donor\s+agency|financing\s+agency|funded\s+by|financed\s+by|implementing\s+agency|implementing\s+partner|executing\s+agency|project\s+management\s+unit)\b\s*(?:no\.?|number)?\s*[:\-]/i;
+// The list includes all non-client entity labels (beneficiary, donor, etc.) to
+// ensure that flattened text like "Procuring Entity: Ministry Donor: Fund" is
+// cleanly cut at "Donor:".
+const SECONDARY_FIELD_LABEL = /\s+(?:reference|ref\.?|procurement\s+(?:no|number|ref)|tender\s+(?:no|number|ref)|rfp|rfq|rfb|itb|project|programme|program|country|city|location|region|tel|telephone|phone|mobile|fax|e-?mail|email|website|web|date|closing|deadline|submission|delivery|address|contact|attention|attn|title|sector|budget|currency|duration|validity|issued|published|beneficiary|employer|owner|donor(?:\s+agency)?|funder|financing\s+agency|funded\s+by|financed\s+by|funding\s+agency|grant\s+from|loan\s+from|implementing\s+agency|implementing\s+partner|executing\s+agency|project\s+management\s+(?:unit)?)\b\s*(?:no\.?|number)?\s*[:\-]/i;
 
 export function cutAtNextFieldLabel(value: string): string {
   const m = SECONDARY_FIELD_LABEL.exec(value);
@@ -428,6 +436,7 @@ function looksLikeOrgName(s: string): boolean {
 
 export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissing<string> {
   const cands: ExtractedField<string>[] = [];
+  const nonClientPattern = nonClientEntityLabelPattern();
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     if (text.length < SOURCE_MIN) continue;
@@ -439,7 +448,9 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
       // …) so a flattened single-line page doesn't bleed the next field into
       // the org name, then take up to the first comma (address often follows).
       const value = cutAtNextFieldLabel(raw).split(/[,;]/)[0].trim();
-      if (!looksLikeOrgName(value)) continue;
+      // Reject if the extracted value starts with a non-client entity label
+      // (e.g., "Beneficiary: XYZ" captured by a stray pattern).
+      if (!looksLikeOrgName(value) || nonClientPattern.test(value)) continue;
       cands.push({
         found: true,
         value: value.slice(0, 200),
@@ -455,7 +466,8 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
       const m2 = /^([A-Z][^\n\r]{5,100}(?:ministry|authority|agency|council|commission|department|institute|corporation|limited|ltd\.?|plc\.?|llc\.?|gmbh|s\.a\.|inc\.?)[^\n\r]{0,60})\s*$/im.exec(top);
       if (m2) {
         const value = m2[1].trim().replace(/\s+/g, " ");
-        if (looksLikeOrgName(value)) {
+        // Also check the letterhead fallback against non-client labels
+        if (looksLikeOrgName(value) && !nonClientPattern.test(value)) {
           cands.push({
             found: true,
             value: value.slice(0, 200),
