@@ -402,6 +402,18 @@ const CLIENT_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }>
   { rx: /\bon\s+behalf\s+of\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "MEDIUM" },
 ];
 
+// Secondary field labels that frequently follow the client/entity name on the
+// SAME physical line once a PDF is flattened (pdf2json / pdfjs join a page into
+// one line, so the `[^\n\r]` capture runs straight past the org name into the
+// next labelled field). Cutting the captured value at the first such label
+// recovers a clean organisation name instead of a contaminated run.
+const SECONDARY_FIELD_LABEL = /\s+(?:reference|ref\.?|procurement\s+(?:no|number|ref)|tender\s+(?:no|number|ref)|rfp|rfq|rfb|itb|project|programme|program|country|city|location|region|tel|telephone|phone|mobile|fax|e-?mail|email|website|web|date|closing|deadline|submission|delivery|address|contact|attention|attn|title|sector|budget|currency|duration|validity|issued|published)\b\s*(?:no\.?|number)?\s*[:\-]/i;
+
+export function cutAtNextFieldLabel(value: string): string {
+  const m = SECONDARY_FIELD_LABEL.exec(value);
+  return (m ? value.slice(0, m.index) : value).trim();
+}
+
 // Validate that a candidate looks like an organization name, not a sentence.
 function looksLikeOrgName(s: string): boolean {
   const t = s.trim();
@@ -423,7 +435,10 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
       const m = p.rx.exec(text);
       if (!m) continue;
       const raw = m[1].trim().replace(/\s+/g, " ");
-      const value = raw.split(/[,;]/)[0].trim(); // take up to first comma (address often follows)
+      // Cut at the first secondary field label (Reference:, Project:, Country:,
+      // …) so a flattened single-line page doesn't bleed the next field into
+      // the org name, then take up to the first comma (address often follows).
+      const value = cutAtNextFieldLabel(raw).split(/[,;]/)[0].trim();
       if (!looksLikeOrgName(value)) continue;
       cands.push({
         found: true,
