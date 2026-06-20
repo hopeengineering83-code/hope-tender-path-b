@@ -33,6 +33,7 @@ import {
   getOpenRouterAppName,
   classifyAiError,
 } from "../../../../../lib/ai-provider-health";
+import { PER_PROVIDER_TIMEOUT_MS, ANTHROPIC_TIMEOUT_MS } from "../../../../../lib/timeout-config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -47,13 +48,6 @@ export type ProviderTestResult = {
 };
 
 const TEST_PROMPT = "Reply with the single word: PING";
-const PER_PROVIDER_TIMEOUT_MS = 3_000;
-// Claude (Anthropic) cold-starts typically take 5–10s. Using the same 3s
-// timeout as fast providers always times out before a response arrives.
-// We give Claude a longer budget while keeping the overall route budget (30s)
-// safe: 7 × 3s + 1 × 10s = 31s at worst, which fits the maxDuration = 30s
-// limit when providers are run sequentially and most are not_configured.
-const ANTHROPIC_TIMEOUT_MS = 10_000;
 
 function safeError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");

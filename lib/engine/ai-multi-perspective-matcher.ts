@@ -6,6 +6,7 @@
  */
 
 import { generateWithFallback } from "../ai";
+import { REMATCH_TIMEOUT_MS } from "../timeout-config";
 import {
   capabilityOverlapScore,
   classifyUniversalTender,
@@ -15,11 +16,6 @@ import {
   type UniversalTenderProfile,
 } from "./universal-tender-taxonomy";
 
-const REMATCH_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.REMATCH_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 120_000) return raw;
-  return 40_000;
-})();
 
 async function withRematchTimeout<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

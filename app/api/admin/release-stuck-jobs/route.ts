@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { failStuckJobs, findStuckJobs } from "../../../../lib/ai-jobs";
+import { logAction } from "../../../../lib/audit";
+import { rateLimit } from "../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +46,29 @@ export async function POST() {
   try { actor = await requireUser(); } catch { return unauthorizedResponse(); }
   if (actor.role !== "ADMIN") return forbiddenResponse();
 
+  // Rate limit admin stuck-job recovery: max 10 per minute per admin
+  const rl = rateLimit(`admin-release-stuck-jobs:${actor.id}`, { limit: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limited. Too many recovery requests. Please wait.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
+
   const result = await failStuckJobs({ limit: 100 });
+
+  // Audit log the recovery operation
+  await logAction({
+    userId: actor.id,
+    action: "ADMIN_RELEASE_STUCK_JOBS",
+    description: `Released ${result.recovered} stuck job(s) via admin recovery`,
+    metadata: {
+      jobsRecovered: result.recovered,
+      jobIds: result.ids.slice(0, 10), // Log first 10 IDs
+      totalIds: result.ids.length,
+    },
+  }).catch((err) => console.warn("Failed to log stuck-job recovery action:", err));
+
   return NextResponse.json({
     recovered: result.recovered,
     ids: result.ids,

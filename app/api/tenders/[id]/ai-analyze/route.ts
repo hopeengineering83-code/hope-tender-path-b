@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
+import { invalidateDashboardCache } from "../../../../../lib/dashboard-cache";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
@@ -507,15 +508,43 @@ async function handleStreamingAnalyze(
 
         let analysisJob: { id: string } | null = null;
         try {
-          analysisJob = await prisma.aiJob.create({
-            data: {
-              tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
-              input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
-            },
-            select: { id: true },
-          });
+          // Use a transaction to prevent race condition where two concurrent requests
+          // both create AI jobs at the same time. Check for any active/recent RUNNING job
+          // inside the transaction to ensure serial execution of job creation.
+          analysisJob = await prisma.$transaction(async (tx) => {
+            // Within the transaction, check if a RUNNING job already exists for this tender/user/jobType
+            const existingRunning = await tx.aiJob.findFirst({
+              where: {
+                tenderId: id,
+                userId,
+                jobType: "AI_ANALYZE",
+                status: "RUNNING",
+                startedAt: { gt: new Date(Date.now() - 60_000) }, // Started in last 60s
+              },
+              select: { id: true },
+            });
+
+            // If a RUNNING job was started in the last 60s, return it instead of creating a duplicate
+            if (existingRunning) {
+              console.warn(`[ai-analyze/stream] Concurrent AI job detected (${existingRunning.id}), reusing existing job instead of creating duplicate`);
+              return existingRunning;
+            }
+
+            // No concurrent job exists, safe to create a new one
+            return await tx.aiJob.create({
+              data: {
+                tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
+                input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
+              },
+              select: { id: true },
+            });
+          }, { isolationLevel: "Serializable", timeout: 5_000 });
         } catch (jobCreateErr) {
-          console.warn("[ai-analyze/stream] Failed to create AiJob record:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
+          if (jobCreateErr instanceof Error && jobCreateErr.message.includes("timeout")) {
+            console.warn("[ai-analyze/stream] Transaction timeout creating AI job — another request may be running analysis concurrently. Continuing with analysis...");
+          } else {
+            console.warn("[ai-analyze/stream] Failed to create AiJob record:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
+          }
         }
 
         await Promise.race([
@@ -839,6 +868,9 @@ async function handleStreamingAnalyze(
                 where: { id: streamFallbackJobId },
                 data: { status: "FAILED", finishedAt: new Date() },
               }).catch(() => {});
+
+              // Invalidate dashboard cache when job fails
+              invalidateDashboardCache(id);
             }
             analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics, nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
           }
@@ -862,6 +894,9 @@ async function handleStreamingAnalyze(
               where: { id: analysisJob.id },
               data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
             }).catch(() => {});
+
+            // Invalidate dashboard cache when job fails
+            invalidateDashboardCache(id);
           }
           analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot(), nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
         }
@@ -1402,6 +1437,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             },
           }).catch(() => {});
 
+          // Invalidate dashboard cache when AI job completes
+          invalidateDashboardCache(id);
+
           // Persist per-chunk step records for observability
           const chunkResults = buildChunkStepResults(aiMeta);
           for (let stepIdx = 0; stepIdx < chunkResults.length; stepIdx++) {
@@ -1519,6 +1557,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             }),
           },
         }).catch(() => {});
+
+        // Invalidate dashboard cache when job completes via fallback
+        invalidateDashboardCache(id);
       }
     }
 

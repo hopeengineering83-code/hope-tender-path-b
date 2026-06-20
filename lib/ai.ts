@@ -2,15 +2,11 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
 import { protectPrompt } from "./ai-trust-boundary";
+import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
-// Per-call timeout for Gemini. Vercel function limit is 60s; leaving ~30s for
-// fallback providers requires Gemini to abort no later than ~25-28s.
-const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) > 0
-  ? Number(process.env.GEMINI_TIMEOUT_MS)
-  : 28_000;
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
   .map((m) => m.trim())
@@ -724,7 +720,7 @@ async function generateWithOpenAI(
   const model = modelOverride || process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), (model.includes("o1") || model.includes("o3")) ? 90_000 : 20_000);
+  const timeoutId = setTimeout(() => controller.abort(), (model.includes("o1") || model.includes("o3")) ? O1_O3_TIMEOUT_MS : OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -810,7 +806,6 @@ export function isTogetherEnabled() {
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each
 // provider must time out well before the function is killed, leaving room
 // to try the next provider in the fallback chain.
-const DEEPSEEK_DEFAULT_TIMEOUT_MS = 20_000;
 async function generateWithDeepSeek(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
@@ -910,7 +905,6 @@ export function isOpenRouterEnabled() {
 // they share one implementation. Mirrors generateWithDeepSeek's safety: hard
 // timeout, key redaction in any surfaced text, null (not throw) on transient
 // errors so the chain can fall through to the next provider / deterministic.
-const OPENAI_COMPAT_DEFAULT_TIMEOUT_MS = 20_000;
 
 function getMistralModelForUseCase(useCase: AiUseCase = "proposal"): string {
   if (useCase === "extraction") return getMistralAnalysisModel();
@@ -1868,11 +1862,18 @@ export const CHUNK_DEADLINE_MARGIN_MS = 8_000;
 // failed → downstream consumers treated the analysis as "AI-unverified" and
 // the regex-fallback gate fired. A single, bounded retry-once recovers nearly
 // every transient failure without changing the deadline contract.
+// However, if ALL providers are rate-limited or exhausted, don't retry since
+// the cooldown period (60s) is much longer than CHUNK_RETRY_BACKOFF (1.5s).
 const CHUNK_RETRY_BACKOFF_MS = 1500;
 const TRANSIENT_CHUNK_ERROR_PATTERN = /429|rate.?limit|quota|tokens?\s+per\s+minute|timed?\s*out|timeout|aborted|malformed json|no json|json object|json parse|empty\s+response/i;
+const PROVIDER_EXHAUSTED_PATTERN = /AI_PROVIDERS_RATE_LIMITED|all.*provider.*exhausted|all.*provider.*in cooldown/i;
 export function isTransientChunkError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return TRANSIENT_CHUNK_ERROR_PATTERN.test(msg);
+}
+export function isProviderExhaustedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return PROVIDER_EXHAUSTED_PATTERN.test(msg);
 }
 async function analyzeOneChunkWithRetry(content: string, index: number, total: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
   try {
@@ -1880,6 +1881,11 @@ async function analyzeOneChunkWithRetry(content: string, index: number, total: n
   } catch (err) {
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
+    // Don't retry if all providers are exhausted/cooled down — waiting 1.5s won't help
+    if (isProviderExhaustedError(err)) {
+      console.warn(`[ai] chunk ${index + 1}/${total} hit provider exhaustion error (all in cooldown) — not retrying. Error: ${msg.slice(0, 200)}`);
+      throw err;
+    }
     console.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
     return await analyzeOneChunk(content, index, total, onProviderUsed);
@@ -2165,11 +2171,6 @@ const REFINEMENT_MAX_INPUT_CHARS = 80_000;
 // Default 25s (env-overridable) gives Tier 2 enough room for a single
 // refinement on a 30K-char proposal while leaving budget for the rest
 // of the pipeline (section calls, auto-rematch, post-passes).
-const REFINEMENT_CALL_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.REFINEMENT_CALL_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 120_000) return raw;
-  return 25_000;
-})();
 
 async function withRefinementTimeout<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -3689,11 +3690,6 @@ import {
 // staying well inside the 50s in-pipeline budget that callers
 // (generate-elite.ts, ai-proposal/route.ts) wrap around the whole
 // generation. Override with PROPOSAL_SECTION_TIMEOUT_MS for higher tiers.
-const PROPOSAL_SECTION_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.PROPOSAL_SECTION_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
-  return 30_000;
-})();
 
 interface SectionResult {
   id: ProposalSectionId;

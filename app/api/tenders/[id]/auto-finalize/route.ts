@@ -18,6 +18,7 @@ import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/docume
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { validateDocumentQuality } from "../../../../../lib/engine/document-quality-validator";
+import { POLISH_TIMEOUT_MS } from "../../../../../lib/timeout-config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -76,8 +77,6 @@ function cleanLine(line: string, technical: boolean): string {
   return out;
 }
 
-// Per-document AI polish timeout — 18s leaves headroom for 3 docs within maxDuration=60s.
-const POLISH_TIMEOUT_MS = 18_000;
 
 async function polishWithAI(text: string, technical: boolean): Promise<string> {
   const prompt = `Rewrite this tender document content to be client-ready, factual, concise, and professional. Remove AI/meta traces and placeholders.${technical ? " Remove pricing/commercial/financial wording from technical envelope content. If a sentence mixes technical content with financial phrasing, keep the technical substance but remove the financial reference. Do not delete entire sections unless they are purely financial." : ""}\n\nCONTENT:\n${text.slice(0, 12000)}`;

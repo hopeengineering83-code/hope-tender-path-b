@@ -51,7 +51,7 @@ describe("admin provider-chain ping budget", () => {
 
   it("keeps provider pings within the route budget", () => {
     assert.match(route, /export const maxDuration = 30/);
-    assert.match(route, /const PER_PROVIDER_TIMEOUT_MS = 3_000/);
+    assert.match(route, /from.*timeout-config.*import.*PER_PROVIDER_TIMEOUT_MS|import.*PER_PROVIDER_TIMEOUT_MS.*from.*timeout-config/);
   });
 
   it("does not ping every provider when one provider is requested", () => {

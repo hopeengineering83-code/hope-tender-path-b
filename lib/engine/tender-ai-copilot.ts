@@ -1,13 +1,6 @@
 import { generateWithFallback } from "../ai";
 import { buildEvidencePromptBlock, verifyEvidenceIds, type EvidenceGraph, type EvidenceNode } from "../evidence-graph";
-
-// Per-call wall-clock cap so a hung AI provider doesn't block the route's
-// maxDuration=60s window. Override via COPILOT_TIMEOUT_MS env var.
-const COPILOT_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.COPILOT_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 120_000) return raw;
-  return 45_000;
-})();
+import { COPILOT_TIMEOUT_MS } from "../timeout-config";
 
 async function withCopilotTimeout<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

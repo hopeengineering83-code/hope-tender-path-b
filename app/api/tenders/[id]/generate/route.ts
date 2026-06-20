@@ -19,7 +19,8 @@ import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
-import { isValidClientName, containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
+import { isValidClientName, containsMetadataPlaceholder, isClientNameContaminated, clientNameContaminationReason } from "../../../../../lib/engine/metadata-validators";
+import { validateTenderBeforeGeneration, validateTenderBeforeExport } from "../../../../../lib/engine/pre-generation-validation";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
@@ -329,6 +330,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "EDIT_TENDER_METADATA",
       diagnosticId: `metadata-contaminated-${id}`,
     }, { status: 422 });
+  }
+
+  // ── Pre-generation validation gate ───────────────────────────────────────
+  // Check for placeholder data, client name contamination, and source
+  // traceability issues. This is the comprehensive pre-generation check that
+  // blocks if critical metadata is missing, placeholder, or contaminated.
+  const preGenValidation = await validateTenderBeforeGeneration({
+    ...tender,
+    clientNameSourcePage: tender.clientNameSourcePage as number | null,
+    clientNameSourceQuote: tender.clientNameSourceQuote as string | null,
+  });
+  if (!preGenValidation.valid) {
+    return NextResponse.json({
+      errorCode: "METADATA_VALIDATION_FAILED",
+      error: "Generation blocked: critical metadata is missing, contains placeholders, or is contaminated.",
+      blockers: preGenValidation.blockers,
+      warnings: preGenValidation.warnings,
+      nextAction: "EDIT_TENDER_METADATA",
+      diagnosticId: `metadata-validation-failed-${id}`,
+    }, { status: 422 });
+  }
+  if (preGenValidation.warnings.length > 0) {
+    console.warn(`[generate] tender=${id} has metadata warnings: ${preGenValidation.warnings.join("; ")}`);
   }
 
   // ── Partial AI analysis gate ─────────────────────────────────────────────

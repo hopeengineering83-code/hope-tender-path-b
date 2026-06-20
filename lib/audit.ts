@@ -121,7 +121,12 @@ export type AuditAction =
   | "SETTINGS_UPDATED"
   // Metadata field override — user marks a field NOT_APPLICABLE, USER_CONFIRMED,
   // USER_EDITED, or IGNORED_WITH_REASON via the metadata completion panel.
-  | "TENDER_METADATA_OVERRIDE";
+  | "TENDER_METADATA_OVERRIDE"
+  // Admin maintenance/recovery operations from the Recovery Command Center
+  // and admin maintenance routes.
+  | "ADMIN_RELEASE_STUCK_JOBS"
+  | "ADMIN_REPAIR_EXECUTED"
+  | "VALIDATE_DOCUMENTS";
 
 export async function logAction(opts: {
   userId?: string;

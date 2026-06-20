@@ -499,21 +499,37 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
 
-  // Warn when the tender deadline has already passed — exporting after
-  // deadline does not make sense operationally and may indicate the wrong
-  // tender is open.
+  // Advisory when the tender deadline has already passed — warn the user but
+  // allow export/submission in case a deadline extension was granted or the
+  // evaluator accepts late submissions. This is a HIGH-severity advisory, not
+  // a hard blocker.
   if (tender.deadline) {
     const now = new Date();
     const deadlineDate = tender.deadline instanceof Date ? tender.deadline : new Date(tender.deadline);
     if (!Number.isNaN(deadlineDate.getTime()) && deadlineDate < now) {
       const daysAgo = Math.round((now.getTime() - deadlineDate.getTime()) / (1000 * 60 * 60 * 24));
-      advisoryWarnings.push({
-        category: "DEADLINE_PASSED",
-        severity: "HIGH" as const,
-        title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Exporting after deadline has no practical use unless an extension was granted.`,
-        recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting.",
-      });
+      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
     }
+  }
+
+  // ── Source traceability for client details ───────────────────────────────
+  // Per CLAUDE.md: "Source page and source quote/snippet for every extracted
+  // client field." If client was extracted but source is missing, warn for export.
+  const clientSourceMissing: string[] = [];
+  if (tender.clientName && !isOverridden("clientName")) {
+    const clientSourcePage = (tender as { clientNameSourcePage?: number | null }).clientNameSourcePage;
+    const clientSourceQuote = (tender as { clientNameSourceQuote?: string | null }).clientNameSourceQuote;
+    if (!clientSourcePage || !clientSourceQuote) {
+      clientSourceMissing.push("client name");
+    }
+  }
+  if (clientSourceMissing.length > 0) {
+    advisoryWarnings.push({
+      category: "CLIENT_DETAILS_SOURCE_MISSING",
+      severity: "MEDIUM" as const,
+      title: `Source page/quote missing for extracted ${clientSourceMissing.join(", ")}. Cannot trace back to original tender document if questions arise.`,
+      recommendedAction: "Manually verify the extracted client name matches the tender document. Re-run AI Analyze if source attribution is needed.",
+    });
   }
 
   // ── Evaluation criteria advisory warning ─────────────────────────────────

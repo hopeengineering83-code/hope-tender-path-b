@@ -196,6 +196,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // and no exactFileName is set). Try a heuristic derived draft from keywords.
     let isDerivedDraft = plan.warnings.some((w: string) => w.includes("derived draft"));
 
+    // Guard: even if plan is empty and no requirements exist, ensure we never
+    // return a 200 response with 0 planned files. This is a gate violation per
+    // CLAUDE.md: "The app does not build an empty submission plan when requirements
+    // exist." and per the Build Plan gate: "the plan may under-score sections".
+    if (plannedFiles.length === 0 && !hasExplicitFiles && tender.requirements.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        errorCode: "BUILD_PLAN_EMPTY_NO_REQUIREMENTS",
+        error: "Cannot build submission plan: no requirements exist and no explicit file names are set. Run AI Analyze first or manually add requirements.",
+        blockers: ["No requirements extracted", "No explicit file names configured"],
+        nextAction: "RERUN_AI_ANALYZE",
+      }, { status: 422 });
+    }
+
     if (plannedFiles.length === 0 && tender.requirements.length > 0) {
       // Gate: if ALL requirements are non-MANDATORY (SCORED/INFORMATIONAL) and no
       // exactFileName is set, we cannot reliably auto-build a plan — require the
