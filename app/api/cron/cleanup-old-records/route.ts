@@ -28,10 +28,21 @@ export async function GET(req: NextRequest) {
       where: { createdAt: { lt: ninetyDaysAgo } },
     });
 
+    // Permanently purge soft-deleted TenderFile records older than 30 days.
+    // Files soft-deleted via ui-triggered deletion or api purge requests are
+    // retained for 30 days to allow recovery if user action was accidental.
+    // After 30 days, the files are permanently deleted to free storage.
+    const deletedTenderFiles = await prisma.tenderFile.deleteMany({
+      where: {
+        deletedAt: { not: null, lt: thirtyDaysAgo },
+      },
+    });
+
     return NextResponse.json({
       deleted: {
         aiJobs: deletedAiJobs.count,
         copilotMessages: deletedCopilotMessages.count,
+        tenderFiles: deletedTenderFiles.count,
       },
     });
   } catch (error) {
