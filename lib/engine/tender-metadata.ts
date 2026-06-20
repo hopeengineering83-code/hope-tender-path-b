@@ -119,8 +119,8 @@ function inferReference(text: string): string | null {
 
 function inferClient(text: string): string | null {
   const rawMatch = firstMatch(text, [
-    /(?:name\s+of\s+procuring\s+entity|client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
-    /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]\s*([^\n\r]{3,120})/i,
+    /\b(?:name\s+of\s+procuring\s+entity|procuring\s+entity|procurement\s+entity|contracting\s+authority|issuing\s+authority|purchaser|client)\s*[:\-]\s*([^\n\r]{3,120})/i,
+    /(?:issued\s+by|invitation\s+by)\s*[:\-]\s*([^\n\r]{3,120})/i,
   ]);
   // Flattened single-line pages (pdf2json/pdfjs) bleed the next labelled field
   // into the capture; cut at the first secondary field label and the first
@@ -136,7 +136,7 @@ function inferClient(text: string): string | null {
   const orgHeader = firstMatch(top, [
     /^([A-Z][^\n\r]{5,100}(?:ministry|authority|agency|council|commission|department|institute|corporation|limited|ltd\.?|plc\.?|llc\.?|gmbh|s\.a\.|inc\.?)[^\n\r]{0,60})\s*$/im,
   ]);
-  if (orgHeader && isValidClientName(orgHeader)) return orgHeader;
+  if (orgHeader && !/^(?:beneficiary|employer|owner|donor\s+agency|financing\s+agency|implementing\s+agency|executing\s+agency)\s*:/i.test(orgHeader) && isValidClientName(orgHeader)) return orgHeader;
 
   return null;
 }

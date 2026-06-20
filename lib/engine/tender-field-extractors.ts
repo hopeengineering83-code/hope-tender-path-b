@@ -407,7 +407,7 @@ const CLIENT_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }>
 // one line, so the `[^\n\r]` capture runs straight past the org name into the
 // next labelled field). Cutting the captured value at the first such label
 // recovers a clean organisation name instead of a contaminated run.
-const SECONDARY_FIELD_LABEL = /\s+(?:reference|ref\.?|procurement\s+(?:no|number|ref)|tender\s+(?:no|number|ref)|rfp|rfq|rfb|itb|project|programme|program|country|city|location|region|tel|telephone|phone|mobile|fax|e-?mail|email|website|web|date|closing|deadline|submission|delivery|address|contact|attention|attn|title|sector|budget|currency|duration|validity|issued|published)\b\s*(?:no\.?|number)?\s*[:\-]/i;
+const SECONDARY_FIELD_LABEL = /\s+(?:reference|ref\.?|procurement\s+(?:no|number|ref)|tender\s+(?:no|number|ref)|rfp|rfq|rfb|itb|project|programme|program|country|city|location|region|tel|telephone|phone|mobile|fax|e-?mail|email|website|web|date|closing|deadline|submission|delivery|address|contact|attention|attn|title|sector|budget|currency|duration|validity|issued|published|beneficiary|employer|owner|donor\s+agency|financing\s+agency|funded\s+by|financed\s+by|implementing\s+agency|implementing\s+partner|executing\s+agency|project\s+management\s+unit)\b\s*(?:no\.?|number)?\s*[:\-]/i;
 
 export function cutAtNextFieldLabel(value: string): string {
   const m = SECONDARY_FIELD_LABEL.exec(value);
