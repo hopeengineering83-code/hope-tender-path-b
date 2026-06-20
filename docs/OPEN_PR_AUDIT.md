@@ -6,7 +6,9 @@ meaningful change is catalogued below with a disposition: **EXTRACTED**
 phase), **REJECTED** (unsafe — must not merge), or **SUPERSEDED**
 (covered elsewhere).
 
-Last reviewed: 2026-06-20.
+Last reviewed: 2026-06-20 (re-reviewed after #798 appeared).
+
+Complete open-PR set at review time: **#792, #793, #794, #795, #796, #797, #798**.
 
 ---
 
@@ -99,6 +101,39 @@ change is rejected.
 
 ---
 
+## PR #798 — 8 P0 critical gaps from production-readiness audit
+Branch: `claude/fix-p0-critical-gaps`
+
+**This is a self-contained, high-value, well-tested PR (47 tests). It is NOT
+folded into #797 — it is a different concern (security/DB/observability) and
+should be reviewed and merged on its own merits.** Every item below is SAFE
+and important; none should be lost.
+
+| Item | Disposition |
+|------|-------------|
+| **SEC-001** `reclassify-documents` — remove unscoped `?? findFirst({id})` cross-tenant fallback | ✅ KEEP (own PR) — critical security |
+| **SEC-002** `repair-metadata` — remove unscoped fallback (auth scoping) | ✅ KEEP — **complementary** to #795 Fix B (data scoping); no conflict, different lines |
+| **SEC-003** `deduplicate-documents` — add `userId` filter (was none) | ✅ KEEP — critical security |
+| **DB-001** `demo-seed.ts` production guard (`NODE_ENV` + `DEMO_SEED_ALLOWED`, exit 2) | ✅ KEEP — prevents prod data wipe |
+| **DB-002/003/PERF-002** additive FK-index migration (`Tender.userId`, `GeneratedDocument.tenderId`, 5×`AuditLog`, `Session.userId`, compliance/export) + `@@index` directives | ✅ KEEP — additive, `IF NOT EXISTS`, idempotent |
+| **AI-001** `redactMessage` covers all 8 provider key prefixes (sk-ant-, sk-or-, sk-, gsk_, dsk-, AIza, AQ, Bearer, authorization) | ✅ KEEP — secret-leak fix; **strengthens** #797's redaction |
+| **OBS-002** `instrumentation.ts` — global `unhandledRejection`/`uncaughtException` capture via `reportError()` | ✅ KEEP — additive, browser-guarded |
+| **DOC-001** `neon-switch-checklist.md` — correct dangerous `db push` → `migrate deploy`; SubmissionPlanState risk | ✅ KEEP — docs |
+| **DOC-007** `.env.example` — document 9 security-critical env vars | ✅ KEEP — docs |
+| 9 remaining P0 gaps (AI-002, PERF-001/003, OBS-001/003/004, DOC-002, DB-005, SEC-005) | ⏳ TRACKED in #798 description for follow-up PRs |
+
+**Recommendation: review and merge #798 on its own.** It does not overlap
+the AI-Analyze engine work; the only adjacency (repair-metadata) is
+complementary. **No `.github/workflows/*` touched** (unlike #792/#796) —
+this PR is clean.
+
+> ⚠️ Coordination note: #798 adds an additive migration
+> `20260620120000_add_missing_fk_indexes`. Phase 3b of #797 will add its own
+> additive Tender-pointer migration. Both are additive and independent;
+> whichever merges first, the other rebases cleanly.
+
+---
+
 ## Summary of dispositions
 
 - **#795**: complete (corrected) — keep open for review.
@@ -106,6 +141,9 @@ change is rejected.
 - **#792**: do not merge; safe progress code extracted, UI concepts deferred to Phase 3b, defects rejected.
 - **#794**: do not merge; needs a separate hardened OCR/ODT task.
 - **#796**: close as superseded; safe traceability code extracted into PR #797.
+- **#797**: keep open (canonical engine foundation, draft until Phase 3b).
+- **#798**: keep open — **review/merge on its own** (critical security/DB/obs fixes, fully tested, no overlap).
 
-**Nothing important is lost:** every safe item is either extracted now or
-explicitly tracked as deferred above.
+**Nothing important is lost:** every safe item is either extracted now,
+explicitly tracked as deferred, or — for #798 — preserved as its own
+complete PR with this catalogue pointing to it.
