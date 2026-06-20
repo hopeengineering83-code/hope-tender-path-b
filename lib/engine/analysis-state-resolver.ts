@@ -28,7 +28,8 @@ export type AnalysisState =
   | "REGEX_FALLBACK_UNAPPROVED" // All providers exhausted, regex fallback drafted, needs approval
   | "HUMAN_APPROVED_FALLBACK"  // Regex fallback approved (promoted) with mandatory note
   | "FAILED"                   // All chunks failed, no fallback, no recovery
-  | "SUPERSEDED";              // Older analysis replaced by newer job
+  | "SUPERSEDED"               // Older analysis replaced by newer job
+  | "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED"; // Sections found but no structured requirements extracted
 
 export type SafeProviderFailureCategory =
   | "RATE_LIMITED"
@@ -57,6 +58,8 @@ export interface TenderAnalysisStateDetail {
   completedChunks: number;
   totalChunks: number;
   requirementsExtracted: number;
+  // Count of requirements persisted in the database (for workflow display)
+  requirementsPersisted?: number;
   sourceReferencesCreated: boolean;
   metadataFieldsPersisted: boolean;
   resumable: boolean;
@@ -91,8 +94,12 @@ export interface DeriveAnalysisStateInput {
   legacyNotesAiAnalyzed: boolean;
   // Persisted artefact counts (queried from canonical tables)
   requirementsExtracted: number;
+  requirementsPersisted?: number;
   sourceReferencesCreated: boolean;
   metadataFieldsPersisted: boolean;
+  // True when tender files contain detected sections (submission/evaluation/required docs)
+  // but no structured requirements were extracted.
+  sectionsDetectedButNoRequirements?: boolean;
 }
 
 /** Redact API keys and obvious secrets from a free-text error for safe UI display. */
@@ -123,7 +130,7 @@ function parseStagedSource(stagedMergedResult: string | null): "PARTIAL_AI" | "F
  * TenderAnalysisStateDetail. No database access — fully unit-testable.
  */
 export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): TenderAnalysisStateDetail {
-  const { job, chunks, legacyNotesAiAnalyzed, requirementsExtracted, sourceReferencesCreated, metadataFieldsPersisted } = input;
+  const { job, chunks, legacyNotesAiAnalyzed, requirementsExtracted, requirementsPersisted, sourceReferencesCreated, metadataFieldsPersisted, sectionsDetectedButNoRequirements } = input;
 
   // ─── No job: legacy notes or not started ───────────────────────────────
   if (!job) {
@@ -207,8 +214,14 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
   } else if (job.status === "SUCCEEDED") {
     // SUCCEEDED with no chunk rows is a valid single-shot success (0 === 0).
     if (totalChunks === 0 || succeededChunks === totalChunks) {
-      state = "AI_SUCCEEDED";
-      analysisSource = "AI";
+      // Check if sections were detected but no requirements extracted — block generation.
+      if (sectionsDetectedButNoRequirements && requirementsExtracted === 0) {
+        state = "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED";
+        analysisSource = "AI";
+      } else {
+        state = "AI_SUCCEEDED";
+        analysisSource = "AI";
+      }
     } else {
       state = "PARTIAL_NEEDS_RESUME";
       analysisSource = "AI";
@@ -264,6 +277,8 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     HUMAN_APPROVED_FALLBACK: "Fallback analysis approved. Proceed with caution (lower confidence).",
     FAILED: "Analysis failed. Check provider status and retry, or proceed with manual entry.",
     SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
+    SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED:
+      "Tender sections detected but no structured requirements found. Retry AI extraction or manually add requirements.",
   };
 
   // ─── Safe diagnostic summary (no secrets, no raw errors) ─────────────────
@@ -286,6 +301,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     completedChunks: succeededChunks,
     totalChunks,
     requirementsExtracted,
+    requirementsPersisted,
     sourceReferencesCreated,
     metadataFieldsPersisted,
     resumable,
@@ -298,14 +314,17 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
  * Resolve the canonical AI Analyze state for a tender.
  * Gathers raw data from the database and delegates all logic to the pure
  * `deriveAnalysisStateDetail`.
+ *
+ * NOTE: This is the unified resolver that replaces both #797 (pure)
+ * and #802 (modular). It uses #802's DB signature but #797's richer state logic.
  */
 export async function resolveTenderAnalysisState(
-  tenderId: string,
-  userId: string
+  prismaClient: typeof prisma,
+  tenderId: string
 ): Promise<TenderAnalysisStateDetail> {
-  // Load the latest AI_ANALYZE job for this tender/user (no relations needed).
-  const latestJob = await prisma.aiJob.findFirst({
-    where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE },
+  // Load the latest AI_ANALYZE job for this tender.
+  const latestJob = await prismaClient.aiJob.findFirst({
+    where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -320,34 +339,58 @@ export async function resolveTenderAnalysisState(
     },
   });
 
-  // Gather persisted artefact counts that gates/UI need regardless of job.
-  const [requirementsExtracted, sourceReferencesCreated, tender] = await Promise.all([
-    prisma.tenderRequirement.count({ where: { tenderId } }),
-    prisma.tenderRequirement
+  // Gather persisted artefact counts + tender metadata in parallel.
+  const [requirementsPersisted, sourceReferencesCreated, tender] = await Promise.all([
+    prismaClient.tenderRequirement.count({ where: { tenderId } }),
+    prismaClient.tenderRequirement
       .count({ where: { tenderId, sourceExactQuote: { not: null } } })
       .then((n) => n > 0),
-    prisma.tender.findUnique({
+    prismaClient.tender.findUnique({
       where: { id: tenderId },
-      select: { notes: true, clientName: true, deadline: true, submissionMethod: true },
+      include: { files: true },
     }),
   ]);
 
-  // Metadata is considered persisted when the critical fields are populated.
+  // Metadata is considered persisted when critical fields are populated.
   const metadataFieldsPersisted = Boolean(
-    tender?.clientName && (tender?.deadline || tender?.submissionMethod)
+    (tender?.clientName || tender?.procuringEntityName) && (tender?.deadline || tender?.submissionMethod)
   );
 
   // Legacy notes-based analysis only matters when there is no job record.
   const legacyNotesAiAnalyzed =
     !latestJob && Boolean(tender?.notes && /analysis\s+source.*ai/i.test(tender.notes));
 
+  // Detect if tender files have section markers (submission/evaluation/required docs)
+  // but no requirements were extracted — a case that should block generation.
+  let sectionsDetectedButNoRequirements = false;
+  if (tender?.files) {
+    for (const file of tender.files) {
+      try {
+        const pageStatus = JSON.parse(file.pageStatusJson || "[]");
+        if (Array.isArray(pageStatus)) {
+          if (
+            pageStatus.some(
+              (p: any) =>
+                p.hasSubmissionInstructions || p.hasEvaluationCriteria || p.hasRequiredDocuments
+            )
+          ) {
+            sectionsDetectedButNoRequirements = true;
+            break;
+          }
+        }
+      } catch {
+        // Malformed JSON — skip
+      }
+    }
+  }
+
   // When the job has no content hash there are no meaningful chunk rows to
   // attribute to it — querying with an empty hash would match foreign/corrupt
   // rows, so we treat it as no chunks.
   let chunks: ResolverChunkInput[] = [];
   if (latestJob?.analysisInputHash) {
-    chunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { tenderId, userId, contentHash: latestJob.analysisInputHash },
+    chunks = await prismaClient.aiAnalyzeChunk.findMany({
+      where: { tenderId, contentHash: latestJob.analysisInputHash },
       select: { status: true, provider: true },
     });
   }
@@ -356,9 +399,11 @@ export async function resolveTenderAnalysisState(
     job: latestJob,
     chunks,
     legacyNotesAiAnalyzed,
-    requirementsExtracted,
+    requirementsExtracted: requirementsPersisted,
+    requirementsPersisted,
     sourceReferencesCreated,
     metadataFieldsPersisted,
+    sectionsDetectedButNoRequirements,
   });
 }
 
@@ -374,7 +419,12 @@ export function canExportWithAnalysisState(state: AnalysisState): boolean {
  * Check if analysis can be resumed or retried.
  */
 export function canResumeAnalysis(state: AnalysisState): boolean {
-  return state === "PARTIAL_NEEDS_RESUME" || state === "REGEX_FALLBACK_UNAPPROVED" || state === "FAILED";
+  return (
+    state === "PARTIAL_NEEDS_RESUME" ||
+    state === "REGEX_FALLBACK_UNAPPROVED" ||
+    state === "FAILED" ||
+    state === "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED"
+  );
 }
 
 /**
@@ -391,6 +441,7 @@ export function analysisStateLabel(state: AnalysisState): string {
     HUMAN_APPROVED_FALLBACK: "Fallback (Approved)",
     FAILED: "Failed",
     SUPERSEDED: "Superseded",
+    SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED: "Sections Detected (No Requirements)",
   };
   return labels[state];
 }

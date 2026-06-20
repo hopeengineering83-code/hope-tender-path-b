@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { runAuthorityReview, AuthorityReviewResult } from "../authority-review";
-import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
 
 export type AuthorityTruthStatus =

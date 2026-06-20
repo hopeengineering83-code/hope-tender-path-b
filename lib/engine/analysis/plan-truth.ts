@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus, SubmissionPlanStatus } from "../submission-plan";
-import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 
 export type PlanTruthStatus =
   | "NO_PLAN"
