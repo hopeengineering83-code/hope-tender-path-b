@@ -249,6 +249,60 @@ describe("Recovery Command Center — nextAction code coverage", () => {
   });
 });
 
+// ─── 1c. PrimaryNextAction union parity — every Execute target is dispatchable ─
+//
+// The "▶ Execute" button dispatches `data.primaryNextAction`, whose value is
+// constrained by the `PrimaryNextAction` union in the lifecycle orchestrator.
+// KNOWN_NEXT_ACTIONS (above) is hand-maintained, so a NEW PrimaryNextAction
+// added to the orchestrator could ship a dead/404 Execute button without ever
+// failing CI. This block derives the set directly from the orchestrator source
+// so the registry can never silently drift behind it — locking CLAUDE.md
+// priority #1 ("Fix Recovery Command Center Execute 404") permanently.
+
+function extractPrimaryNextActionUnion(): string[] {
+  const src = readFileSync(
+    resolve(process.cwd(), "lib/engine/tender-lifecycle-orchestrator.ts"),
+    "utf8",
+  );
+  const match = src.match(/export type PrimaryNextAction =([\s\S]*?);/);
+  assert.ok(match, "PrimaryNextAction union must exist in the orchestrator");
+  const members = Array.from(match![1].matchAll(/"([A-Z_]+)"/g)).map((m) => m[1]);
+  assert.ok(members.length > 0, "PrimaryNextAction union must have members");
+  return members;
+}
+
+describe("Recovery Command Center — PrimaryNextAction union parity", () => {
+  const primaryActions = extractPrimaryNextActionUnion();
+
+  it("every PrimaryNextAction the orchestrator can emit resolves in the registry", () => {
+    const missing = primaryActions.filter((a) => !getRecoveryCommandActionSpec(a));
+    assert.deepEqual(
+      missing,
+      [],
+      `These PrimaryNextAction values have no registry entry and would render a dead "Action not available yet" Execute button: ${missing.join(", ")}`,
+    );
+  });
+
+  it("every api/custom-api PrimaryNextAction target points at an existing route (no 404)", () => {
+    for (const action of primaryActions) {
+      const spec = getRecoveryCommandActionSpec(action)!;
+      const isApiPath = spec.kind === "api" || (spec.kind === "custom" && spec.path?.startsWith("/api/"));
+      if (!isApiPath) continue;
+      const file = routeFileForApiPath(spec.path!);
+      assert.ok(existsSync(file), `${action} Execute would 404 — missing API route ${file}`);
+    }
+  });
+
+  it("every download PrimaryNextAction target points at an existing route (no 404)", () => {
+    for (const action of primaryActions) {
+      const spec = getRecoveryCommandActionSpec(action)!;
+      if (spec.kind !== "download" || !spec.path?.startsWith("/api/")) continue;
+      const file = routeFileForApiPath(spec.path);
+      assert.ok(existsSync(file), `${action} download would 404 — missing API route ${file}`);
+    }
+  });
+});
+
 // ─── 2. link-vault-evidence route: safety gates unchanged ─────────────────────
 
 // The POST handler only marks a document READY_FOR_EXPORT when:
