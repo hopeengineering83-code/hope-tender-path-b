@@ -40,4 +40,22 @@ describe("persistent AI route guard", () => {
     expectContains(middleware, /AI request guard is unavailable[\s\S]*status: 503/, "middleware must fail closed without SESSION_SECRET");
     expectContains(guard, /AI request guard is unavailable[\s\S]*status: 503/, "proxy must fail closed without SESSION_SECRET");
   });
+
+  it("propagates the rewrite target via a request header (not query-only)", () => {
+    // Regression: after a middleware rewrite to an API route, the destination
+    // handler's req.url reflects the ORIGINAL request URL (without our
+    // ?target= query) in the Node runtime, so the guard read null and
+    // returned "Invalid guarded route target". The target must travel as a
+    // request header, which always propagates.
+    expectContains(
+      middleware,
+      /requestHeaders\.set\("x-hope-guard-target", originalTarget\)/,
+      "middleware must set the target as a request header before rewriting",
+    );
+    expectContains(
+      guard,
+      /req\.headers\.get\("x-hope-guard-target"\)\s*\?\?\s*currentUrl\.searchParams\.get\("target"\)/,
+      "guard must read the target from the header first, falling back to the query param",
+    );
+  });
 });

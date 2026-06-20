@@ -66,6 +66,14 @@ export async function middleware(req: NextRequest) {
     guardUrl.search = "";
     guardUrl.searchParams.set("target", originalTarget);
 
+    // Also pass the target as a request header. After a middleware rewrite to
+    // an API route, the destination handler's `req.url` reflects the ORIGINAL
+    // request URL (without our `?target=` query) in the Node runtime — so the
+    // query param alone is not reliably readable downstream. Request headers,
+    // by contrast, always propagate via `request: { headers }`. The rate-guard
+    // reads the header first and falls back to the query param.
+    requestHeaders.set("x-hope-guard-target", originalTarget);
+
     return withSecurityHeaders(NextResponse.rewrite(guardUrl, { request: { headers: requestHeaders } }));
   }
 

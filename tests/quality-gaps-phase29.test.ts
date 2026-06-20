@@ -17,6 +17,11 @@ const readinessSource = readFileSync(
   "utf-8",
 );
 
+const exportReadinessSource = readFileSync(
+  path.join(process.cwd(), "lib/engine/export-readiness.ts"),
+  "utf-8",
+);
+
 const diagnosticSource = readFileSync(
   path.join(process.cwd(), "app/api/tenders/[id]/pipeline-diagnostic/route.ts"),
   "utf-8",
@@ -71,17 +76,40 @@ describe("final-submission-readiness — analysis extraction status blockers", (
 // ── 4. final-submission-readiness — deadline-in-the-past advisory ─────────────
 
 describe("final-submission-readiness — deadline-passed advisory", () => {
-  it("checks tender.deadline for past-deadline condition", () => {
+  // The deadline-passed check is owned by export-readiness.ts, which emits
+  // DEADLINE_PASSED as a HIGH advisory (not a hard blocker). It flows into
+  // final-submission-readiness via readiness.advisoryWarnings.
+  it("export-readiness checks tender.deadline for past-deadline condition", () => {
     assert.ok(
-      readinessSource.includes("DEADLINE_PASSED"),
-      "readiness must push DEADLINE_PASSED blocker when deadline has passed",
+      exportReadinessSource.includes("DEADLINE_PASSED"),
+      "export-readiness must emit DEADLINE_PASSED when the deadline has passed",
     );
   });
 
-  it("computes daysAgo from deadline date", () => {
+  it("export-readiness computes daysAgo from deadline date", () => {
     assert.ok(
-      readinessSource.includes("daysAgo"),
-      "readiness DEADLINE_PASSED blocker must include daysAgo count",
+      exportReadinessSource.includes("daysAgo"),
+      "export-readiness DEADLINE_PASSED advisory must include daysAgo count",
+    );
+  });
+
+  it("export-readiness emits DEADLINE_PASSED as an advisory, not a hard blocker", () => {
+    const idx = exportReadinessSource.indexOf('"DEADLINE_PASSED"');
+    assert.ok(idx !== -1, "DEADLINE_PASSED must exist in export-readiness");
+    const before = exportReadinessSource.slice(Math.max(0, idx - 200), idx);
+    assert.ok(
+      before.includes("advisoryWarnings.push"),
+      "DEADLINE_PASSED must be pushed to advisoryWarnings, not blockers",
+    );
+  });
+
+  it("final-submission-readiness does NOT re-add DEADLINE_PASSED as a hard blocker", () => {
+    // Regression guard: a duplicate push to tenderLevelBlockers here caused
+    // DEADLINE_PASSED to appear in both the advisory list and the hard
+    // blocker list, wrongly blocking export after a passed deadline.
+    assert.ok(
+      !readinessSource.includes('category: "DEADLINE_PASSED"'),
+      "final-submission-readiness must not push its own DEADLINE_PASSED blocker",
     );
   });
 });

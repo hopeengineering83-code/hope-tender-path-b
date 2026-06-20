@@ -159,6 +159,10 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         requiredDocPages: perPage?.requiredDocumentPages.length ?? null,
         clientDetailPages: perPage?.clientDetailPages.length ?? null,
         characterCount: quality.characterCount,
+        // Average characters per extracted page — the clearest "low text
+        // density" signal (CLAUDE.md item 7). Null when the page count is
+        // unknown (e.g. DOCX whole-document detection).
+        averageCharsPerPage: quality.averageCharsPerPage,
         ocrUsed: (file.ocrPages != null && file.ocrPages > 0) || file.ocrModel != null,
         // Page number lists for CLAUDE.md "failed pages list" and "low-confidence pages list"
         failedPageNums: perPage?.failedPages ?? [],
@@ -294,6 +298,15 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       <span>
                         Chars extracted:{" "}
                         <span className="font-medium text-slate-700">{file.characterCount.toLocaleString()}</span>
+                      </span>
+                    )}
+                    {file.averageCharsPerPage !== null && (
+                      <span>
+                        Text density:{" "}
+                        <span className={`font-medium ${file.averageCharsPerPage < 300 ? "text-amber-700" : "text-slate-700"}`}>
+                          {file.averageCharsPerPage.toLocaleString()} chars/page
+                          {file.averageCharsPerPage < 300 ? " (low)" : ""}
+                        </span>
                       </span>
                     )}
                   </div>

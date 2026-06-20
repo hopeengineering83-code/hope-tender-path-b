@@ -55,7 +55,11 @@ function responseHeaders(upstream: Response): Headers {
 
 export async function POST(req: Request) {
   const currentUrl = new URL(req.url);
-  const rawTarget = currentUrl.searchParams.get("target");
+  // Prefer the header set by middleware: after a rewrite to this API route,
+  // `req.url` can reflect the original request URL (without our `?target=`
+  // query) in the Node runtime, so the header is the reliable source. Fall
+  // back to the query param for safety / older callers.
+  const rawTarget = req.headers.get("x-hope-guard-target") ?? currentUrl.searchParams.get("target");
   if (!rawTarget || rawTarget.length > 2_000) {
     return NextResponse.json({ error: "Invalid guarded route target" }, { status: 400 });
   }

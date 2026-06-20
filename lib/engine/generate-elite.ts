@@ -2,7 +2,7 @@ import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Pac
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
-import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "./feature-flags";
+import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldUseDeepReasoning } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
@@ -925,7 +925,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     where: { id: tenderId, userId },
     include: {
       requirements: true,
-      files: { select: { originalFileName: true, extractedText: true } },
+      files: { select: { originalFileName: true, extractedText: true, totalPages: true } },
       expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
       projectMatches: { where: { isSelected: true }, include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
       complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
@@ -1061,8 +1061,35 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // line at the end of generation. Empty when the flag is off.
   const deepTelemetry = new DeepReasoningTelemetry();
 
+  // Deep reasoning runs when the explicit env flag is on OR when this
+  // tender is complex/high-value enough to auto-trigger it (see
+  // shouldUseDeepReasoning). Computed once and reused at every
+  // deep-reasoning call site in this function so the decision is stable
+  // across comprehension, alignment, and refinement.
+  const mandatoryRequirementCount = tender.requirements.filter(
+    (r) => r.priority === "MANDATORY" || r.priority === "CRITICAL",
+  ).length;
+  const deepReasoningTotalPages = tender.files.reduce(
+    (sum, f) => sum + (f.totalPages ?? 0),
+    0,
+  );
+  const useDeepReasoning = shouldUseDeepReasoning({
+    requirementCount: tender.requirements.length,
+    mandatoryRequirementCount,
+    budget: tender.budget ?? null,
+    tenderTextLength: tenderText.length,
+    totalPages: deepReasoningTotalPages > 0 ? deepReasoningTotalPages : null,
+  });
+  if (useDeepReasoning && !isDeepReasoningEnabled()) {
+    console.info(
+      `[generate-elite] Deep reasoning auto-triggered for tender ${tenderId}: ` +
+        `${tender.requirements.length} requirement(s), ${mandatoryRequirementCount} mandatory/critical, ` +
+        `budget=${tender.budget ?? "n/a"}, textLen=${tenderText.length}, pages=${deepReasoningTotalPages || "unknown"}.`,
+    );
+  }
+
   let deepComprehension: DeepTenderComprehension | null = null;
-  if (isDeepReasoningEnabled()) {
+  if (useDeepReasoning) {
     try {
       deepComprehension = await deepTelemetry.track("comprehension", () => extractDeepTenderComprehension(tenderText));
       if (deepComprehension) {
@@ -1364,7 +1391,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // Claude reads criterion-anchored rationales BEFORE writing.
       // Falls back silently to legacy lexical match when alignment is
       // unavailable. See lib/engine/semantic-match-aligner.ts.
-      if (isDeepReasoningEnabled() && deepComprehension && deepComprehension.criteria.length > 0) {
+      if (useDeepReasoning && deepComprehension && deepComprehension.criteria.length > 0) {
         try {
           const expertCandidates: AlignmentCandidate[] = (experts as ExpertRecord[]).slice(0, 6).map((e, idx) => ({
             // ExpertRecord (lib/engine/benchmark-tables.ts) has no `id` field;
@@ -1499,7 +1526,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // tool-use without the rest of the deep pipeline yields
       // marginal value.
       const enableToolUseGeneration =
-        isDeepReasoningEnabled() &&
+        useDeepReasoning &&
         isToolUseGenerationEnabled() &&
         !useParallel;
       const aiToolUse = enableToolUseGeneration
@@ -2721,7 +2748,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // deep path didn't apply (flag off, AI unavailable, or deep
   // refiner returned null).
   if (
-    isDeepReasoningEnabled() &&
+    useDeepReasoning &&
     !REFINEMENT_DISABLED &&
     qualityScore.total < QUALITY_REFINEMENT_THRESHOLD &&
     qualityScore.weakAxes.length > 0 &&
