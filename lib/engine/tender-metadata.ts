@@ -28,7 +28,7 @@ import {
   canonicalizeCountry,
   isValidClientContact,
 } from "./metadata-validators";
-import { cutAtNextFieldLabel } from "./tender-field-extractors";
+import { extractClientName } from "./tender-field-extractors";
 
 export type TenderMetadataDraft = {
   title: string;
@@ -118,26 +118,14 @@ function inferReference(text: string): string | null {
 }
 
 function inferClient(text: string): string | null {
-  const rawMatch = firstMatch(text, [
-    /(?:name\s+of\s+procuring\s+entity|client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
-    /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]\s*([^\n\r]{3,120})/i,
-  ]);
-  // Flattened single-line pages (pdf2json/pdfjs) bleed the next labelled field
-  // into the capture; cut at the first secondary field label and the first
-  // comma (address often follows) to recover a clean organisation name.
-  const raw = rawMatch ? cutAtNextFieldLabel(rawMatch).split(/[,;]/)[0].trim() : null;
-  if (raw && isValidClientName(raw)) return raw;
-
-  // Fallback: look for a standalone organization-name header near the top
-  // of the document (e.g. a letterhead line like "Federal Ministry of Water\n").
-  // The org keyword may appear anywhere in the line (prefix, middle, or suffix).
-  // Only inspect the first 3 000 characters to avoid body-text false positives.
-  const top = text.slice(0, 3000);
-  const orgHeader = firstMatch(top, [
-    /^([A-Z][^\n\r]{5,100}(?:ministry|authority|agency|council|commission|department|institute|corporation|limited|ltd\.?|plc\.?|llc\.?|gmbh|s\.a\.|inc\.?)[^\n\r]{0,60})\s*$/im,
-  ]);
-  if (orgHeader && isValidClientName(orgHeader)) return orgHeader;
-
+  // Delegate to the canonical client/procuring-entity extractor so the pattern
+  // set, field-label trimming (cutAtNextFieldLabel), and letterhead-header
+  // fallback live in ONE place. This function and extractClientName previously
+  // had separate copies of the same logic, so the same flattened-page bug had
+  // to be fixed in both. The stricter canonical validator (isValidClientName)
+  // is applied on top to preserve this upload-time path's behaviour.
+  const result = extractClientName({ files: [{ fileName: "tender", extractedText: text }] });
+  if (result.found && isValidClientName(result.value)) return result.value;
   return null;
 }
 
