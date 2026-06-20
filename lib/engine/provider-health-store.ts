@@ -127,6 +127,31 @@ export async function markProviderFailed(
  * Record a provider success in both in-memory state and DB.
  * Resets consecutiveFailures and clears cooldown.
  */
+export async function markProviderAnalysisOK(provider: string): Promise<void> {
+  const { recordProviderAnalysisSuccess } = await import("@/lib/ai-provider-health");
+  recordProviderAnalysisSuccess(provider as any);
+  try {
+    await prisma.providerHealthSnapshot.upsert({
+      where: { provider },
+      update: {
+        lastSuccessAt: new Date(),
+        consecutiveFailures: 0,
+        cooldownUntil: null,
+        lastFailureCategory: null,
+        lastSafeErrorMessage: null,
+      },
+      create: {
+        provider,
+        lastSuccessAt: new Date(),
+        consecutiveFailures: 0,
+        cooldownUntil: null,
+      },
+    });
+  } catch (err) {
+    console.warn("[provider-health-store] Failed to persist markProviderAnalysisOK:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 export async function markProviderOK(provider: string): Promise<void> {
   recordProviderSuccess(provider as AiProviderName);
 
