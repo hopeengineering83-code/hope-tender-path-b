@@ -156,7 +156,7 @@ describe("/api/ai/health reports the canonical runtime order", () => {
 
   it("deterministic entry is marked isAi=false and surfaces status=unknown", () => {
     assert.match(source, /deterministic:\s*\{[\s\S]*?fallbackRank:\s*9[\s\S]*?isAi:\s*false/);
-    assert.match(source, /deterministic[\s\S]*?status:\s*"unknown"/);
+    assert.match(source, /deterministic[\s\S]*?status:\s*"UNKNOWN"/);
   });
 
   it("surfaces a structured noAiProviderReady signal that mirrors lib/ai.ts NoAiProviderReadyError", () => {
@@ -232,17 +232,17 @@ describe("dashboard provider-health UI follows the canonical order", () => {
   it("pill colour for AI providers uses the unified status field", () => {
     // Only runtime_verified renders a green "Available" pill. The status enum
     // is the single source of truth for pill colour.
-    assert.match(source, /p\.status === "runtime_verified"/);
+    assert.match(source, /p\.status === "GENERATION_VERIFIED"/);
     assert.match(source, /Available \(runtime verified\)/);
     // not_configured renders as Not configured (red).
-    assert.match(source, /p\.status === "not_configured"[\s\S]*?Not configured/);
+    assert.match(source, /p\.status === "NOT_CONFIGURED"[\s\S]*?Not configured/);
     // configured (key only) renders as a neutral pill — NOT green.
-    assert.match(source, /p\.status === "configured"[\s\S]*?Configured — not yet tested on this instance/);
+    assert.match(source, /p\.status === "CONFIGURED"[\s\S]*?Configured — not yet tested on this instance/);
     // rate_limited / unauthorized / timeout / unavailable all render as amber/red.
-    assert.match(source, /p\.status === "rate_limited"/);
-    assert.match(source, /p\.status === "unauthorized"/);
-    assert.match(source, /p\.status === "timeout"/);
-    assert.match(source, /p\.status === "unavailable"/);
+    assert.match(source, /p\.status === "RATE_LIMITED"/);
+    assert.match(source, /p\.status === "UNAUTHORIZED"/);
+    assert.match(source, /p\.status === "TIMEOUT"/);
+    assert.match(source, /p\.status === "BILLING_BLOCKED"/);
   });
 
   it("preferredProvider picks the first CONFIGURED AI provider in canonical order", () => {
@@ -282,35 +282,35 @@ describe("AiProviderStatus enum + deriveProviderStatus()", () => {
   });
 
   it("returns not_configured when the env var is missing", () => {
-    assert.equal(deriveProviderStatus("mistral"), "not_configured");
-    assert.equal(deriveProviderStatus("groq"), "not_configured");
-    assert.equal(deriveProviderStatus("anthropic"), "not_configured");
+    assert.equal(deriveProviderStatus("mistral"), "NOT_CONFIGURED");
+    assert.equal(deriveProviderStatus("groq"), "NOT_CONFIGURED");
+    assert.equal(deriveProviderStatus("anthropic"), "NOT_CONFIGURED");
   });
 
   it("returns configured when the key is present but no success and no failure recorded", () => {
     process.env.MISTRAL_API_KEY = "sk-test-mistral-configured-only";
-    assert.equal(deriveProviderStatus("mistral"), "configured");
+    assert.equal(deriveProviderStatus("mistral"), "CONFIGURED");
     // Snapshot must surface the same status.
-    assert.equal(getProviderRuntimeSnapshot("mistral").status, "configured");
+    assert.equal(getProviderRuntimeSnapshot("mistral").status, "CONFIGURED");
   });
 
   it("returns runtime_verified after a real generation success (recordProviderSuccess), not after a ping-only success", () => {
     process.env.GROQ_API_KEY = "gsk-test-groq";
     // Ping-only success must NOT flip the provider to runtime_verified.
     recordProviderPingSuccess("groq");
-    assert.equal(deriveProviderStatus("groq"), "configured");
+    assert.equal(deriveProviderStatus("groq"), "CONFIGURED");
     // Real generation success DOES flip it.
     recordProviderSuccess("groq");
-    assert.equal(deriveProviderStatus("groq"), "runtime_verified");
-    assert.equal(getProviderRuntimeSnapshot("groq").status, "runtime_verified");
+    assert.equal(deriveProviderStatus("groq"), "GENERATION_VERIFIED");
+    assert.equal(getProviderRuntimeSnapshot("groq").status, "GENERATION_VERIFIED");
     assert.equal(getProviderRuntimeSnapshot("groq").runtimeVerified, true);
   });
 
   it("returns rate_limited after a RATE_LIMIT failure (provider is in cooldown)", () => {
     process.env.OPENAI_API_KEY = "sk-test-openai";
     recordProviderFailure("openai", new Error("HTTP 429 Too Many Requests"));
-    assert.equal(deriveProviderStatus("openai"), "rate_limited");
-    assert.equal(getProviderRuntimeSnapshot("openai").status, "rate_limited");
+    assert.equal(deriveProviderStatus("openai"), "RATE_LIMITED");
+    assert.equal(getProviderRuntimeSnapshot("openai").status, "RATE_LIMITED");
     assert.equal(getProviderRuntimeSnapshot("openai").rateLimited, true);
     assert.equal(getProviderRuntimeSnapshot("openai").coolingDown, true);
   });
@@ -318,52 +318,52 @@ describe("AiProviderStatus enum + deriveProviderStatus()", () => {
   it("returns unauthorized after an AUTH failure (401/403/invalid key)", () => {
     process.env.GEMINI_API_KEY = "AIzaFakeKey1234567890123456789012345";
     recordProviderFailure("gemini", new Error("HTTP 403 Forbidden — API key invalid"));
-    assert.equal(deriveProviderStatus("gemini"), "unauthorized");
-    assert.equal(getProviderRuntimeSnapshot("gemini").status, "unauthorized");
+    assert.equal(deriveProviderStatus("gemini"), "UNAUTHORIZED");
+    assert.equal(getProviderRuntimeSnapshot("gemini").status, "UNAUTHORIZED");
   });
 
   it("returns timeout after a TIMEOUT failure", () => {
     process.env.TOGETHER_API_KEY = "together-test";
     recordProviderFailure("together", new Error("Request timed out after 30s"));
-    assert.equal(deriveProviderStatus("together"), "timeout");
-    assert.equal(getProviderRuntimeSnapshot("together").status, "timeout");
+    assert.equal(deriveProviderStatus("together"), "TIMEOUT");
+    assert.equal(getProviderRuntimeSnapshot("together").status, "TIMEOUT");
   });
 
   it("returns unavailable after MODEL_UNAVAILABLE / BILLING / NETWORK / MALFORMED_RESPONSE failures", () => {
     process.env.DEEPSEEK_API_KEY = "dsk-test";
     recordProviderFailure("deepseek", new Error("HTTP 404 model not found: deepseek-reasoner"));
-    assert.equal(deriveProviderStatus("deepseek"), "unavailable");
+    assert.equal(deriveProviderStatus("deepseek"), "BILLING_BLOCKED");
 
     resetProviderHealth();
     process.env.DEEPSEEK_API_KEY = "dsk-test";
     recordProviderFailure("deepseek", new Error("HTTP 402 Insufficient balance"));
-    assert.equal(deriveProviderStatus("deepseek"), "unavailable");
+    assert.equal(deriveProviderStatus("deepseek"), "BILLING_BLOCKED");
 
     resetProviderHealth();
     process.env.DEEPSEEK_API_KEY = "dsk-test";
     recordProviderFailure("deepseek", new Error("fetch failed: ECONNRESET"));
-    assert.equal(deriveProviderStatus("deepseek"), "unavailable");
+    assert.equal(deriveProviderStatus("deepseek"), "BILLING_BLOCKED");
   });
 
   it("returns unknown after an UNKNOWN-category failure", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     recordProviderFailure("anthropic", new Error("some weird failure"));
-    assert.equal(deriveProviderStatus("anthropic"), "unknown");
-    assert.equal(getProviderRuntimeSnapshot("anthropic").status, "unknown");
+    assert.equal(deriveProviderStatus("anthropic"), "UNKNOWN");
+    assert.equal(getProviderRuntimeSnapshot("anthropic").status, "UNKNOWN");
   });
 
   it("configured-only provider is NOT marked as available / runtime_verified / healthy", () => {
     // The dashboard bug: showing green just because a key exists. The status
-    // enum + snapshot must distinguish "configured" from "runtime_verified".
+    // enum + snapshot must distinguish "CONFIGURED" from "GENERATION_VERIFIED".
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     const snap = getProviderRuntimeSnapshot("openrouter");
-    assert.equal(snap.status, "configured");
+    assert.equal(snap.status, "CONFIGURED");
     assert.equal(snap.runtimeVerified, false);
     // `available` is the legacy chain-scheduler field ("configured + not cooling")
     // — it MAY be true here, but it is NOT a health statement. The UI must use
     // `status`, not `available`.
     assert.equal(snap.available, true);
-    assert.notEqual(snap.status, "runtime_verified");
+    assert.notEqual(snap.status, "GENERATION_VERIFIED");
   });
 });
 
@@ -692,8 +692,8 @@ describe("AiProviderStatus enum is exported and complete", () => {
   it("exports the AiProviderStatus type with all 8 states", () => {
     assert.match(source, /export type AiProviderStatus\s*=/);
     for (const state of [
-      "not_configured", "configured", "runtime_verified",
-      "rate_limited", "unauthorized", "timeout", "unavailable", "unknown",
+      "NOT_CONFIGURED", "CONFIGURED", "GENERATION_VERIFIED",
+      "RATE_LIMITED", "UNAUTHORIZED", "TIMEOUT", "BILLING_BLOCKED", "UNKNOWN",
     ]) {
       assert.match(source, new RegExp(`\\| "${state}"`));
     }
@@ -740,7 +740,7 @@ describe("configured != healthy — the status enum distinguishes key-only from 
   it("a provider with only an API key is NOT runtime_verified", () => {
     process.env.MISTRAL_API_KEY = "sk-test-mistral-configured-only";
     const snap = getProviderRuntimeSnapshot("mistral");
-    assert.equal(snap.status, "configured");
+    assert.equal(snap.status, "CONFIGURED");
     assert.equal(snap.runtimeVerified, false);
   });
 
@@ -748,7 +748,7 @@ describe("configured != healthy — the status enum distinguishes key-only from 
     process.env.GROQ_API_KEY = "gsk-test-groq";
     recordProviderSuccess("groq");
     const snap = getProviderRuntimeSnapshot("groq");
-    assert.equal(snap.status, "runtime_verified");
+    assert.equal(snap.status, "GENERATION_VERIFIED");
     assert.equal(snap.runtimeVerified, true);
   });
 
@@ -756,8 +756,8 @@ describe("configured != healthy — the status enum distinguishes key-only from 
     process.env.OPENAI_API_KEY = "sk-test-openai";
     recordProviderFailure("openai", new Error("HTTP 429"));
     const snap = getProviderRuntimeSnapshot("openai");
-    assert.equal(snap.status, "rate_limited");
-    assert.notEqual(snap.status, "configured");
-    assert.notEqual(snap.status, "runtime_verified");
+    assert.equal(snap.status, "RATE_LIMITED");
+    assert.notEqual(snap.status, "CONFIGURED");
+    assert.notEqual(snap.status, "GENERATION_VERIFIED");
   });
 });

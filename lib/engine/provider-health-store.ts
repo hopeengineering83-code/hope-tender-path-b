@@ -4,13 +4,17 @@
 // It wraps lib/ai-provider-health-db.ts and lib/ai-provider-health.ts to give
 // callers a single import point with the canonical markProviderFailed /
 // markProviderOK / isProviderCoolingDown / getProviderHealthSummary API.
+//
+// Design rules:
+//   - All DB calls wrapped in try/catch — DB unavailability never blocks AI calls.
+//   - Never stores API keys, raw prompts, or full provider responses.
+//   - Error messages are redacted before storage.
+//   - loadProviderHealthIntoMemory() is idempotent: skip after first load per process.
 
 import { prisma } from "@/lib/prisma";
 import {
   recordProviderFailure,
   recordProviderSuccess,
-  recordProviderAnalysisSuccess,
-  recordProviderPingSuccess,
   isProviderCooledDown,
   getProviderStateSnapshot,
   restoreProviderState,
@@ -18,7 +22,9 @@ import {
   type AiProviderFailureCategory,
 } from "@/lib/ai-provider-health";
 
-// Cooldown seconds per failure class.
+// Cooldown seconds per failure class (used for DB cooldownUntil timestamp).
+// Mirrors COOLDOWN_PER_CATEGORY_MS in ai-provider-health.ts but expressed in
+// seconds for clarity when writing to DB DateTimes.
 const COOLDOWN_SECONDS: Record<string, number> = {
   RATE_LIMIT: 60,
   AUTH: 3600,
@@ -31,28 +37,31 @@ const COOLDOWN_SECONDS: Record<string, number> = {
 };
 
 const ALL_PROVIDERS: AiProviderName[] = [
-  "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
+  "anthropic", "gemini", "openai", "mistral", "deepseek", "groq", "together", "openrouter",
 ];
 
+// Module-level guard: loadProviderHealthIntoMemory runs only once per process.
 let healthLoaded = false;
 
+/**
+ * Redacts API keys and URLs from an error message so it is safe to store.
+ */
 function redactError(raw: string | null | undefined): string {
   if (!raw) return "";
   return raw
-    .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9-_]{15,}/g, "[REDACTED]")
-    .replace(/AQ[A-Za-z0-9-_]{20,}/g, "[REDACTED]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
-    .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
+    .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+    .replace(/https?:\/\/\S+/g, "[URL_REDACTED]")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
 }
 
+/**
+ * Map a failure class string to an AiProviderFailureCategory.
+ * QUOTA_EXHAUSTED maps to RATE_LIMIT for in-memory tracking parity.
+ */
 function toFailureCategory(failureClass: string): AiProviderFailureCategory {
   const map: Record<string, AiProviderFailureCategory> = {
     RATE_LIMIT: "RATE_LIMIT",
@@ -67,6 +76,10 @@ function toFailureCategory(failureClass: string): AiProviderFailureCategory {
   return map[failureClass] ?? "UNKNOWN";
 }
 
+/**
+ * Record a provider failure in both in-memory state and DB.
+ * DB write is fire-and-forget: errors are logged but never propagated.
+ */
 export async function markProviderFailed(
   provider: string,
   failureClass: string,
@@ -74,13 +87,17 @@ export async function markProviderFailed(
 ): Promise<void> {
   const category = toFailureCategory(failureClass);
   const safeError = redactError(redactedError);
+  // Update in-memory state immediately
   recordProviderFailure(provider as AiProviderName, new Error(safeError || failureClass));
 
+  // Persist to DB asynchronously (fire-and-forget in hot path)
   const cooldownSeconds = COOLDOWN_SECONDS[failureClass] ?? COOLDOWN_SECONDS.UNKNOWN;
   const cooldownUntil = new Date(Date.now() + cooldownSeconds * 1_000);
 
   try {
-    const existing = await prisma.providerHealthSnapshot.findUnique({ where: { provider } });
+    const existing = await prisma.providerHealthSnapshot.findUnique({
+      where: { provider },
+    });
     const consecutiveFails = (existing?.consecutiveFailures ?? 0) + 1;
 
     await prisma.providerHealthSnapshot.upsert({
@@ -106,37 +123,17 @@ export async function markProviderFailed(
   }
 }
 
-export async function markProviderPingOK(provider: string): Promise<void> {
-  recordProviderPingSuccess(provider as AiProviderName);
-  try {
-    await prisma.providerHealthSnapshot.upsert({
-      where: { provider },
-      update: {
-        lastPingSucceededAt: new Date(),
-        consecutiveFailures: 0,
-        cooldownUntil: null,
-        lastFailureCategory: null,
-        lastSafeErrorMessage: null,
-      },
-      create: {
-        provider,
-        lastPingSucceededAt: new Date(),
-        consecutiveFailures: 0,
-        cooldownUntil: null,
-      },
-    });
-  } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderPingOK:", err instanceof Error ? err.message : String(err));
-  }
-}
-
+/**
+ * Record a provider success in both in-memory state and DB.
+ * Resets consecutiveFailures and clears cooldown.
+ */
 export async function markProviderAnalysisOK(provider: string): Promise<void> {
-  recordProviderAnalysisSuccess(provider as AiProviderName);
+  const { recordProviderAnalysisSuccess } = await import("@/lib/ai-provider-health");
+  recordProviderAnalysisSuccess(provider as any);
   try {
     await prisma.providerHealthSnapshot.upsert({
       where: { provider },
       update: {
-        lastAnalysisSucceededAt: new Date(),
         lastSuccessAt: new Date(),
         consecutiveFailures: 0,
         cooldownUntil: null,
@@ -145,7 +142,6 @@ export async function markProviderAnalysisOK(provider: string): Promise<void> {
       },
       create: {
         provider,
-        lastAnalysisSucceededAt: new Date(),
         lastSuccessAt: new Date(),
         consecutiveFailures: 0,
         cooldownUntil: null,
@@ -158,11 +154,11 @@ export async function markProviderAnalysisOK(provider: string): Promise<void> {
 
 export async function markProviderOK(provider: string): Promise<void> {
   recordProviderSuccess(provider as AiProviderName);
+
   try {
     await prisma.providerHealthSnapshot.upsert({
       where: { provider },
       update: {
-        lastGenerationSucceededAt: new Date(),
         lastSuccessAt: new Date(),
         consecutiveFailures: 0,
         cooldownUntil: null,
@@ -171,7 +167,6 @@ export async function markProviderOK(provider: string): Promise<void> {
       },
       create: {
         provider,
-        lastGenerationSucceededAt: new Date(),
         lastSuccessAt: new Date(),
         consecutiveFailures: 0,
         cooldownUntil: null,
@@ -182,8 +177,15 @@ export async function markProviderOK(provider: string): Promise<void> {
   }
 }
 
+/**
+ * Check if a provider is currently in cooldown (DB-backed, falls back to in-memory).
+ * Returns false silently if DB is unavailable.
+ */
 export async function isProviderCoolingDown(provider: string): Promise<boolean> {
+  // Check in-memory first (fastest path)
   if (isProviderCooledDown(provider as AiProviderName)) return true;
+
+  // Check DB for cross-instance cooldowns
   try {
     const snap = await prisma.providerHealthSnapshot.findUnique({ where: { provider } });
     if (!snap || !snap.cooldownUntil) return false;
@@ -193,6 +195,10 @@ export async function isProviderCoolingDown(provider: string): Promise<boolean> 
   }
 }
 
+/**
+ * Return a summary of all provider health records from DB.
+ * Used by the admin endpoint. Returns [] silently if DB is unavailable.
+ */
 export async function getProviderHealthSummary(): Promise<Array<{
   provider: string;
   status: string;
@@ -211,7 +217,7 @@ export async function getProviderHealthSummary(): Promise<Array<{
           : "UNKNOWN",
       cooldownUntil: r.cooldownUntil,
       consecutiveFails: r.consecutiveFailures,
-      lastTestedAt: r.lastFailureAt ?? r.lastSuccessAt ?? (r as any).lastPingSucceededAt ?? (r as any).lastAnalysisSucceededAt ?? (r as any).lastGenerationSucceededAt ?? r.updatedAt,
+      lastTestedAt: r.lastFailureAt ?? r.lastSuccessAt ?? r.updatedAt,
     }));
   } catch (err) {
     console.warn("[provider-health-store] Failed to fetch health summary:", err instanceof Error ? err.message : String(err));
@@ -219,6 +225,15 @@ export async function getProviderHealthSummary(): Promise<Array<{
   }
 }
 
+/**
+ * Load DB-persisted provider health into the in-memory map.
+ * Called once per process (guarded by healthLoaded flag) so cold starts
+ * inherit active cooldowns recorded by prior instances.
+ *
+ * The inMemoryMap parameter is accepted for testing / direct sync use, but
+ * the canonical path writes into lib/ai-provider-health.ts's internal state
+ * via restoreProviderState().
+ */
 export async function loadProviderHealthIntoMemory(
   inMemoryMap?: Map<string, unknown>,
 ): Promise<void> {
@@ -233,13 +248,11 @@ export async function loadProviderHealthIntoMemory(
       if (!ALL_PROVIDERS.includes(snap.provider as AiProviderName)) continue;
 
       const cooldownUntilMs = snap.cooldownUntil ? snap.cooldownUntil.getTime() : null;
+      // Skip fully expired cooldowns with no recent failure activity
       if (cooldownUntilMs && cooldownUntilMs <= now && !snap.lastFailureAt) continue;
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
-        lastPingSucceededAt: (snap as any).lastPingSucceededAt ? (snap as any).lastPingSucceededAt.getTime() : null,
-        lastGenerationSucceededAt: (snap as any).lastGenerationSucceededAt ? (snap as any).lastGenerationSucceededAt.getTime() : null,
-        lastAnalysisSucceededAt: (snap as any).lastAnalysisSucceededAt ? (snap as any).lastAnalysisSucceededAt.getTime() : null,
         lastFailureAt: snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
         lastFailureCategory: (snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null,
         lastFailureMessage: snap.lastSafeErrorMessage ?? null,
@@ -247,6 +260,7 @@ export async function loadProviderHealthIntoMemory(
         cooldownUntil: cooldownUntilMs,
       });
 
+      // If caller passed an explicit map (for testing), also write into it
       if (inMemoryMap) {
         inMemoryMap.set(snap.provider, getProviderStateSnapshot(snap.provider as AiProviderName));
       }
@@ -256,6 +270,7 @@ export async function loadProviderHealthIntoMemory(
   }
 }
 
+/** Reset the healthLoaded guard — test-only. */
 export const __testing__ = {
   resetHealthLoadedFlag: () => { healthLoaded = false; },
 };

@@ -58,6 +58,9 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
+        lastPingSucceededAt: (snap as any).lastPingSucceededAt ? (snap as any).lastPingSucceededAt.getTime() : null,
+        lastGenerationSucceededAt: (snap as any).lastGenerationSucceededAt ? (snap as any).lastGenerationSucceededAt.getTime() : null,
+        lastAnalysisSucceededAt: (snap as any).lastAnalysisSucceededAt ? (snap as any).lastAnalysisSucceededAt.getTime() : null,
         lastFailureAt: snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
         lastFailureCategory: (snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null,
         lastFailureMessage: snap.lastSafeErrorMessage ?? null,
@@ -79,7 +82,7 @@ export const __testing__ = { resetRestoreGuard: () => { restoredAt = null; } };
 export async function persistAllHealthToDb(): Promise<void> {
   try {
     for (const provider of ALL_PROVIDERS) {
-      const s = getProviderStateSnapshot(provider);
+      const s = getProviderStateSnapshot(provider); if (!s) continue;
       // Skip providers with no recorded state (avoids unnecessary writes)
       if (!s.lastSuccessAt && !s.lastFailureAt) continue;
 

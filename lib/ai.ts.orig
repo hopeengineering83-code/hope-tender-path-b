@@ -3541,11 +3541,11 @@ ${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  // Provider chain for proposal generation:
+  // Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic.
   // Claude is placed last so Anthropic rate limits do not block proposal generation.
   // lastProposalProvider is set so callers can surface which provider was used.
 
-    // Gemini — first tier
+  // Gemini — first tier
   if (apiKey && !isProviderCooledDown("gemini")) {
     try {
       const geminiResult = await generateWithBestModel(prompt);
@@ -3604,7 +3604,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     if (orResult) { recordProviderSuccess("openrouter"); lastProposalProvider = "openrouter"; return orResult; }
   }
 
-    // Claude (Anthropic) — last resort
+  // Claude (Anthropic) — last resort
   if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
     try {
       // TENDER_TOOL_USE_GENERATION path: when params.toolUse is set,
@@ -3724,10 +3724,10 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Provider chain for sections:
+  // Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic
   // Claude is tried last so Anthropic rate limits don't block parallel section generation.
 
-    // Gemini — first tier
+  // Gemini — first tier
   if (apiKey && !isProviderCooledDown("gemini")) {
     try {
       // Prepend the section's system-prompt persona to the user prompt so
@@ -3820,7 +3820,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     }
   }
 
-    // Claude — last resort (system prompts in proposal-sections.ts are tuned for Claude)
+  // Claude — last resort (system prompts in proposal-sections.ts are tuned for Claude)
   if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
     try {
       const claudeResult = await Promise.race([

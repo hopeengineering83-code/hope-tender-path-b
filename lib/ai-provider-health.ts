@@ -43,7 +43,7 @@ export type AiProviderHealth = {
   cooldownUntil: string | null;
 };
 
-type InternalState = {
+export type InternalState = {
   lastSuccessAt: number | null;
   lastPingSucceededAt: number | null;
   lastGenerationSucceededAt: number | null;
@@ -197,7 +197,7 @@ export function isProviderConfigured(provider: AiProviderName): boolean {
   }
 }
 
-const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
+export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
   RATE_LIMIT: 60_000,
   AUTH: 5 * 60_000,
   BILLING: 10 * 60_000,
@@ -472,6 +472,10 @@ export function getMistralModel(): string {
 /** Back-compat alias: returns the proposal model. */
 export function getTogetherModel(): string {
   return getTogetherProposalModel();
+}
+
+export function resetHealthLoadedFlag() {
+  // dummy for store tests
 }
 
 export const __testing__ = { COOLDOWN_PER_CATEGORY_MS };

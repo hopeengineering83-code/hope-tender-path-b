@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
-import { logAction } from "../../../../lib/audit";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
+import { logAction } from "@/lib/audit";
 import {
   recordProviderPingSuccess,
   recordProviderAnalysisSuccess,
@@ -35,12 +35,12 @@ import {
   isAnthropicConfigured,
   getAnthropicApiKey,
   type AiProviderName
-} from "../../../../lib/ai-provider-health";
+} from "@/lib/ai-provider-health";
 import {
   PER_PROVIDER_TIMEOUT_MS,
   ANTHROPIC_TIMEOUT_MS,
   GEMINI_TIMEOUT_MS
-} from "../../../../../lib/timeout-config";
+} from "@/lib/timeout-config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -155,7 +155,7 @@ async function testProvider(
       const { GoogleGenerativeAI } = require("@google/generative-ai");
       const client = new GoogleGenerativeAI(getGeminiApiKey()!);
       const m = client.getGenerativeModel({ model });
-      const res = await withTimeout(
+      const res: any = await withTimeout(
         m.generateContent({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: maxTokens }
@@ -165,7 +165,7 @@ async function testProvider(
       resultText = res.response.text();
     } else if (provider === "anthropic") {
       model = process.env.ANTHROPIC_PROPOSAL_MODELS?.split(",")[0]?.trim() || "claude-3-5-haiku-latest";
-      const res = await withTimeout(
+      const res: any = await withTimeout(
         fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -186,7 +186,7 @@ async function testProvider(
       resultText = data.content[0].text;
     } else {
       // OpenAI Compatible
-      const config = {
+      const config: any = {
         mistral: { key: getMistralApiKey()!, url: getMistralBaseUrl(), model: getMistralProposalModel() },
         groq: { key: getGroqApiKey()!, url: getGroqBaseUrl(), model: getGroqModel() },
         openrouter: {
@@ -200,14 +200,14 @@ async function testProvider(
         deepseek: { key: getDeepSeekApiKey()!, url: "https://api.deepseek.com/v1", model: getDeepSeekModel() },
       }[provider];
 
-      model = config!.model;
-      const res = await withTimeout(
-        fetch(`${config!.url}/chat/completions`, {
+      model = config.model;
+      const res: any = await withTimeout(
+        fetch(`${config.url}/chat/completions`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${config!.key}`,
-            ...(config as any).headers
+            Authorization: `Bearer ${config.key}`,
+            ...config.headers
           },
           body: JSON.stringify({
             model,
@@ -223,7 +223,7 @@ async function testProvider(
       resultText = data.choices[0].message.content;
     }
 
-    let structuredOutput = null;
+    let structuredOutput: any = null;
     if (capability === "analysis") {
       try {
         const jsonMatch = resultText.match(/\{.*\}/s);
