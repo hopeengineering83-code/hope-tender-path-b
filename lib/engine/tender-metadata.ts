@@ -34,6 +34,12 @@ export type TenderMetadataDraft = {
   title: string;
   reference: string | null;
   clientName: string | null;
+  procuringEntityName: string | null;
+  donorAgency: string | null;
+  implementingAgency: string | null;
+  clientWebsite: string | null;
+  submissionEmailSubject: string | null;
+  contactDetailsSource: Record<string, { page: number | null; quote: string | null }> | null;
   // ─── new fields (returned but only mapped to DB when columns exist) ───
   clientContactName: string | null;
   clientContactTitle: string | null;
@@ -65,6 +71,40 @@ export type TenderMetadataDraft = {
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+
+function pageForIndex(text: string, index: number): number | null {
+  const before = text.slice(0, Math.max(0, index));
+  const markers = Array.from(before.matchAll(/\[Page\s+(\d+)\]/gi));
+  const last = markers[markers.length - 1];
+  return last ? Number(last[1]) : null;
+}
+
+type GroundedString = { value: string; page: number | null; quote: string } | null;
+
+function firstLabelledValue(text: string, patterns: RegExp[]): GroundedString {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match?.[1]) continue;
+    const raw = clean(match[1]);
+    const value = cutAtNextFieldLabel(raw).split(/[,;]/)[0].replace(/[.;,]+$/, "").trim().slice(0, 240);
+    if (!value) continue;
+    return {
+      value,
+      page: pageForIndex(text, match.index),
+      quote: clean(match[0]).slice(0, 300),
+    };
+  }
+  return null;
+}
+
+function sourceMap(entries: Array<[string, GroundedString]>): Record<string, { page: number | null; quote: string | null }> | null {
+  const out: Record<string, { page: number | null; quote: string | null }> = {};
+  for (const [field, result] of entries) {
+    if (result) out[field] = { page: result.page, quote: result.quote };
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function firstMatch(text: string, patterns: RegExp[]): string | null {
@@ -139,6 +179,41 @@ function inferClient(text: string): string | null {
   if (orgHeader && !/^(?:beneficiary|employer|owner|donor\s+agency|financing\s+agency|implementing\s+agency|executing\s+agency)\s*:/i.test(orgHeader) && isValidClientName(orgHeader)) return orgHeader;
 
   return null;
+}
+
+function inferProcuringEntity(text: string): GroundedString {
+  const result = firstLabelledValue(text, [
+    /\b(?:name\s+of\s+procuring\s+entity|procuring\s+entity|procurement\s+entity|contracting\s+authority|issuing\s+authority|purchaser)\s*[:\-]\s*([^\n\r]{3,160})/i,
+  ]);
+  return result && isValidClientName(result.value) ? result : null;
+}
+
+function inferDonorAgency(text: string): GroundedString {
+  const result = firstLabelledValue(text, [
+    /\b(?:funded\s+by|financed\s+by|donor\s+agency|financing\s+agency|grant\s+from|loan\s+from)\s*[:\-]\s*([^\n\r]{3,160})/i,
+  ]);
+  return result && isValidClientName(result.value) ? result : null;
+}
+
+function inferImplementingAgency(text: string): GroundedString {
+  const result = firstLabelledValue(text, [
+    /\b(?:implementing\s+agency|implementing\s+partner|executing\s+agency|project\s+management\s+unit)\s*[:\-]\s*([^\n\r]{3,160})/i,
+  ]);
+  return result && isValidClientName(result.value) ? result : null;
+}
+
+function inferClientWebsite(text: string): GroundedString {
+  const result = firstLabelledValue(text, [
+    /\b(?:tender\s+portal|e-?procurement\s+portal|portal|website)\s*[:\-]\s*(https?:\/\/[^\s)]+|www\.[^\s)]+)/i,
+  ]);
+  return result && /^(?:https?:\/\/|www\.)/i.test(result.value) ? result : null;
+}
+
+function inferSubmissionEmailSubject(text: string): GroundedString {
+  const result = firstLabelledValue(text, [
+    /\b(?:email\s+subject|subject\s+line|subject\s+of\s+(?:the\s+)?email|e-?mail\s+must\s+have\s+subject)\s*[:\-]\s*(["“”'A-Z0-9][^\n\r]{3,160})/i,
+  ]);
+  return result;
 }
 
 function inferClientContactName(text: string): string | null {
@@ -468,6 +543,12 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       title: `[REVIEW NEEDED] ${baseFileName}`,
       reference: null,
       clientName: null,
+      procuringEntityName: null,
+      donorAgency: null,
+      implementingAgency: null,
+      clientWebsite: null,
+      submissionEmailSubject: null,
+      contactDetailsSource: null,
       clientContactName: null,
       clientContactTitle: null,
       clientContactEmail: null,
@@ -501,6 +582,11 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
   const title = inferTitle(text, fallbackFileName);
   const reference = inferReference(text);
   const clientName = inferClient(text);
+  const procuringEntity = inferProcuringEntity(text);
+  const donorAgencyResult = inferDonorAgency(text);
+  const implementingAgencyResult = inferImplementingAgency(text);
+  const clientWebsiteResult = inferClientWebsite(text);
+  const submissionEmailSubjectResult = inferSubmissionEmailSubject(text);
   const country = inferCountry(text);
   const category = inferCategory(text);
   const deadline = inferDeadline(text);
@@ -535,6 +621,18 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     title,
     reference,
     clientName,
+    procuringEntityName: procuringEntity?.value ?? null,
+    donorAgency: donorAgencyResult?.value ?? null,
+    implementingAgency: implementingAgencyResult?.value ?? null,
+    clientWebsite: clientWebsiteResult?.value ?? null,
+    submissionEmailSubject: submissionEmailSubjectResult?.value ?? null,
+    contactDetailsSource: sourceMap([
+      ["procuringEntityName", procuringEntity],
+      ["donorAgency", donorAgencyResult],
+      ["implementingAgency", implementingAgencyResult],
+      ["clientWebsite", clientWebsiteResult],
+      ["submissionEmailSubject", submissionEmailSubjectResult],
+    ]),
     clientContactName,
     clientContactTitle,
     clientContactEmail,
