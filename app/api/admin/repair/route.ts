@@ -5,6 +5,8 @@ import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from 
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
 import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/proposal-labels";
 import { getStorageAdapter } from "../../../../lib/storage";
+import { logAction } from "../../../../lib/audit";
+import { rateLimit } from "../../../../lib/rate-limit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -37,6 +39,15 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
+
+  // Rate limit admin repair operations: max 10 per minute per admin
+  const rl = rateLimit(`admin-repair:${actor.id}`, { maxPerMinute: 10 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limited. Too many repair requests. Please wait before retrying.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
   }
 
   const { searchParams } = new URL(req.url);
@@ -257,6 +268,20 @@ export async function POST(req: Request) {
     });
     results.pruneSuperseded = { deleted: count, cutoffDays };
   }
+
+  // Audit log the repair operation for compliance tracking
+  await logAction({
+    userId: actor.id,
+    action: "ADMIN_REPAIR_EXECUTED",
+    metadata: {
+      step,
+      reextractionCount: results.reextraction?.total ?? 0,
+      reextractionSuccess: results.reextraction?.success ?? 0,
+      labelsUpdated: results.labels?.updated ?? 0,
+      requirementsCleaned: results.requirements?.cleared ?? 0,
+      documentsDeleted: results.pruneSuperseded?.deleted ?? 0,
+    },
+  }).catch((err) => console.warn("Failed to log repair action:", err));
 
   return NextResponse.json(results);
   } catch (error) {
