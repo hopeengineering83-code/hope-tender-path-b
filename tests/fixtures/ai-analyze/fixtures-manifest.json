@@ -1,0 +1,46 @@
+{
+  "FIXTURE_SAFETY": "All fixtures in this directory are fully synthetic. They contain no real client names, real project details, real financial figures, real contact information, real API keys, or real provider outputs. They are safe to commit, share, and use in CI.",
+  "digital_tender": {
+    "file": "synthetic-digital-tender.md",
+    "description": "A 5-page synthetic digital tender with clear text layer, page markers, sections, mandatory requirements, evaluation criteria, and submission rules.",
+    "expected_extraction_quality": "FULL_EXTRACTION_AI_ANALYZED",
+    "expected_page_count": 5,
+    "expected_sections": [
+      "Section A: Scope of Services",
+      "Section B: Mandatory Requirements",
+      "Section C: Evaluation Criteria",
+      "Section D: Terms of Reference"
+    ],
+    "expected_mandatory_requirements_count": 4,
+    "expected_mandatory_requirement_ids": ["M1", "M2", "M3", "M4"],
+    "expected_evaluation_criteria": {
+      "technical_points": 70,
+      "financial_points": 30,
+      "minimum_technical_threshold_pct": 70
+    },
+    "expected_submission_constraints": {
+      "technical_page_limit": 50,
+      "financial_page_limit": 20,
+      "bid_bond_usd": 10000,
+      "envelope_mode": "TWO_ENVELOPE",
+      "validity_days": 90
+    }
+  },
+  "scanned_weak_tender": {
+    "file": "synthetic-scanned-weak-tender.md",
+    "description": "A synthetic fixture representing the output of a failed/poor OCR pass on a scanned tender. Garbled text, symbol noise, near-blank pages. The extraction-quality gate must flag this as weak/corrupted and NEVER show 'All Clear'.",
+    "expected_extraction_quality": "EXTRACTION_WEAK_REVIEW_REQUIRED or EXTRACTION_CORRUPTED_AI_SKIPPED",
+    "expected_behavior": "The dashboard must display a weak-extraction warning, NOT 'All Clear'. AI Analyze must be blocked or produce a REGEX_FALLBACK_FROM_WEAK_EXTRACTION status. The generation and export gates must remain locked."
+  },
+  "manual_test_account": {
+    "note": "The acceptance harness uses source-shape and contract assertions that do NOT require a database or authenticated session. The manual authenticated test steps in docs/AI_ANALYZE_ACCEPTANCE_RUNBOOK.md describe how to verify the full end-to-end workflow against a live deployment using a dedicated test tender/account.",
+    "required_credentials": "Manual authenticated testing requires: (1) a valid session on the production or preview deployment, (2) at least one configured AI provider key in the deployment's environment, (3) a disposable test tender created using the synthetic fixtures in this directory. Do NOT use production tenders or production user accounts for acceptance testing."
+  },
+  "what_cannot_be_tested_without_credentials": [
+    "The actual AI provider call (requires real API keys in the deployment environment) — the harness verifies the contract and wiring, not the live provider response",
+    "The authenticated AI Analyze route POST /api/tenders/[id]/ai-analyze (requires a valid session cookie) — the harness verifies the route's source-shape contract, not the live response",
+    "The DB-backed checkpoint persistence (requires a real Postgres instance) — the harness verifies the checkpoint logic contract, not the live DB writes",
+    "The Vercel function timeout behavior (requires the production runtime) — the harness verifies the timeout configuration is wired, not the live timeout",
+    "The end-to-end extraction from a real PDF upload (requires the upload pipeline + storage) — the harness verifies the extraction-quality gate logic, not the live PDF parsing"
+  ]
+}
