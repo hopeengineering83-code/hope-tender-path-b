@@ -56,7 +56,7 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdf2json": "^3.2.0",
-    "pdfjs-dist": "^5.4.394",
+    "pdfjs-dist": "5.4.296",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "xlsx": "^0.18.5",
