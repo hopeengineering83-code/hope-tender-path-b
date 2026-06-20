@@ -770,19 +770,12 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
     });
   }
-  // Deadline-in-the-past advisory — mirrors the export-readiness.ts check.
-  if (tender.deadline) {
-    const deadlineDate = tender.deadline instanceof Date ? tender.deadline : new Date(tender.deadline as string);
-    if (!Number.isNaN(deadlineDate.getTime()) && deadlineDate < new Date()) {
-      const daysAgo = Math.round((Date.now() - deadlineDate.getTime()) / (1000 * 60 * 60 * 24));
-      tenderLevelBlockers.push({
-        category: "DEADLINE_PASSED",
-        severity: "MEDIUM",
-        title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Exporting after deadline has no practical use unless an extension was granted.`,
-        recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting.",
-      });
-    }
-  }
+  // NOTE: the deadline-in-the-past check lives in export-readiness.ts, which
+  // emits DEADLINE_PASSED as a HIGH advisory (not a hard blocker). That
+  // advisory already flows in via `readiness.advisoryWarnings` above, so we
+  // do NOT re-add it here — doing so previously produced a DEADLINE_PASSED
+  // entry in BOTH the advisory list and the hard tenderLevelBlockers list,
+  // which incorrectly blocked export after a passed deadline.
 
   // Extraction quality gate — mirrors the POST /export enforcement so the panel
   // shows the blocker before the user tries to export, not just after.
