@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { runAuthorityReview, AuthorityReviewResult } from "../authority-review";
 import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { canExportWithAnalysisState, type AnalysisState } from "../analysis-state-resolver";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
 
 export type AuthorityTruthStatus =
@@ -35,7 +36,7 @@ export async function resolveAuthorityTruth(
 
   const hasDocs = tender.generatedDocuments.length > 0;
   const planVerified = planStatus === "CANONICAL_APPROVED";
-  const analysisTrusted = analysisInfo.state === "AI_SUCCEEDED" || analysisInfo.state === "HUMAN_APPROVED_FALLBACK";
+  const analysisTrusted = canExportWithAnalysisState(analysisInfo.state as AnalysisState);
 
   if (!hasDocs && !planVerified) {
     return {

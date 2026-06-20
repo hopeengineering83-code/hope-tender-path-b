@@ -3,6 +3,8 @@ import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { resolveTenderAnalysisState } from "../analysis/tender-analysis-resolver";
+import { canExportWithAnalysisState, type AnalysisState } from "../analysis-state-resolver";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
   return Boolean(r.sourceTenderFileId || r.sourcePageNumber != null);
@@ -103,17 +105,22 @@ export async function getCanonicalTenderWorkflowState(
     throw new Error("Tender not found");
   }
 
-  const readiness = computeTenderReadinessState(tender as any);
+  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
+  const readiness = computeTenderReadinessState({
+    ...tender,
+    analysisSource: analysisInfo.analysisSource === "AI" ? "AI" : analysisInfo.analysisSource === "REGEX_FALLBACK" ? "REGEX_FALLBACK" : "UNKNOWN"
+  } as any);
 
-  const analysisSource = (tender as any).analysisSource ?? "UNKNOWN";
-  const analysisIsApprovedFallback = analysisSource === "REGEX_FALLBACK" && (tender as any).status === "ANALYSIS_APPROVED";
+  const analysisTrusted = canExportWithAnalysisState(analysisInfo.state as AnalysisState);
+  const analysisIsApprovedFallback = analysisInfo.state === "HUMAN_APPROVED_FALLBACK";
 
   const canonicalModules = computeCanonicalModuleStates({
     ...readiness,
-    hasAnalysis: Boolean((tender as any).analysisSource),
+    hasAnalysis: analysisInfo.state !== "NOT_STARTED",
     hasRequirements: tender.requirements.length > 0,
     hasDocuments: tender.generatedDocuments.length > 0,
     analysisIsApprovedFallback,
+    analysisTrusted,
   } as any);
 
   const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
@@ -146,11 +153,18 @@ export async function getCanonicalTenderWorkflowState(
     actionEndpoint = `/api/tenders/${tenderId}/run-ocr`;
     label = "Run OCR";
     reason = "Extraction is not reliable enough for analysis. Run OCR to improve quality.";
-  } else if (canonicalModules.analysis !== "READY" && !analysisIsApprovedFallback) {
-    nextAction = "RUN_AI_ANALYZE";
-    actionEndpoint = `/api/tenders/${tenderId}/ai-analyze`;
-    label = "Run AI Analyze";
-    reason = readiness.blockers.find(b => /analysis|extraction/i.test(b)) ?? "Tender needs AI analysis.";
+  } else if (!analysisTrusted && !analysisIsApprovedFallback) {
+    if (analysisInfo.state === "PARTIAL_NEEDS_RESUME") {
+        nextAction = "RESUME_AI_ANALYZE";
+        actionEndpoint = `/api/tenders/${tenderId}/ai-analyze?continue=true`;
+        label = "Resume AI Analyze";
+        reason = analysisInfo.nextAction ?? "Analysis is partially complete.";
+    } else {
+        nextAction = "RUN_AI_ANALYZE";
+        actionEndpoint = `/api/tenders/${tenderId}/ai-analyze`;
+        label = "Run AI Analyze";
+        reason = analysisInfo.safeDiagnosticSummary ?? "Tender needs AI analysis.";
+    }
   } else if (canonicalModules.metadata !== "READY") {
     nextAction = "EDIT_METADATA";
     label = "Edit Metadata";
@@ -191,7 +205,7 @@ export async function getCanonicalTenderWorkflowState(
   }
 
   const readyForAnalysis = !extractionBlocked;
-  const readyForMatching = canonicalModules.analysis === "READY" && tender.requirements.length > 0 && !analysisUnsafe;
+  const readyForMatching = analysisTrusted && tender.requirements.length > 0 && !analysisUnsafe;
   const readyForGeneration = planApproved &&
                              isExtractionAcceptableForGeneration(tender.files as any) &&
                              !analysisUnsafe &&
@@ -208,7 +222,7 @@ export async function getCanonicalTenderWorkflowState(
 
   return {
     tenderId,
-    analysisVersion: readiness.currentAnalysisHash,
+    analysisVersion: analysisInfo.canonicalJobId ?? readiness.currentAnalysisHash,
     planVersion: String(tender.updatedAt.getTime()),
     currentStage: (tender.stage as WorkflowStage) || "UPLOAD_TENDER",
     nextAction,
@@ -220,7 +234,7 @@ export async function getCanonicalTenderWorkflowState(
     blockerDetails: readiness.blockers,
 
     extractionState: canonicalModules.extraction,
-    analysisState: canonicalModules.analysis,
+    analysisState: analysisInfo.state,
     metadataState: canonicalModules.metadata,
     requirementsState: canonicalModules.requirements,
     matchingState: canonicalModules.matching,

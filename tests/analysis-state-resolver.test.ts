@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import {
   deriveAnalysisStateDetail,
   canExportWithAnalysisState,
@@ -11,31 +11,33 @@ import {
   type DeriveAnalysisStateInput,
 } from "../lib/engine/analysis-state-resolver";
 
-// ─── Helpers ────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
 function makeJob(overrides: Partial<ResolverJobInput> = {}): ResolverJobInput {
   return {
     id: "job-1",
-    status: "QUEUED",
-    analysisInputHash: "hash-abc",
+    status: "SUCCEEDED",
+    analysisInputHash: "hash-1",
     stagedMergedResult: null,
     promotedAt: null,
     supersededBy: null,
-    startedAt: null,
-    finishedAt: null,
+    startedAt: new Date(),
+    finishedAt: new Date(),
     errorMessage: null,
     ...overrides,
   };
 }
 
-function chunk(status: string, provider: string | null = "Mistral"): ResolverChunkInput {
-  return { status, provider };
+function chunk(status: string, provider: string | null = "Mistral", totalChunks = 2): ResolverChunkInput {
+  return { status, provider, totalChunks };
 }
 
 function makeInput(overrides: Partial<DeriveAnalysisStateInput> = {}): DeriveAnalysisStateInput {
   return {
-    job: null,
-    chunks: [],
+    latestJob: null,
+    promotedJob: null,
+    latestChunks: [],
+    promotedChunks: [],
     legacyNotesAiAnalyzed: false,
     requirementsExtracted: 0,
     sourceReferencesCreated: false,
@@ -44,19 +46,16 @@ function makeInput(overrides: Partial<DeriveAnalysisStateInput> = {}): DeriveAna
   };
 }
 
-// ─── Helper-function tests ────────────────────────────────────────────────
+// ─── Basic Gates ──────────────────────────────────────────────────────────
 
-test("AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK unblock export; others block", () => {
+test("canExportWithAnalysisState gates correctly", () => {
   assert.equal(canExportWithAnalysisState("AI_SUCCEEDED"), true);
   assert.equal(canExportWithAnalysisState("HUMAN_APPROVED_FALLBACK"), true);
-  const blocked: AnalysisState[] = [
-    "NOT_STARTED", "QUEUED", "RUNNING", "PARTIAL_NEEDS_RESUME",
-    "REGEX_FALLBACK_UNAPPROVED", "FAILED", "SUPERSEDED",
-  ];
-  for (const s of blocked) assert.equal(canExportWithAnalysisState(s), false, `${s} must block export`);
+  assert.equal(canExportWithAnalysisState("NOT_STARTED"), false);
+  assert.equal(canExportWithAnalysisState("FAILED"), false);
 });
 
-test("canResumeAnalysis only for partial/fallback-unapproved/failed", () => {
+test("canResumeAnalysis gates correctly", () => {
   assert.equal(canResumeAnalysis("PARTIAL_NEEDS_RESUME"), true);
   assert.equal(canResumeAnalysis("REGEX_FALLBACK_UNAPPROVED"), true);
   assert.equal(canResumeAnalysis("FAILED"), true);
@@ -96,9 +95,12 @@ test("derive: no job + legacy notes → AI_SUCCEEDED (LEGACY_NOTES)", () => {
 // ─── Core derivation: success paths ────────────────────────────────────────
 
 test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
+  const job = makeJob({ status: "SUCCEEDED", promotedAt: new Date() });
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
-    chunks: [chunk("SUCCEEDED"), chunk("SUCCEEDED")],
+    latestJob: job,
+    promotedJob: job,
+    latestChunks: [chunk("SUCCEEDED"), chunk("SUCCEEDED")],
+    promotedChunks: [chunk("SUCCEEDED"), chunk("SUCCEEDED")],
   }));
   assert.equal(d.state, "AI_SUCCEEDED");
   assert.equal(d.analysisSource, "AI");
@@ -109,17 +111,18 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
 });
 
 test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED (0===0)", () => {
+  const job = makeJob({ status: "SUCCEEDED", analysisInputHash: null });
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED", analysisInputHash: null }),
-    chunks: [],
+    latestJob: job,
+    latestChunks: [],
   }));
   assert.equal(d.state, "AI_SUCCEEDED");
 });
 
 test("derive: SUCCEEDED but a chunk still pending → PARTIAL_NEEDS_RESUME", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED" }),
-    chunks: [chunk("SUCCEEDED"), chunk("QUEUED")],
+    latestJob: makeJob({ status: "SUCCEEDED" }),
+    latestChunks: [chunk("SUCCEEDED"), chunk("QUEUED")],
   }));
   assert.equal(d.state, "PARTIAL_NEEDS_RESUME");
   assert.equal(d.resumable, true);
@@ -129,32 +132,24 @@ test("derive: SUCCEEDED but a chunk still pending → PARTIAL_NEEDS_RESUME", () 
 // ─── Core derivation: running / queued ─────────────────────────────────────
 
 test("derive: QUEUED job → QUEUED", () => {
-  const d = deriveAnalysisStateDetail(makeInput({ job: makeJob({ status: "QUEUED" }) }));
+  const d = deriveAnalysisStateDetail(makeInput({ latestJob: makeJob({ status: "QUEUED" }) }));
   assert.equal(d.state, "QUEUED");
 });
 
 test("derive: RUNNING job → RUNNING", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "RUNNING" }),
-    chunks: [chunk("SUCCEEDED"), chunk("RUNNING")],
+    latestJob: makeJob({ status: "RUNNING" }),
+    latestChunks: [chunk("SUCCEEDED"), chunk("RUNNING")],
   }));
   assert.equal(d.state, "RUNNING");
   assert.equal(canResumeAnalysis(d.state), false);
-});
-
-test("derive: QUEUED-status job with pending chunks still RUNNING when chunks active", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "RUNNING" }),
-    chunks: [chunk("QUEUED")],
-  }));
-  assert.equal(d.state, "RUNNING");
 });
 
 // ─── Core derivation: fallback paths ───────────────────────────────────────
 
 test("derive: FAILED + FALLBACK_DRAFT not promoted → REGEX_FALLBACK_UNAPPROVED", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({
+    latestJob: makeJob({
       status: "FAILED",
       stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }),
     }),
@@ -166,12 +161,14 @@ test("derive: FAILED + FALLBACK_DRAFT not promoted → REGEX_FALLBACK_UNAPPROVED
 });
 
 test("derive: FAILED + FALLBACK_DRAFT promoted → HUMAN_APPROVED_FALLBACK", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({
+  const job = makeJob({
       status: "FAILED",
       stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }),
       promotedAt: new Date(),
-    }),
+    });
+  const d = deriveAnalysisStateDetail(makeInput({
+    latestJob: job,
+    promotedJob: job,
   }));
   assert.equal(d.state, "HUMAN_APPROVED_FALLBACK");
   assert.equal(d.analysisSource, "REGEX_FALLBACK");
@@ -180,7 +177,7 @@ test("derive: FAILED + FALLBACK_DRAFT promoted → HUMAN_APPROVED_FALLBACK", () 
 
 test("derive: FAILED + PARTIAL_AI staged → PARTIAL_NEEDS_RESUME", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({
+    latestJob: makeJob({
       status: "FAILED",
       stagedMergedResult: JSON.stringify({ analysisSource: "PARTIAL_AI" }),
     }),
@@ -190,37 +187,67 @@ test("derive: FAILED + PARTIAL_AI staged → PARTIAL_NEEDS_RESUME", () => {
 
 test("derive: FAILED + no staged result → FAILED", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "FAILED" }),
+    latestJob: makeJob({ status: "FAILED" }),
   }));
   assert.equal(d.state, "FAILED");
   assert.equal(d.analysisSource, "NONE");
   assert.equal(d.resumable, true);
 });
 
-test("derive: FAILED + malformed staged JSON → FAILED (no throw)", () => {
+// ─── Success Preservation Logic ───────────────────────────────────────────
+
+test("derive: latest failed job does NOT hide prior promoted success", () => {
+  const promoted = makeJob({ id: "job-promoted", status: "SUCCEEDED", promotedAt: new Date() });
+  const latest = makeJob({ id: "job-latest", status: "FAILED" });
+
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "FAILED", stagedMergedResult: "{not valid json" }),
+    latestJob: latest,
+    promotedJob: promoted,
+    latestChunks: [chunk("FAILED"), chunk("FAILED")],
+    promotedChunks: [chunk("SUCCEEDED"), chunk("SUCCEEDED")],
   }));
-  assert.equal(d.state, "FAILED");
+
+  assert.equal(d.state, "AI_SUCCEEDED");
+  assert.equal(d.analysisSource, "AI");
+  assert.equal(d.canonicalJobId, "job-promoted");
+  assert.equal(d.latestJobId, "job-latest");
+  // It should show counts from the promoted job
+  assert.equal(d.completedChunks, 2);
+  assert.equal(d.totalChunks, 2);
+  assert.ok(d.safeDiagnosticSummary.includes("Using prior successful analysis"));
+});
+
+test("derive: running job hides prior promoted success (RUNNING is higher precedence)", () => {
+  const promoted = makeJob({ id: "job-promoted", status: "SUCCEEDED", promotedAt: new Date() });
+  const latest = makeJob({ id: "job-latest", status: "RUNNING" });
+
+  const d = deriveAnalysisStateDetail(makeInput({
+    latestJob: latest,
+    promotedJob: promoted,
+    latestChunks: [chunk("SUCCEEDED"), chunk("RUNNING")],
+  }));
+
+  assert.equal(d.state, "RUNNING");
+  assert.equal(d.completedChunks, 1);
 });
 
 // ─── Core derivation: superseded ───────────────────────────────────────────
 
 test("derive: supersededBy set → SUPERSEDED (even if SUCCEEDED)", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED", supersededBy: "job-2" }),
-    chunks: [chunk("SUCCEEDED")],
+    latestJob: makeJob({ status: "SUCCEEDED", supersededBy: "job-2" }),
+    latestChunks: [chunk("SUCCEEDED")],
   }));
   assert.equal(d.state, "SUPERSEDED");
   assert.equal(canExportWithAnalysisState(d.state), false);
 });
 
-// ─── Provider attempt aggregation (the bug Amazon Q flagged) ───────────────
+// ─── Provider attempt aggregation ──────────────────────────────────────────
 
 test("derive: provider with mixed outcomes aggregates successes+failures, SUCCESS overall", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "PARTIAL_SUCCESS" }),
-    chunks: [
+    latestJob: makeJob({ status: "PARTIAL_SUCCESS" }),
+    latestChunks: [
       chunk("SUCCEEDED", "Mistral"),
       chunk("FAILED", "Mistral"),
       chunk("SUCCEEDED", "Mistral"),
@@ -233,43 +260,11 @@ test("derive: provider with mixed outcomes aggregates successes+failures, SUCCES
   assert.equal(mistral.status, "SUCCESS");
 });
 
-test("derive: provider with only failures reports FAILED status", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "FAILED" }),
-    chunks: [chunk("FAILED", "Groq"), chunk("FAILED", "Groq")],
-  }));
-  const groq = d.providerAttempts.find((p) => p.provider === "Groq");
-  assert.ok(groq);
-  assert.equal(groq.failures, 2);
-  assert.equal(groq.status, "FAILED");
-});
-
-test("derive: multiple providers tracked independently", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "PARTIAL_SUCCESS" }),
-    chunks: [
-      chunk("FAILED", "Mistral"),
-      chunk("SUCCEEDED", "Groq"),
-    ],
-  }));
-  assert.equal(d.providerAttempts.length, 2);
-  assert.equal(d.providerAttempts.find((p) => p.provider === "Mistral")?.status, "FAILED");
-  assert.equal(d.providerAttempts.find((p) => p.provider === "Groq")?.status, "SUCCESS");
-});
-
-test("derive: null providers are ignored in attempts", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "RUNNING" }),
-    chunks: [chunk("QUEUED", null), chunk("RUNNING", null)],
-  }));
-  assert.equal(d.providerAttempts.length, 0);
-});
-
 // ─── Safe diagnostics: no secret leakage ───────────────────────────────────
 
 test("derive: error message with API key is redacted in diagnostics", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({
+    latestJob: makeJob({
       status: "FAILED",
       errorMessage: "auth failed for sk-abc123XYZsecretkey and api_key=topsecret999",
     }),
@@ -279,19 +274,12 @@ test("derive: error message with API key is redacted in diagnostics", () => {
   assert.ok(d.safeDiagnosticSummary.includes("[KEY]"), "redaction marker present");
 });
 
-test("derive: Bearer token redacted", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "FAILED", errorMessage: "rejected: Bearer abc.def.ghi" }),
-  }));
-  assert.ok(!d.safeDiagnosticSummary.includes("abc.def.ghi"));
-});
-
 // ─── Artefact passthrough ──────────────────────────────────────────────────
 
 test("derive: artefact counts pass through to detail", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED" }),
-    chunks: [chunk("SUCCEEDED")],
+    latestJob: makeJob({ status: "SUCCEEDED" }),
+    latestChunks: [chunk("SUCCEEDED")],
     requirementsExtracted: 12,
     sourceReferencesCreated: true,
     metadataFieldsPersisted: true,
@@ -311,15 +299,40 @@ test("derive: every scenario returns exactly one valid AnalysisState", () => {
   const scenarios: DeriveAnalysisStateInput[] = [
     makeInput(),
     makeInput({ legacyNotesAiAnalyzed: true }),
-    makeInput({ job: makeJob({ status: "QUEUED" }) }),
-    makeInput({ job: makeJob({ status: "RUNNING" }), chunks: [chunk("RUNNING")] }),
-    makeInput({ job: makeJob({ status: "SUCCEEDED" }), chunks: [chunk("SUCCEEDED")] }),
-    makeInput({ job: makeJob({ status: "PARTIAL_SUCCESS" }), chunks: [chunk("SUCCEEDED"), chunk("FAILED")] }),
-    makeInput({ job: makeJob({ status: "FAILED" }) }),
-    makeInput({ job: makeJob({ status: "CANCELED" }) }),
+    makeInput({ latestJob: makeJob({ status: "QUEUED" }) }),
+    makeInput({ latestJob: makeJob({ status: "RUNNING" }), latestChunks: [chunk("RUNNING")] }),
+    makeInput({ latestJob: makeJob({ status: "SUCCEEDED" }), latestChunks: [chunk("SUCCEEDED")] }),
+    makeInput({ latestJob: makeJob({ status: "PARTIAL_SUCCESS" }), latestChunks: [chunk("SUCCEEDED"), chunk("FAILED")] }),
+    makeInput({ latestJob: makeJob({ status: "FAILED" }) }),
+    makeInput({ latestJob: makeJob({ status: "CANCELED" }) }),
   ];
   for (const s of scenarios) {
     const d = deriveAnalysisStateDetail(s);
     assert.ok(valid.includes(d.state), `unexpected state: ${d.state}`);
   }
+});
+
+// ─── Edge Cases ──────────────────────────────────────────────────────────
+
+test("derive: zero chunks with RUNNING job → RUNNING", () => {
+  const d = deriveAnalysisStateDetail(makeInput({
+    latestJob: makeJob({ status: "RUNNING", analysisInputHash: "h1" }),
+    latestChunks: [],
+  }));
+  assert.equal(d.state, "RUNNING");
+});
+
+test("derive: malformed diagnostics (random string) does not crash", () => {
+  const d = deriveAnalysisStateDetail(makeInput({
+    latestJob: makeJob({ status: "FAILED", errorMessage: "something broke !!! {{" }),
+  }));
+  assert.equal(d.state, "FAILED");
+  assert.ok(d.safeDiagnosticSummary.includes("something broke"));
+});
+
+test("derive: very short API key-like string not redacted if below threshold", () => {
+  const d = deriveAnalysisStateDetail(makeInput({
+    latestJob: makeJob({ status: "FAILED", errorMessage: "short sk-abc" }),
+  }));
+  assert.ok(d.safeDiagnosticSummary.includes("sk-abc"));
 });

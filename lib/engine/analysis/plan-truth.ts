@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
-import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus, SubmissionPlanStatus } from "../submission-plan";
+import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
 import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { canExportWithAnalysisState, type AnalysisState } from "../analysis-state-resolver";
 
 export type PlanTruthStatus =
   | "NO_PLAN"
@@ -34,7 +35,7 @@ export async function resolvePlanTruth(
   const status = deriveSubmissionPlanStatus(tender, plan);
 
   const isVerified = status === "CANONICAL_APPROVED";
-  const analysisTrusted = analysisInfo.state === "AI_SUCCEEDED" || analysisInfo.state === "HUMAN_APPROVED_FALLBACK";
+  const analysisTrusted = canExportWithAnalysisState(analysisInfo.state as AnalysisState);
 
   let reason = "Plan status: " + status;
   if (!analysisTrusted && !isVerified) {

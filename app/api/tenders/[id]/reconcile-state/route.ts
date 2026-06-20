@@ -15,7 +15,7 @@ export async function POST(
 
     const { id: tenderId } = await params;
 
-    const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId);
+    const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, actor.id);
 
     // Explicitly update tender stage/status based on resolved truth
     let status = undefined;
