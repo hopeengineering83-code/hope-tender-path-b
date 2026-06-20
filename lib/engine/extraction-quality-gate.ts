@@ -338,7 +338,10 @@ export function summarizeExtractionCoverage(files: ExtractionFileForCoverage[]):
     const missingPages = Math.max(0, fileTotal - fileExtracted);
     const weakByScore = score === null || score < FULL_EXTRACTION_MIN_SCORE;
     const filePerfect = Math.max(0, Math.min(fileTotal, fileExtracted) - fileOcr - totalFailedOrCorrupted - (weakByScore ? missingPages : 0));
-    if (!weakByScore && totalFailedOrCorrupted === 0 && missingPages === 0) perfectlyExtractedPages += filePerfect;
+    const fileIsHighQuality = !weakByScore;
+    if (fileIsHighQuality && totalFailedOrCorrupted === 0 && missingPages === 0) {
+      perfectlyExtractedPages += filePerfect;
+    }
 
     if (score === null) {
       lowConfidencePages.push({ fileName: name, page: null, reason: "Extraction score unknown", score });

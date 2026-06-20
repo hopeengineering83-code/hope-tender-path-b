@@ -14,6 +14,7 @@ export async function extractTextFromBuffer(
 ): Promise<string> {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   try {
+    if (isOdt(mimeType, ext)) return await extractOdt(buffer);
     if (isPdf(mimeType, ext)) return await extractPdf(buffer);
     if (isDocx(mimeType, ext)) return await extractDocx(buffer, fileName);
     if (isXlsx(mimeType, ext)) return await extractXlsx(buffer, fileName);
@@ -21,7 +22,7 @@ export async function extractTextFromBuffer(
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
     if (isRtf(mimeType, ext)) return extractRtf(buffer);
     if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, MAX_EXTRACTED_TEXT_CHARS);
-    if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
+    if (isImage(mimeType, ext)) return await extractImageWithClaudeVision(buffer, mimeType, fileName);
     return "";
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -30,6 +31,7 @@ export async function extractTextFromBuffer(
   }
 }
 
+function isOdt(mime: string, ext: string) { return mime === "application/vnd.oasis.opendocument.text" || ext === "odt"; }
 function isPdf(mime: string, ext: string) { return mime === "application/pdf" || ext === "pdf"; }
 function isDocx(mime: string, ext: string) { return mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || mime === "application/msword" || ext === "docx" || ext === "doc"; }
 function isXlsx(mime: string, ext: string) { return mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || mime === "application/vnd.ms-excel" || mime === "application/vnd.oasis.opendocument.spreadsheet" || ["xlsx", "xls", "ods"].includes(ext); }
@@ -247,6 +249,18 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
   // The cap above is enforced by the model itself on big files.
   const knownPages = typeof pageCount === "number" ? pageCount : null;
   if (knownPages && knownPages > PDF_OCR_MAX_PAGES_PER_CALL) {
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const pdfDoc = await PDFDocument.load(buffer);
+      const pagesToKeep = Array.from({ length: PDF_OCR_MAX_PAGES_PER_CALL }, (_, i) => i);
+      const newPdfDoc = await PDFDocument.create();
+      const copiedPages = await newPdfDoc.copyPages(pdfDoc, pagesToKeep.filter(i => i < pdfDoc.getPageCount()));
+      copiedPages.forEach((page) => newPdfDoc.addPage(page));
+      buffer = Buffer.from(await newPdfDoc.save());
+      console.info(`[extract-text] Trimmed PDF to first ${PDF_OCR_MAX_PAGES_PER_CALL} pages for OCR.`);
+    } catch (trimErr) {
+      console.warn("[extract-text] Failed to trim PDF for OCR:", trimErr);
+    }
     console.warn(`[extract-text] PDF has ${knownPages} pages; OCR call may be slow / costly (cap is ${PDF_OCR_MAX_PAGES_PER_CALL} pages).`);
   }
 
@@ -298,6 +312,112 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
     console.warn(`[extract-text] Claude vision OCR failed (${modelName}):`, msg);
     return "";
   }
+}
+
+
+async function extractImageWithClaudeVision(buffer: Buffer, mimeType: string, fileName: string): Promise<string> {
+  const ocrFlag = (process.env.PDF_OCR_ENABLED || "").toLowerCase();
+  const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
+  const ocrEnabled = ocrFlag === "true" || (ocrFlag !== "false" && hasAnthropicKey);
+
+  if (!ocrEnabled) {
+    return `[Image: ${fileName} — OCR disabled]`;
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return `[Image: ${fileName} — No Anthropic API Key for OCR]`;
+
+  let Anthropic: { new (config: { apiKey: string }): any };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
+  } catch (err) {
+    console.warn("[extract-text] @anthropic-ai/sdk not available for Image OCR:", err);
+    return `[Image: ${fileName} — OCR SDK missing]`;
+  }
+
+  const base64Image = buffer.toString("base64");
+  const rawModel = process.env.PDF_OCR_MODEL || "claude-3-5-sonnet-latest";
+  const modelName = rawModel.trim().toLowerCase().replace(/[._\s]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+
+  const client = new Anthropic({ apiKey });
+
+  // Normalize media type for Anthropic
+  let anthropicMime = mimeType;
+  const supportedMimes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+  if (!supportedMimes.includes(anthropicMime)) {
+    if (fileName.toLowerCase().endsWith(".png")) anthropicMime = "image/png";
+    else if (fileName.toLowerCase().endsWith(".webp")) anthropicMime = "image/webp";
+    else if (fileName.toLowerCase().endsWith(".gif")) anthropicMime = "image/gif";
+    else anthropicMime = "image/jpeg";
+  }
+
+  try {
+    const response = await client.messages.create({
+      model: modelName,
+      max_tokens: 4000,
+      system: "You are a precise OCR engine. Extract ALL visible text from the attached image, preserving paragraph structure and table contents where possible. Output ONLY the extracted text — no commentary, no markdown fences, no preamble.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: anthropicMime as any,
+                data: base64Image,
+              },
+            },
+            {
+              type: "text",
+              text: "Extract the complete text content of this image. Preserve paragraph and table structure.",
+            },
+          ],
+        },
+      ],
+    });
+    const text = response.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text ?? "")
+      .join("\n")
+      .trim();
+    return normalizeExtractedText(`[Image text extracted via Claude vision OCR: ${fileName}]\n\n${text}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[extract-text] Image OCR failed (${modelName}):`, msg);
+    return `[Image: ${fileName} — OCR failed: ${msg.slice(0, 100)}]`;
+  }
+}
+
+
+async function extractOdt(buffer: Buffer): Promise<string> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(buffer);
+  const contentXml = zip.files["content.xml"];
+  if (!contentXml) return "[No content.xml found in ODT file]";
+  const xml = await contentXml.async("string");
+
+  // Robustly extract text from ODT XML by stripping all tags while preserving
+  // content between them. ODT text content is typically inside <text:p>,
+  // <text:h>, and <text:span> tags. This approach handles nested tags
+  // (e.g. <text:p>Hello <text:span>World</text:span></text:p>) correctly
+  // by removing the tags but keeping the text content.
+  let text = xml
+    // Replace closing paragraph and heading tags with newlines to preserve structure
+    .replace(/<\/(?:text:p|text:h|text:section|table:table-row)>/g, "\n")
+    // Replace tab tags with spaces
+    .replace(/<text:tab\/>/g, " ")
+    // Remove all remaining XML tags
+    .replace(/<[^>]+>/g, "")
+    // Decode basic XML entities
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+
+  return text.trim() ? normalizeExtractedText(text) : "[ODT file has no extractable text]";
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
@@ -443,6 +563,7 @@ export function isMeaningfulExtraction(text: string | null | undefined): boolean
 
 export function getFileTypeLabel(mimeType: string, fileName: string): string {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
+  if (isOdt(mimeType, ext)) return "ODT";
   if (isPdf(mimeType, ext)) return "PDF";
   if (isDocx(mimeType, ext)) return ext === "doc" ? "DOC" : "DOCX";
   if (isXlsx(mimeType, ext)) return ext === "xls" ? "XLS" : ext === "ods" ? "ODS" : "XLSX";
@@ -472,7 +593,7 @@ export function detectCategoryFromFile(fileName: string, mimeType: string): stri
   return "OTHER";
 }
 
-export const SUPPORTED_EXTENSIONS = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp,.svg,.tiff,.bmp";
+export const SUPPORTED_EXTENSIONS = ".pdf,.odt,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp,.svg,.tiff,.bmp";
 export const FILE_TYPE_COLORS: Record<string, string> = {
   PDF: "bg-red-100 text-red-700", DOCX: "bg-blue-100 text-blue-700", DOC: "bg-blue-100 text-blue-700", XLSX: "bg-green-100 text-green-700", XLS: "bg-green-100 text-green-700", ODS: "bg-green-100 text-green-700", PPTX: "bg-orange-100 text-orange-700", PPT: "bg-orange-100 text-orange-700", CSV: "bg-teal-100 text-teal-700", RTF: "bg-slate-100 text-slate-700", TXT: "bg-slate-100 text-slate-700", JPG: "bg-purple-100 text-purple-700", JPEG: "bg-purple-100 text-purple-700", PNG: "bg-purple-100 text-purple-700",
 };

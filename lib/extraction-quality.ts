@@ -194,10 +194,10 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
   };
 }
 
-const LOW_DENSITY_THRESHOLD = 150; // chars per page below which we flag as low-density
+const LOW_DENSITY_THRESHOLD = 150;
 // A table-heavy page that still contains enough text is considered perfectly
 // extracted — only low-density table pages are flagged as TABLE_HEAVY.
-const TABLE_GOOD_THRESHOLD = 300; // chars above which a TABLE_HEAVY page counts as GOOD
+const TABLE_GOOD_THRESHOLD = 300;
 
 function classifyPageText(pageText: string): Omit<PageQualityEntry, "page"> {
   const charCount = pageText.replace(/\s+/g, " ").length;
