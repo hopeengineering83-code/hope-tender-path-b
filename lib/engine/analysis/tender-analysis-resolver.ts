@@ -35,10 +35,10 @@ export async function resolveTenderAnalysisState(
   // If userId is missing, we must fetch it from the tender to ensure tenant isolation
   let effectiveUserId = userId;
   if (!effectiveUserId) {
-    const tender = await (prisma as any).tender?.findUnique({
+    const tender = await (prisma as any).tender?.findUnique ? await (prisma as any).tender.findUnique({
       where: { id: tenderId },
       select: { userId: true }
-    }).catch(() => null);
+    }).catch(() => null) : null;
     if (!tender) throw new Error("Tender not found");
     effectiveUserId = tender.userId;
   }
@@ -56,14 +56,14 @@ export async function resolveTenderAnalysisState(
   }
 
   // Calculate metadata count for UI compatibility
-  const tender = await (prisma as any).tender?.findUnique({
+  const tender = await (prisma as any).tender?.findUnique ? await (prisma as any).tender.findUnique({
     where: { id: tenderId },
-    select: { clientName: true, deadline: true, submissionMethod: true, reference: true }
-  }).catch(() => null);
+    select: { clientName: true, deadline: true, submissionMethod: true, reference: true, files: true }
+  }).catch(() => null) : null;
   const metadataCount = [tender?.clientName, tender?.deadline, tender?.submissionMethod, tender?.reference].filter(Boolean).length;
 
   // We need the raw sourceReferencesCreated count for the legacy API
-  const sourceReferencesCount = await (prisma as any).tenderRequirement?.count({
+  const sourceReferencesCount = await (prisma as any).tenderRequirement?.count ? await (prisma as any).tenderRequirement.count({
     where: {
         tenderId,
         OR: [
@@ -72,10 +72,40 @@ export async function resolveTenderAnalysisState(
             { sourceExactQuote: { not: null } }
         ]
     }
-  }).catch(() => 0) ?? 0;
+  }).catch(() => 0) : 0;
+
+  // Check for detected sections in files (Stage 2 legacy compatibility)
+  let sectionsDetected = false;
+  if (tender?.files && Array.isArray(tender.files)) {
+    for (const file of tender.files) {
+        try {
+            const pageStatus = JSON.parse(file.pageStatusJson || "[]");
+            if (Array.isArray(pageStatus)) {
+                if (pageStatus.some((p: any) => p.hasSubmissionInstructions || p.hasEvaluationCriteria || p.hasRequiredDocuments)) {
+                    sectionsDetected = true;
+                    break;
+                }
+            }
+        } catch (e) {}
+    }
+  }
+
+  let state: TenderAnalysisState = detail.state as TenderAnalysisState;
+  let nextAction = detail.nextAction;
+  let safeDiagnosticSummary = detail.safeDiagnosticSummary;
+
+  if (state === "AI_SUCCEEDED" && detail.requirementsExtracted === 0 && sectionsDetected) {
+    state = "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED";
+    nextAction = "RETRY_AI_EXTRACTION";
+    safeDiagnosticSummary = "AI analysis finished but could not find specific requirements within the detected pages. Manual review or re-extraction is recommended.";
+  } else if (state === "NOT_STARTED" && sectionsDetected) {
+    state = "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED";
+    nextAction = "RETRY_AI_EXTRACTION";
+    safeDiagnosticSummary = "Important tender sections (like Evaluation or Submission) were detected, but no structured requirements could be saved. Try re-running the extraction.";
+  }
 
   return {
-    state: detail.state as TenderAnalysisState,
+    state,
     latestJobId: detail.latestJobId,
     canonicalJobId: detail.canonicalJobId,
     startedAt: detail.startedAt,
@@ -91,7 +121,7 @@ export async function resolveTenderAnalysisState(
     completedChunks: detail.completedChunks,
     totalChunks: detail.totalChunks,
     resumableJobId: detail.resumable ? detail.latestJobId : null,
-    nextAction: detail.nextAction,
-    safeDiagnosticSummary: detail.safeDiagnosticSummary,
+    nextAction,
+    safeDiagnosticSummary,
   };
 }

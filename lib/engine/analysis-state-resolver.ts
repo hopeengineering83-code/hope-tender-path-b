@@ -242,22 +242,22 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
 export async function resolveTenderAnalysisState(prisma: any, tenderId: string, userId: string): Promise<TenderAnalysisStateDetail> {
   const db = prisma || globalPrisma;
   const [latestJob, promotedJob] = await Promise.all([
-    db.aiJob?.findFirst({ where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE }, orderBy: { createdAt: "desc" }, select: { id: true, status: true, analysisInputHash: true, stagedMergedResult: true, promotedAt: true, supersededBy: true, startedAt: true, finishedAt: true, errorMessage: true } }).catch(() => null) ?? null,
-    db.aiJob?.findFirst({ where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE, promotedAt: { not: null }, supersededBy: null }, orderBy: { promotedAt: "desc" }, select: { id: true, status: true, analysisInputHash: true, stagedMergedResult: true, promotedAt: true, supersededBy: true, startedAt: true, finishedAt: true, errorMessage: true } }).catch(() => null) ?? null
+    db.aiJob?.findFirst ? db.aiJob.findFirst({ where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE }, orderBy: { createdAt: "desc" }, select: { id: true, status: true, analysisInputHash: true, stagedMergedResult: true, promotedAt: true, supersededBy: true, startedAt: true, finishedAt: true, errorMessage: true } }).catch(() => null) : Promise.resolve(null),
+    db.aiJob?.findFirst ? db.aiJob.findFirst({ where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE, promotedAt: { not: null }, supersededBy: null }, orderBy: { promotedAt: "desc" }, select: { id: true, status: true, analysisInputHash: true, stagedMergedResult: true, promotedAt: true, supersededBy: true, startedAt: true, finishedAt: true, errorMessage: true } }).catch(() => null) : Promise.resolve(null)
   ]);
   const [requirementsExtracted, sourceReferencesCreated, tender] = await Promise.all([
-    db.tenderRequirement?.count({ where: { tenderId } }).catch(() => 0) ?? 0,
-    db.tenderRequirement?.count({ where: { tenderId, OR: [{ sourceTenderFileId: { not: null } }, { sourcePageNumber: { not: null } }, { sourceExactQuote: { not: null } }] } }).then((n: number) => n > 0).catch(() => false) ?? false,
-    db.tender?.findUnique({ where: { id: tenderId }, select: { notes: true, clientName: true, deadline: true, submissionMethod: true } }).catch(() => null) ?? null,
+    db.tenderRequirement?.count ? db.tenderRequirement.count({ where: { tenderId } }).catch(() => 0) : Promise.resolve(0),
+    db.tenderRequirement?.count ? db.tenderRequirement.count({ where: { tenderId, OR: [{ sourceTenderFileId: { not: null } }, { sourcePageNumber: { not: null } }, { sourceExactQuote: { not: null } }] } }).then((n: number) => n > 0).catch(() => false) : Promise.resolve(false),
+    db.tender?.findUnique ? db.tender.findUnique({ where: { id: tenderId }, select: { notes: true, clientName: true, deadline: true, submissionMethod: true } }).catch(() => null) : Promise.resolve(null),
   ]);
   const metadataFieldsPersisted = Boolean(tender?.clientName && (tender?.deadline || tender?.submissionMethod));
   const legacyNotesAiAnalyzed = !latestJob && Boolean(tender?.notes && /analysis\s+source.*ai/i.test(tender.notes));
   let latestChunks: ResolverChunkInput[] = [];
-  if (latestJob?.analysisInputHash && db.aiAnalyzeChunk) {
+  if (latestJob?.analysisInputHash && db.aiAnalyzeChunk?.findMany) {
     latestChunks = await db.aiAnalyzeChunk.findMany({ where: { tenderId, userId, contentHash: latestJob.analysisInputHash }, select: { status: true, provider: true, totalChunks: true } }).catch(() => []) ?? [];
   }
   let promotedChunks: ResolverChunkInput[] = [];
-  if (promotedJob && promotedJob.id !== latestJob?.id && promotedJob.analysisInputHash && db.aiAnalyzeChunk) {
+  if (promotedJob && promotedJob.id !== latestJob?.id && promotedJob.analysisInputHash && db.aiAnalyzeChunk?.findMany) {
     promotedChunks = await db.aiAnalyzeChunk.findMany({ where: { tenderId, userId, contentHash: promotedJob.analysisInputHash }, select: { status: true, provider: true, totalChunks: true } }).catch(() => []) ?? [];
   } else if (promotedJob && latestJob && promotedJob.id === latestJob.id) {
     promotedChunks = latestChunks;
