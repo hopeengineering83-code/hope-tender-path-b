@@ -558,18 +558,10 @@ async function handleStreamingAnalyze(
         emit({ phase: "analyzing", chunk: initialChunk, totalChunks: estimatedChunks, resumedFromChunk: startFromChunk ?? 0, message: startFromChunk ? `Resuming at chunk ${initialChunk} of ${estimatedChunks}…` : `Analyzing chunk 1 of ${estimatedChunks}…` });
 
         // Wrap analyzeWithAI to emit per-chunk progress events.
-        // analyzeWithAI processes chunks sequentially; we poll progress after
-        // the call returns rather than instrumenting the library internals.
-        // For multi-chunk tenders we emit a mid-analysis event after a short
-        // delay so the UI shows movement.
+        // analyzeWithAI processes chunks in parallel (limit 3); we emit real
+        // events as each chunk starts and completes — never an estimated
+        // timer — so the UI progress reflects persisted chunk state only.
         let progressTimer: ReturnType<typeof setInterval> | null = null;
-        let estimatedChunksDone = 0;
-        if (estimatedChunks > 1) {
-          progressTimer = setInterval(() => {
-            estimatedChunksDone = Math.min(estimatedChunksDone + 1, estimatedChunks - 1);
-            emit({ phase: "analyzing", chunk: estimatedChunksDone + 1, totalChunks: estimatedChunks, message: `Analyzing chunk ${estimatedChunksDone + 1} of ${estimatedChunks}…` });
-          }, Math.max(3_000, Math.floor(SAFE_DEADLINE_MS / (estimatedChunks + 1))));
-        }
 
         let aiMeta: AnalysisWithMeta;
         let analysisResult: {
@@ -585,6 +577,12 @@ async function handleStreamingAnalyze(
 
         if (isAIEnabled()) {
           const onChunkStart = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
+            emit({
+              phase: "analyzing",
+              chunk: chunkIndex + 1,
+              totalChunks,
+              message: `Starting analysis of chunk ${chunkIndex + 1} of ${totalChunks}…`,
+            });
             await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
               console.error("[ai-analyze/stream] checkpoint start write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
             });
@@ -603,6 +601,12 @@ async function handleStreamingAnalyze(
             provider?: string | null;
           }) => {
             if (typeof chunkIndex === "number" && result) {
+              emit({
+                phase: "analyzing",
+                chunk: chunkIndex + 1,
+                totalChunks,
+                message: `Completed chunk ${chunkIndex + 1} of ${totalChunks}${provider ? ` using ${provider}` : ""}.`,
+              });
               await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch((e: unknown) => {
                 console.error("[ai-analyze/stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
               });
@@ -624,6 +628,12 @@ async function handleStreamingAnalyze(
             errorMessage,
             provider,
           }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
+            emit({
+              phase: "analyzing_error",
+              chunk: chunkIndex + 1,
+              totalChunks,
+              message: `Chunk ${chunkIndex + 1} failed: ${errorMessage.slice(0, 100)}`,
+            });
             await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch((e: unknown) => {
               console.error("[ai-analyze/stream] checkpoint failed write failed — chunk may be retried on resume:", e instanceof Error ? e.message : String(e));
             });
@@ -716,7 +726,8 @@ async function handleStreamingAnalyze(
                       requirementType: req.requirementType, priority: req.priority,
                       exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
-                      sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
+                      sectionReference: req.sectionReference ?? null,
+                      sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
                       sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
                       sourceTenderFileId: (req.sourceFileToken && validTenderFileIds.has(req.sourceFileToken)) ? req.sourceFileToken : null,
                       sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethod,
@@ -728,6 +739,7 @@ async function handleStreamingAnalyze(
                   where: { id },
                   data: {
                     analysisSummary: aiResult.summary,
+                    ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
                     evaluationMethodology: aiResult.evaluationMethodology || null,
                     exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
                     exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
@@ -803,7 +815,8 @@ async function handleStreamingAnalyze(
               failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
               extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
             }));
-            const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+            const textSamples = tenderRecord.files.map((f) => f.extractedText);
+            const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
             // When AI analysis was only partial (some chunks failed or the deadline
             // was reached before all chunks completed), cap the persisted status to
             // PARTIAL so downstream gates (Generate Docs, Export) cannot treat an
