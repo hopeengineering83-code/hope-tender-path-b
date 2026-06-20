@@ -75,7 +75,7 @@ export type AiProviderStatus =
   | "unauthorized"
   | "timeout"
   | "unavailable"
-  | "unknown";
+  | "unknown" | "analysis_verified" | "generation_verified";
 
 export type AiProviderHealth = {
   provider: AiProviderName;
@@ -83,6 +83,7 @@ export type AiProviderHealth = {
   lastSuccessAt: string | null;
   lastPingSucceededAt: string | null;
   lastGenerationSucceededAt: string | null;
+  lastAnalysisSucceededAt: string | null;
   lastFailureAt: string | null;
   lastFailureCategory: AiProviderFailureCategory | null;
   lastFailureMessage: string | null;
@@ -94,6 +95,7 @@ type InternalState = {
   lastSuccessAt: number | null;
   lastPingSucceededAt: number | null;
   lastGenerationSucceededAt: number | null;
+  lastAnalysisSucceededAt: number | null;
   lastFailureAt: number | null;
   lastFailureCategory: AiProviderFailureCategory | null;
   lastFailureMessage: string | null;
@@ -274,7 +276,7 @@ function ensureState(provider: AiProviderName): InternalState {
     s = {
       lastSuccessAt: null,
       lastPingSucceededAt: null,
-      lastGenerationSucceededAt: null,
+      lastGenerationSucceededAt: null, lastAnalysisSucceededAt: null,
       lastFailureAt: null,
       lastFailureCategory: null,
       lastFailureMessage: null,
@@ -337,6 +339,23 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
   if (/no\s+json|malformed\s+json|invalid\s+json|json\s+parse/.test(lower)) return "MALFORMED_RESPONSE";
   return "UNKNOWN";
+}
+
+export function recordProviderAnalysisSuccess(provider: AiProviderName): void {
+  const s = state.get(provider);
+  if (!s) {
+    recordProviderSuccess(provider); // fallback to ensure state exists
+    const s2 = state.get(provider)!;
+    s2.lastAnalysisSucceededAt = Date.now();
+    return;
+  }
+  const now = Date.now();
+  s.lastSuccessAt = now;
+  s.lastAnalysisSucceededAt = now;
+  s.consecutiveFailures = 0;
+  s.cooldownUntil = null;
+  s.lastFailureCategory = null;
+  s.lastFailureMessage = null;
 }
 
 export function recordProviderSuccess(provider: AiProviderName): void {
@@ -432,7 +451,7 @@ export function getProviderStateSnapshot(provider: AiProviderName): {
   cooldownUntil: number | null;
 } {
   const s = state.get(provider) ?? {
-    lastSuccessAt: null, lastFailureAt: null,
+    lastSuccessAt: null, lastAnalysisSucceededAt: null, lastFailureAt: null,
     lastFailureCategory: null, lastFailureMessage: null,
     consecutiveFailures: 0, cooldownUntil: null,
   };
@@ -454,7 +473,7 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
   const s = state.get(provider) ?? {
     lastSuccessAt: null,
     lastPingSucceededAt: null,
-    lastGenerationSucceededAt: null,
+    lastGenerationSucceededAt: null, lastAnalysisSucceededAt: null,
     lastFailureAt: null,
     lastFailureCategory: null,
     lastFailureMessage: null,
@@ -467,6 +486,7 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
     lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt).toISOString() : null,
     lastPingSucceededAt: s.lastPingSucceededAt ? new Date(s.lastPingSucceededAt).toISOString() : null,
     lastGenerationSucceededAt: s.lastGenerationSucceededAt ? new Date(s.lastGenerationSucceededAt).toISOString() : null,
+    lastAnalysisSucceededAt: s.lastAnalysisSucceededAt ? new Date(s.lastAnalysisSucceededAt).toISOString() : null,
     lastFailureAt: s.lastFailureAt ? new Date(s.lastFailureAt).toISOString() : null,
     lastFailureCategory: s.lastFailureCategory,
     lastFailureMessage: s.lastFailureMessage,
@@ -521,6 +541,8 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   // A real generation success is authoritative — once recorded, the provider
   // is "runtime_verified" until a new failure puts it back in cooldown.
   // (Ping-only successes are tracked separately and do NOT flip this.)
+  if (h.lastGenerationSucceededAt && !cooling) return "generation_verified";
+  if (h.lastAnalysisSucceededAt && !cooling) return "analysis_verified";
   if (h.lastGenerationSucceededAt && !cooling) return "runtime_verified";
   // Failure-driven states (provider is currently in cooldown OR has a recorded
   // failure category even if the cooldown window has expired).
@@ -578,7 +600,7 @@ export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRu
     // runtimeVerified: true only when lastGenerationSucceededAt is set —
     // recordProviderSuccess (real generation) sets it; recordProviderPingSuccess
     // (connectivity check only) does not.
-    runtimeVerified: Boolean(h.lastGenerationSucceededAt),
+    runtimeVerified: Boolean(h.lastGenerationSucceededAt || h.lastAnalysisSucceededAt),
     // Legacy field: "configured + not currently cooling". Kept for the chain
     // scheduler. NOT a health statement — UI must use `status` instead.
     available: h.configured && !coolingDown,

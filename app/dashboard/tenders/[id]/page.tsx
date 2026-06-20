@@ -1,4 +1,11 @@
 import type { ReactNode } from "react";
+import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
+import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
+import { AuthorityReviewTruthPanel } from "../../../../components/authority-review-truth-panel";
+import { MetadataTruthPanel } from "../../../../components/metadata-truth-panel";
+import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
+import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
+import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -22,10 +29,6 @@ import { ExtractionQualityPanel } from "../../../../components/extraction-qualit
 import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
-import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
-import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
-import { NextActionPanel } from "../../../../components/next-action-panel";
-import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
@@ -44,6 +47,10 @@ import { MetadataCompletionPanel } from "../../../../components/metadata-complet
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
 import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
+import { NextActionPanel } from "../../../../components/next-action-panel";
+import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
+import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
+import { prisma as prismaClient } from "../../../../lib/prisma";
 
 function WorkflowStage({
   number,
@@ -79,7 +86,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   await prismaReady;
 
   const { id } = await params;
-  const tender = await prisma.tender.findFirst({
+  const tender = await prismaClient.tender.findFirst({
     where: { id, userId },
     include: {
       files: {
@@ -106,7 +113,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   if (!tender) notFound();
 
-  const fileTextMetrics = await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
+  const fileTextMetrics = await prismaClient.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
     SELECT
       id,
       COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
@@ -133,8 +140,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   };
 
   const ai = isAIEnabled();
-  const generationReadiness = await getTenderGenerationReadinessStrict(prisma, userId, tender.id).catch(() => null);
-  const canonicalReadiness = await getCanonicalTenderReadiness(prisma, userId, tender.id).catch(() => null);
+  const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
+  const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
 
   return (
     <main className="space-y-5" aria-label="Tender workflow workspace">
@@ -148,6 +155,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       }} />
 
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
+      <TenderWorkflowActionCenter tenderId={tender.id} />
+      <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
       <TenderRecoveryCommandCenter tenderId={tender.id} />
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
@@ -162,7 +171,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical metadata." open>
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} />
         <ExtractionQualityDashboard tenderId={tender.id} />
+        <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
+        <MetadataTruthPanel tenderId={tender.id} />
         <MetadataCompletionPanel tenderId={tender.id} />
         <ClientSubmissionDetailsPanel tenderId={tender.id} />
         <ExtractionQualityPanel tenderId={tender.id} />
@@ -195,7 +206,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
         <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} />
+        <SubmissionPlanTruthPanel tenderId={tender.id} />
         <SubmissionPlanReconciliationPanel tenderId={tender.id} />
+        <AuthorityReviewTruthPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
         <EvaluatorObjectionsPanel tenderId={tender.id} />

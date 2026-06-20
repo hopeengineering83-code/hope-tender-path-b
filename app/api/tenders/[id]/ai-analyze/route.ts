@@ -1680,6 +1680,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisProviderStatus = `AI_ANALYZED_BY_${analysisProvider.toUpperCase()}`;
       }
 
+      if (analysisProvider) {
+        const { markProviderAnalysisOK } = await import("../../../../../lib/engine/provider-health-store");
+        void markProviderAnalysisOK(analysisProvider).catch(() => {});
+      }
       // Log skipped (cooling down) providers from the diagnostics snapshot
       const diagnosticsSnap = analysisResult.providerDiagnostics;
       if (diagnosticsSnap) {
