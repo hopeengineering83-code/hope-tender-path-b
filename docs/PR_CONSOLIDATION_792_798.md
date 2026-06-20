@@ -3,8 +3,26 @@
 
 **Date**: 2026-06-20  
 **Auditor**: Claude Code  
-**Status**: PHASE 1 COMPLETE — ready for Phase 2 validation & Phase 3 merge  
-**Scope**: All 7 open PRs (#792–#798), every file, every meaningful hunk
+**Status**: PHASE 3 IN PROGRESS — see Execution Log below  
+**Scope**: All open PRs (#792–#800), every file, every meaningful hunk
+
+> ⚠️ **A new PR #799 appeared mid-consolidation** (Jules, 17:40) with a competing/more-
+> complete canonical resolver. It is audited below and the resolver PRs (#792/#796/#797/#799)
+> are intentionally **held open** pending reconciliation so none of #799's unique code is lost.
+
+---
+
+## Execution Log (Phase 3)
+
+| Step | Action | Result |
+|------|--------|--------|
+| 1 | **Merge #798** (security/DB/obs) | ✅ MERGED to main — squash commit `4d528ab` (all 6 checks green) |
+| 2 | **Re-home #795** onto `claude/*` (codex/* failed branch policy) | ✅ PR **#800** opened; rebased clean onto post-#798 main; 26/26 tests pass; tsc clean; Amazon Q: no blocking defects |
+| 3 | **Merge #800** (re-homed #795) | ⏳ pending final CI (5/6 green) |
+| 4 | **Close #793** (boundary labels in #800) | ⏳ after #800 merges |
+| 5 | **Close #794** (unsafe OCR/ODT) | ✅ CLOSED — tracking issue **#801** created for hardened redesign |
+| 6 | **Audit #799** before any resolver closures | ✅ DONE — see PR #799 section; resolver PRs held open |
+| 7 | Reconcile #797 ⇄ #799 resolver designs | ⏳ NEXT — see Reconciliation Plan |
 
 ---
 
@@ -311,6 +329,77 @@ npm test -- tests/p0-audit-fixes-regression.test.ts
 - Implement provider health rework (CONFIGURED → CONNECTIVITY_VERIFIED → ANALYSIS_VERIFIED)
 - Runtime API key reads + provider-agnostic OCR fallback
 - Extraction-quality dashboard rewrite
+
+---
+
+## PR #799 — Unify AI analysis truth (Jules) — AUDITED, HELD OPEN
+
+**Base branch**: `fix/production-tender-state-contradictions-3363296751845903810`  
+**Base commit**: 32035b5 (single commit)  
+**Files changed**: 63 (+1421 / −2686)  
+**Disposition**: **HOLD OPEN** — competing/more-complete resolver; reconcile with #797 before any closure
+
+This PR appeared **after** the original audit and is the single biggest "don't-lose-this-code"
+risk in the set. It shares ~half its deletions with #798 (dashboard-cache, feature-flags,
+timeout-config, pre-generation-validation, deep-reasoning-estimate cleanup) — those are now
+redundant since #798 is merged — but it also contains **substantial unique resolver + UI +
+provider-health code that #797 does NOT have.**
+
+### Unique code in #799 (NOT in #797)
+
+| Hunk | File | Lines | What it is | vs #797 |
+|------|------|-------|-----------|---------|
+| **U1** | `lib/engine/analysis/tender-analysis-resolver.ts` (NEW) | 231 | Canonical resolver, **modular** design | Competes with #797's single-file `analysis-state-resolver.ts` |
+| **U2** | `lib/engine/analysis/authority-truth.ts` (NEW) | 70 | Authority/approval truth module | Not in #797 |
+| **U3** | `lib/engine/analysis/metadata-truth.ts` (NEW) | 104 | Metadata truth module | Not in #797 |
+| **U4** | `lib/engine/analysis/plan-truth.ts` (NEW) | 51 | Submission-plan truth module | Not in #797 |
+| **U5** | `lib/engine/provider-health-store.ts` (NEW) | 25 | **Granular Provider Health** store | This is the Phase 3b work #797 *deferred* |
+| **U6** | `components/tender-workflow-action-center.tsx` (NEW) | 109 | **Workflow Control Center** UI | Not in #797 (Phase 3b) |
+| **U7** | `components/submission-plan-truth-panel.tsx` (NEW) | 29 | Submission-plan truth panel UI | Not in #797 |
+| **U8** | `components/tender-health-score-panel.tsx` | −341 | Health-score panel rewrite to use resolver | Not in #797 |
+| **U9** | `lib/engine/authority-review.ts` | −193 | Authority-review rewrite to use truth modules | Not in #797 |
+| **U10** | `lib/extraction-quality.ts` | +55 | Extraction-quality additions | Overlaps but not identical to #797 |
+
+### Overlap/conflict with #797
+
+- Both implement a **canonical analysis resolver** — but with **different architectures**
+  (#797: one pure file + 38 unit tests; #799: modular `analysis/*-truth.ts` + UI wiring, no
+  unit tests surfaced). Merging both as-is would conflict and duplicate the concept.
+- #797's distinctive strengths #799 lacks: **pure, fully-unit-tested** `deriveAnalysisStateDetail`
+  (38 tests), source-traceability extraction from #796, real per-chunk progress from #792,
+  8-prefix secret redaction.
+- #799's distinctive strengths #797 lacks: **provider-health store**, **workflow action center
+  UI**, modular truth resolvers (authority/metadata/plan), panel rewrites.
+
+### Reconciliation Plan (Phase 3c — next major step)
+
+Neither PR should be closed or blind-merged. The correct outcome is **one** canonical resolver
+that keeps both sides' strengths:
+
+1. Keep #797's **pure, tested** `deriveAnalysisStateDetail` core + source-traceability + progress
+   events + redaction as the engine.
+2. Adopt #799's **provider-health store**, **workflow action center**, and the **truth-module
+   split** (authority/metadata/plan) as the surrounding structure + UI, refactored to call the
+   #797 core (so the 38 tests still apply).
+3. Drop #799's now-redundant cleanup hunks (already landed via #798).
+4. Land the reconciled result on a single `claude/*` branch with the combined test suite, then
+   close #792/#796/#797/#799 pointing to it.
+
+Until that reconciliation lands, **all four resolver PRs stay open** so no unique code is lost.
+
+---
+
+## Closures Performed / Pending
+
+| PR | Action | When | Notes |
+|----|--------|------|-------|
+| #794 | ✅ CLOSED | done | Unsafe OCR/ODT; tracking issue #801 |
+| #793 | ⏳ PENDING | after #800 merges | Boundary labels live in #800 |
+| #795 | ⏳ PENDING | after #800 merges | Superseded by re-homed #800 |
+| #792 | 🔒 HELD | after resolver reconciliation | Safe progress code in #797; defects rejected |
+| #796 | 🔒 HELD | after resolver reconciliation | Safe traceability in #797 |
+| #797 | 🔒 HELD | reconcile with #799 | Canonical engine core |
+| #799 | 🔒 HELD | reconcile with #797 | Unique resolver/UI/provider-health |
 
 ---
 
