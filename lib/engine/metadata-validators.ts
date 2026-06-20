@@ -234,3 +234,60 @@ export function clientNameContaminationReason(value: string | null | undefined):
   }
   return null;
 }
+
+// ─── Non-client entity label detection ──────────────────────────────
+
+/**
+ * Canonical list of labels that indicate a non-client entity (beneficiary,
+ * donor, implementing partner, etc.) and should NOT be extracted as the
+ * procuring entity or client name. Used across extraction, validation,
+ * and repair workflows to ensure consistent safety rules.
+ */
+const NON_CLIENT_ENTITY_LABELS = [
+  "beneficiary",
+  "employer",
+  "owner",
+  "donor",
+  "donor agency",
+  "financing agency",
+  "funded by",
+  "financed by",
+  "funder",
+  "funding agency",
+  "grant from",
+  "loan from",
+  "implementing agency",
+  "implementing partner",
+  "executing agency",
+  "project management unit",
+  "project management",
+  "pmu",
+];
+
+/**
+ * Check if a string is a non-client entity label (beneficiary, donor,
+ * implementing agency, etc.). These labels should never produce a client
+ * or procuring entity name on their own.
+ *
+ * @param str The label to test (will be lowercased)
+ * @returns true if this is a non-client entity label
+ */
+export function isNonClientEntityLabel(str: string | undefined): boolean {
+  if (!str) return false;
+  const normalized = str.trim().toLowerCase();
+  return NON_CLIENT_ENTITY_LABELS.some((label) =>
+    normalized === label || normalized.startsWith(label + " ") || normalized.endsWith(" " + label)
+  );
+}
+
+/**
+ * Generate a regex pattern that matches non-client entity labels as the start
+ * of a string (with optional colon/dash suffix). Used in header-fallback guards
+ * and extraction filters.
+ *
+ * @returns A RegExp that matches non-client entity labels at the line start
+ */
+export function nonClientEntityLabelPattern(): RegExp {
+  const escaped = NON_CLIENT_ENTITY_LABELS.map((l) => l.replace(/\s+/g, "\\s+")).join("|");
+  return new RegExp(`^(?:${escaped})\\s*[:\\-]?`, "i");
+}

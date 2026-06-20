@@ -27,6 +27,7 @@ import {
   isValidCountry,
   canonicalizeCountry,
   isValidClientContact,
+  nonClientEntityLabelPattern,
 } from "./metadata-validators";
 import { cutAtNextFieldLabel } from "./tender-field-extractors";
 
@@ -176,7 +177,9 @@ function inferClient(text: string): string | null {
   const orgHeader = firstMatch(top, [
     /^([A-Z][^\n\r]{5,100}(?:ministry|authority|agency|council|commission|department|institute|corporation|limited|ltd\.?|plc\.?|llc\.?|gmbh|s\.a\.|inc\.?)[^\n\r]{0,60})\s*$/im,
   ]);
-  if (orgHeader && !/^(?:beneficiary|employer|owner|donor\s+agency|financing\s+agency|implementing\s+agency|executing\s+agency)\s*:/i.test(orgHeader) && isValidClientName(orgHeader)) return orgHeader;
+  // Reject the fallback if the header line itself starts with a non-client label
+  // (e.g., "Beneficiary: Global Health Agency" should never become clientName).
+  if (orgHeader && !nonClientEntityLabelPattern().test(orgHeader) && isValidClientName(orgHeader)) return orgHeader;
 
   return null;
 }
