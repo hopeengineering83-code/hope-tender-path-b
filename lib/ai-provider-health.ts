@@ -75,7 +75,9 @@ export type AiProviderStatus =
   | "unauthorized"
   | "timeout"
   | "unavailable"
-  | "unknown" | "analysis_verified" | "generation_verified";
+  | "unknown"
+  | "analysis_verified"
+  | "generation_verified";
 
 export type AiProviderHealth = {
   provider: AiProviderName;
@@ -539,11 +541,14 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   if (!h.configured) return "not_configured";
   const cooling = isProviderCooledDown(provider);
   // A real generation success is authoritative — once recorded, the provider
-  // is "runtime_verified" until a new failure puts it back in cooldown.
+  // is "runtime_verified" until a new failure puts it back in cooldown. This is
+  // the only state shown as Ready / green, and the existing provider-health
+  // contract (see ai-provider-health-order-alignment.test.ts) depends on it.
   // (Ping-only successes are tracked separately and do NOT flip this.)
-  if (h.lastGenerationSucceededAt && !cooling) return "generation_verified";
-  if (h.lastAnalysisSucceededAt && !cooling) return "analysis_verified";
   if (h.lastGenerationSucceededAt && !cooling) return "runtime_verified";
+  // A successful analysis (but no generation yet) is a weaker, granular signal:
+  // surfaced as "analysis_verified" — useful, but NOT shown as green/Ready.
+  if (h.lastAnalysisSucceededAt && !cooling) return "analysis_verified";
   // Failure-driven states (provider is currently in cooldown OR has a recorded
   // failure category even if the cooldown window has expired).
   const category = h.lastFailureCategory;
