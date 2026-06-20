@@ -85,11 +85,15 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || isGroqConfigured() || isDeepSeekConfigured() || anthropicApiKey);
+  return isGeminiEnabled() || isOpenAIEnabled() || isMistralEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isClaudeEnabled();
 }
 
 export function isClaudeEnabled() {
   return Boolean(anthropicApiKey);
+}
+
+export function isGeminiEnabled() {
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 
 // Last AI provider that successfully produced a proposal output. Set inside
@@ -472,7 +476,7 @@ export class NoAiProviderReadyError extends Error {
 function isProviderEnabled(name: AiProviderName): boolean {
   switch (name) {
     case "anthropic":  return isClaudeEnabled();
-    case "gemini":     return Boolean(apiKey);
+    case "gemini":     return isGeminiEnabled();
     case "openai":     return isOpenAIEnabled();
     case "mistral":    return isMistralEnabled();
     case "deepseek":   return isDeepSeekEnabled();
@@ -3627,7 +3631,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
 
   lastProposalProvider = null;
-  const configured = [Boolean(apiKey), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
+  const configured = [isGeminiEnabled(), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
   if (!configured.some(Boolean)) {
     throw new NoAiProviderReadyError({
       useCase: "proposal",
