@@ -33,9 +33,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const dryRun = body.dryRun === true;
 
-  // Verify tender ownership or admin
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actorId }, select: { id: true } })
-    ?? await prisma.tender.findFirst({ where: { id: tenderId }, select: { id: true } });
+  // Verify tender ownership. The fallback `?? findFirst({ where: { id } })`
+  // was removed (audit SEC-001, 2026-06-20) — it allowed any authenticated
+  // user (including VIEWER, who per RBAC only has TENDER_READ) to reclassify
+  // GeneratedDocument rows on ANY user's tender. The owner-scoped findFirst
+  // is the only safe lookup; if the tender doesn't belong to the actor,
+  // return 404 (not 403, to avoid leaking existence).
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actorId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   const docs = await prisma.generatedDocument.findMany({

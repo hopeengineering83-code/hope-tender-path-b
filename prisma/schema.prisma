@@ -46,6 +46,10 @@ model Session {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Audit DB-002 (2026-06-20): session revocation on password reset /
+  // logout-all filters by userId. Was a sequential scan before this index.
+  @@index([userId])
 }
 
 model Company {
@@ -397,6 +401,11 @@ model Tender {
   shares                TenderShare[]
   copilotMessages       TenderCopilotMessage[]
   metadataOverrides     TenderMetadataOverride[]
+
+  // Audit DB-002 (2026-06-20): the single most-queried column in the app
+  // (every "list my tenders" dashboard query filters on userId). Was a
+  // sequential scan before this index.
+  @@index([userId])
 }
 
 model TenderShare {
@@ -500,6 +509,8 @@ model ComplianceMatrix {
   updatedAt         DateTime           @updatedAt
 
   @@index([requirementId])
+  // Audit DB-002 (2026-06-20): every tender-detail compliance panel loads by tenderId.
+  @@index([tenderId])
 }
 
 model TenderExpertMatch {
@@ -549,6 +560,8 @@ model ComplianceGap {
   updatedAt      DateTime @updatedAt
 
   @@index([requirementId])
+  // Audit DB-002 (2026-06-20): compliance-gap panels load by tenderId.
+  @@index([tenderId])
 }
 
 model GeneratedDocument {
@@ -582,6 +595,10 @@ model GeneratedDocument {
   comments         DocumentComment[]
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+
+  // Audit DB-002 (2026-06-20): every tender-detail panel loads docs by tenderId.
+  // Was a sequential scan before this index.
+  @@index([tenderId])
 }
 
 // Per-document review action audit trail (PR #247).
@@ -651,6 +668,9 @@ model ExportPackage {
   downloadCount Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  // Audit DB-002 (2026-06-20): export-package list loads by tenderId.
+  @@index([tenderId])
 }
 
 model AuditLog {
@@ -663,6 +683,17 @@ model AuditLog {
   description String
   metadata    String   @default("{}")
   createdAt   DateTime @default(now())
+
+  // Audit DB-003 (2026-06-20): AuditLog previously had ZERO indexes. The
+  // guard_canonical_requirement_set_delete trigger runs a 4-column WHERE on
+  // every TenderRequirement DELETE; without these indexes it was a full
+  // table scan that grew linearly with audit history.
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  // Composite covering index for the trigger's exact WHERE clause
+  @@index([entityType, entityId, action, createdAt])
 }
 
 model Notification {

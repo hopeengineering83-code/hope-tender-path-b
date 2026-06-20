@@ -63,12 +63,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     : ["evaluationMethodology" as SupportedField];
   const force = (body as { force?: unknown }).force === true && actor.role === "ADMIN";
 
-  // Scope: owner OR (ADMIN / PROPOSAL_MANAGER) — same as other tender mutations.
+  // Scope: owner OR (ADMIN / PROPOSAL_MANAGER). The fallback `?? findFirst({ where: { id } })`
+  // was removed (audit SEC-002, 2026-06-20) — it allowed any REVIEWER (broader
+  // than the RBAC matrix in lib/security/rbac.ts intends) to overwrite scalar
+  // metadata fields on any tender they do not own. The owner-scoped findFirst
+  // is the only safe lookup; if the tender doesn't belong to the actor,
+  // return 404 (not 403, to avoid leaking existence).
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    include: { files: { select: { fileName: true, extractedText: true } } },
-  }) ?? await prisma.tender.findFirst({
-    where: { id: tenderId },
     include: { files: { select: { fileName: true, extractedText: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });

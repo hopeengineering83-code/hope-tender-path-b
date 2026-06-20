@@ -25,7 +25,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const dryRun = body.dryRun === true;
 
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId }, select: { id: true } });
+  // Verify tender ownership (audit SEC-003, 2026-06-20). The previous lookup
+  // had NO userId filter — any ADMIN/PROPOSAL_MANAGER from any company could
+  // pass another company's tender UUID and supersede all of that tender's
+  // duplicate documents (destructive `generationStatus: "SUPERSEDED"`).
+  // The owner-scoped findFirst is the only safe lookup; if the tender doesn't
+  // belong to the actor, return 404 (not 403, to avoid leaking existence).
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // Load all non-superseded docs
