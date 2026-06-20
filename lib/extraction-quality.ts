@@ -278,3 +278,58 @@ export function assessExtractionQualityPerPage(text: string | null | undefined):
   const wholeDocumentPage: PageQualityEntry = { page: 1, ...classifyPageText(raw) };
   return reportFromPages([wholeDocumentPage], markerRegex.test(raw) ? "PAGE_MARKERS" : "DOCUMENT_LEVEL");
 }
+
+export type ExtractionConsistencyStatus =
+  | "CONSISTENT"
+  | "PAGE_STATUS_INCOMPLETE"
+  | "PAGE_COUNT_MISMATCH"
+  | "EXTRACTION_STALE"
+  | "REEXTRACTION_REQUIRED";
+
+export interface ExtractionSnapshot {
+  fileId: string;
+  sourcePageCount: number;
+  storedPageStatusCount: number;
+  extractedPages: number;
+  ocrPages: number;
+  weakPages: number;
+  blankPages: number;
+  failedPages: number;
+  extractionScore: number;
+  extractionMethod: string;
+  contentHash: string | null;
+  extractionRunAt: Date | null;
+  consistencyStatus: ExtractionConsistencyStatus;
+}
+
+export function computeExtractionSnapshot(file: any): ExtractionSnapshot {
+  const pageStatus = JSON.parse(file.pageStatusJson || "[]");
+  const storedPageStatusCount = pageStatus.length;
+  const sourcePageCount = file.totalPages || 0;
+
+  const snapshot: ExtractionSnapshot = {
+    fileId: file.id,
+    sourcePageCount,
+    storedPageStatusCount,
+    extractedPages: file.extractedPages || 0,
+    ocrPages: file.ocrPages || 0,
+    weakPages: pageStatus.filter((p: any) => p.status === "LOW_DENSITY" || p.status === "TABLE_HEAVY").length,
+    blankPages: pageStatus.filter((p: any) => p.status === "BLANK").length,
+    failedPages: file.failedPages || 0,
+    extractionScore: file.extractionScore || 0,
+    extractionMethod: file.extractionMethod || "UNKNOWN",
+    contentHash: file.contentHash || null,
+    extractionRunAt: file.updatedAt || null,
+    consistencyStatus: "CONSISTENT",
+  };
+
+  if (storedPageStatusCount === 0 && sourcePageCount > 0) {
+    snapshot.consistencyStatus = "PAGE_STATUS_INCOMPLETE";
+  } else if (sourcePageCount > 0 && storedPageStatusCount !== sourcePageCount) {
+    snapshot.consistencyStatus = "PAGE_COUNT_MISMATCH";
+  } else if (!file.extractedText || file.extractedText.length < 50) {
+    snapshot.consistencyStatus = "REEXTRACTION_REQUIRED";
+  }
+
+  return snapshot;
+}
