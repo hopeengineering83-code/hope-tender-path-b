@@ -35,11 +35,15 @@ Branch: `claude/fix-remaining-gaps-qwgq6b`
 | Item | Disposition |
 |------|-------------|
 | pdfjs pin | 🔁 SUPERSEDED by #795 (verified present) |
-| `inferClient` consolidation | 🔁 SUPERSEDED by #795 |
-| Extended client fields via regex | 🔁 SUPERSEDED by #795 |
+| `inferClient` → `extractClientName` consolidation | ⏭️ NOT NEEDED — both impls now share `nonClientEntityLabelPattern()` + `isValidClientName`, so the drift #793 worried about is already prevented |
+| Extended client fields via regex | 🔁 SUPERSEDED by #795 (grounded versions with page/quote provenance) |
+| **Extra boundary labels** (`financier`, `financing`, `recipient`, `grantee`, `consultant`) in `SECONDARY_FIELD_LABEL` | ✅ **EXTRACTED into #795** (commit `e6d9826`) + 4 tests — the one safe piece #795 had missed |
+| `inferDonorAgency` `KNOWN_DONORS` narrative scan | ❌ REJECTED — violates "do not save unlabelled donor mentions from tender narrative" |
+| `inferClientWebsite` bare-first-URL fallback | ❌ REJECTED — violates "do not save broad first-URL fallback" |
 
-**Recommendation: close #793 as superseded by the corrected #795.** No
-unique code is lost.
+**Recommendation: close #793 as superseded by the corrected #795.** Its one
+safe unique piece (extra boundary labels) is now extracted; its two unsafe
+heuristics are correctly omitted.
 
 ---
 
@@ -53,14 +57,24 @@ Branch: `fix/ai-analyze-robustness-...`
 | `components/ai-analyze-panel.tsx`: "Resume Now" button + auto-retry toggle | ⏳ DEFERRED to Phase 3b UI wiring (concept is sound; reimplement cleanly) |
 | `.github/workflows/branch-policy.yml` allow `fix/*` → main | ❌ REJECTED (mission-explicit; weakens branch policy) |
 | `"Autorety"` typo + duplicated `if (!autoRetryEnabled)` block | ❌ REJECTED (bugs) |
-| `lib/ai-analyze-checkpoints.ts`: `totalChunks = rows[0]` instead of `Math.max` | ❌ REJECTED (mission-flagged DEFECT — keep `Math.max`) |
+| `lib/ai-analyze-checkpoints.ts`: `totalChunks = rows[0]` instead of `Math.max` | ❌ REJECTED (mission-flagged DEFECT, confirmed by Amazon Q review — keep `Math.max`) |
 | `resumeAvailable` logic tweak | ⏳ DEFERRED (re-evaluate in Phase 3b; not adopted with the rows[0] defect) |
 | Removed temp artifacts `fix_route.py`, `fix_generate_missing.py` | ➖ N/A (artifacts not on main) |
 
+**Amazon Q review of #792 (must fix when Phase 3b reimplements the UI):**
+- "Autorety" → "Auto-retry" typo (line 293).
+- Auto-retry **interval leak**: the countdown `setInterval` starts *before*
+  the `autoRetryEnabled` check, so disabling it leaks a running interval.
+  The enabled-check must come first.
+- **Resume-clearing bug**: the unconditional `setContinueJobId` after the
+  if/else chain clears `resumableJobId` immediately after a fallback,
+  breaking resume. Correct shape: `if PARTIAL → setContinueJobId(jobId)
+  else if !fallback → null else if resumableJobId → setContinueJobId(resumableJobId)`.
+
 **Recommendation: do not merge #792.** Safe progress-event code is now in
-the engine branch; remaining safe UI concepts land in Phase 3b. The
-branch-policy change, typo, duplicate block, and checkpoint defect must
-never be adopted.
+the engine branch; remaining safe UI concepts land in Phase 3b with the
+above three review fixes applied. The branch-policy change, typo, duplicate
+block, and checkpoint defect must never be adopted.
 
 ---
 
@@ -74,11 +88,12 @@ Branch: `fix/extraction-quality-and-odt-ocr-support-...`
 | Treats unsupported image bytes as JPEG | ❌ REJECTED (incorrect) |
 | Writes OCR failure strings into extracted text | ❌ REJECTED (contaminates tender text) |
 | ODT ZIP extraction without archive limits | ❌ REJECTED (zip-bomb / resource risk) |
-| Stricter "perfect extraction" gate in `extraction-quality-gate.ts` | ⏳ DEFERRED (the only potentially-safe idea; revisit in a dedicated, tested hardening task) |
+| "Stricter perfect extraction" gate in `extraction-quality-gate.ts` | ➖ NO-OP — diff verified: only renames a local (`fileIsHighQuality = !weakByScore`) and removes two comments; logic is identical. Nothing functional to salvage. |
 
 **Recommendation: do not merge #794.** Requires a separate, security-
 reviewed OCR/ODT redesign with archive limits, provider-agnostic OCR,
-full-document coverage, and tests.
+full-document coverage, and tests. The "stricter gate" claim in the PR body
+is not reflected in the actual diff (cosmetic only).
 
 ---
 
