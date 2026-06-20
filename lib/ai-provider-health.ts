@@ -1,37 +1,8 @@
 // AI Provider Health Tracker.
 //
-// Screenshot context: production showed "all providers exhausted, falling
-// back to regex". The existing chain in lib/ai.ts already tries Anthropic
-// → Gemini → OpenAI → Mistral → Together → DeepSeek in sequence, but without a way to:
-//   - know WHICH provider failed and WHEN
-//   - back off briefly after a transient rate-limit (HTTP 429) so the
-//     next request doesn't immediately re-hit the same throttled provider
-//   - report current provider health to an admin
-//
-// This module is an in-memory tracker. It is intentionally stateless
-// across deployments (resets on each cold start) — persisting health
-// would require a Prisma model and a runtime migration which is out of
-// scope for this PR. For multi-instance Vercel deployments each function
-// instance has its own tracker; the data is still useful as a
-// per-instance signal because cooldowns are short (default 60s) and a
-// new instance learns the failure pattern within a few requests.
-//
-// Usage:
-//   import { recordProviderFailure, isProviderCooledDown } from "./ai-provider-health";
-//
-//   try {
-//     return await callAnthropic(...);
-//   } catch (err) {
-//     recordProviderFailure("anthropic", err);
-//     throw err;
-//   }
-//
-//   // In a fanout path:
-//   if (isProviderCooledDown("gemini")) {
-//     // skip Gemini for now — it 429'd N seconds ago
-//   }
+// Make provider truth accurate, secure, and based on real capability.
 
-export type AiProviderName = "anthropic" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter";
+export type AiProviderName = "mistral" | "groq" | "openrouter" | "gemini" | "openai" | "together" | "deepseek" | "anthropic";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -43,41 +14,20 @@ export type AiProviderFailureCategory =
   | "MALFORMED_RESPONSE"
   | "UNKNOWN";
 
-// Unified operator-facing status enum. Surfaced via /api/ai/health and the
-// dashboard provider-health panel. Intentionally distinct from
-// AiProviderFailureCategory — this enum is about "what should the UI show",
-// not about the raw HTTP-level classification.
-//
-// Invariants:
-//   - `not_configured`    — env var missing/empty. Never shown as healthy.
-//   - `configured`        — key present, no recorded runtime success yet on
-//                            this instance. NOT healthy. Not green.
-//   - `runtime_verified`  — recent real generation success. The ONLY state
-//                            that may be shown as Ready/Usable/green.
-//   - `rate_limited`      — most recent failure was RATE_LIMIT. In cooldown.
-//   - `unauthorized`      — most recent failure was AUTH (401/403/invalid key).
-//                            In cooldown. Operator action required.
-//   - `timeout`           — most recent failure was TIMEOUT. In short cooldown.
-//   - `unavailable`       — most recent failure was MODEL_UNAVAILABLE, BILLING,
-//                            NETWORK, or MALFORMED_RESPONSE. In cooldown.
-//   - `unknown`           — most recent failure was UNKNOWN, OR configured but
-//                            no success and no failure recorded yet. NOT green.
-//
-// `configured` and `unknown` (with no failure) collapse to the same UI pill
-// ("Configured — not yet tested on this instance") but the enum keeps them
-// distinct so callers can distinguish "key-only, never tried" from
-// "key + unclassified failure" if they need to.
 export type AiProviderStatus =
-  | "not_configured"
-  | "configured"
-  | "runtime_verified"
-  | "rate_limited"
-  | "unauthorized"
-  | "timeout"
-  | "unavailable"
-  | "unknown"
-  | "analysis_verified"
-  | "generation_verified";
+  | "NOT_CONFIGURED"
+  | "CONFIGURED"
+  | "CONNECTIVITY_VERIFIED"
+  | "ANALYSIS_VERIFIED"
+  | "GENERATION_VERIFIED"
+  | "RATE_LIMITED"
+  | "UNAUTHORIZED"
+  | "BILLING_BLOCKED"
+  | "MODEL_UNAVAILABLE"
+  | "TIMEOUT"
+  | "NETWORK_ERROR"
+  | "COOLING_DOWN"
+  | "UNKNOWN";
 
 export type AiProviderHealth = {
   provider: AiProviderName;
@@ -105,25 +55,36 @@ type InternalState = {
   cooldownUntil: number | null;
 };
 
-const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  gemini: "GEMINI_API_KEY",
-  openai: "OPENAI_API_KEY",
-  mistral: "MISTRAL_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-  groq: "GROQ_API_KEY",
-  together: "TOGETHER_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
-};
+const state = new Map<AiProviderName, InternalState>();
 
-// ─── Central DeepSeek key resolution ──────────────────────────────────────
-// Official variable is DEEPSEEK_API_KEY. Two common mis-spellings are also
-// accepted so a mis-named Vercel env var still activates the provider, but
-// UI/help text always recommends the official name. Resolved in ONE place so
-// lib/ai.ts, the health route, and the health panel agree on "configured".
+// ─── Dynamic Key Reads ──────────────────────────────────────────────────────
+
+export function getAnthropicApiKey(): string | undefined {
+  const v = process.env.ANTHROPIC_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isAnthropicConfigured(): boolean {
+  return Boolean(getAnthropicApiKey());
+}
+
+export function getGeminiApiKey(): string | undefined {
+  const v = process.env.GEMINI_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isGeminiConfigured(): boolean {
+  return Boolean(getGeminiApiKey());
+}
+
+export function getOpenAIApiKey(): string | undefined {
+  const v = process.env.OPENAI_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isOpenAIConfigured(): boolean {
+  return Boolean(getOpenAIApiKey());
+}
+
 export const DEEPSEEK_OFFICIAL_ENV = "DEEPSEEK_API_KEY";
 const DEEPSEEK_ENV_CANDIDATES = ["DEEPSEEK_API_KEY", "DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"] as const;
-
 export function getDeepSeekApiKey(): string | undefined {
   for (const name of DEEPSEEK_ENV_CANDIDATES) {
     const value = process.env[name];
@@ -131,25 +92,17 @@ export function getDeepSeekApiKey(): string | undefined {
   }
   return undefined;
 }
-
 export function isDeepSeekConfigured(): boolean {
   return Boolean(getDeepSeekApiKey());
 }
-
-/** True only when the OFFICIAL DEEPSEEK_API_KEY is set (not an alias). Lets the
- * UI nudge operators to rename an alias to the canonical variable. */
 export function deepSeekOfficialEnvPresent(): boolean {
   const value = process.env.DEEPSEEK_API_KEY;
   return Boolean(value && value.trim().length > 0);
 }
-
 export function getDeepSeekModel(): string {
   return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
 }
 
-// ─── Mistral (OpenAI-compatible) ──────────────────────────────────────────
-// Third-tier provider in the default/proposal/validation chains. Official
-// variable MISTRAL_API_KEY. Models are overridable by use-case.
 export function getMistralApiKey(): string | undefined {
   const v = process.env.MISTRAL_API_KEY;
   return v && v.trim().length > 0 ? v.trim() : undefined;
@@ -170,16 +123,7 @@ export function getMistralBaseUrl(): string {
   const v = process.env.MISTRAL_BASE_URL;
   return (v && v.trim().length > 0 ? v.trim() : "https://api.mistral.ai/v1").replace(/\/+$/, "");
 }
-/** Back-compat alias for the Mistral model getter. Returns MISTRAL_PROPOSAL_MODEL env if set,
- * otherwise the compact default "mistral-small-latest". Use getMistralProposalModel() for
- * the full-quality default (mistral-large-latest). */
-export function getMistralModel(): string {
-  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-small-latest";
-}
 
-// ─── Groq (OpenAI-compatible) ─────────────────────────────────────────────
-// Fast fallback provider. Official variable GROQ_API_KEY. Model overridable via
-// GROQ_PROPOSAL_MODEL (default: a current Llama 3.3 70B instruct model).
 export function getGroqApiKey(): string | undefined {
   const v = process.env.GROQ_API_KEY;
   return v && v.trim().length > 0 ? v.trim() : undefined;
@@ -195,8 +139,6 @@ export function getGroqBaseUrl(): string {
   return (v && v.trim().length > 0 ? v.trim() : "https://api.groq.com/openai/v1").replace(/\/+$/, "");
 }
 
-// ─── Together (OpenAI-compatible) ─────────────────────────────────────────
-// Fourth-tier provider in the canonical default chain.
 export function getTogetherApiKey(): string | undefined {
   const v = process.env.TOGETHER_API_KEY;
   return v && v.trim().length > 0 ? v.trim() : undefined;
@@ -217,14 +159,7 @@ export function getTogetherBaseUrl(): string {
   const v = process.env.TOGETHER_BASE_URL;
   return (v && v.trim().length > 0 ? v.trim() : "https://api.together.xyz/v1").replace(/\/+$/, "");
 }
-/** Back-compat alias: returns the proposal model (was getTogetherModel in older code). */
-export function getTogetherModel(): string {
-  return getTogetherProposalModel();
-}
 
-// ─── OpenRouter (OpenAI-compatible aggregator) ────────────────────────────
-// Aggregator fallback. Official variable OPENROUTER_API_KEY. Model overridable
-// via OPENROUTER_PROPOSAL_MODEL (default: openrouter/auto picks a live model).
 export function getOpenRouterApiKey(): string | undefined {
   const v = process.env.OPENROUTER_API_KEY;
   return v && v.trim().length > 0 ? v.trim() : undefined;
@@ -243,34 +178,35 @@ export function getOpenRouterSiteUrl(): string {
   const v = process.env.OPENROUTER_SITE_URL;
   return v && v.trim().length > 0 ? v.trim() : "https://hope-tender-path-b.vercel.app";
 }
-/** Standard variable is OPENROUTER_APP_NAME; OPENROUTER_SITE_NAME is accepted
- * as a back-compat alias (used for the OpenRouter X-Title attribution header). */
 export function getOpenRouterAppName(): string {
   const v = process.env.OPENROUTER_APP_NAME || process.env.OPENROUTER_SITE_NAME;
   return v && v.trim().length > 0 ? v.trim() : "Hope Tender Proposal Generator";
 }
 
-function isProviderConfigured(provider: AiProviderName): boolean {
-  if (provider === "deepseek") return isDeepSeekConfigured();
-  if (provider === "mistral") return isMistralConfigured();
-  if (provider === "groq") return isGroqConfigured();
-  if (provider === "together") return isTogetherConfigured();
-  if (provider === "openrouter") return isOpenRouterConfigured();
-  return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
+export function isProviderConfigured(provider: AiProviderName): boolean {
+  switch (provider) {
+    case "anthropic": return isAnthropicConfigured();
+    case "gemini": return isGeminiConfigured();
+    case "openai": return isOpenAIConfigured();
+    case "mistral": return isMistralConfigured();
+    case "deepseek": return isDeepSeekConfigured();
+    case "groq": return isGroqConfigured();
+    case "together": return isTogetherConfigured();
+    case "openrouter": return isOpenRouterConfigured();
+    default: return false;
+  }
 }
 
 const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
-  RATE_LIMIT: 60_000,        // 60s — typical for 429 from Anthropic / Gemini
-  AUTH: 5 * 60_000,           // 5min — bad keys won't recover on their own
-  BILLING: 10 * 60_000,       // 10min — billing issues require manual fix (e.g. DeepSeek 402)
-  TIMEOUT: 10_000,            // 10s — transient
-  MODEL_UNAVAILABLE: 5 * 60_000, // 5min
-  NETWORK: 15_000,            // 15s
-  MALFORMED_RESPONSE: 5_000,  // 5s — try again quickly
-  UNKNOWN: 30_000,            // 30s
+  RATE_LIMIT: 60_000,
+  AUTH: 5 * 60_000,
+  BILLING: 10 * 60_000,
+  TIMEOUT: 30_000,
+  MODEL_UNAVAILABLE: 2 * 60_000,
+  NETWORK: 30_000,
+  MALFORMED_RESPONSE: 60_000,
+  UNKNOWN: 60_000,
 };
-
-const state = new Map<AiProviderName, InternalState>();
 
 function ensureState(provider: AiProviderName): InternalState {
   let s = state.get(provider);
@@ -278,7 +214,8 @@ function ensureState(provider: AiProviderName): InternalState {
     s = {
       lastSuccessAt: null,
       lastPingSucceededAt: null,
-      lastGenerationSucceededAt: null, lastAnalysisSucceededAt: null,
+      lastGenerationSucceededAt: null,
+      lastAnalysisSucceededAt: null,
       lastFailureAt: null,
       lastFailureCategory: null,
       lastFailureMessage: null,
@@ -291,38 +228,15 @@ function ensureState(provider: AiProviderName): InternalState {
 }
 
 function redactMessage(message: string | null | undefined): string {
-  // Audit AI-001 (2026-06-20): the previous implementation only stripped
-  // `sk-*` and `Bearer XXX`. Provider error responses that echo the
-  // Authorization header can leak live API keys into
-  // ProviderHealthSnapshot.lastSafeErrorMessage, AiJob.errorMessage, and the
-  // /api/admin/ai-provider-health operator panel. Extended to cover ALL 8
-  // provider key prefixes used by this app:
-  //   - OpenAI / Together / OpenRouter (legacy): `sk-`
-  //   - Anthropic:                          `sk-ant-`
-  //   - OpenRouter (current):               `sk-or-`
-  //   - Groq:                               `gsk_`
-  //   - DeepSeek:                           `dsk-` (also covers `dsk_` variant)
-  //   - Google Gemini (AI Studio legacy):   `AIza` (39 chars) + `AQ` (new format)
-  //   - Mistral:                            no canonical prefix — covered by
-  //                                          the `Bearer XXX` rule below.
   return (message ?? "")
-    // Anthropic keys (sk-ant-...) — must be matched BEFORE the generic sk- rule
     .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    // OpenRouter keys (sk-or-...) — must be matched BEFORE the generic sk- rule
     .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    // OpenAI / Together / legacy OpenRouter keys (sk-...)
     .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    // Groq keys (gsk_...)
     .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    // DeepSeek keys (dsk-... or dsk_...)
     .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    // Google Gemini API keys — AIza... (legacy, 39 chars total) or AQ... (new format)
-    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
-    .replace(/\bAQ[A-Za-z0-9_-]{30,}\b/g, "[REDACTED]")
-    // Authorization: Bearer <token> — catches Mistral and any OpenAI-compatible
-    // provider that echoes the header in its error response
+    .replace(/AIza[A-Za-z0-9-_]{15,}/g, "[REDACTED]")
+    .replace(/AQ[A-Za-z0-9-_]{20,}/g, "[REDACTED]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
-    // Authorization header name + value (e.g. "authorization: sk-...")
     .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
     .replace(/\s+/g, " ")
     .trim()
@@ -334,7 +248,6 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   const lower = raw.toLowerCase();
   if (/429|rate.?limit|quota|too\s+many\s+requests|resource\s+exhausted|tokens?\s+per\s+minute/.test(lower)) return "RATE_LIMIT";
   if (/401|403|invalid\s+api\s+key|unauthor|forbidden|api\s+key/.test(lower)) return "AUTH";
-  // HTTP 402 — payment required / insufficient balance (e.g. DeepSeek billing error)
   if (/402|insufficient.?balance|payment\s+required|billing|account\s+balance/.test(lower)) return "BILLING";
   if (/timed?\s*out|timeout|abort/.test(lower)) return "TIMEOUT";
   if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request/.test(lower)) return "MODEL_UNAVAILABLE";
@@ -344,13 +257,7 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
 }
 
 export function recordProviderAnalysisSuccess(provider: AiProviderName): void {
-  const s = state.get(provider);
-  if (!s) {
-    recordProviderSuccess(provider); // fallback to ensure state exists
-    const s2 = state.get(provider)!;
-    s2.lastAnalysisSucceededAt = Date.now();
-    return;
-  }
+  const s = ensureState(provider);
   const now = Date.now();
   s.lastSuccessAt = now;
   s.lastAnalysisSucceededAt = now;
@@ -371,100 +278,46 @@ export function recordProviderSuccess(provider: AiProviderName): void {
   s.lastFailureMessage = null;
 }
 
-/** Records a successful manual PING test without inflating lastGenerationSucceededAt.
- * Use this in the admin health-test route so connectivity checks are not mistaken
- * for real generation successes when assessing "runtime verified" status. */
 export function recordProviderPingSuccess(provider: AiProviderName): void {
   const s = ensureState(provider);
   s.lastPingSucceededAt = Date.now();
-  // Clear the cooldown so the provider is considered available again after a
-  // successful ping (same as a generation success for scheduling purposes).
   s.consecutiveFailures = 0;
   s.cooldownUntil = null;
   s.lastFailureCategory = null;
   s.lastFailureMessage = null;
-  // Note: lastSuccessAt and lastGenerationSucceededAt are intentionally NOT
-  // updated here — "runtime verified" in the health panel should reflect
-  // a real generation call, not just a connectivity check.
 }
 
 export function recordProviderFailure(provider: AiProviderName, error: unknown): AiProviderFailureCategory {
   const s = ensureState(provider);
   const category = classifyAiError(error);
+  const message = redactMessage(error instanceof Error ? error.message : String(error));
   const now = Date.now();
+
   s.lastFailureAt = now;
   s.lastFailureCategory = category;
-  s.lastFailureMessage = redactMessage(error instanceof Error ? error.message : String(error ?? ""));
-  s.consecutiveFailures += 1;
-  // Exponential backoff on consecutive failures — first failure gets the
-  // base cooldown; second doubles it; third quadruples it; capped at 10min.
-  const base = COOLDOWN_PER_CATEGORY_MS[category];
-  const backoff = Math.min(10 * 60_000, base * Math.pow(2, Math.max(0, s.consecutiveFailures - 1)));
-  s.cooldownUntil = now + backoff;
+  s.lastFailureMessage = message;
+  s.consecutiveFailures++;
+
+  const baseCooldown = COOLDOWN_PER_CATEGORY_MS[category];
+  const backoffFactor = Math.min(Math.pow(2, s.consecutiveFailures - 1), 16);
+  s.cooldownUntil = now + baseCooldown * backoffFactor;
+
   return category;
 }
 
-/** Merges persisted DB state into the in-memory tracker on cold start.
- * Applies newer persisted timestamps and also preserves the more restrictive
- * active cooldown when another serverless instance has already observed a
- * provider failure. This keeps a local success from incorrectly masking a
- * DB-backed rate-limit window that is still active across Vercel instances. */
-export function restoreProviderState(
-  provider: AiProviderName,
-  snapshot: {
-    lastSuccessAt: number | null;
-    lastFailureAt: number | null;
-    lastFailureCategory: AiProviderFailureCategory | null;
-    lastFailureMessage: string | null;
-    consecutiveFailures: number;
-    cooldownUntil: number | null;
-  },
-): void {
-  const s = ensureState(provider);
-  if (snapshot.lastSuccessAt && snapshot.lastSuccessAt > (s.lastSuccessAt ?? 0)) {
-    s.lastSuccessAt = snapshot.lastSuccessAt;
-  }
-  const now = Date.now();
-  const persistedCooldownActive = Boolean(snapshot.cooldownUntil && snapshot.cooldownUntil > now);
-  const persistedFailureNewer = Boolean(snapshot.lastFailureAt && snapshot.lastFailureAt > (s.lastFailureAt ?? 0));
-  const persistedCooldownMoreRestrictive = Boolean(
-    persistedCooldownActive && snapshot.cooldownUntil! > (s.cooldownUntil ?? 0),
-  );
-
-  if (persistedFailureNewer || persistedCooldownMoreRestrictive) {
-    s.lastFailureAt = snapshot.lastFailureAt;
-    s.lastFailureCategory = snapshot.lastFailureCategory;
-    s.lastFailureMessage = snapshot.lastFailureMessage;
-    s.consecutiveFailures = Math.max(s.consecutiveFailures, snapshot.consecutiveFailures);
-  }
-  if (persistedCooldownMoreRestrictive) {
-    s.cooldownUntil = snapshot.cooldownUntil;
-  }
+export function getProviderStateSnapshot(provider: AiProviderName): InternalState | null {
+  const s = state.get(provider);
+  return s ? { ...s } : null;
 }
 
-/** Returns a plain-object snapshot of the current in-memory state for
- * persistence. Used by lib/ai-provider-health-db.ts. */
-export function getProviderStateSnapshot(provider: AiProviderName): {
-  lastSuccessAt: number | null;
-  lastFailureAt: number | null;
-  lastFailureCategory: AiProviderFailureCategory | null;
-  lastFailureMessage: string | null;
-  consecutiveFailures: number;
-  cooldownUntil: number | null;
-} {
-  const s = state.get(provider) ?? {
-    lastSuccessAt: null, lastAnalysisSucceededAt: null, lastFailureAt: null,
-    lastFailureCategory: null, lastFailureMessage: null,
-    consecutiveFailures: 0, cooldownUntil: null,
-  };
-  return { ...s };
+export function restoreProviderState(provider: AiProviderName, snap: InternalState): void {
+  state.set(provider, { ...snap });
 }
 
 export function isProviderCooledDown(provider: AiProviderName): boolean {
   const s = state.get(provider);
   if (!s || !s.cooldownUntil) return false;
   if (Date.now() >= s.cooldownUntil) {
-    // expire the cooldown silently
     s.cooldownUntil = null;
     return false;
   }
@@ -472,16 +325,7 @@ export function isProviderCooledDown(provider: AiProviderName): boolean {
 }
 
 export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
-  const s = state.get(provider) ?? {
-    lastSuccessAt: null,
-    lastPingSucceededAt: null,
-    lastGenerationSucceededAt: null, lastAnalysisSucceededAt: null,
-    lastFailureAt: null,
-    lastFailureCategory: null,
-    lastFailureMessage: null,
-    consecutiveFailures: 0,
-    cooldownUntil: null,
-  };
+  const s = ensureState(provider);
   return {
     provider,
     configured: isProviderConfigured(provider),
@@ -498,7 +342,33 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
 }
 
 export function getAllProviderHealth(): AiProviderHealth[] {
-  return (Object.keys(PROVIDER_ENV_KEY) as AiProviderName[]).map(getProviderHealth);
+  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  return providers.map(getProviderHealth);
+}
+
+export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
+  const h = getProviderHealth(provider);
+  if (!h.configured) return "NOT_CONFIGURED";
+
+  const cooling = isProviderCooledDown(provider);
+  if (cooling) {
+    const category = h.lastFailureCategory;
+    switch (category) {
+      case "RATE_LIMIT": return "RATE_LIMITED";
+      case "AUTH": return "UNAUTHORIZED";
+      case "BILLING": return "BILLING_BLOCKED";
+      case "MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
+      case "TIMEOUT": return "TIMEOUT";
+      case "NETWORK": return "NETWORK_ERROR";
+      default: return "COOLING_DOWN";
+    }
+  }
+
+  if (h.lastGenerationSucceededAt) return "GENERATION_VERIFIED";
+  if (h.lastAnalysisSucceededAt) return "ANALYSIS_VERIFIED";
+  if (h.lastPingSucceededAt) return "CONNECTIVITY_VERIFIED";
+
+  return "CONFIGURED";
 }
 
 export type ProviderRuntimeSnapshot = {
@@ -513,81 +383,9 @@ export type ProviderRuntimeSnapshot = {
   rateLimited: boolean;
   runtimeVerified: boolean;
   available: boolean;
-  // Unified operator-facing status. See AiProviderStatus doc above.
-  // `available` (legacy field) is true for "configured + not currently cooling"
-  // — this is intentionally weaker than `status === "runtime_verified"` and is
-  // kept for backwards compatibility with the chain scheduler. UI MUST use
-  // `status`, not `available`, to decide whether to show a green pill.
   status: AiProviderStatus;
 };
 
-/** Derives the unified operator-facing status for a provider from its current
- * health + cooldown state. Rules:
- *   1. not configured           -> "not_configured"
- *   2. configured + recent success + not cooling -> "runtime_verified"
- *   3. configured + cooling + RATE_LIMIT         -> "rate_limited"
- *   4. configured + cooling + AUTH               -> "unauthorized"
- *   5. configured + cooling + TIMEOUT            -> "timeout"
- *   6. configured + cooling + (BILLING | MODEL_UNAVAILABLE | NETWORK |
- *                              MALFORMED_RESPONSE) -> "unavailable"
- *   7. configured + UNKNOWN failure (cooling or not) -> "unknown"
- *   8. configured + no failure + no success      -> "configured"
- *
- * The ONLY state that may be displayed as Ready / green is "runtime_verified".
- * "configured" and "unknown" must NOT be shown as healthy.
- */
-export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
-  const h = getProviderHealth(provider);
-  if (!h.configured) return "not_configured";
-  const cooling = isProviderCooledDown(provider);
-  // A real generation success is authoritative — once recorded, the provider
-  // is "runtime_verified" until a new failure puts it back in cooldown. This is
-  // the only state shown as Ready / green, and the existing provider-health
-  // contract (see ai-provider-health-order-alignment.test.ts) depends on it.
-  // (Ping-only successes are tracked separately and do NOT flip this.)
-  if (h.lastGenerationSucceededAt && !cooling) return "runtime_verified";
-  // A successful analysis (but no generation yet) is a weaker, granular signal:
-  // surfaced as "analysis_verified" — useful, but NOT shown as green/Ready.
-  if (h.lastAnalysisSucceededAt && !cooling) return "analysis_verified";
-  // Failure-driven states (provider is currently in cooldown OR has a recorded
-  // failure category even if the cooldown window has expired).
-  const category = h.lastFailureCategory;
-  if (cooling || category) {
-    switch (category) {
-      case "RATE_LIMIT":
-        return "rate_limited";
-      case "AUTH":
-        return "unauthorized";
-      case "TIMEOUT":
-        return "timeout";
-      case "BILLING":
-      case "MODEL_UNAVAILABLE":
-      case "NETWORK":
-      case "MALFORMED_RESPONSE":
-        return "unavailable";
-      case "UNKNOWN":
-      default:
-        return "unknown";
-    }
-  }
-  // Configured, never failed, never succeeded on this instance.
-  return "configured";
-}
-
-/** Route/UI-friendly runtime view. Field names match the public API contract
- * (lastErrorCategory / lastSafeErrorMessage). The message is already redacted
- * by recordProviderFailure, so this never leaks keys or raw provider bodies.
- * Note: runtimeVerified reflects lastGenerationSucceededAt (a real generation
- * call), NOT lastPingSucceededAt (a connectivity-only admin check). The
- * lastSuccessAt field in the snapshot is set only by recordProviderSuccess
- * (real generation calls), so runtimeVerified accurately reflects this.
- * Ping-only successes are tracked separately in lastPingSucceededAt on the
- * AiProviderHealth type but intentionally omitted from this compact view.
- *
- * `status` is the unified operator-facing enum — UI MUST use this field,
- * not the legacy `available` boolean, to decide whether to show a green pill.
- * `available` is kept only for backwards compatibility with the chain
- * scheduler (which needs "configured + not currently cooling"). */
 export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
   const h = getProviderHealth(provider);
   const coolingDown = isProviderCooledDown(provider);
@@ -602,12 +400,7 @@ export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRu
     consecutiveFailures: h.consecutiveFailures,
     coolingDown,
     rateLimited: coolingDown && h.lastFailureCategory === "RATE_LIMIT",
-    // runtimeVerified: true only when lastGenerationSucceededAt is set —
-    // recordProviderSuccess (real generation) sets it; recordProviderPingSuccess
-    // (connectivity check only) does not.
-    runtimeVerified: Boolean(h.lastGenerationSucceededAt || h.lastAnalysisSucceededAt),
-    // Legacy field: "configured + not currently cooling". Kept for the chain
-    // scheduler. NOT a health statement — UI must use `status` instead.
+    runtimeVerified: status === "GENERATION_VERIFIED" || status === "ANALYSIS_VERIFIED",
     available: h.configured && !coolingDown,
     status,
   };
@@ -621,16 +414,12 @@ export type ProviderAttemptDiagnostic = {
   cooldownUntil: string | null;
 };
 
-/** Builds a safe, provider-specific snapshot for the AI Analyze diagnostics.
- * Used to turn a vague "regex fallback" paragraph into an actionable,
- * per-provider report (which providers were tried, which are cooling down,
- * and the safe failure category for each). Never includes keys/raw bodies. */
 export function buildProviderDiagnosticsSnapshot(): {
   providersAttempted: AiProviderName[];
   providersCoolingDown: AiProviderName[];
   perProvider: ProviderAttemptDiagnostic[];
 } {
-  const providers = Object.keys(PROVIDER_ENV_KEY) as AiProviderName[];
+  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   const perProvider: ProviderAttemptDiagnostic[] = providers.map((provider) => {
     const h = getProviderHealth(provider);
     return {
@@ -648,13 +437,8 @@ export function buildProviderDiagnosticsSnapshot(): {
   };
 }
 
-/**
- * Returns milliseconds until the soonest configured provider exits cooldown,
- * or 0 if at least one configured provider is already available.
- * Returns null when no providers are configured.
- */
 export function getMinCooldownExpiryMs(): number | null {
-  const providers = Object.keys(PROVIDER_ENV_KEY) as AiProviderName[];
+  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   const configured = providers.filter((p) => isProviderConfigured(p));
   if (configured.length === 0) return null;
   const now = Date.now();
@@ -672,8 +456,6 @@ export function getMinCooldownExpiryMs(): number | null {
   return isFinite(minMs) ? minMs : null;
 }
 
-/** Reset state (test-only, also used by an admin endpoint when an
- *  operator wants to clear cooldowns after fixing a misconfiguration). */
 export function resetProviderHealth(provider?: AiProviderName): void {
   if (provider) {
     state.delete(provider);
@@ -682,4 +464,14 @@ export function resetProviderHealth(provider?: AiProviderName): void {
   state.clear();
 }
 
-export const __testing__ = { COOLDOWN_PER_CATEGORY_MS, PROVIDER_ENV_KEY };
+/** Back-compat alias for the Mistral model getter. */
+export function getMistralModel(): string {
+  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-small-latest";
+}
+
+/** Back-compat alias: returns the proposal model. */
+export function getTogetherModel(): string {
+  return getTogetherProposalModel();
+}
+
+export const __testing__ = { COOLDOWN_PER_CATEGORY_MS };
