@@ -7,6 +7,7 @@ import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-ge
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { getLatestAnalyzeCheckpointProgress } from "../../../../lib/ai-analyze-checkpoints";
 import { detectMetadataContamination } from "../../../../lib/engine/tender-metadata-completeness";
+import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -102,26 +103,36 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // "Resume analysis" banner and pre-wire the continue flow on page load.
     // Failed AI_ANALYZE jobs can still be resumable when their output preserved
     // successful chunkResults before a timeout/provider failure triggered regex fallback.
-    const latestPartialJobCandidates = await prisma.aiJob.findMany({
-      where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
-      orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
-      take: 10,
-      select: { id: true, output: true },
-    }).catch(() => []);
-
     let partialJobInfo: { jobId: string; completedChunks: number; totalChunks: number } | null = null;
-    for (const candidate of latestPartialJobCandidates) {
-      try {
-        const out = JSON.parse(candidate.output ?? "{}") as { completedChunks?: number; totalChunks?: number; chunkResults?: unknown[] };
-        const completedChunks = typeof out.completedChunks === "number" ? out.completedChunks : (Array.isArray(out.chunkResults) ? out.chunkResults.length : 0);
-        if (completedChunks <= 0) continue;
-        partialJobInfo = {
-          jobId: candidate.id,
-          completedChunks,
-          totalChunks: out.totalChunks ?? 0,
-        };
-        break;
-      } catch { /* ignore */ }
+
+    // Check cache first (10-second TTL prevents N+1 queries on dashboard reloads)
+    const cached = getCachedPartialJobInfo(id, userId);
+    if (cached) {
+      partialJobInfo = cached;
+    } else {
+      // Cache miss: query database and cache result
+      const latestPartialJobCandidates = await prisma.aiJob.findMany({
+        where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
+        orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+        take: 10,
+        select: { id: true, output: true },
+      }).catch(() => []);
+
+      for (const candidate of latestPartialJobCandidates) {
+        try {
+          const out = JSON.parse(candidate.output ?? "{}") as { completedChunks?: number; totalChunks?: number; chunkResults?: unknown[] };
+          const completedChunks = typeof out.completedChunks === "number" ? out.completedChunks : (Array.isArray(out.chunkResults) ? out.chunkResults.length : 0);
+          if (completedChunks <= 0) continue;
+          partialJobInfo = {
+            jobId: candidate.id,
+            completedChunks,
+            totalChunks: out.totalChunks ?? 0,
+          };
+          // Cache the result for 10 seconds
+          setCachedPartialJobInfo(id, userId, partialJobInfo.jobId, partialJobInfo.completedChunks, partialJobInfo.totalChunks);
+          break;
+        } catch { /* ignore */ }
+      }
     }
 
     const aiAnalyzeCheckpointProgress = await getLatestAnalyzeCheckpointProgress(id, userId).catch(() => null);
@@ -235,6 +246,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         metadata: { tenderId: id, fields: manuallySet, source: "MANUAL_CONFIRMED" },
       });
     }
+
+    // Invalidate dashboard cache when tender is updated
+    invalidateDashboardCache(id);
 
     return NextResponse.json(await withDashboardPayload(tender as any));
   } catch (error) {

@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
+import { invalidateDashboardCache } from "../../../../../lib/dashboard-cache";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
@@ -867,6 +868,9 @@ async function handleStreamingAnalyze(
                 where: { id: streamFallbackJobId },
                 data: { status: "FAILED", finishedAt: new Date() },
               }).catch(() => {});
+
+              // Invalidate dashboard cache when job fails
+              invalidateDashboardCache(id);
             }
             analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics, nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
           }
@@ -890,6 +894,9 @@ async function handleStreamingAnalyze(
               where: { id: analysisJob.id },
               data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
             }).catch(() => {});
+
+            // Invalidate dashboard cache when job fails
+            invalidateDashboardCache(id);
           }
           analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot(), nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
         }
@@ -1430,6 +1437,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             },
           }).catch(() => {});
 
+          // Invalidate dashboard cache when AI job completes
+          invalidateDashboardCache(id);
+
           // Persist per-chunk step records for observability
           const chunkResults = buildChunkStepResults(aiMeta);
           for (let stepIdx = 0; stepIdx < chunkResults.length; stepIdx++) {
@@ -1547,6 +1557,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             }),
           },
         }).catch(() => {});
+
+        // Invalidate dashboard cache when job completes via fallback
+        invalidateDashboardCache(id);
       }
     }
 
