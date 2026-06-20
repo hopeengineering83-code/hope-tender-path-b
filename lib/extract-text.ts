@@ -139,8 +139,24 @@ async function extractPdfWithPdfParse(buffer: Buffer): Promise<{ text: string; p
     const parser = new mod.PDFParse({ data: buffer });
     try {
       const result = await parser.getText();
-      text = result?.text ?? "";
       pages = result?.total ?? result?.pages?.length ?? 0;
+      // pdf-parse v2 returns per-page text in result.pages ([{ text, num }]).
+      // Reconstruct the text WITH [Page N] markers so the page count and
+      // per-requirement/client source attribution survive downstream. The
+      // flat result.text field has NO page markers, which previously caused
+      // multi-page digital PDFs to report an unknown page count (export
+      // blocked, no source pages) whenever pdf-parse won the extractor race.
+      const perPage = Array.isArray(result?.pages) ? result.pages as Array<{ text?: string; num?: number }> : [];
+      const anyPageText = perPage.some((p) => (p?.text ?? "").trim().length > 0);
+      text = anyPageText
+        ? perPage
+            .map((p, i) => {
+              const body = (p?.text ?? "").trim();
+              return body ? `[Page ${p?.num ?? i + 1}]\n${body}` : "";
+            })
+            .filter(Boolean)
+            .join("\n\n")
+        : (result?.text ?? "");
     } finally {
       if (typeof parser.destroy === "function") await parser.destroy();
     }
