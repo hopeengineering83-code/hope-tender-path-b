@@ -442,3 +442,5 @@ export async function listUserJobs(userId: string, opts?: { jobType?: JobType; s
   });
   return rows.map((r) => ({ ...r, jobType: r.jobType as JobType, status: r.status as JobStatus }));
 }
+
+export * from "./ai-jobs/index";

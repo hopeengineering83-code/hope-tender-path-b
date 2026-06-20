@@ -1426,7 +1426,7 @@ function chunkTenderContent(content: string): string[] {
   return chunks;
 }
 
-function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
+export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   if (parts.length === 0) {
     throw new Error("mergeAnalysisResults: cannot merge zero analysis parts");
   }
