@@ -19,7 +19,7 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const logger = childLogger("[validate]");
+  const logger = childLogger({ route: "[validate]" });
   try {
     let actor;
     try {
@@ -76,7 +76,6 @@ export async function POST(
     });
 
     const validationResults = {
-      ok: readiness.ok,
       documentCount: docs.length,
       failureCount: readiness.failures.length,
       documentFailures: readiness.failures.map((f) => ({

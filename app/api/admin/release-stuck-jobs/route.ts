@@ -47,7 +47,7 @@ export async function POST() {
   if (actor.role !== "ADMIN") return forbiddenResponse();
 
   // Rate limit admin stuck-job recovery: max 10 per minute per admin
-  const rl = rateLimit(`admin-release-stuck-jobs:${actor.id}`, { maxPerMinute: 10 });
+  const rl = rateLimit(`admin-release-stuck-jobs:${actor.id}`, { limit: 10, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Rate limited. Too many recovery requests. Please wait.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
@@ -61,6 +61,7 @@ export async function POST() {
   await logAction({
     userId: actor.id,
     action: "ADMIN_RELEASE_STUCK_JOBS",
+    description: `Released ${result.recovered} stuck job(s) via admin recovery`,
     metadata: {
       jobsRecovered: result.recovered,
       jobIds: result.ids.slice(0, 10), // Log first 10 IDs

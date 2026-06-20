@@ -42,7 +42,7 @@ export async function POST(req: Request) {
   }
 
   // Rate limit admin repair operations: max 10 per minute per admin
-  const rl = rateLimit(`admin-repair:${actor.id}`, { maxPerMinute: 10 });
+  const rl = rateLimit(`admin-repair:${actor.id}`, { limit: 10, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Rate limited. Too many repair requests. Please wait before retrying.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
@@ -273,6 +273,7 @@ export async function POST(req: Request) {
   await logAction({
     userId: actor.id,
     action: "ADMIN_REPAIR_EXECUTED",
+    description: `Admin repair executed (step: ${step})`,
     metadata: {
       step,
       reextractionCount: results.reextraction?.total ?? 0,
