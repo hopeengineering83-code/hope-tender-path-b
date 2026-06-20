@@ -89,10 +89,12 @@ export async function POST(
     };
 
     // Log the validation action
-    await logAction(prisma, {
+    await logAction({
       userId: actor.id,
       action: "VALIDATE_DOCUMENTS",
-      tenderId: id,
+      entityType: "Tender",
+      entityId: id,
+      description: `Validated ${docs.length} document(s) for export readiness`,
       metadata: {
         documentCount: docs.length,
         validationOk: readiness.ok,
