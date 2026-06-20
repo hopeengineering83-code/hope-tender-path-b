@@ -44,6 +44,7 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
 
   const [autoRetryAt, setAutoRetryAt] = useState<number | null>(null);
   const [autoRetrySecondsLeft, setAutoRetrySecondsLeft] = useState<number | null>(null);
+  const [autoRetryEnabled, setAutoRetryEnabled] = useState(true);
   const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoRetryCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -76,6 +77,11 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
         setAutoRetrySecondsLeft(left);
       }
     }, 1000);
+    if (!autoRetryEnabled) {
+      setAutoRetrySecondsLeft(null);
+      setAutoRetryAt(null);
+      return;
+    }
     autoRetryTimerRef.current = setTimeout(() => {
       autoRetryTimerRef.current = null;
       setAutoRetryAt(null);
@@ -131,9 +137,12 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
             const event = JSON.parse(part.slice(6));
             if (event.phase === "analyzing" && event.chunk !== undefined) {
               const total = event.totalChunks ?? "?";
-              setAnalyzePhase(`Analyzing chunk ${event.chunk}/${total}`);
+              setAnalyzePhase(event.message || `Analyzing chunk ${event.chunk}/${total}`);
               const pct = event.totalChunks ? Math.round(20 + (event.chunk / event.totalChunks) * 55) : 50;
               setAnalyzeProgress(pct);
+            } else if (event.phase === "analyzing_error") {
+              // Non-fatal chunk error in parallel mode
+              console.warn("AI Analysis Chunk Error:", event.message);
             } else if (event.phase === "extracting") {
               setAnalyzePhase(event.message?.slice(0, 50) ?? "Extracting…");
               setAnalyzeProgress(15);
@@ -168,7 +177,13 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
                   scheduleAutoRetry(Math.max(event.providerRetryAfterMs, 5_000), event.resumableJobId ?? null);
                 }
               }
-              if (event.status !== "AI_ANALYSIS_PARTIAL") {
+              if (event.status === "AI_ANALYSIS_PARTIAL") {
+                if (event.jobId) setContinueJobId(event.jobId);
+              } else if (!event.fallback) {
+                setContinueJobId(null);
+              } else if (event.resumableJobId) {
+                setContinueJobId(event.resumableJobId);
+              }
                 setContinueJobId(null);
               } else if (event.jobId) {
                 setContinueJobId(event.jobId);
@@ -257,20 +272,31 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
                 </p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleAnalyzeStreaming}
-                disabled={analyzing}
-                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
-              >
-                Retry Now
-              </button>
-              <button
-                onClick={cancelAutoRetry}
-                className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-              >
-                Cancel
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={handleAnalyzeStreaming}
+                  disabled={analyzing}
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
+                >
+                  Retry Now
+                </button>
+                <button
+                  onClick={cancelAutoRetry}
+                  className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+                >
+                  Cancel
+                </button>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoRetryEnabled}
+                  onChange={(e) => setAutoRetryEnabled(e.target.checked)}
+                  className="h-3 w-3 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-[10px] font-bold uppercase text-amber-700">Enable Autorety</span>
+              </label>
             </div>
           </div>
         </div>
@@ -336,12 +362,20 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
           <p className="text-xs text-amber-800 font-medium">
             ⚠ Previous analysis was interrupted. You can resume from the last successful chunk.
           </p>
-          <button
-            onClick={() => { setContinueJobId(null); }}
-            className="text-[10px] uppercase font-bold text-amber-700 hover:text-amber-900"
-          >
-            Start Fresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAnalyzeStreaming}
+              className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-[10px] font-bold uppercase text-white hover:bg-amber-700"
+            >
+              <RefreshIcon className="h-3 w-3" /> Resume Now
+            </button>
+            <button
+              onClick={() => { setContinueJobId(null); }}
+              className="text-[10px] uppercase font-bold text-amber-700 hover:text-amber-900"
+            >
+              Start Fresh
+            </button>
+          </div>
         </div>
       )}
     </section>

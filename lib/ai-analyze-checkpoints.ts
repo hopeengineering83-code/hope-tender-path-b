@@ -227,7 +227,7 @@ export async function getCompletedChunkResults(tenderId: string, userId: string,
 
 export async function getAnalyzeProgress(tenderId: string, userId: string, contentHash: string): Promise<AiAnalyzeCheckpointProgress> {
   const rows = await getAnalyzeCheckpoints(tenderId, userId, contentHash);
-  const totalChunks = rows.reduce((max, row) => Math.max(max, row.totalChunks), 0);
+  const totalChunks = rows.length > 0 ? rows[0].totalChunks : 0;
   const completedChunks = rows.filter((row) => row.status === "SUCCEEDED").length;
   const failedChunks = rows.filter((row) => row.status === "FAILED").length;
   const progressPercent = totalChunks > 0 ? Math.round((completedChunks / totalChunks) * 100) : 0;
@@ -236,7 +236,7 @@ export async function getAnalyzeProgress(tenderId: string, userId: string, conte
     totalChunks,
     failedChunks,
     progressPercent,
-    resumeAvailable: completedChunks > 0 && completedChunks < totalChunks,
+    resumeAvailable: completedChunks > 0 && (completedChunks + failedChunks < totalChunks || failedChunks > 0),
   };
 }
 
