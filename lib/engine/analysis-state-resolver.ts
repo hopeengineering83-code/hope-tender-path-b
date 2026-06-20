@@ -9,8 +9,15 @@
 // - Whether fallback (regex) is active
 // - Whether export/generation is unblocked
 // - What action is needed next
+//
+// ARCHITECTURE: The DB-querying entry point `resolveTenderAnalysisState`
+// gathers raw data, then delegates ALL state logic to the pure function
+// `deriveAnalysisStateDetail`. This keeps the core decision logic fully
+// unit-testable without a database.
 
 import { prisma } from "@/lib/prisma";
+
+export const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
 export type AnalysisState =
   | "NOT_STARTED"              // No job created
@@ -19,7 +26,7 @@ export type AnalysisState =
   | "AI_SUCCEEDED"             // All required chunks succeeded, promoted
   | "PARTIAL_NEEDS_RESUME"     // Some chunks succeeded, some pending/failed, resumable
   | "REGEX_FALLBACK_UNAPPROVED" // All providers exhausted, regex fallback drafted, needs approval
-  | "HUMAN_APPROVED_FALLBACK"  // Regex fallback approved with mandatory note
+  | "HUMAN_APPROVED_FALLBACK"  // Regex fallback approved (promoted) with mandatory note
   | "FAILED"                   // All chunks failed, no fallback, no recovery
   | "SUPERSEDED";              // Older analysis replaced by newer job
 
@@ -44,7 +51,8 @@ export interface TenderAnalysisStateDetail {
   providerAttempts: Array<{
     provider: string;
     status: "SUCCESS" | "FAILED";
-    failureCategory?: SafeProviderFailureCategory;
+    successes: number;
+    failures: number;
   }>;
   completedChunks: number;
   totalChunks: number;
@@ -56,44 +64,70 @@ export interface TenderAnalysisStateDetail {
   safeDiagnosticSummary: string; // Safe to show in UI (no API keys, raw errors)
 }
 
+// ─── Pure input shapes (no Prisma types so this stays unit-testable) ──────
+
+export interface ResolverJobInput {
+  id: string;
+  status: string; // QUEUED | RUNNING | SUCCEEDED | PARTIAL_SUCCESS | FAILED | CANCELED
+  analysisInputHash: string | null;
+  stagedMergedResult: string | null;
+  promotedAt: Date | null;
+  supersededBy: string | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  errorMessage: string | null;
+}
+
+export interface ResolverChunkInput {
+  status: string; // QUEUED | RUNNING | SUCCEEDED | FAILED | SKIPPED
+  provider: string | null;
+}
+
+export interface DeriveAnalysisStateInput {
+  job: ResolverJobInput | null;
+  chunks: ResolverChunkInput[];
+  // Legacy notes flag — true when Tender.notes records a prior AI analysis
+  // and there is no AiJob record.
+  legacyNotesAiAnalyzed: boolean;
+  // Persisted artefact counts (queried from canonical tables)
+  requirementsExtracted: number;
+  sourceReferencesCreated: boolean;
+  metadataFieldsPersisted: boolean;
+}
+
+/** Redact API keys and obvious secrets from a free-text error for safe UI display. */
+function redactSafe(message: string): string {
+  return message
+    .replace(/sk-[a-zA-Z0-9-]+/g, "[KEY]")
+    .replace(/(api[_-]?key\s*[=:]\s*)\S+/gi, "$1[KEY]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [KEY]")
+    .slice(0, 200);
+}
+
+/** Parse the staged result's analysisSource without throwing on malformed JSON. */
+function parseStagedSource(stagedMergedResult: string | null): "PARTIAL_AI" | "FALLBACK_DRAFT" | null {
+  if (!stagedMergedResult) return null;
+  try {
+    const parsed = JSON.parse(stagedMergedResult) as { analysisSource?: string };
+    if (parsed.analysisSource === "PARTIAL_AI" || parsed.analysisSource === "FALLBACK_DRAFT") {
+      return parsed.analysisSource;
+    }
+  } catch {
+    // malformed staged payload — treat as no staged source
+  }
+  return null;
+}
+
 /**
- * Resolve the canonical AI Analyze state for a tender.
- * Returns exactly one state and all information needed by UI panels and gates.
- *
- * Decision logic:
- * 1. Check AiJob + AiAnalyzeChunk records (primary truth)
- * 2. If no job, check Tender.notes for legacy analysis (fallback for old tenders)
- * 3. Return unified state detail
+ * PURE state derivation. Takes all gathered data and returns a single
+ * TenderAnalysisStateDetail. No database access — fully unit-testable.
  */
-export async function resolveTenderAnalysisState(
-  tenderId: string,
-  userId: string
-): Promise<TenderAnalysisStateDetail> {
-  // Load the latest job for this tender/user
-  const latestJob = await prisma.aiJob.findFirst({
-    where: {
-      tenderId,
-      userId,
-      jobType: "ANALYZE_TENDER", // Assuming job type enum includes this
-    },
-    orderBy: { createdAt: "desc" },
-    include: {
-      steps: true,
-    },
-  });
+export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): TenderAnalysisStateDetail {
+  const { job, chunks, legacyNotesAiAnalyzed, requirementsExtracted, sourceReferencesCreated, metadataFieldsPersisted } = input;
 
-  // If no job exists, check for legacy notes-based analysis
-  if (!latestJob) {
-    const tender = await prisma.tender.findUnique({
-      where: { id: tenderId },
-      select: {
-        notes: true,
-        updatedAt: true,
-      },
-    });
-
-    if (tender?.notes && /analysis\s+source.*ai/i.test(tender.notes)) {
-      // Legacy AI analysis recorded in notes
+  // ─── No job: legacy notes or not started ───────────────────────────────
+  if (!job) {
+    if (legacyNotesAiAnalyzed) {
       return {
         state: "AI_SUCCEEDED",
         latestJobId: null,
@@ -105,17 +139,15 @@ export async function resolveTenderAnalysisState(
         providerAttempts: [],
         completedChunks: 0,
         totalChunks: 0,
-        requirementsExtracted: 0,
-        sourceReferencesCreated: false,
-        metadataFieldsPersisted: false,
+        requirementsExtracted,
+        sourceReferencesCreated,
+        metadataFieldsPersisted,
         resumable: false,
-        nextAction: "Legacy analysis detected. Re-run AI Analyze for current extraction.",
+        nextAction: "Legacy analysis detected. Re-run AI Analyze for current extraction quality.",
         safeDiagnosticSummary:
-          "Analysis was performed with prior version of extraction engine. Consider re-analyzing for better extraction quality.",
+          "Analysis was performed with a prior version of the extraction engine. Consider re-analyzing.",
       };
     }
-
-    // No analysis at all
     return {
       state: "NOT_STARTED",
       latestJobId: null,
@@ -127,150 +159,207 @@ export async function resolveTenderAnalysisState(
       providerAttempts: [],
       completedChunks: 0,
       totalChunks: 0,
-      requirementsExtracted: 0,
-      sourceReferencesCreated: false,
-      metadataFieldsPersisted: false,
+      requirementsExtracted,
+      sourceReferencesCreated,
+      metadataFieldsPersisted,
       resumable: false,
       nextAction: "Run AI Analyze to extract requirements and metadata.",
       safeDiagnosticSummary: "No analysis performed yet.",
     };
   }
 
-  // We have a job. Analyze its chunks to determine state
-  const chunks = await prisma.aiAnalyzeChunk.findMany({
-    where: {
-      tenderId,
-      userId,
-      contentHash: latestJob.analysisInputHash || "",
-    },
-  });
-
-  const totalChunks = chunks.length || 1; // At least 1
+  // ─── Chunk tallies ──────────────────────────────────────────────────────
+  const totalChunks = chunks.length;
   const succeededChunks = chunks.filter((c) => c.status === "SUCCEEDED").length;
   const failedChunks = chunks.filter((c) => c.status === "FAILED").length;
   const pendingChunks = chunks.filter((c) => c.status === "QUEUED" || c.status === "RUNNING").length;
 
-  // Determine canonical (winning) job
-  // If job has been promoted, it's canonical; otherwise latest is canonical
-  const canonicalJobId = latestJob.promotedAt ? latestJob.id : null;
+  // ─── Aggregate provider attempts (count successes/failures per provider) ──
+  const providerMap = new Map<string, { successes: number; failures: number }>();
+  for (const chunk of chunks) {
+    if (!chunk.provider) continue;
+    const stats = providerMap.get(chunk.provider) ?? { successes: 0, failures: 0 };
+    if (chunk.status === "SUCCEEDED") stats.successes++;
+    else if (chunk.status === "FAILED") stats.failures++;
+    providerMap.set(chunk.provider, stats);
+  }
+  const providerAttempts: TenderAnalysisStateDetail["providerAttempts"] = [];
+  for (const [provider, stats] of providerMap.entries()) {
+    providerAttempts.push({
+      provider,
+      status: stats.successes > 0 ? "SUCCESS" : "FAILED",
+      successes: stats.successes,
+      failures: stats.failures,
+    });
+  }
+  const successfulProvider =
+    chunks.find((c) => c.status === "SUCCEEDED")?.provider ?? null;
 
-  // Determine state based on job status and chunk progress
-  let state: AnalysisState = "NOT_STARTED";
-  let analysisSource: "AI" | "REGEX_FALLBACK" | "LEGACY_NOTES" | "NONE" = "NONE";
+  const stagedSource = parseStagedSource(job.stagedMergedResult);
 
-  if (latestJob.status === "SUCCEEDED") {
-    if (succeededChunks === totalChunks) {
+  // ─── State machine ────────────────────────────────────────────────────
+  let state: AnalysisState;
+  let analysisSource: TenderAnalysisStateDetail["analysisSource"];
+
+  if (job.supersededBy) {
+    state = "SUPERSEDED";
+    analysisSource = "AI";
+  } else if (job.status === "SUCCEEDED") {
+    // SUCCEEDED with no chunk rows is a valid single-shot success (0 === 0).
+    if (totalChunks === 0 || succeededChunks === totalChunks) {
       state = "AI_SUCCEEDED";
       analysisSource = "AI";
     } else {
-      // Job succeeded but not all chunks succeeded (partial success persisted)
       state = "PARTIAL_NEEDS_RESUME";
       analysisSource = "AI";
     }
-  } else if (latestJob.status === "PARTIAL_SUCCESS") {
+  } else if (job.status === "PARTIAL_SUCCESS") {
     state = "PARTIAL_NEEDS_RESUME";
     analysisSource = "AI";
-  } else if (latestJob.status === "FAILED") {
-    if (latestJob.stagedMergedResult) {
-      // Fallback result exists but not approved
-      state = "REGEX_FALLBACK_UNAPPROVED";
-      analysisSource = "REGEX_FALLBACK";
+  } else if (job.status === "FAILED") {
+    if (stagedSource === "FALLBACK_DRAFT") {
+      // A promoted fallback draft is a human-approved fallback.
+      if (job.promotedAt) {
+        state = "HUMAN_APPROVED_FALLBACK";
+        analysisSource = "REGEX_FALLBACK";
+      } else {
+        state = "REGEX_FALLBACK_UNAPPROVED";
+        analysisSource = "REGEX_FALLBACK";
+      }
+    } else if (stagedSource === "PARTIAL_AI") {
+      // Partial AI work staged but job ultimately failed — resumable.
+      state = "PARTIAL_NEEDS_RESUME";
+      analysisSource = "AI";
     } else {
       state = "FAILED";
       analysisSource = "NONE";
     }
-  } else if (latestJob.status === "QUEUED") {
+  } else if (job.status === "QUEUED") {
     state = "QUEUED";
-  } else if (latestJob.status === "RUNNING" || pendingChunks > 0) {
+    analysisSource = "NONE";
+  } else if (job.status === "RUNNING" || pendingChunks > 0) {
     state = "RUNNING";
-  }
-
-  // Check if superseded by newer job
-  if (latestJob.supersededBy) {
-    state = "SUPERSEDED";
-  }
-
-  // Collect provider attempts from chunks
-  const providerAttempts: TenderAnalysisStateDetail["providerAttempts"] = [];
-  for (const chunk of chunks) {
-    if (chunk.provider) {
-      const existing = providerAttempts.find((p) => p.provider === chunk.provider);
-      if (!existing) {
-        providerAttempts.push({
-          provider: chunk.provider,
-          status: chunk.status === "SUCCEEDED" ? "SUCCESS" : "FAILED",
-        });
-      }
-    }
-  }
-
-  // Determine resumable status
-  const resumable = state === "PARTIAL_NEEDS_RESUME" || state === "REGEX_FALLBACK_UNAPPROVED";
-
-  // Generate UI-friendly next action
-  let nextAction = "";
-  switch (state) {
-    case "NOT_STARTED":
-      nextAction = "Run AI Analyze to extract requirements and metadata.";
-      break;
-    case "QUEUED":
-      nextAction = "AI Analyze queued. Processing will start shortly.";
-      break;
-    case "RUNNING":
-      nextAction = `Processing: ${succeededChunks}/${totalChunks} chunks completed. Current chunk in progress...`;
-      break;
-    case "AI_SUCCEEDED":
-      nextAction = "Analysis complete. Proceed to Build Submission Plan.";
-      break;
-    case "PARTIAL_NEEDS_RESUME":
-      nextAction = `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done. Click Resume to complete.`;
-      break;
-    case "REGEX_FALLBACK_UNAPPROVED":
-      nextAction =
-        "Provider exhausted. Regex fallback available (lower quality). Review and approve with a note, or retry AI Analyze.";
-      break;
-    case "HUMAN_APPROVED_FALLBACK":
-      nextAction = "Fallback analysis approved. Proceed with caution (lower confidence).";
-      break;
-    case "FAILED":
-      nextAction = "Analysis failed. Check provider status and retry, or proceed with manual entry.";
-      break;
-    case "SUPERSEDED":
-      nextAction = "This analysis was replaced by a newer run. Review the latest analysis.";
-      break;
-  }
-
-  // Safe diagnostic summary (no secrets, no raw errors)
-  let safeDiagnosticSummary = "";
-  if (latestJob.errorMessage) {
-    // Redact API keys and provider details
-    const safe = latestJob.errorMessage
-      .replace(/sk-[a-z0-9]+/gi, "[KEY]")
-      .replace(/api[_-]?key/gi, "[KEY]")
-      .slice(0, 200);
-    safeDiagnosticSummary = `Last error: ${safe}...`;
+    analysisSource = "NONE";
   } else {
-    safeDiagnosticSummary = `Job status: ${latestJob.status}. Chunks: ${succeededChunks} succeeded, ${failedChunks} failed, ${pendingChunks} pending.`;
+    // CANCELED or unknown status
+    state = "FAILED";
+    analysisSource = "NONE";
+  }
+
+  const canonicalJobId = job.promotedAt ? job.id : null;
+  const resumable =
+    state === "PARTIAL_NEEDS_RESUME" ||
+    state === "REGEX_FALLBACK_UNAPPROVED" ||
+    state === "FAILED";
+
+  // ─── UI-friendly next action ────────────────────────────────────────────
+  const nextActions: Record<AnalysisState, string> = {
+    NOT_STARTED: "Run AI Analyze to extract requirements and metadata.",
+    QUEUED: "AI Analyze queued. Processing will start shortly.",
+    RUNNING: `Processing: ${succeededChunks}/${totalChunks} chunks completed. Current chunk in progress...`,
+    AI_SUCCEEDED: "Analysis complete. Proceed to Build Submission Plan.",
+    PARTIAL_NEEDS_RESUME: `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done. Click Resume to complete.`,
+    REGEX_FALLBACK_UNAPPROVED:
+      "Provider exhausted. Regex fallback available (lower quality). Review and approve with a note, or retry AI Analyze.",
+    HUMAN_APPROVED_FALLBACK: "Fallback analysis approved. Proceed with caution (lower confidence).",
+    FAILED: "Analysis failed. Check provider status and retry, or proceed with manual entry.",
+    SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
+  };
+
+  // ─── Safe diagnostic summary (no secrets, no raw errors) ─────────────────
+  let safeDiagnosticSummary: string;
+  if (job.errorMessage && (state === "FAILED" || state === "REGEX_FALLBACK_UNAPPROVED")) {
+    safeDiagnosticSummary = `Last error: ${redactSafe(job.errorMessage)}`;
+  } else {
+    safeDiagnosticSummary = `Job status: ${job.status}. Chunks: ${succeededChunks} succeeded, ${failedChunks} failed, ${pendingChunks} pending.`;
   }
 
   return {
     state,
-    latestJobId: latestJob.id,
+    latestJobId: job.id,
     canonicalJobId,
     analysisSource,
-    startedAt: latestJob.startedAt,
-    finishedAt: latestJob.finishedAt,
-    successfulProvider: succeededChunks > 0 ? chunks.find((c) => c.status === "SUCCEEDED")?.provider || null : null,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    successfulProvider: succeededChunks > 0 ? successfulProvider : null,
     providerAttempts,
     completedChunks: succeededChunks,
     totalChunks,
-    requirementsExtracted: 0, // TODO: query TenderRequirement table
-    sourceReferencesCreated: false, // TODO: check if source references exist
-    metadataFieldsPersisted: false, // TODO: check if tender metadata is populated
+    requirementsExtracted,
+    sourceReferencesCreated,
+    metadataFieldsPersisted,
     resumable,
-    nextAction,
+    nextAction: nextActions[state],
     safeDiagnosticSummary,
   };
+}
+
+/**
+ * Resolve the canonical AI Analyze state for a tender.
+ * Gathers raw data from the database and delegates all logic to the pure
+ * `deriveAnalysisStateDetail`.
+ */
+export async function resolveTenderAnalysisState(
+  tenderId: string,
+  userId: string
+): Promise<TenderAnalysisStateDetail> {
+  // Load the latest AI_ANALYZE job for this tender/user (no relations needed).
+  const latestJob = await prisma.aiJob.findFirst({
+    where: { tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      analysisInputHash: true,
+      stagedMergedResult: true,
+      promotedAt: true,
+      supersededBy: true,
+      startedAt: true,
+      finishedAt: true,
+      errorMessage: true,
+    },
+  });
+
+  // Gather persisted artefact counts that gates/UI need regardless of job.
+  const [requirementsExtracted, sourceReferencesCreated, tender] = await Promise.all([
+    prisma.tenderRequirement.count({ where: { tenderId } }),
+    prisma.tenderRequirement
+      .count({ where: { tenderId, sourceExactQuote: { not: null } } })
+      .then((n) => n > 0),
+    prisma.tender.findUnique({
+      where: { id: tenderId },
+      select: { notes: true, clientName: true, deadline: true, submissionMethod: true },
+    }),
+  ]);
+
+  // Metadata is considered persisted when the critical fields are populated.
+  const metadataFieldsPersisted = Boolean(
+    tender?.clientName && (tender?.deadline || tender?.submissionMethod)
+  );
+
+  // Legacy notes-based analysis only matters when there is no job record.
+  const legacyNotesAiAnalyzed =
+    !latestJob && Boolean(tender?.notes && /analysis\s+source.*ai/i.test(tender.notes));
+
+  // When the job has no content hash there are no meaningful chunk rows to
+  // attribute to it — querying with an empty hash would match foreign/corrupt
+  // rows, so we treat it as no chunks.
+  let chunks: ResolverChunkInput[] = [];
+  if (latestJob?.analysisInputHash) {
+    chunks = await prisma.aiAnalyzeChunk.findMany({
+      where: { tenderId, userId, contentHash: latestJob.analysisInputHash },
+      select: { status: true, provider: true },
+    });
+  }
+
+  return deriveAnalysisStateDetail({
+    job: latestJob,
+    chunks,
+    legacyNotesAiAnalyzed,
+    requirementsExtracted,
+    sourceReferencesCreated,
+    metadataFieldsPersisted,
+  });
 }
 
 /**
@@ -303,5 +392,5 @@ export function analysisStateLabel(state: AnalysisState): string {
     FAILED: "Failed",
     SUPERSEDED: "Superseded",
   };
-  return labels[state] || "Unknown";
+  return labels[state];
 }
