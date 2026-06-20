@@ -129,7 +129,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
         state: "AI_SUCCEEDED",
         analysisSource: "LEGACY_NOTES",
         nextAction: "Legacy analysis detected. Re-run AI Analyze for current extraction quality.",
-        safeDiagnosticSummary: "Analysis was performed with a prior version of the engine.",
+        safeDiagnosticSummary: "Analysis was performed with a prior version of the extraction engine. Consider re-analyzing.",
       };
     }
     return defaultResult;
@@ -141,6 +141,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
 
   const totalChunks = chunksToTally.length > 0 ? chunksToTally[0].totalChunks : 0;
   const succeededChunks = chunksToTally.filter((c) => c.status === "SUCCEEDED").length;
+  const failedChunks = chunksToTally.filter((c) => c.status === "FAILED").length;
   const pendingChunks = chunksToTally.filter((c) => c.status === "QUEUED" || c.status === "RUNNING").length;
 
   const providerMap = new Map<string, { successes: number; failures: number }>();
@@ -211,13 +212,13 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
   const nextActions: Record<AnalysisState, string> = {
     NOT_STARTED: "Run AI Analyze to extract requirements and metadata.",
     QUEUED: "AI Analyze queued. Processing will start shortly.",
-    RUNNING: `Processing: ${succeededChunks}/${totalChunks} chunks completed.`,
+    RUNNING: `Processing: ${succeededChunks}/${totalChunks} chunks completed. Current chunk in progress...`,
     AI_SUCCEEDED: "Analysis complete. Proceed to Build Submission Plan.",
-    PARTIAL_NEEDS_RESUME: `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done.`,
-    REGEX_FALLBACK_UNAPPROVED: "AI exhausted. Regex fallback available. Review and approve, or retry.",
-    HUMAN_APPROVED_FALLBACK: "Fallback analysis approved. Proceed with caution.",
-    FAILED: "Analysis failed. Check provider status and retry.",
-    SUPERSEDED: "This analysis was replaced by a newer run.",
+    PARTIAL_NEEDS_RESUME: `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done. Click Resume to complete.`,
+    REGEX_FALLBACK_UNAPPROVED: "Provider exhausted. Regex fallback available (lower quality). Review and approve with a note, or retry AI Analyze.",
+    HUMAN_APPROVED_FALLBACK: "Fallback analysis approved. Proceed with caution (lower confidence).",
+    FAILED: "Analysis failed. Check provider status and retry, or proceed with manual entry.",
+    SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
   };
 
   let safeDiagnosticSummary: string;
@@ -226,7 +227,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
   } else if (latestJob.errorMessage && (state === "FAILED" || state === "REGEX_FALLBACK_UNAPPROVED" || (state === "PARTIAL_NEEDS_RESUME" && latestJob.status === "FAILED"))) {
     safeDiagnosticSummary = `Last attempt error: ${redactSafe(latestJob.errorMessage)}`;
   } else {
-    safeDiagnosticSummary = `Job status: ${latestJob.status}. Chunks: ${succeededChunks} succeeded, ${totalChunks - succeededChunks - pendingChunks} failed.`;
+    safeDiagnosticSummary = `Job status: ${latestJob.status}. Chunks: ${succeededChunks} succeeded, ${failedChunks} failed, ${pendingChunks} pending.`;
   }
 
   return {

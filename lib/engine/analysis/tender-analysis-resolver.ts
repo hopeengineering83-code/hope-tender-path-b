@@ -32,18 +32,21 @@ export async function resolveTenderAnalysisState(
   tenderId: string,
   userId?: string
 ): Promise<AnalysisResolverResult> {
+  // If userId is missing, we must fetch it from the tender to ensure tenant isolation
   let effectiveUserId = userId;
   if (!effectiveUserId) {
-    const tender = await prisma.tender.findUnique({
+    const tender = await (prisma as any).tender?.findUnique({
       where: { id: tenderId },
       select: { userId: true }
-    });
+    }).catch(() => null);
     if (!tender) throw new Error("Tender not found");
     effectiveUserId = tender.userId;
   }
 
-  const detail = await resolveInternal(prisma, tenderId, effectiveUserId);
+  // Delegate to the consolidated internal resolver
+  const detail = await resolveInternal(prisma, tenderId, effectiveUserId!);
 
+  // Map to the public legacy response shape
   const attemptedProviders = detail.providerAttempts.map(p => p.provider);
   const providerFailureCategories: Record<string, string> = {};
   for (const p of detail.providerAttempts) {
@@ -52,13 +55,15 @@ export async function resolveTenderAnalysisState(
     }
   }
 
-  const tender = await prisma.tender.findUnique({
+  // Calculate metadata count for UI compatibility
+  const tender = await (prisma as any).tender?.findUnique({
     where: { id: tenderId },
     select: { clientName: true, deadline: true, submissionMethod: true, reference: true }
-  });
+  }).catch(() => null);
   const metadataCount = [tender?.clientName, tender?.deadline, tender?.submissionMethod, tender?.reference].filter(Boolean).length;
 
-  const sourceReferencesCount = await prisma.tenderRequirement.count({
+  // We need the raw sourceReferencesCreated count for the legacy API
+  const sourceReferencesCount = await (prisma as any).tenderRequirement?.count({
     where: {
         tenderId,
         OR: [
@@ -67,7 +72,7 @@ export async function resolveTenderAnalysisState(
             { sourceExactQuote: { not: null } }
         ]
     }
-  });
+  }).catch(() => 0) ?? 0;
 
   return {
     state: detail.state as TenderAnalysisState,
