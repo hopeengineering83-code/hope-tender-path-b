@@ -102,7 +102,7 @@ describe("validateTenderBeforeExport", () => {
     const tender = { ...baseTender, deadline: new Date(Date.now() - 1000) };
     const result = validateTenderBeforeExport(tender as any);
     assert.ok(
-      result.blockers.some((b) => b.includes("deadline") || b.includes("DEADLINE_PASSED")),
+      result.blockers.some((b) => b.includes("deadline")),
       "Should block when deadline is in past",
     );
   });

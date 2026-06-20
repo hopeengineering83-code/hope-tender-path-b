@@ -499,20 +499,16 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
 
-  // Block when the tender deadline has already passed — exporting after
-  // deadline does not make sense operationally and may indicate the wrong
-  // tender is open. Per CLAUDE.md this is a hard export blocker.
+  // Advisory when the tender deadline has already passed — warn the user but
+  // allow export/submission in case a deadline extension was granted or the
+  // evaluator accepts late submissions. This is a HIGH-severity advisory, not
+  // a hard blocker.
   if (tender.deadline) {
     const now = new Date();
     const deadlineDate = tender.deadline instanceof Date ? tender.deadline : new Date(tender.deadline);
     if (!Number.isNaN(deadlineDate.getTime()) && deadlineDate < now) {
       const daysAgo = Math.round((now.getTime() - deadlineDate.getTime()) / (1000 * 60 * 60 * 24));
-      blockers.push(tenderBlocker(
-        "DEADLINE_PASSED",
-        `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`,
-        "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting.",
-        "HIGH",
-      ));
+      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
     }
   }
 
