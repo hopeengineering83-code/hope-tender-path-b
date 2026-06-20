@@ -1163,6 +1163,7 @@ export type AIRequirement = {
   sourceExtractionMethod?: "text" | "ocr" | "mixed" | null;
   sourceConfidence?: number | null;
   sourceLinkageWarning?: string | null;
+  sourceSectionHeading?: string | null;
 };
 
 export type AIAnalysisResult = {
@@ -1199,6 +1200,7 @@ export type AIAnalysisResult = {
   procuringEntityName?: string | null;
   legalClientName?: string | null;
   donorAgency?: string | null;
+  tenderTitle?: string | null;
   implementingAgency?: string | null;
   clientNameSourcePage?: number | null;
   clientNameSourceQuote?: string | null;
@@ -1443,8 +1445,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
       const key = (req.title ?? "").toLowerCase().replace(/\s+/g, " ").trim();
       if (!key) continue;
       const existing = reqByKey.get(key);
-      const existingHasSource = Boolean(existing?.sourceFileToken || existing?.sourceTenderFileId || existing?.sourceFileName || existing?.sourceQuote);
-      const candidateHasSource = Boolean(req.sourceFileToken || req.sourceTenderFileId || req.sourceFileName || req.sourceQuote);
+      const existingHasSource = Boolean(existing?.sourceFileToken || existing?.sourceTenderFileId || existing?.sourceFileName || existing?.sourceQuote || existing?.sourceSectionHeading);
+      const candidateHasSource = Boolean(req.sourceFileToken || req.sourceTenderFileId || req.sourceFileName || req.sourceQuote || req.sourceSectionHeading);
       if (!existing || (candidateHasSource && !existingHasSource) || (candidateHasSource === existingHasSource && (req.description?.length ?? 0) > (existing.description?.length ?? 0))) {
         reqByKey.set(key, req);
       }
@@ -1506,6 +1508,7 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const envelopeMode = firstDefined((p) => p.envelopeMode);
   const clientType = firstDefined((p) => p.clientType);
   const submissionFormat = firstDefined((p) => p.submissionFormat);
+  const tenderTitle = firstDefined((p) => p.tenderTitle ?? undefined);
   // Extended client fields — first non-null value wins across chunks
   const procuringEntityName = firstDefined((p) => p.procuringEntityName ?? undefined);
   const legalClientName = firstDefined((p) => p.legalClientName ?? undefined);
@@ -1559,6 +1562,7 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     envelopeMode,
     clientType,
     submissionFormat,
+    tenderTitle: tenderTitle ?? null,
     procuringEntityName: procuringEntityName ?? null,
     legalClientName: legalClientName ?? null,
     donorAgency: donorAgency ?? null,
@@ -1648,6 +1652,7 @@ Step 12 — Write evaluationMethodology: how the proposal should be structured t
 JSON structure required:
 {
   "summary": "4-6 sentence senior bid interpretation: client name, tender title, assignment scope, key technical challenges, main evaluation driver, top strategic risk for the responding firm",
+  "tenderTitle": "The full official title of the tender project as printed on the document (NOT a summary, the verbatim title), or null",
   "requirements": [
     {
       "title": "short strategic title (max 80 chars)",
@@ -1662,7 +1667,8 @@ JSON structure required:
       "sourcePage": page_number_integer_or_null,
       "sourceQuote": "verbatim 1-2 sentence snippet from the tender that this requirement is drawn from, or null",
        "sourceFileToken": "copy the exact FILE_ID value from the nearest [FILE_ID:<id>|FILE_NAME:<name>] header, or null",
-       "sourceFileName": "copy the exact FILE_NAME value shown in that same header, or null"
+       "sourceFileName": "copy the exact FILE_NAME value shown in that same header, or null",
+       "sourceSectionHeading": "copy the exact section heading if available from the nearest header, or null"
     }
   ],
   "exactFileNaming": ["exact filenames required by the tender"],
@@ -1758,11 +1764,13 @@ ${tenderContent}`;
                 sourceQuote: typeof r.sourceQuote === "string" ? r.sourceQuote.trim().slice(0, 500) || null : null,
                 sourceFileToken: typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim().slice(0, 200) || null : null,
                 sourceFileName: typeof r.sourceFileName === "string" ? r.sourceFileName.trim().slice(0, 500) || null : null,
+                sourceSectionHeading: typeof r.sourceSectionHeading === "string" ? r.sourceSectionHeading.trim().slice(0, 300) || null : null,
               }))
           : [],
         exactFileNaming: Array.isArray(parsed.exactFileNaming) ? parsed.exactFileNaming.filter((s: unknown) => typeof s === "string") : [],
         exactFileOrder: Array.isArray(parsed.exactFileOrder) ? parsed.exactFileOrder.filter((s: unknown) => typeof s === "string") : [],
         evaluationMethodology: typeof parsed.evaluationMethodology === "string" ? parsed.evaluationMethodology : "",
+        tenderTitle: typeof parsed.tenderTitle === "string" ? parsed.tenderTitle.trim().slice(0, 400) || null : null,
         submissionNotes: typeof parsed.submissionNotes === "string" ? parsed.submissionNotes : "",
         // Classification fields — validated against the allowed enum sets.
         // Anything the model returns outside those sets (or a free-form
