@@ -41,13 +41,13 @@ export async function validateTenderBeforeGeneration(
   // 'Bid-Team to confirm', 'unknown', 'not specified', or 'N/A' as if they are valid."
   if (tender.clientName && isPlaceholderClientName(tender.clientName)) {
     blockers.push(
-      `Client name is a placeholder ("${tender.clientName}"). Set the real procuring entity name from the tender document before generating documents.`
+      `clientName is a placeholder ("${tender.clientName}"). Set the real procuring entity name from the tender document before generating documents.`
     );
   }
 
   if (tender.submissionMethod && containsMetadataPlaceholder(tender.submissionMethod)) {
     blockers.push(
-      `Submission method contains placeholder text. Provide the actual submission method (email, physical address, online portal, etc.) before generating.`
+      `submissionMethod contains placeholder text. Provide the actual submission method (email, physical address, online portal, etc.) before generating.`
     );
   }
 
@@ -111,11 +111,11 @@ export function validateTenderBeforeExport(tender: Tender): PreGenerationValidat
   const warnings: string[] = [];
 
   if (tender.clientName && isPlaceholderClientName(tender.clientName)) {
-    blockers.push(`Client name is a placeholder. Cannot export with unverified metadata.`);
+    blockers.push(`clientName is a placeholder. Cannot export with unverified metadata.`);
   }
 
   if (tender.clientName && isClientNameContaminated(tender.clientName)) {
-    blockers.push(`Client name is contaminated. Cannot export with mixed/corrupted metadata.`);
+    blockers.push(`clientName is contaminated. Cannot export with mixed/corrupted metadata.`);
   }
 
   // Deadline-in-past IS a hard block for export

@@ -13,6 +13,7 @@ describe("validateTenderBeforeGeneration", () => {
     submissionAddress: "test@example.com",
     clientNameSourcePage: 1,
     clientNameSourceQuote: "Test Client",
+    requirements: [] as Array<{ id: string; sourcePageNumber?: number | null; sourceQuote?: string | null }>,
   };
 
   it("passes validation for clean tender data", async () => {
