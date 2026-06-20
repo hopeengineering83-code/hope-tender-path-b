@@ -195,3 +195,42 @@ export function isValidClientContact(value: string | null | undefined): boolean 
   const properTokens = text.split(/\s+/).filter((w) => /^[A-Z][a-z]+$/.test(w));
   return properTokens.length >= 2;
 }
+
+// ─── Client name contamination detection ────────────────────────────
+
+/**
+ * Detect if a client name is contaminated by tender portal navigation,
+ * old tender alerts, or unrelated tender text. Pattern: if the name contains
+ * pipes (|) or suspicious phrase combinations suggesting mixed content.
+ * Examples: "ABC Ministry | Tender Portal | Old Tender: XYZ"
+ */
+export function isClientNameContaminated(value: string | null | undefined): boolean {
+  const text = (value ?? "").trim();
+  if (text.length === 0) return false;
+  // Pipe characters almost always indicate merged portal/navigation text
+  if (text.includes("|")) return true;
+  // Detect phrases that suggest portal/navigation contamination
+  if (/(tender\s+portal|old\s+tender|alert|notification|browse|tenders?|portal|dashboard|published|deadline.*passed|archived|closed)/i.test(text)) {
+    // But allow legitimate phrases like "Ministry of Health & Tender Division"
+    if (!/&|and|division|department|ministry/i.test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * Get a detailed contamination reason for a client name. Returns null if
+ * no contamination detected, or a user-friendly message describing the issue.
+ */
+export function clientNameContaminationReason(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim();
+  if (text.length === 0) return null;
+  if (text.includes("|")) {
+    return "Client name contains pipe separators (|), indicating mixed portal/navigation text. Manually separate the legitimate client name from portal artifacts.";
+  }
+  if (/(tender\s+portal|old\s+tender|alert|notification|dashboard|published|deadline.*passed|archived|closed)/i.test(text)) {
+    if (!/&|and|division|department/i.test(text)) {
+      return "Client name appears contaminated by tender portal text or old alerts. Manually extract the real procuring entity name.";
+    }
+  }
+  return null;
+}
