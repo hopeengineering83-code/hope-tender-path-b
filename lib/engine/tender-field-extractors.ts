@@ -1,4 +1,4 @@
-import { nonClientEntityLabelPattern } from "./metadata-validators";
+import { nonClientEntityLabelPattern, canonicalizeCountry } from "./metadata-validators";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 //
@@ -788,26 +788,29 @@ export function extractClientAddress(input: ExtractorInput): ExtractedFieldOrMis
 }
 
 // ─── 21. Country ──────────────────────────────────────────────────────────────
-const COUNTRY_PATTERN = /\b(?:country|nation|state)\s*[:\-]\s*([A-Za-z\s]{3,50})/i;
+// Uses the shared canonicalizeCountry() against the comprehensive KNOWN_COUNTRIES
+// list in metadata-validators (50+ countries across all continents) rather than a
+// narrow hardcoded subset, so tenders from any recognised country are captured.
+const COUNTRY_PATTERN = /\b(?:country|nation|state)\s*[:\-]\s*([A-Za-z'’.\-\s]{2,60})/i;
 
 export function extractCountry(input: ExtractorInput): ExtractedFieldOrMissing<string> {
   const cands: ExtractedField<string>[] = [];
-  const KNOWN_COUNTRIES = ["Ethiopia", "Kenya", "Tanzania", "Uganda", "Rwanda", "Burundi", "Sudan", "South Sudan", "Somalia", "Djibouti", "Eritrea", "Egypt"];
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     if (text.length < SOURCE_MIN) continue;
     const m = COUNTRY_PATTERN.exec(text);
     if (!m) continue;
-    const value = m[1].trim().replace(/\s+/g, " ");
-    if (KNOWN_COUNTRIES.some(c => c.toLowerCase() === value.toLowerCase())) {
-      cands.push({
-        found: true,
-        value: KNOWN_COUNTRIES.find(c => c.toLowerCase() === value.toLowerCase())!,
-        sourceQuote: captureAround(text, m.index, m[0].length),
-        sourceFile: file?.fileName ?? null,
-        confidence: "HIGH",
-      });
-    }
+    // Canonicalize against the full known-country list (returns the canonical
+    // spelling when any known country appears in the captured value, else null).
+    const canonical = canonicalizeCountry(m[1].trim().replace(/\s+/g, " "));
+    if (!canonical) continue;
+    cands.push({
+      found: true,
+      value: canonical,
+      sourceQuote: captureAround(text, m.index, m[0].length),
+      sourceFile: file?.fileName ?? null,
+      confidence: "HIGH",
+    });
   }
   return pickBest(cands);
 }
