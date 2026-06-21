@@ -52,6 +52,7 @@ export type AnalysisOrchestrationResult = {
   failedChunks: number;
   analysisProvider?: string | null;
   errorMessage?: string;
+  analysisMeta?: AnalysisWithMeta;
 };
 
 /**
@@ -290,6 +291,7 @@ export async function executeAnalysis(
     failedChunks: analysisMeta?.failedChunks ?? 0,
     analysisProvider,
     errorMessage,
+    analysisMeta: analysisMeta ?? undefined,
   };
 }
 
