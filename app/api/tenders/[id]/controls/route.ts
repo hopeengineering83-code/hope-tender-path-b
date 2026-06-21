@@ -17,9 +17,9 @@ import { classifyWeakMatches } from "../../../../../lib/engine/weak-match-classi
 
 export const dynamic = "force-dynamic";
 
-async function deriveSuggestedControls(tenderId: string): Promise<SuggestedControl[]> {
+async function deriveSuggestedControls(tenderId: string, userId?: string): Promise<SuggestedControl[]> {
   try {
-    const lifecycle = await computeTenderLifecycle(prisma, tenderId);
+    const lifecycle = await computeTenderLifecycle(prisma, tenderId, userId);
     if (!lifecycle) return [];
     const tenderForMatches = await prisma.tender.findFirst({
       where: { id: tenderId },
@@ -99,7 +99,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       orderBy: { createdAt: "desc" },
       take: 300,
     }),
-    deriveSuggestedControls(id),
+    deriveSuggestedControls(id, actor.id),
   ]);
   const records = logs.map(auditLogToControlRecord).filter((r): r is NonNullable<typeof r> => r !== null);
   const persistedSummary = controlSummary(records);
