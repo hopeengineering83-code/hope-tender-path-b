@@ -92,6 +92,43 @@ export async function assertAnalysisReadyForFinalGeneration(
   tenderId: string,
   tender: TenderAnalysisSourceLike,
 ): Promise<AnalysisGateResult> {
+  // FM-009: Prefer the canonical analysis-state resolver (which considers
+  // AiJob + AiAnalyzeChunk + promoted fallback state) over the legacy
+  // notes-based heuristic. Falls back to the legacy path on any error so
+  // behaviour is no worse than before.
+  try {
+    const tenderRow = await client.tender.findUnique({
+      where: { id: tenderId },
+      select: { userId: true },
+    });
+    if (tenderRow) {
+      const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
+      // The resolver uses the global prisma internally, so we pass null here.
+      const detail = await resolveTenderAnalysisState(null as any, tenderId, tenderRow.userId);
+      if (detail.state === "AI_SUCCEEDED" || detail.state === "HUMAN_APPROVED_FALLBACK") {
+        return { ok: true };
+      }
+      if (detail.state === "NOT_STARTED") {
+        return {
+          ok: false,
+          code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+          message:
+            "Analysis source has not been confirmed. Run AI analysis before final proposal generation, or approve the current analysis as sufficient.",
+          nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
+        };
+      }
+      return {
+        ok: false,
+        code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+        message:
+          "Latest analysis used the regex fallback (AI providers failed). Final proposal generation is blocked until AI analysis is re-run successfully, or a human explicitly approves the fallback analysis as sufficient.",
+        nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
+      };
+    }
+  } catch {
+    // Fall through to legacy notes-based detection below.
+  }
+
   const source = await detectAnalysisSourceWithApproval(client, tenderId, tender);
   if (source === "AI" || source === "HUMAN_APPROVED_REGEX_FALLBACK") return { ok: true };
   if (source === "UNKNOWN") {

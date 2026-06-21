@@ -401,6 +401,7 @@ model Tender {
   shares                TenderShare[]
   copilotMessages       TenderCopilotMessage[]
   metadataOverrides     TenderMetadataOverride[]
+  submissionPlanState   SubmissionPlanState?
 
   // Audit DB-002 (2026-06-20): the single most-queried column in the app
   // (every "list my tenders" dashboard query filters on userId). Was a
@@ -1080,4 +1081,18 @@ model RateLimitBucket {
   resetAt   DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── SubmissionPlanState ─────────────────────────────────────────────────────
+// Per-tender summary of the submission plan state. Backed by migration
+// 20260613190000_comprehensive_gap_guards.
+model SubmissionPlanState {
+  tenderId             String    @id
+  tender               Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  provenance           String    @default("NONE")
+  confirmationStatus   String    @default("NOT_REQUIRED")
+  derivedDocumentCount Int       @default(0)
+  activeDocumentCount  Int       @default(0)
+  confirmedAt          DateTime?
+  updatedAt            DateTime  @default(now()) @updatedAt
 }
