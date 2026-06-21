@@ -14,18 +14,12 @@ function assertProductionEnv() {
     throw new Error(`Missing required production variables: ${missing.map(([name]) => name).join(", ")}`);
   }
 
-  const providerKeys = [
-    "MISTRAL_API_KEY",
-    "GROQ_API_KEY",
-    "OPENROUTER_API_KEY",
-    "GEMINI_API_KEY",
-    "OPENAI_API_KEY",
-    "TOGETHER_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "ANTHROPIC_API_KEY",
-  ];
-  if (!providerKeys.some((name) => Boolean(process.env[name]))) {
-    throw new Error(`Configure at least one supported AI provider: ${providerKeys.join(", ")}`);
+  // Provider key names come from the single shared catalog — NOT duplicated
+  // here. The catalog (lib/ai-provider-catalog.cjs) is the one source the typed
+  // registry, this build guard, and scripts/check-env.mjs all consume.
+  const { AI_PROVIDER_API_KEY_ENVS } = require("./lib/ai-provider-catalog.cjs");
+  if (!AI_PROVIDER_API_KEY_ENVS.some((name) => Boolean(process.env[name]))) {
+    throw new Error(`Configure at least one supported AI provider: ${AI_PROVIDER_API_KEY_ENVS.join(", ")}`);
   }
 
   const dbUrl = process.env.DATABASE_URL ?? "";

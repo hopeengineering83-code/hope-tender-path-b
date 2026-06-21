@@ -7,35 +7,20 @@ import {
   recordProviderSuccess,
   recordProviderFailure,
   isProviderCooledDown,
-  isMistralConfigured,
-  getMistralApiKey,
-  getMistralBaseUrl,
-  getMistralProposalModel,
-  isGroqConfigured,
-  getGroqApiKey,
-  getGroqBaseUrl,
-  getGroqModel,
-  isOpenRouterConfigured,
-  getOpenRouterApiKey,
-  getOpenRouterBaseUrl,
-  getOpenRouterModel,
+  isProviderConfigured,
+  getGeminiApiKey,
   getOpenRouterSiteUrl,
   getOpenRouterAppName,
-  isGeminiConfigured,
-  getGeminiApiKey,
-  isOpenAIConfigured,
-  getOpenAIApiKey,
-  isTogetherConfigured,
-  getTogetherApiKey,
-  getTogetherBaseUrl,
-  getTogetherProposalModel,
-  isDeepSeekConfigured,
-  getDeepSeekApiKey,
-  getDeepSeekModel,
-  isAnthropicConfigured,
   getAnthropicApiKey,
   type AiProviderName
 } from "@/lib/ai-provider-health";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  getProviderEntry,
+  getProviderModel,
+  getProviderBaseUrl,
+  readProviderKey,
+} from "@/lib/ai-provider-registry";
 import { PER_PROVIDER_TIMEOUT_MS, ANTHROPIC_TIMEOUT_MS, GEMINI_TIMEOUT_MS } from "@/lib/timeout-config";
 
 export const dynamic = "force-dynamic";
@@ -128,18 +113,7 @@ async function testProvider(
   provider: AiProviderName,
   capability: "ping" | "analysis" | "generation"
 ): Promise<ProviderTestResult> {
-  const isConfigured = {
-    mistral: isMistralConfigured(),
-    groq: isGroqConfigured(),
-    openrouter: isOpenRouterConfigured(),
-    gemini: isGeminiConfigured(),
-    openai: isOpenAIConfigured(),
-    together: isTogetherConfigured(),
-    deepseek: isDeepSeekConfigured(),
-    anthropic: isAnthropicConfigured(),
-  }[provider];
-
-  if (!isConfigured) return { provider, capability, status: "not_configured", model: "", durationMs: 0 };
+  if (!isProviderConfigured(provider)) return { provider, capability, status: "not_configured", model: "", durationMs: 0 };
   if (isProviderCooledDown(provider)) return { provider, capability, status: "skipped_cooldown", model: "", durationMs: 0 };
 
   const start = Date.now();
@@ -195,34 +169,27 @@ async function testProvider(
       const data = await res.json();
       resultText = data.content[0].text;
     } else {
-      // OpenAI Compatible
-      const config: any = {
-        mistral: { key: getMistralApiKey()!, url: getMistralBaseUrl(), model: getMistralProposalModel() },
-        groq: { key: getGroqApiKey()!, url: getGroqBaseUrl(), model: getGroqModel() },
-        openrouter: {
-          key: getOpenRouterApiKey()!,
-          url: getOpenRouterBaseUrl(),
-          model: getOpenRouterModel(),
-          headers: { "HTTP-Referer": getOpenRouterSiteUrl(), "X-Title": getOpenRouterAppName() }
-        },
-        openai: { key: getOpenAIApiKey()!, url: "https://api.openai.com/v1", model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o-mini" },
-        together: { key: getTogetherApiKey()!, url: getTogetherBaseUrl(), model: getTogetherProposalModel() },
-        deepseek: { key: getDeepSeekApiKey()!, url: "https://api.deepseek.com/v1", model: getDeepSeekModel() },
-      }[provider];
-
-      model = config.model;
+      // OpenAI-compatible providers (zai, cerebras, mistral, groq, openrouter,
+      // openai, together, deepseek) — all config derived from the registry.
+      const entry = getProviderEntry(provider);
+      const key = readProviderKey(provider);
+      const url = getProviderBaseUrl(provider);
+      model = getProviderModel(provider, capability === "analysis" ? "extraction" : "proposal");
+      const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${key}` };
+      if (provider === "openrouter") {
+        headers["HTTP-Referer"] = getOpenRouterSiteUrl();
+        headers["X-Title"] = getOpenRouterAppName();
+      }
+      // Cerebras requires max_completion_tokens instead of max_tokens.
+      const tokenParam = entry.requestFormat === "cerebras" ? "max_completion_tokens" : "max_tokens";
       const res: any = await withTimeout(
-        fetch(`${config.url}/chat/completions`, {
+        fetch(`${url}/chat/completions`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.key}`,
-            ...config.headers
-          },
+          headers,
           body: JSON.stringify({
             model,
             messages: [{ role: "user", content: prompt }],
-            max_tokens: maxTokens,
+            [tokenParam]: maxTokens,
             temperature: 0,
           }),
         }),
@@ -292,7 +259,7 @@ export async function GET(req: Request) {
   const onlyProvider = url.searchParams.get("provider") as AiProviderName | null;
   const capability = (url.searchParams.get("capability") || "ping") as "ping" | "analysis" | "generation";
 
-  const PROVIDERS: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const PROVIDERS: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
   const testers = PROVIDERS.map(p => new ProviderTester(p, capability));
   const results: ProviderTestResult[] = [];
 

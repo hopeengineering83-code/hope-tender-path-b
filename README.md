@@ -472,23 +472,37 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require"
 # Must be ≥32 chars, must not be a known insecure default.
 SESSION_SECRET="<64-character random hex>"
 
-# ── Recommended (set at least one of the two AI keys below) ─────────────────
+# ── AI providers — set at least one key ─────────────────────────────────────
+# The single source of truth for the canonical automatic provider order is
+# lib/ai-provider-registry.ts. The order is:
+#   Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude
+# The first five are the currently-working providers. Anthropic/Claude is the
+# last-resort (emergency-only) provider. See docs/ai-provider-order.md.
+#
+# Vercel Hobby: at most 3 ACTUAL outbound provider attempts per request/chunk;
+# unconfigured/cooled-down/invalid-OpenRouter providers are skipped for free.
 
-# Anthropic Claude — PREFERRED provider for proposal generation. The
-# generation prompt is tuned for Claude. Get a key from:
-# https://console.anthropic.com/settings/keys
-# Format: sk-ant-... (97+ chars). Optional but strongly recommended.
-# ANTHROPIC_API_KEY="sk-ant-..."
+# Z.ai GLM — first-tier, general OpenAI-compatible endpoint (NOT a Coding Plan).
+# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4.7-flash
 
-# Override the Claude model chain (comma-separated, tried in order)
-# ANTHROPIC_PROPOSAL_MODELS="claude-opus-4-7,claude-sonnet-4-6,claude-haiku-4-5-20251001"
+# Cerebras — second-tier, OpenAI-compatible (uses max_completion_tokens).
+# CEREBRAS_API_KEY="..."      # default model gpt-oss-120b
 
-# Google Gemini — fallback for proposal generation (when Claude is not
-# configured) and primary engine for CV/project extraction. Without
-# either AI key, all imported records remain REGEX_DRAFT only.
-# https://aistudio.google.com/app/apikey
-# Format: AIza + 35 alphanumerics (39 chars total)
-GEMINI_API_KEY="AIza..."
+# Mistral / Groq — third & fourth tier (currently-working).
+# MISTRAL_API_KEY="..."
+# GROQ_API_KEY="gsk_..."
+
+# OpenRouter — fifth tier. MUST be an explicit ':free' model; 'openrouter/auto'
+# and any non-':free' model are rejected to prevent paid usage.
+# OPENROUTER_API_KEY="sk-or-..."
+# OPENROUTER_PROPOSAL_MODEL="meta-llama/llama-3.3-70b-instruct:free"
+
+# Remaining supported providers (after OpenRouter, in order):
+# GEMINI_API_KEY="AIza..."    # AIza + 35 alphanumerics (39 chars total)
+# OPENAI_API_KEY="sk-..."
+# TOGETHER_API_KEY="..."
+# DEEPSEEK_API_KEY="..."
+# ANTHROPIC_API_KEY="sk-ant-..."  # last-resort, emergency-only
 
 # ── Optional ────────────────────────────────────────────────────────────────
 
@@ -518,7 +532,7 @@ The validator (`scripts/check-env.mjs`) rejects:
 ### Prerequisites
 - Node.js 20+
 - A PostgreSQL database (Neon free tier works)
-- An AI provider key — at least one of: an Anthropic Claude API key (preferred) or a Google Gemini API key
+- An AI provider key — at least one from the canonical chain (Z.ai GLM, Cerebras, Mistral, Groq, OpenRouter, Gemini, OpenAI, Together, DeepSeek, or Anthropic/Claude). See docs/ai-provider-order.md.
 
 ### Local development
 ```bash

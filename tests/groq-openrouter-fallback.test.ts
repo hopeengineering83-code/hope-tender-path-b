@@ -44,13 +44,26 @@ describe("Groq provider config", () => {
 describe("OpenRouter provider config", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
 
-  it("detects configuration and model overrides", () => {
-    assert.equal(isOpenRouterConfigured(), false);
+  it("requires an explicit :free model and rejects openrouter/auto + non-free", () => {
+    // With a key but no model, OpenRouter is NOT configured (would risk paid use).
     process.env.OPENROUTER_API_KEY = "sk-or-test-1234567890";
-    assert.equal(isOpenRouterConfigured(), true);
-    assert.equal(getOpenRouterModel(), "openrouter/auto");
+    assert.equal(isOpenRouterConfigured(), false);
+    assert.equal(getOpenRouterModel(), null);
+
+    // openrouter/auto is rejected.
+    process.env.OPENROUTER_PROPOSAL_MODEL = "openrouter/auto";
+    assert.equal(isOpenRouterConfigured(), false);
+    assert.equal(getOpenRouterModel(), null);
+
+    // A non-:free model is rejected.
     process.env.OPENROUTER_PROPOSAL_MODEL = "openai/gpt-4o-mini";
-    assert.equal(getOpenRouterModel(), "openai/gpt-4o-mini");
+    assert.equal(isOpenRouterConfigured(), false);
+    assert.equal(getOpenRouterModel(), null);
+
+    // An explicit :free model is accepted.
+    process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+    assert.equal(isOpenRouterConfigured(), true);
+    assert.equal(getOpenRouterModel(), "meta-llama/llama-3.3-70b-instruct:free");
   });
 });
 
@@ -85,56 +98,45 @@ describe("canonical provider wiring", () => {
     assert.match(source, /getOpenRouterBaseUrl\(\)/);
   });
 
-  it("groq and openrouter are included in the provider chain", () => {
-    assert.match(source, /PROVIDER_CHAINS/);
-    assert.match(source, /"groq"/);
-    assert.match(source, /"openrouter"/);
+  it("groq and openrouter are part of the registry-derived chain", () => {
+    // The chain is derived from CANONICAL_AI_PROVIDER_ORDER (no PROVIDER_CHAINS
+    // literal map). The dedicated tail fallback helper remains.
+    assert.match(source, /CANONICAL_AI_PROVIDER_ORDER/);
     assert.match(source, /tryTailFallbackProviders/);
   });
 
-  it("includes the new keys in the no-provider error", () => {
-    assert.match(source, /GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY/);
+  it("includes provider keys in the no-provider error", () => {
+    assert.match(source, /GROQ_API_KEY/);
+    assert.match(source, /OPENROUTER_API_KEY/);
+    assert.match(source, /ANTHROPIC_API_KEY/);
   });
 
   it("OpenRouter attribution headers use the centralized getters", () => {
     assert.match(source, /"HTTP-Referer":\s*getOpenRouterSiteUrl\(\)/);
     assert.match(source, /"X-Title":\s*getOpenRouterAppName\(\)/);
   });
-
-  it("uses Mistral, Groq, OpenRouter, Gemini, OpenAI, Together, DeepSeek, Claude in that order", () => {
-    const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
-    assert.ok(match);
-    const chain = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
-    assert.deepEqual(chain, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
-  });
 });
 
-describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
+describe("/api/ai/health exposes the full registry-derived chain", () => {
   const source = readFileSync("app/api/ai/health/route.ts", "utf8");
 
-  it("returns groq and openrouter provider objects with fallback ranks", () => {
-    assert.match(source, /groq:\s*\{/);
-    assert.match(source, /openrouter:\s*\{/);
-    assert.match(source, /fallbackRank:\s*6/);
-    assert.match(source, /fallbackRank:\s*7/);
-    assert.match(source, /fallbackRank:\s*8/);
+  it("builds provider objects from the canonical registry entries", () => {
+    assert.match(source, /getCanonicalProviderEntries/);
+    assert.match(source, /fallbackRank:\s*entry\.rank/);
   });
 
-  it("advertises the extended fallback chain with Claude last", () => {
-    assert.match(source, /Together → DeepSeek → Claude → deterministic draft fallback/);
+  it("advertises the registry-generated fallback chain string", () => {
+    assert.match(source, /CANONICAL_AI_FALLBACK_CHAIN_DISPLAY/);
   });
 });
 
-describe("AI Health panel renders all eight provider cards from the contract", () => {
+describe("AI Health panel renders all provider cards from the registry", () => {
   const source = readFileSync("components/ai-health-panel.tsx", "utf8");
 
-  it("includes Groq + OpenRouter labels, env vars, and fallback ranks", () => {
-    assert.match(source, /label: "Groq"/);
-    assert.match(source, /label: "OpenRouter"/);
-    assert.match(source, /GROQ_API_KEY/);
-    assert.match(source, /OPENROUTER_API_KEY/);
-    assert.match(source, /rank: 6/);
-    assert.match(source, /rank: 7/);
+  it("builds the cards from the canonical registry entries", () => {
+    assert.match(source, /getCanonicalProviderEntries/);
+    assert.match(source, /label:\s*entry\.displayName/);
+    assert.match(source, /envVar:\s*entry\.env\.apiKey/);
   });
 
   it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {
@@ -143,35 +145,18 @@ describe("AI Health panel renders all eight provider cards from the contract", (
     assert.match(source, /Rate-limited|coolingDown/);
   });
 
-  it("nudges pinning a model when OpenRouter uses the auto default", () => {
-    assert.match(source, /Set OPENROUTER_PROPOSAL_MODEL/);
+  it("surfaces the OpenRouter free-model requirement", () => {
+    assert.match(source, /openRouterModelValidity/);
   });
 });
 
 describe("AI health contract", () => {
   const source = readFileSync("app/api/ai/health/route.ts", "utf8");
 
-  it("publishes canonical ranks with Mistral first and Claude last", () => {
-    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*1/);
-    assert.match(source, /groq:\s*\{[\s\S]*?fallbackRank:\s*2/);
-    assert.match(source, /openrouter:\s*\{[\s\S]*?fallbackRank:\s*3/);
-    assert.match(source, /claude:\s*\{[\s\S]*?fallbackRank:\s*8/);
-    assert.match(source, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback/);
-  });
-
-  it("selects the preferred provider in canonical order", () => {
-    const mistral = source.indexOf('mistralConfigured ? "mistral"');
-    const groq = source.indexOf('groqConfigured ? "groq"');
-    const openrouter = source.indexOf('openRouterConfigured ? "openrouter"');
-    const gemini = source.indexOf('geminiConfigured ? "gemini"');
-    const deepseek = source.indexOf('deepSeekConfigured ? "deepseek"');
-    const claude = source.indexOf('claudeConfigured ? "claude"');
-    assert.ok(mistral >= 0 && mistral < groq && groq < openrouter && openrouter < gemini && gemini < deepseek && deepseek < claude);
-  });
-
-  it("includes Mistral and Together at canonical positions", () => {
-    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*1/);
-    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*6/);
+  it("publishes registry-derived ranks and the preferred provider", () => {
+    assert.match(source, /getCanonicalProviderEntries/);
+    assert.match(source, /preferredConfiguredProviderName/);
+    assert.match(source, /CANONICAL_AI_FALLBACK_CHAIN_DISPLAY/);
   });
 });
 

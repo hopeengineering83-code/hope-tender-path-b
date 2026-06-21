@@ -81,13 +81,44 @@ describe("/api/ai/health DB restore contract", () => {
   });
 });
 
+describe("provider health DB persistence — capability success times", () => {
+  it("schema stores per-capability success timestamps", async () => {
+    const { readFileSync } = await import("node:fs");
+    const schema = readFileSync("prisma/schema.prisma", "utf8");
+    const model = schema.match(/model ProviderHealthSnapshot \{[\s\S]*?\n\}/)?.[0] ?? "";
+    assert.match(model, /lastPingSucceededAt\s+DateTime\?/);
+    assert.match(model, /lastAnalysisSucceededAt\s+DateTime\?/);
+    assert.match(model, /lastGenerationSucceededAt\s+DateTime\?/);
+  });
+
+  it("ships a migration adding the capability columns", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const path = "prisma/migrations/20260621193000_add_provider_health_capability_times/migration.sql";
+    assert.ok(existsSync(path), "migration must exist");
+    const sql = readFileSync(path, "utf8");
+    assert.match(sql, /lastPingSucceededAt/);
+    assert.match(sql, /lastAnalysisSucceededAt/);
+    assert.match(sql, /lastGenerationSucceededAt/);
+  });
+
+  it("persistAllHealthToDb writes the capability success times (no `as any` casts on restore)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/ai-provider-health-db.ts", "utf8");
+    assert.match(src, /lastAnalysisSucceededAt: s\.lastAnalysisSucceededAt/);
+    assert.match(src, /lastGenerationSucceededAt: s\.lastGenerationSucceededAt/);
+    assert.match(src, /lastPingSucceededAt: s\.lastPingSucceededAt/);
+    // Restore reads the real columns, not `(snap as any)`.
+    assert.doesNotMatch(src, /\(snap as any\)\.lastAnalysisSucceededAt/);
+  });
+});
+
 describe("provider health DB persistence order", () => {
-  it("uses the canonical runtime order (Mistral first, Anthropic last) for persistence iteration", async () => {
+  it("derives the persistence iteration order from the canonical registry", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("lib/ai-provider-health-db.ts", "utf8");
-    const match = source.match(/ALL_PROVIDERS:\s*AiProviderName\[\]\s*=\s*\[([^\]]+)\]/);
-    assert.ok(match, "ALL_PROVIDERS list must remain visible for source-level policy checks");
-    const providers = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((m) => m[1]);
-    assert.deepEqual(providers, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    // ALL_PROVIDERS now derives from CANONICAL_AI_PROVIDER_ORDER (single source).
+    assert.match(source, /ALL_PROVIDERS[\s\S]*?=\s*CANONICAL_AI_PROVIDER_ORDER/);
+    const { CANONICAL_AI_PROVIDER_ORDER } = await import("../lib/ai-provider-registry");
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
   });
 });

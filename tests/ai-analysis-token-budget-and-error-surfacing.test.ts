@@ -29,22 +29,30 @@ describe("AI analysis output-token budget", () => {
     const match = source.match(/function maxOutputTokensForUseCase[\s\S]*?\n}/);
     assert.ok(match, "maxOutputTokensForUseCase not found");
     const body = match[0];
+    // Per-provider caps come from the registry (zai/cerebras = conservative);
+    // the generic fallback keeps a bounded extraction/fast budget.
+    assert.match(body, /getProviderOutputCap\(provider, useCase\)/);
     assert.match(body, /useCase === "extraction" \|\| useCase === "fast"\)\s*return\s*4096/);
-    // Proposal generation keeps the full 16K budget.
     assert.match(body, /return 16000/);
   });
 
-  it("threads the computed budget through callProvider", () => {
+  it("threads the per-provider computed budget through callProvider", () => {
     const match = source.match(/async function callProvider[\s\S]*?export async function generateWithFallback/);
     assert.ok(match, "callProvider not found");
     const body = match[0];
-    assert.match(body, /const maxTokens = maxOutputTokensForUseCase\(opts\?\.useCase\)/);
+    // Budget is now computed per-provider via the registry caps.
+    assert.match(body, /const maxTokens = maxOutputTokensForUseCase\(useCase, name\)/);
     // Each OpenAI-compatible provider call must pass maxTokens, never undefined.
     assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens\)/);
     assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens\)/);
     assert.match(body, /generateWithMistral\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
     assert.match(body, /generateWithTogether\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
     assert.doesNotMatch(body, /generateWith(?:Mistral|Together)\(prompt, opts\?\.systemPrompt, undefined/);
+  });
+
+  it("Cerebras never reserves a 16K free-tier budget (conservative caps)", () => {
+    // Cerebras uses max_completion_tokens with conservative caps from the registry.
+    assert.match(source, /maxTokensParam: "max_completion_tokens"/);
   });
 });
 
