@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
@@ -21,8 +21,12 @@ function requestDiagnosticId() {
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const diagnosticId = requestDiagnosticId();
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized. Sign in again before running the tender engine.", code: "UNAUTHORIZED", nextAction: "LOGIN_AGAIN", diagnosticId }, { status: 401 });
+  // SEC-005 FIX: require ADMIN or PROPOSAL_MANAGER role — any authenticated
+  // user (including VIEWER) was previously able to trigger the full engine.
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
