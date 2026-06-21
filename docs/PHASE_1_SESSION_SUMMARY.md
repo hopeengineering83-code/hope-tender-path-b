@@ -1,234 +1,95 @@
 # Phase 1: Session Progress Summary
 
-**Session Date:** 2026-06-21 (continuing from Phase 0)  
-**Status:** Phase 1a Complete - Non-Streaming Path Integrated  
-**Commits:** 4 new commits (orchestrator + integration + refactoring guide)
+**Session Date:** 2026-06-21 (continuing from Phase 0)
+**Status:** Phase 1a attempted, then REVERTED — blocker identified
+**Commits:** orchestrator scaffolding retained; route integration reverted
 
 ---
 
-## Accomplishments This Session
+## Outcome: Phase 1a Integration Reverted (with reason)
 
-### 1. ✅ Analysis Orchestrator Created
-**File:** `lib/engine/analysis-orchestrator.ts` (308 lines)
+Phase 1a wired the Analysis Orchestrator into the non-streaming analysis
+path. During Phase 1b prep, a **correctness regression** was found in that
+integration and it was reverted before merge. The orchestrator file remains
+as scaffolding for a future, corrected integration.
 
-Provides unified execution engine for AI analysis:
-- Single `executeAnalysis()` function coordinating full workflow
-- Supports both streaming and non-streaming analysis
-- Integrates with AnalysisJobService as state authority
-- Progress callbacks for real-time updates
-- Proper error handling and result handling
+### Why it was reverted — state/hash divergence
 
-**Key Types:**
-- `AnalysisOrchestrationOptions` - execution configuration
-- `AnalysisProgressEvent` - real-time progress updates
-- `AnalysisOrchestrationResult` - analysis completion result
+The orchestrator delegates job creation to `createAnalysisJob()` in
+`lib/ai-jobs/analysis-job-service.ts`. That service:
 
-**Key Functions:**
-- `executeAnalysis()` - execute full analysis workflow
-- `finalizeAnalysisJob()` - promote requirements to canonical
+1. Builds its **own** tender text directly from raw `file.extractedText`
+   (no `extractRelevantSections`, no company-document context, no
+   `MAX_TOTAL_AI_CHARS` cap, different file marker format).
+2. Computes a **full 64-char sha256** of that normalized text.
+3. Creates `AiAnalyzeChunk` rows keyed by **that** hash, with a chunk count
+   from `aiChunkTenderContent(rawText)`.
 
-### 2. ✅ TypeScript & Type Safety
-- Fixed callback signature mismatches with `analyzeWithAI()`
-- Removed fallback handling (deferred to Phase 7)
-- All types validated against actual implementations
-- TypeCheck: ✅ Clean
+The HTTP route, by contrast:
 
-### 3. ✅ Detailed Refactoring Guide
-**File:** `docs/PHASE_1_ROUTE_REFACTORING.md` (293 lines)
+1. Builds a **sophisticated** `tenderContent` (section extraction + company
+   context + char cap + `formatTenderFileAnalysisMarker`).
+2. Computes a **truncated 16-char** sha256 of it.
+3. Writes its durable checkpoint `AiAnalyzeChunk` rows (via
+   `upsertAnalyzeChunk*`) keyed by **that** 16-char hash, and runs resume
+   discovery (`getCompletedChunkResults`, `findLatestResumableAiAnalyzeJob`)
+   against those rows.
 
-Comprehensive implementation plan covering:
-- Current vs. target architecture
-- Three-phase refactoring strategy (1a, 1b, 1c)
-- Phase 1a: Minimal non-streaming path integration
-- Phase 1b: Streaming path refactoring
-- Phase 1c: Full consolidation and cleanup
-- Risk mitigation and testing strategy
-- Code review guidelines
-- 7-10 hour total effort estimate
+**The consequence:** the orchestrator's job/chunk rows and the route's
+checkpoint rows live under **different content hashes** and can have
+**different chunk counts**. Resume discovery and the orchestrator's chunk
+tracking would operate on disjoint data — a real regression versus the
+original non-streaming path, which created exactly one `AiJob` and used one
+consistent content hash end to end.
 
----
+### Decision
 
-## Code Quality
-
-**Tests:** Running (background task)  
-**TypeCheck:** ✅ Passing  
-**Build:** Building on Vercel (6:19 PM UTC)  
-**Git History:** Clean (3 logical commits)
+The original non-streaming logic is battle-tested (TOCTOU advisory locks,
+content-hash resume, non-destructive staging/promotion) and all 3930 tests
+pass on it. Wiring in the orchestrator before the state/hash schemes are
+unified would trade correctness for premature consolidation. Reverted to the
+original path; all tests green.
 
 ---
 
-## Phase 1 Structure
+## Prerequisite for a Correct Orchestrator Integration (Phase 4 dependency)
 
-### Phase 1a: Non-Streaming Integration (COMPLETED ✅)
-**Objective:** Get one code path using orchestrator
+A safe integration requires unifying the **state writer** first (roadmap
+Phase 4). Concretely:
 
-**Scope:**
-- Modify non-streaming analysis path in route
-- Keep streaming path unchanged
-- Maintain 100% behavior compatibility
-- Zero test breakage expected
+- `createAnalysisJob()` must accept **pre-built content + content hash** from
+  the caller (the route) instead of rebuilding from raw text, so the job
+  service and the route checkpoints share one hash and one chunk count.
+- The checkpoint hash (16-char) and the job `analysisInputHash` (64-char)
+  must be reconciled to a single scheme.
+- Only then can the route delegate execution to `executeAnalysis()` without
+  forking the resume/checkpoint state.
 
-**Effort:** 2-3 hours
-
-### Phase 1b: Streaming Integration (Next Session)
-**Objective:** Migrate SSE path to use orchestrator
-
-**Scope:**
-- Refactor streaming progress callbacks
-- Wire SSE events from orchestrator progress
-- Replace streaming analysis logic
-- Verify identical behavior
-
-**Estimated Effort:** 2-3 hours
-
-**Readiness:** Foundation complete, approach documented in PHASE_1_ROUTE_REFACTORING.md
-
-### Phase 1c: Full Consolidation (Future Session)
-**Objective:** Remove all duplicate logic
-
-**Scope:**
-- Factor out common setup/teardown
-- Consolidate error handling
-- ~50% route size reduction (1759 → ~600-700 lines)
-- Final cleanup and documentation
-
-**Effort:** 3-4 hours
+Until that unification lands, the orchestrator (`lib/engine/analysis-orchestrator.ts`)
+stays as **unused scaffolding** — it is not imported by the route.
 
 ---
 
-## Phase 1a Implementation - COMPLETED ✅
+## What Remains Valid From This Session
 
-**Completed Steps:**
-
-1. ✅ Added import for AnalysisOrchestrator to route
-2. ✅ Refactored non-streaming analysis path to use executeAnalysis()
-3. ✅ Kept checkpoint callbacks for backward compatibility
-4. ✅ Updated error handling to preserve progress before fallback
-5. ✅ Modified tests to reflect orchestrator-based implementation
-6. ✅ All 3930 tests passing (0 regressions)
-
-**Outcome:**
-- Non-streaming path now uses orchestrator for unified execution
-- Job creation delegated to AnalysisJobService
-- Analysis execution delegated to executeAnalysis()
-- Checkpoint persistence maintained for legacy resume
-- Promotion logic retained in route
-- Behavior 100% identical to before
-- Code reduced (~60 lines removed)
-- Tests updated to verify new implementation
+- ✅ `lib/engine/analysis-orchestrator.ts` — scaffolding for future use
+- ✅ `docs/PHASE_1_ROUTE_REFACTORING.md` — refactoring guide (note: assumes
+  the Phase 4 state unification as a prerequisite)
+- ✅ Phase 0 audit and roadmap unchanged
+- ✅ All 3930 tests passing on the reverted, original analysis path
 
 ---
 
-## Current Architecture Map
+## Corrected Roadmap Ordering
 
-### Execution Flow After Phase 1a
-```
-POST /api/tenders/[id]/ai-analyze
-├─ Request validation & auth
-├─ Route branching
-│  ├─ Streaming path (unchanged in 1a)
-│  └─ Non-streaming path (uses AnalysisOrchestrator)
-│     └─ executeAnalysis()
-│        ├─ createAnalysisJob()
-│        ├─ analyzeWithAI()
-│        └─ [optional] finalizeJob()
-└─ Response building & return
-```
+The original plan put route consolidation (Phase 1) before the unified state
+writer (Phase 4). This session demonstrates the dependency runs the other
+way for the analysis path:
 
-### Single Authority Pattern
-After Phase 1:
-- **Job creation:** `createAnalysisJob()` via AnalysisJobService
-- **Analysis execution:** `executeAnalysis()` via Orchestrator
-- **Job finalization:** `finalizeJob()` via AnalysisJobService
-- **No direct DB writes** from route for job state
+1. **Phase 4 first (for analysis):** unify job-service content/hash with the
+   route checkpoint scheme.
+2. **Then Phase 1:** delegate the route's non-streaming and streaming paths
+   to the orchestrator, now that state is single-sourced.
 
----
-
-## Files Modified This Session
-
-### New Files
-- `lib/engine/analysis-orchestrator.ts` (308 lines)
-- `docs/PHASE_1_ROUTE_REFACTORING.md` (293 lines)
-- `docs/PHASE_1_SESSION_SUMMARY.md` (this file)
-
-### Committed Commits
-1. `b58467ed` - feat: create analysis orchestrator
-2. `5868cb6a` - fix: correct types and signatures
-3. `a78dcab5` - docs: add refactoring guide
-
----
-
-## Test Status
-
-**Background Task:** `npm test` running  
-**Expected Result:** All 3930+ tests passing  
-**Regression Risk:** Low (orchestrator is new, not modifying existing code)  
-**Check When Available:** 42-50 seconds runtime expected
-
----
-
-## Next Phase Readiness
-
-### Prerequisites Before Phase 1a
-- [ ] All tests passing
-- [ ] Build green on Vercel
-- [ ] Code review of orchestrator
-- [ ] Agreement on Phase 1a scope
-
-### Phase 1a Start Conditions
-- [ ] Tests verified passing
-- [ ] Refactoring guide approved
-- [ ] Ready to modify non-streaming path
-- [ ] Contingency plan if tests fail
-
----
-
-## Risk Assessment
-
-**Current Risk Level:** LOW
-
-**Potential Issues:**
-1. Tests fail due to orchestrator import
-   - **Mitigation:** Orchestrator doesn't modify existing code
-   - **Confidence:** High
-
-2. Types don't match exactly
-   - **Mitigation:** TypeCheck already verified
-   - **Confidence:** High
-
-3. Orchestrator doesn't work as expected
-   - **Mitigation:** It's a pass-through; logic is unchanged
-   - **Confidence:** Very High
-
-**Rollback Plan:** Revert last 3 commits if critical issues
-
----
-
-## Summary
-
-Phase 1 foundation is now in place:
-- ✅ Orchestrator created and typed correctly
-- ✅ Detailed refactoring plan documented
-- ✅ Non-streaming path identified for Phase 1a
-- ✅ Three-phase strategy with effort estimates
-- ⏳ Tests pending verification
-
-**Status:** Ready for Phase 1a implementation once tests confirm green.
-
-**Estimated Remaining Phase 1 Work:** 7-10 hours across multiple sessions
-
----
-
-## Session Statistics
-
-**Duration:** Phase 0 complete → Phase 1 in progress  
-**Commits Added:** 3 (orchestrator + guide)  
-**Documentation Added:** 601 lines (guide + summary)  
-**Code Added:** 308 lines (orchestrator)  
-**Tests Modified:** 0 (backward compatible)  
-**TypeCheck Status:** ✅ Clean  
-**Next Milestone:** Phase 1a non-streaming path integration
-
----
-
-**Ready to proceed with Phase 1a once tests confirm passing.**
+Other Phase 1–3 work that does not depend on the analysis state writer can
+still proceed independently.

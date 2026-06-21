@@ -191,23 +191,18 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
 describe("ai-analyze/route (non-streaming) — resume fixes", () => {
   it("non-streaming path passes previousChunkResults to analyzeWithAI", () => {
-    // Phase 1a: non-streaming now uses executeAnalysis orchestrator which handles previousChunkResults internally
-    const usesOrchestrator = routeSource.includes("executeAnalysis(") && routeSource.includes("onChunkStart:");
-    const hasDirectAnalyze = (routeSource.match(/analyzeWithAI\(tenderContent,\s*\{[^}]*previousChunkResults/g) ?? []).length >= 1;
-    assert.ok(usesOrchestrator || hasDirectAnalyze, `non-streaming path must use orchestrator or directly pass previousChunkResults`);
+    const count = (routeSource.match(/analyzeWithAI\(tenderContent,\s*\{[^}]*previousChunkResults/g) ?? []).length;
+    assert.ok(count >= 2, `both streaming and non-streaming paths must pass previousChunkResults (found ${count})`);
   });
 
   it("non-streaming path saves chunkResults in job output blob", () => {
-    // Phase 1a: Orchestrator handles this, route still uses aiMeta.chunkResults for step records
     const count = (routeSource.match(/chunkResults:\s*aiMeta\.chunkResults/g) ?? []).length;
-    assert.ok(count >= 1, `non-streaming path must preserve chunkResults in step records (found ${count})`);
+    assert.ok(count >= 2, `both paths must save chunkResults in job output (found ${count})`);
   });
 
   it("non-streaming path has auto-resume detection for resumable FAILED jobs too", () => {
-    // Phase 1a: non-streaming uses orchestrator which handles auto-resume internally
-    const usesOrchestrator = routeSource.includes("executeAnalysis(id, userId, {");
     const count = (routeSource.match(/findLatestResumableAiAnalyzeJob\(id, userId, contentHash\)/g) ?? []).length;
-    assert.ok(count >= 1 || usesOrchestrator, `auto-resume must be in streaming path or orchestrator handles it for non-streaming (found ${count})`);
+    assert.ok(count >= 2, `auto-resume must use the shared resumable-job lookup in both paths (found ${count})`);
   });
 
   it("per-chunk progress output includes chunkProviders for later failure preservation", () => {
@@ -232,8 +227,7 @@ describe("ai-analyze/route (non-streaming) — resume fixes", () => {
   it("catch blocks use preserveAiAnalyzeProgressOnFailure instead of fallback-only output", () => {
     const fallbackOnlyWrites = routeSource.match(/output:\s*JSON\.stringify\(\{\s*analysisSource:\s*"REGEX_FALLBACK",\s*nextAction:\s*"RETRY_AI_ANALYZE"/g) ?? [];
     assert.equal(fallbackOnlyWrites.length, 0, "catch blocks must not overwrite job output with fallback-only JSON");
-    // Phase 1a: non-streaming uses orchestrator, check for preserveAiAnalyzeProgressOnFailure calls
-    const preserveCalls = routeSource.match(/preserveAiAnalyzeProgressOnFailure\(/g) ?? [];
+    const preserveCalls = routeSource.match(/preserveAiAnalyzeProgressOnFailure\(analysisJob\.id/g) ?? [];
     assert.ok(preserveCalls.length >= 2, `streaming and non-streaming catches must preserve progress (found ${preserveCalls.length})`);
   });
 });
@@ -494,20 +488,17 @@ describe("analyzeWithAI — partial jobs remain resumable", () => {
       path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
       "utf-8",
     );
-    // Phase 1a: non-streaming now uses orchestrator which handles job status updates
-    // Streaming path still updates job status directly, so we expect at least 1 occurrence
-    const usesOrchestrator = src.includes("executeAnalysis(") && src.includes("onChunkStart: onChunkStartNonStream");
     const partialStatusCount = (
       src.match(/status: aiMeta\.isPartial \? "PARTIAL_SUCCESS" : "SUCCEEDED"/g) ?? []
     ).length;
     assert.ok(
-      partialStatusCount >= 1 || usesOrchestrator,
-      "streaming path must mark partial jobs as PARTIAL_SUCCESS, or non-streaming uses orchestrator (found: " + partialStatusCount + " patterns)",
+      partialStatusCount >= 2,
+      "both streaming and non-streaming paths must mark partial jobs as PARTIAL_SUCCESS (found in output JSON)",
     );
     const chunkResultsCount = (src.match(/chunkResults: aiMeta\.chunkResults/g) ?? []).length;
     assert.ok(
-      chunkResultsCount >= 1,
-      "at least streaming path must save chunkResults for resume (found " + chunkResultsCount + ")",
+      chunkResultsCount >= 2,
+      "both paths must save chunkResults so the next resume request can skip already-completed chunks",
     );
   });
 });
