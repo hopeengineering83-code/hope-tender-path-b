@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
 import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
+import { detectAnalysisSource } from "@/lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
 import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
 
@@ -40,6 +41,7 @@ type TenderLike = {
   pageLimit?: number | null;
   bidOutcome?: string | null;
   analysisSource?: string | null;
+  notes?: string | null;
   analysisExtractionStatus?: string | null;
   requirements?: TenderRequirementLike[];
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
@@ -175,7 +177,10 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
 
   // GO requires trusted AI analysis — regex fallback (approved or not) must
   // stay at REVIEW so no one exports on unverified extraction-based analysis.
-  const analysisSourceNorm = (tender.analysisSource ?? "").toUpperCase();
+  // The Tender model has no `analysisSource` column — the source is recorded in
+  // tender.notes, so detect it from there (FM-008). Reading the non-existent
+  // field left this permanently false, so the snapshot never reached GO.
+  const analysisSourceNorm = detectAnalysisSource(tender);
   const analysisTrustedForGo = analysisSourceNorm === "AI";
 
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0

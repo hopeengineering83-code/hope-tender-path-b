@@ -2,6 +2,7 @@ import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Pac
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
+import { detectAnalysisSource } from "./analysis-source";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldUseDeepReasoning } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { runDeepRefinement } from "./deep-reasoning-refiner";
@@ -1319,6 +1320,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           projectMatches: tender.projectMatches as Parameters<typeof computeBidStrategy>[0]["tender"]["projectMatches"],
           evaluationMethodology: tender.evaluationMethodology,
           submissionMethod: tender.submissionMethod,
+          // Derive analysis source from tender.notes (FM-008): the Tender model
+          // has no `analysisSource` column, so leaving it unset made the
+          // regex-fallback win-probability penalty never fire.
+          analysisSource: detectAnalysisSource(tender),
         },
         company: {
           name: company.name,
