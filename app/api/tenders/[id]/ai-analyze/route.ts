@@ -17,7 +17,7 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
-import { formatTenderFileAnalysisMarker } from "../../../../../lib/engine/requirement-source-linkage";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
 import {
   AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,
@@ -190,73 +190,6 @@ const AI_ANALYSIS_TIMEOUT_MS = (() => {
   return tier === "3" || tier === "4" ? 240_000 : 50_000;
 })();
 
-const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
-  const raw = Number(process.env.TENDER_AI_MAX_FILE_CHARS);
-  if (Number.isFinite(raw) && raw >= 1_000 && raw <= 50_000) return raw;
-  return 12_000;
-})();
-
-const SECTION_SCAN_CHARS = (() => {
-  const raw = Number(process.env.TENDER_AI_SECTION_SCAN_CHARS);
-  if (Number.isFinite(raw) && raw >= 500 && raw <= 10_000) return raw;
-  return 3_000;
-})();
-
-// Soft cap on total tender content sent to AI. Content above this threshold
-// is chunked by analyzeWithAI. Setting a max prevents OOM from extremely
-// large tenders while still covering multi-file tenders well.
-const MAX_TOTAL_AI_CHARS = (() => {
-  const raw = Number(process.env.TENDER_AI_MAX_TOTAL_CHARS);
-  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 500_000) return raw;
-  return 300_000; // 6 × 50K chunks
-})();
-
-const SECTION_KEYWORDS = /evaluation|scoring|criteria|submission|deadline|annex|appendix|form[s\s]|financial proposal|technical proposal|envelope|subject line|bid bond|eligibility|qualification|instructions to (bidders?|tenderers?)|evaluation matrix|scoring matrix|award criteria/i;
-
-/**
- * For files larger than maxChars, extracts the first portion PLUS sections
- * near evaluation/submission/scoring keywords. This surfaces critical tender
- * instructions that appear deep in a document rather than always truncating
- * from the start.
- */
-function extractRelevantSections(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-
-  const head = text.slice(0, Math.floor(maxChars * 0.6));
-  const scanBudget = maxChars - head.length;
-
-  // Find positions of keyword-bearing lines beyond the head section
-  const tail = text.slice(head.length);
-  const snippets: string[] = [];
-  let budgetUsed = 0;
-
-  // Walk the tail looking for lines that match section keywords
-  let searchPos = 0;
-  while (budgetUsed < scanBudget && searchPos < tail.length) {
-    const nextMatch = tail.slice(searchPos).search(SECTION_KEYWORDS);
-    if (nextMatch === -1) break;
-
-    const matchStart = searchPos + nextMatch;
-    // Find the start of the line containing the match
-    const lineStart = tail.lastIndexOf("\n", matchStart) + 1;
-    // Extract SECTION_SCAN_CHARS around the match
-    const snippetStart = Math.max(lineStart, matchStart - 200);
-    const snippetEnd = Math.min(tail.length, snippetStart + SECTION_SCAN_CHARS);
-    const snippet = tail.slice(snippetStart, snippetEnd);
-
-    if (!head.includes(snippet.slice(0, 50))) {
-      snippets.push(snippet);
-      budgetUsed += snippet.length;
-    }
-
-    searchPos = snippetEnd;
-    if (budgetUsed >= scanBudget) break;
-  }
-
-  if (snippets.length === 0) return head;
-  return `${head}\n\n[... key sections extracted from remainder ...]\n\n${snippets.join("\n\n---\n\n")}`;
-}
-
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -271,9 +204,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-function stripExtractionHeader(txt: string): string {
-  return txt.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, "").trim();
-}
 
 type SavedJobOutput = {
   isPartial?: boolean;
@@ -437,35 +367,11 @@ async function handleStreamingAnalyze(
         const fileCount = tenderRecord.files.length;
         emit({ phase: "extracting", message: `Extracting text from ${fileCount} file${fileCount === 1 ? "" : "s"}…`, fileCount });
 
-        // Build tender content (same logic as non-streaming path)
-        const fileTexts = tenderRecord.files
-          .map((f) => f.extractedText
-            ? `${formatTenderFileAnalysisMarker(f)}\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-            : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
-          .join("\n\n");
-
-        // Include a short digest of each company document's extracted text so
-        // that the contentHash changes when vault content is updated (not just
-        // when document names change). The digest is compact (8 hex chars) so
-        // it doesn't inflate the AI input budget.
-        const companyContext = company?.documents?.length
-          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
-              const textDigest = d.extractedText
-                ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
-                : "no-text";
-              return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
-            }).join("\n")}`
-          : "";
-
-        const tenderContent = [
-          `TENDER: ${tenderRecord.title}`,
-          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description.slice(0, 2_000)}` : null,
-          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary.slice(0, 2_000)}` : null,
-          fileTexts || null,
-          companyContext || null,
-        ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
-
-        const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
+        // Shared builder — IDENTICAL content + hash to the non-streaming path
+        // and the durable job service, so all execution paths share one
+        // chunk-state identity.
+        const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
+        const contentHash = computeAnalysisContentHash(tenderContent);
         if (force) {
           await clearAnalyzeCheckpoints(id, userId, contentHash);
         } else {
@@ -1129,37 +1035,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (isAIEnabled()) {
       try {
-        const fileTexts = tenderRecord.files
-          .map((f) => f.extractedText
-            ? `${formatTenderFileAnalysisMarker(f)}\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-            : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
-          .join("\n\n");
-
-        // Include a short digest of each company document's extracted text so
-        // that the contentHash changes when vault content is updated (not just
-        // when document names change). Mirrors the streaming path companyContext.
-        const companyContext = company?.documents?.length
-          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
-              const textDigest = d.extractedText
-                ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
-                : "no-text";
-              return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
-            }).join("\n")}`
-          : "";
-
-        const tenderContent = [
-          `TENDER: ${tenderRecord.title}`,
-          // Cap description/intakeSummary so they don't crowd out the actual
-          // file content. 2K each is enough for context without inflating the
-          // total beyond the MAX_TOTAL_AI_CHARS budget.
-          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description.slice(0, 2_000)}` : null,
-          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary.slice(0, 2_000)}` : null,
-          fileTexts || null,
-          companyContext || null,
-        ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
+        // Shared builder — IDENTICAL content + hash to the streaming path and
+        // the durable job service (lib/ai-jobs/analysis-job-service.ts), so all
+        // execution paths share one chunk-state identity.
+        const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
 
         // Compute content hash for continuation validation and auto-resume discovery
-        const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
+        const contentHash = computeAnalysisContentHash(tenderContent);
         if (force) {
           await clearAnalyzeCheckpoints(id, userId, contentHash);
         } else {

@@ -78,8 +78,14 @@ describe("release gap audit regressions", () => {
   });
 
   it("changes AI analysis content hashes when vault text changes", () => {
+    // The vault-document digest now lives in the shared content builder
+    // (lib/engine/tender-analysis-content.ts), consumed by BOTH the route and
+    // the durable job service. The digest still folds vault text into the hash.
+    const builder = source("lib/engine/tender-analysis-content.ts");
+    assert.match(builder, /createHash\("sha256"\)\.update\(d\.extractedText\.slice\(0, 10_000\)\)/);
+    assert.match(builder, /\[digest:\$\{textDigest\}\]/);
+    // And the route delegates to the shared builder.
     const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(route, /createHash\("sha256"\)\.update\(d\.extractedText\.slice\(0, 10_000\)\)/);
-    assert.match(route, /\[digest:\$\{textDigest\}\]/);
+    assert.match(route, /buildTenderAnalysisContent\(tenderRecord, company\)/);
   });
 });
