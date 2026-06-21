@@ -3,6 +3,7 @@ import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { detectAnalysisSource, ANALYSIS_APPROVAL_GAP_TITLE } from "../analysis-source";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
   return Boolean(r.sourceTenderFileId || r.sourcePageNumber != null);
@@ -105,12 +106,22 @@ export async function getCanonicalTenderWorkflowState(
 
   const readiness = computeTenderReadinessState(tender as any);
 
-  const analysisSource = (tender as any).analysisSource ?? "UNKNOWN";
-  const analysisIsApprovedFallback = analysisSource === "REGEX_FALLBACK" && (tender as any).status === "ANALYSIS_APPROVED";
+  // CRITICAL FIX (investigation FM-008): the previous code read
+  // (tender as any).analysisSource which does NOT exist on the Tender model.
+  // This made analysisSource always "UNKNOWN", hasAnalysis always false, and
+  // the workflow was permanently stuck recommending "RUN_AI_ANALYZE" even
+  // after analysis completed. Now uses detectAnalysisSource(tender) which
+  // reads the actual tender.notes marker.
+  const detectedSource = detectAnalysisSource(tender as any);
+  const analysisSource = detectedSource === "AI" ? "AI"
+    : detectedSource === "REGEX_FALLBACK_AI_ERROR" ? "REGEX_FALLBACK"
+    : "UNKNOWN";
+  const analysisIsApprovedFallback = analysisSource === "REGEX_FALLBACK"
+    && tender.complianceGaps.some(g => g.title === ANALYSIS_APPROVAL_GAP_TITLE && g.isResolved && g.severity === "ADVISORY");
 
   const canonicalModules = computeCanonicalModuleStates({
     ...readiness,
-    hasAnalysis: Boolean((tender as any).analysisSource),
+    hasAnalysis: analysisSource !== "UNKNOWN",
     hasRequirements: tender.requirements.length > 0,
     hasDocuments: tender.generatedDocuments.length > 0,
     analysisIsApprovedFallback,
