@@ -885,6 +885,7 @@ model AiJob {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   steps         AiJobStep[]
+  analyzeChunks AiAnalyzeChunk[]
 
   @@index([userId, status])
   @@index([tenderId, jobType])
@@ -907,6 +908,7 @@ model AiJobStep {
 }
 
 model AiAnalyzeChunk {
+  failureCategory String?
   id           String   @id @default(uuid())
   tenderId     String
   userId       String
@@ -921,10 +923,13 @@ model AiAnalyzeChunk {
   finishedAt   DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  jobId        String?
+  job          AiJob?   @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@unique([tenderId, userId, contentHash, chunkIndex])
   @@index([tenderId, userId, contentHash])
   @@index([status])
+  @@index([jobId])
 }
 
 // ─── ProviderHealthSnapshot ───────────────────────────────────────────────────
