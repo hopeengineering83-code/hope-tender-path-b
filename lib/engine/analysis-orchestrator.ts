@@ -44,7 +44,7 @@ export type AnalysisProgressEvent = {
 export type AnalysisOrchestrationResult = {
   jobId: string;
   success: boolean;
-  analysisSource?: "AI" | "PARTIAL_AI" | "REGEX_FALLBACK";
+  analysisSource: "AI" | "PARTIAL_AI";
   requirementCount: number;
   isPartial: boolean;
   totalChunks: number;
@@ -146,18 +146,19 @@ export async function executeAnalysis(
     });
   };
 
-  const wrappedOnChunkComplete = async (info: {
-    chunkIndex: number;
-    totalChunks: number;
-    result: AIAnalysisResult;
-    provider?: string | null;
-  }) => {
+  const wrappedOnChunkComplete = async (snapshot: any) => {
+    const info = {
+      chunkIndex: snapshot.chunkIndex ?? 0,
+      totalChunks: snapshot.totalChunks,
+      result: snapshot.result,
+      provider: snapshot.provider,
+    };
     await onChunkComplete?.(info);
     await onProgress?.({
       phase: "analyzing",
-      chunk: info.chunkIndex + 1,
-      totalChunks: info.totalChunks,
-      message: `Completed chunk ${info.chunkIndex + 1} of ${info.totalChunks}${info.provider ? ` using ${info.provider}` : ""}`,
+      chunk: (snapshot.chunkIndex ?? 0) + 1,
+      totalChunks: snapshot.totalChunks,
+      message: `Completed chunk ${(snapshot.chunkIndex ?? 0) + 1} of ${snapshot.totalChunks}${snapshot.provider ? ` using ${snapshot.provider}` : ""}`,
     });
   };
 
@@ -202,7 +203,7 @@ export async function executeAnalysis(
   // Execute analysis through AI system
   let analysisMeta: AnalysisWithMeta | null = null;
   let analysisProvider: string | null = null;
-  let analysisSource: "AI" | "PARTIAL_AI" | "REGEX_FALLBACK" = "AI";
+  let analysisSource: "AI" | "PARTIAL_AI" = "AI";
   let errorMessage: string | undefined;
 
   try {
@@ -219,15 +220,14 @@ export async function executeAnalysis(
     const providers = analysisMeta.chunkProviders.filter((p): p is string => p !== null);
     analysisProvider = providers[0] ?? null;
 
-    if (analysisMeta.fallback) {
-      analysisSource = "REGEX_FALLBACK";
-    } else if (analysisMeta.isPartial) {
+    if (analysisMeta.isPartial) {
       analysisSource = "PARTIAL_AI";
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Analysis failed";
     errorMessage = msg;
     analysisMeta = {
+      result: { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" },
       isPartial: true,
       totalChunks,
       completedChunks: 0,
@@ -235,9 +235,7 @@ export async function executeAnalysis(
       skippedChunks: 0,
       chunkProviders: Array(totalChunks).fill(null),
       chunkResults: [],
-      fallback: true,
     };
-    analysisSource = "REGEX_FALLBACK";
   }
 
   // Phase: Merging (implicit in analyzeWithAI)
@@ -277,13 +275,13 @@ export async function executeAnalysis(
   // Phase: Complete
   await onProgress?.({
     phase: "complete",
-    status: analysisSource === "REGEX_FALLBACK" ? "FALLBACK" : analysisMeta?.isPartial ? "PARTIAL" : "SUCCESS",
+    status: analysisMeta?.isPartial ? "PARTIAL" : "SUCCESS",
     message: `Analysis complete — ${analysisMeta?.chunkResults.length ?? 0} requirements extracted`,
   });
 
   return {
     jobId,
-    success: analysisSource !== "REGEX_FALLBACK" && !analysisMeta?.fallback,
+    success: !errorMessage && !analysisMeta?.isPartial,
     analysisSource,
     requirementCount: analysisMeta?.chunkResults.length ?? 0,
     isPartial: analysisMeta?.isPartial ?? false,
