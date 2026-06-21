@@ -21,6 +21,7 @@ import {
   type AiProviderName,
   type AiProviderFailureCategory,
 } from "@/lib/ai-provider-health";
+import { CANONICAL_AI_PROVIDER_ORDER } from "@/lib/ai-provider-registry";
 
 // Cooldown seconds per failure class (used for DB cooldownUntil timestamp).
 // Mirrors COOLDOWN_PER_CATEGORY_MS in ai-provider-health.ts but expressed in
@@ -36,9 +37,7 @@ const COOLDOWN_SECONDS: Record<string, number> = {
   UNKNOWN: 60,
 };
 
-const ALL_PROVIDERS: AiProviderName[] = [
-  "anthropic", "gemini", "openai", "mistral", "deepseek", "groq", "together", "openrouter",
-];
+const ALL_PROVIDERS: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
 
 // Module-level guard: loadProviderHealthIntoMemory runs only once per process.
 let healthLoaded = false;

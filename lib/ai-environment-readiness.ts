@@ -1,3 +1,12 @@
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  CANONICAL_AI_PROVIDER_CHAIN_DISPLAY,
+  getProviderRegistry,
+  getProviderModel,
+  isProviderConfigured,
+  providerDisplayName,
+} from "./ai-provider-registry";
+
 export type AIEnvironmentVariableStatus = {
   name: string;
   present: boolean;
@@ -5,6 +14,11 @@ export type AIEnvironmentVariableStatus = {
   severity: "critical" | "recommended" | "optional";
   note: string;
 };
+
+// The required canonical provider order, generated from the registry. Surfaced
+// here (and asserted by tests) so the readiness module can never drift from the
+// single source of truth.
+export const CANONICAL_PROVIDER_DISPLAY = CANONICAL_AI_PROVIDER_CHAIN_DISPLAY;
 
 export type AIEnvironmentReadiness = {
   ready: boolean;
@@ -24,14 +38,24 @@ function status(name: string, scope: AIEnvironmentVariableStatus["scope"], sever
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
-    status("MISTRAL_API_KEY", "ai", "critical", "First-tier provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Verified working; used for analysis, extraction, proposal, validation."),
+    status("ZAI_API_KEY", "ai", "critical", `First-tier provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}). Z.ai GLM via the general OpenAI-compatible endpoint.`),
+    status("ZAI_BASE_URL", "ai", "optional", "Z.ai general API base URL (default: https://api.z.ai/api/paas/v4)."),
+    status("ZAI_PROPOSAL_MODEL", "ai", "optional", "Z.ai proposal model (default: glm-4.7-flash)."),
+    status("ZAI_ANALYSIS_MODEL", "ai", "optional", "Z.ai analysis model (default: glm-4.7-flash)."),
+    status("ZAI_FAST_MODEL", "ai", "optional", "Z.ai fast model (default: glm-4.7-flash)."),
+    status("CEREBRAS_API_KEY", "ai", "critical", "Second-tier provider. Cerebras via OpenAI-compatible endpoint (uses max_completion_tokens)."),
+    status("CEREBRAS_BASE_URL", "ai", "optional", "Cerebras API base URL (default: https://api.cerebras.ai/v1)."),
+    status("CEREBRAS_PROPOSAL_MODEL", "ai", "optional", "Cerebras proposal model (default: gpt-oss-120b)."),
+    status("CEREBRAS_ANALYSIS_MODEL", "ai", "optional", "Cerebras analysis model (default: gpt-oss-120b)."),
+    status("CEREBRAS_FAST_MODEL", "ai", "optional", "Cerebras fast model (default: gpt-oss-120b)."),
+    status("MISTRAL_API_KEY", "ai", "critical", `Third-tier provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}). Verified working; used for analysis, extraction, proposal, validation.`),
     status("MISTRAL_PROPOSAL_MODEL", "ai", "optional", "Mistral proposal model (default: mistral-large-latest)."),
     status("MISTRAL_ANALYSIS_MODEL", "ai", "optional", "Mistral analysis model override."),
     status("MISTRAL_FAST_MODEL", "ai", "optional", "Mistral fast/cheap model override."),
     status("GROQ_API_KEY", "ai", "critical", "Second-tier provider — fastest verified working provider. Uses llama-3.3-70b-versatile by default."),
     status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile)."),
     status("OPENROUTER_API_KEY", "ai", "critical", "Third-tier aggregator provider — routes via high-quality models via OpenAI-compatible API."),
-    status("OPENROUTER_PROPOSAL_MODEL", "ai", "optional", "OpenRouter model pin (default: openrouter/auto — pin to a specific model for predictable costs)."),
+    status("OPENROUTER_PROPOSAL_MODEL", "ai", "recommended", "OpenRouter model — MUST be an explicit ':free' model. 'openrouter/auto' and non-':free' models are rejected to prevent paid usage."),
     status("GEMINI_API_KEY", "ai", "critical", "Fourth-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases."),
     status("GEMINI_MODEL", "ai", "recommended", "Default Gemini model for general AI calls."),
     status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
@@ -60,22 +84,26 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
-  // Reflect the required canonical provider order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+  // Provider chain, generated directly from the registry in canonical order
+  // (zai → cerebras → mistral → groq → openrouter → gemini → openai → together
+  // → deepseek → anthropic). Only configured providers appear.
   const providerChain: string[] = [];
-  if (present("MISTRAL_API_KEY")) providerChain.push(`Mistral (${process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest"})`);
-  if (present("GROQ_API_KEY")) providerChain.push(`Groq (${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})`);
-  if (present("OPENROUTER_API_KEY")) providerChain.push(`OpenRouter (${process.env.OPENROUTER_PROPOSAL_MODEL || "auto"})`);
-  if (present("GEMINI_API_KEY")) providerChain.push(`Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-pro"})`);
-  if (present("OPENAI_API_KEY")) providerChain.push(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})`);
-  if (present("TOGETHER_API_KEY")) providerChain.push(`Together (${process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3-70b-chat-hf"})`);
-  if (present("DEEPSEEK_API_KEY")) providerChain.push(`DeepSeek (${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})`);
-  if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude (last-resort)");
+  for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
+    if (!isProviderConfigured(provider)) continue;
+    const label = providerDisplayName(provider);
+    const suffix = provider === "anthropic"
+      ? " (last-resort)"
+      : ` (${getProviderModel(provider, "proposal") || "model not set"})`;
+    providerChain.push(`${label}${suffix}`);
+  }
 
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (!present("OPENAI_API_KEY") && !present("GEMINI_API_KEY") && !present("ANTHROPIC_API_KEY") && !present("MISTRAL_API_KEY") && !present("DEEPSEEK_API_KEY") && !present("GROQ_API_KEY") && !present("TOGETHER_API_KEY") && !present("OPENROUTER_API_KEY")) {
-    blockers.push("No AI provider is configured. Set at least one of: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.");
+  const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
+  if (!anyProviderConfigured) {
+    const keyNames = Object.values(getProviderRegistry()).map((e) => e.env.apiKey).join(", ");
+    blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");

@@ -11,6 +11,8 @@ export function getProductionCSP(): string {
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    "connect-src 'self' https://*.googleapis.com https://*.mistral.ai https://*.openai.com https://*.anthropic.com https://*.groq.com https://*.openrouter.ai",
+    // AI provider endpoints (canonical registry order): zai, cerebras, mistral,
+    // groq, openrouter, gemini(googleapis), openai, together, deepseek, anthropic.
+    "connect-src 'self' https://*.googleapis.com https://*.z.ai https://*.cerebras.ai https://*.mistral.ai https://*.groq.com https://*.openrouter.ai https://*.openai.com https://*.together.xyz https://*.deepseek.com https://*.anthropic.com",
   ].join("; ");
 }

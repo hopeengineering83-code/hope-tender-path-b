@@ -1,11 +1,13 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
 import { protectPrompt } from "./ai-trust-boundary";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
-const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+// Anthropic key is read at request time via getAnthropicApiKey() — never cached
+// at module load, so configured-state and call-state can never disagree.
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
@@ -84,7 +86,7 @@ export function isAIEnabled() {
 }
 
 export function isClaudeEnabled() {
-  return Boolean(anthropicApiKey);
+  return Boolean(getAnthropicApiKey());
 }
 
 export function isGeminiEnabled() {
@@ -189,6 +191,7 @@ Operating principles, in priority order:
 You are not the original author. You are a senior pair of eyes adding the discipline that makes the proposal evaluator-ready.`;
 
 async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokensOverride?: number, modelOverride?: string): Promise<string | null> {
+  const anthropicApiKey = getAnthropicApiKey();
   if (!anthropicApiKey) return null;
 
   let Anthropic: { new (config: { apiKey: string }): unknown };
@@ -360,21 +363,18 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL, maxTok
 // Claude is placed LAST so that Anthropic rate limits do not block the app
 // while other providers are available. Providers are tried in sequence;
 // cooled-down or unconfigured providers are skipped automatically.
-export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
+// AiUseCase is owned by the authoritative registry; re-exported here so the
+// many `import { AiUseCase } from "./ai"` callers keep working.
+export type { AiUseCase } from "./ai-provider-registry";
 
-// Order: verified-working providers first (Mistral → Groq → OpenRouter),
-// then high-quality providers that may be rate-limited (Gemini → OpenAI),
-// then providers that need key/balance fixes (Together → DeepSeek → Anthropic).
-export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"] as const;
+// The canonical provider chain is derived from the single source of truth in
+// lib/ai-provider-registry.ts — there is NO hardcoded order array here.
+export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
 
-const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
-  default:    ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  extraction: ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  proposal:   ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  validation: ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  fast:       ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  reasoning:  ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-};
+// Every use case derives its fallback sequence from the same canonical order.
+function providerChainForUseCase(_useCase: AiUseCase): readonly AiProviderName[] {
+  return CANONICAL_AI_PROVIDER_ORDER;
+}
 
 // ─── Structured "no AI provider ready" error ─────────────────────────────────
 // Thrown by generateWithFallback() when every configured provider is either
@@ -423,7 +423,27 @@ export type AiProviderAttempt = {
 export type NoAiProviderReadyErrorKind =
   | "NO_PROVIDER_CONFIGURED"
   | "ALL_PROVIDERS_COOLING"
-  | "ALL_PROVIDERS_EXHAUSTED";
+  | "ALL_PROVIDERS_EXHAUSTED"
+  // Distinct from ALL_PROVIDERS_EXHAUSTED: the per-request/chunk attempt budget
+  // (max 3 actual outbound provider requests on Vercel Hobby) was consumed
+  // while eligible providers still remained untried. NOT the same as
+  // "all configured providers exhausted".
+  | "ATTEMPT_BUDGET_EXHAUSTED";
+
+// Maximum ACTUAL outbound provider requests per single generateWithFallback
+// call (one request or one AI Analyze chunk). Skipped providers (unconfigured,
+// cooling down, invalid OpenRouter config) do NOT consume an attempt. Bounded
+// to keep cumulative provider time within the Vercel Hobby 60s function limit.
+export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
+  const raw = Number(process.env.AI_MAX_PROVIDER_ATTEMPTS);
+  if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return Math.floor(raw);
+  return 3;
+})();
+
+// Wall-clock reserved at the tail of the shared deadline for error handling and
+// database state updates, so a provider call never consumes the time needed to
+// persist failure state and return a structured error.
+export const ERROR_HANDLING_RESERVE_MS = 5_000;
 
 export class NoAiProviderReadyError extends Error {
   readonly code = "NO_AI_PROVIDER_READY" as const;
@@ -456,7 +476,9 @@ export class NoAiProviderReadyError extends Error {
           // string-match on this prefix continue to classify the error as
           // AI_PROVIDERS_RATE_LIMITED rather than ALL_PROVIDERS_EXHAUSTED.
           ? `AI_PROVIDERS_RATE_LIMITED: all ${params.providerAttempts.filter((a) => a.coolingDown).length} configured provider(s) are in cooldown after recent rate-limit/quota errors for use-case "${params.useCase}". Details: ${failureDetails.join(" | ")}. Wait for cooldowns to expire and re-run.`
-          : `All configured AI providers exhausted for use-case "${params.useCase}" (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none — all in cooldown"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
+          : params.errorKind === "ATTEMPT_BUDGET_EXHAUSTED"
+            ? `ATTEMPT_BUDGET_EXHAUSTED: the per-request provider attempt budget (${MAX_PROVIDER_ATTEMPTS_PER_REQUEST}) was consumed for use-case "${params.useCase}" before a provider succeeded (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none"}). Eligible providers may remain untried. Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
+            : `All configured AI providers exhausted for use-case "${params.useCase}" (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none — all in cooldown"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
     );
     super(message);
     this.name = "NoAiProviderReadyError";
@@ -469,16 +491,10 @@ export class NoAiProviderReadyError extends Error {
 }
 
 function isProviderEnabled(name: AiProviderName): boolean {
-  switch (name) {
-    case "anthropic":  return isClaudeEnabled();
-    case "gemini":     return isGeminiEnabled();
-    case "openai":     return isOpenAIEnabled();
-    case "mistral":    return isMistralEnabled();
-    case "deepseek":   return isDeepSeekEnabled();
-    case "groq":       return isGroqEnabled();
-    case "together":   return isTogetherEnabled();
-    case "openrouter": return isOpenRouterEnabled();
-  }
+  // Single configured check via the registry. For OpenRouter this also enforces
+  // the explicit `:free` model policy, so an invalid OpenRouter configuration
+  // is treated as "not configured" and skipped WITHOUT consuming an attempt.
+  return registryIsProviderConfigured(name);
 }
 
 /**
@@ -494,7 +510,12 @@ function isProviderEnabled(name: AiProviderName): boolean {
  * (max_tokens: 10) passed — which is exactly the "providers OK but regex
  * fallback" symptom. A 4K budget comfortably fits one chunk's analysis JSON.
  */
-function maxOutputTokensForUseCase(useCase: AiUseCase = "default"): number {
+function maxOutputTokensForUseCase(useCase: AiUseCase = "default", provider?: AiProviderName): number {
+  // The per-provider output cap is owned by the registry. zai/cerebras carry
+  // conservative free-tier caps (analysis 3000 / proposal 4000 / fast 1200);
+  // standard providers keep the larger budget. When no provider is supplied
+  // (legacy callers), fall back to the prior generic behaviour.
+  if (provider) return getProviderOutputCap(provider, useCase);
   if (useCase === "extraction" || useCase === "fast") return 4096;
   return 16000;
 }
@@ -504,8 +525,27 @@ async function callProvider(
   prompt: string,
   opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
 ): Promise<string | null> {
-  const maxTokens = maxOutputTokensForUseCase(opts?.useCase);
+  const useCase = opts?.useCase ?? "default";
+  const maxTokens = maxOutputTokensForUseCase(useCase, name);
+  // Request structured JSON output for extraction on providers that support it.
+  const wantJson = useCase === "extraction";
   switch (name) {
+    case "zai": {
+      const r = await generateWithZai(prompt, opts?.systemPrompt, maxTokens, useCase, wantJson).catch((err) => {
+        recordProviderFailure("zai", err);
+        return null;
+      });
+      if (r) { recordProviderSuccess("zai"); return r; }
+      return null;
+    }
+    case "cerebras": {
+      const r = await generateWithCerebras(prompt, opts?.systemPrompt, maxTokens, useCase, wantJson).catch((err) => {
+        recordProviderFailure("cerebras", err);
+        return null;
+      });
+      if (r) { recordProviderSuccess("cerebras"); return r; }
+      return null;
+    }
     case "anthropic": {
       if (opts?.useCase === "reasoning") {
         for (const m of CLAUDE_REASONING_MODELS) {
@@ -610,10 +650,10 @@ async function callProvider(
 
 export async function generateWithFallback(
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase; onProviderUsed?: (provider: AiProviderName) => void },
+  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase; onProviderUsed?: (provider: AiProviderName) => void; deadlineAt?: number },
 ): Promise<string> {
   const useCase = opts?.useCase ?? "default";
-  const chain = PROVIDER_CHAINS[useCase];
+  const chain = providerChainForUseCase(useCase);
   const trustBoundary = protectPrompt(prompt);
   if (trustBoundary.suspicious) {
     console.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
@@ -627,6 +667,16 @@ export async function generateWithFallback(
   // same redacted snapshot used by providerAttempts.
   const failureDetails: string[] = [];
 
+  // Vercel Hobby attempt budget: count ONLY actual outbound provider requests.
+  // Skipped providers (unconfigured, cooling, invalid OpenRouter config) do not
+  // consume an attempt. Once the budget is exhausted we stop with a distinct
+  // ATTEMPT_BUDGET_EXHAUSTED error rather than marching through the whole chain.
+  let actualAttempts = 0;
+  let budgetExhausted = false;
+  // Shared deadline: never start a new outbound attempt if there is not enough
+  // wall-clock left to also handle the error and persist state afterwards.
+  let deadlineHit = false;
+
   for (const provider of chain) {
     const configured = isProviderEnabled(provider);
     const coolingDown = isProviderCooledDown(provider);
@@ -638,6 +688,7 @@ export async function generateWithFallback(
     // payload so callers see the most recent failure category.
     const pre = getProviderRuntimeSnapshot(provider);
     if (!configured) {
+      // Skipped WITHOUT consuming an attempt.
       providerAttempts.push({
         provider, configured: false, tried: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: pre.coolingDown, cooldownUntil: pre.cooldownUntil,
@@ -645,6 +696,7 @@ export async function generateWithFallback(
       continue;
     }
     if (coolingDown) {
+      // Skipped WITHOUT consuming an attempt.
       providerAttempts.push({
         provider, configured: true, tried: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: true, cooldownUntil: pre.cooldownUntil,
@@ -652,7 +704,30 @@ export async function generateWithFallback(
       failureDetails.push(`${provider}: in cooldown`);
       continue;
     }
+    // Attempt budget guard — this provider is eligible (configured + not
+    // cooling) but we have already used our actual-attempt budget.
+    if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST) {
+      budgetExhausted = true;
+      providerAttempts.push({
+        provider, configured: true, tried: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: false, cooldownUntil: pre.cooldownUntil,
+      });
+      continue;
+    }
+    // Shared-deadline guard — do not start a new outbound call unless enough
+    // time remains to also run error handling and persist state.
+    if (typeof opts?.deadlineAt === "number" && Date.now() + ERROR_HANDLING_RESERVE_MS >= opts.deadlineAt) {
+      deadlineHit = true;
+      providerAttempts.push({
+        provider, configured: true, tried: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: false, cooldownUntil: pre.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: skipped — shared deadline reached`);
+      continue;
+    }
+
     tried.push(provider);
+    actualAttempts++;
     const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase });
     if (result) {
       opts?.onProviderUsed?.(provider);
@@ -675,10 +750,9 @@ export async function generateWithFallback(
     });
   }
 
-  // All configured providers either unconfigured, cooling down, or returned
-  // no usable result. Throw a structured NoAiProviderReadyError so callers
-  // can branch on `err.code` / `err.errorKind` / `err.nextAction` instead of
-  // parsing strings.
+  // No provider produced a usable result. Throw a structured
+  // NoAiProviderReadyError so callers can branch on `err.code` /
+  // `err.errorKind` / `err.nextAction` instead of parsing strings.
   const configuredCount = providerAttempts.filter((a) => a.configured).length;
   const allConfiguredCooling = configuredCount > 0 && providerAttempts.filter((a) => a.configured).every((a) => a.coolingDown);
   const errorKind: NoAiProviderReadyErrorKind =
@@ -686,7 +760,9 @@ export async function generateWithFallback(
       ? "NO_PROVIDER_CONFIGURED"
       : allConfiguredCooling
         ? "ALL_PROVIDERS_COOLING"
-        : "ALL_PROVIDERS_EXHAUSTED";
+        : (budgetExhausted || deadlineHit)
+          ? "ATTEMPT_BUDGET_EXHAUSTED"
+          : "ALL_PROVIDERS_EXHAUSTED";
   const nextAction: NoAiProviderReadyError["nextAction"] =
     configuredCount === 0
       ? "CONFIGURE_AI_KEYS"
@@ -931,8 +1007,14 @@ async function generateOpenAICompatible(params: {
   systemPrompt: string;
   maxTokens: number;
   extraHeaders?: Record<string, string>;
+  // Cerebras requires `max_completion_tokens` instead of the generic
+  // `max_tokens`. Defaults to the standard OpenAI parameter name.
+  maxTokensParam?: "max_tokens" | "max_completion_tokens";
+  // Request guaranteed structured JSON output (response_format json_object).
+  responseFormatJson?: boolean;
+  timeoutMs?: number;
 }): Promise<string | null> {
-  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders } = params;
+  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs } = params;
   // Surface the real failure reason. Previously every HTTP-error / empty-content
   // branch only logged to console.warn and returned null, so the actual cause
   // (e.g. "HTTP 400: max_tokens too large", "HTTP 429: rate limit") was lost and
@@ -943,7 +1025,7 @@ async function generateOpenAICompatible(params: {
     if (providerName) recordProviderFailure(providerName, new Error(`${providerLabel} ${reason}`));
   };
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
   try {
     const res = await fetch(endpoint, {
       method: "POST",
@@ -954,8 +1036,9 @@ async function generateOpenAICompatible(params: {
       },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens,
+        [maxTokensParam]: maxTokens,
         temperature: fallbackTemperature(),
+        ...(responseFormatJson ? { response_format: { type: "json_object" } } : {}),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
@@ -1077,12 +1160,21 @@ async function generateWithTogether(
 async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
   const key = getOpenRouterApiKey();
   if (!key) return null;
+  // getOpenRouterModel() returns null when the configured model is missing,
+  // `openrouter/auto`, or any non-`:free` model. In that case we must NOT send
+  // a request that could create paid usage — record the configuration problem
+  // and skip the provider.
+  const model = getOpenRouterModel();
+  if (!model) {
+    recordProviderFailure("openrouter", new Error("OpenRouter CONFIGURATION_INVALID: model is not an explicit ':free' model"));
+    return null;
+  }
   return generateOpenAICompatible({
     providerLabel: "OpenRouter",
     providerName: "openrouter",
     endpoint: `${getOpenRouterBaseUrl()}/chat/completions`,
     apiKey: key,
-    model: getOpenRouterModel(),
+    model,
     prompt,
     systemPrompt,
     maxTokens,
@@ -1091,6 +1183,60 @@ async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEF
       "HTTP-Referer": getOpenRouterSiteUrl(),
       "X-Title": getOpenRouterAppName(),
     },
+  });
+}
+
+// ─── Z.ai GLM (OpenAI-compatible) ─────────────────────────────────────────────
+// First in the canonical order. Uses the GENERAL Z.ai API endpoint (not a
+// Coding Plan endpoint), Authorization: Bearer <key>, and requests JSON mode
+// for structured extraction. Conservative output caps come from the registry.
+async function generateWithZai(
+  prompt: string,
+  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+  maxTokens = 4000,
+  useCase: AiUseCase = "proposal",
+  wantJson = false,
+): Promise<string | null> {
+  const key = getZaiApiKey();
+  if (!key) return null;
+  return generateOpenAICompatible({
+    providerLabel: "Z.ai GLM",
+    providerName: "zai",
+    endpoint: `${getZaiBaseUrl()}/chat/completions`,
+    apiKey: key,
+    model: getProviderModel("zai", useCase),
+    prompt,
+    systemPrompt,
+    maxTokens,
+    responseFormatJson: wantJson,
+  });
+}
+
+// ─── Cerebras (OpenAI-compatible, max_completion_tokens) ──────────────────────
+// Second in the canonical order. OpenAI-compatible wire format BUT uses the
+// provider-specific `max_completion_tokens` parameter (never a 16K reservation
+// on a free tier). A 429 records a rate-limit cooldown and moves to the next
+// eligible provider.
+async function generateWithCerebras(
+  prompt: string,
+  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+  maxTokens = 4000,
+  useCase: AiUseCase = "proposal",
+  wantJson = false,
+): Promise<string | null> {
+  const key = getCerebrasApiKey();
+  if (!key) return null;
+  return generateOpenAICompatible({
+    providerLabel: "Cerebras",
+    providerName: "cerebras",
+    endpoint: `${getCerebrasBaseUrl()}/chat/completions`,
+    apiKey: key,
+    model: getProviderModel("cerebras", useCase),
+    prompt,
+    systemPrompt,
+    maxTokens,
+    maxTokensParam: "max_completion_tokens",
+    responseFormatJson: wantJson,
   });
 }
 
@@ -2235,6 +2381,7 @@ export async function generateWithClaudeTools(
   executor: (toolName: string, input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
   maxTokensOverride?: number, modelOverride?: string,
 ): Promise<string | null> {
+  const anthropicApiKey = getAnthropicApiKey();
   if (!anthropicApiKey) return null;
 
   let Anthropic: { new (config: { apiKey: string }): unknown };

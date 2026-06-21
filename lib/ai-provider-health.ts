@@ -1,8 +1,23 @@
 // AI Provider Health Tracker.
 //
 // Make provider truth accurate, secure, and based on real capability.
+//
+// The provider identity, canonical order, env var names, and configured checks
+// all derive from the authoritative registry (lib/ai-provider-registry.ts).
+// This module owns only the RUNTIME health state machine (success/failure,
+// cooldown, derived status).
 
-export type AiProviderName = "mistral" | "groq" | "openrouter" | "gemini" | "openai" | "together" | "deepseek" | "anthropic";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  readProviderKey,
+  isProviderConfigured as registryIsProviderConfigured,
+  getProviderBaseUrl,
+  getProviderModel,
+  openRouterModelValidity,
+  type AiProviderName,
+} from "./ai-provider-registry";
+
+export type { AiProviderName } from "./ai-provider-registry";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -12,6 +27,7 @@ export type AiProviderFailureCategory =
   | "MODEL_UNAVAILABLE"
   | "NETWORK"
   | "MALFORMED_RESPONSE"
+  | "CONFIGURATION_INVALID"
   | "UNKNOWN";
 
 export type AiProviderStatus =
@@ -26,8 +42,13 @@ export type AiProviderStatus =
   | "MODEL_UNAVAILABLE"
   | "TIMEOUT"
   | "NETWORK_ERROR"
+  | "MALFORMED_RESPONSE"
   | "COOLING_DOWN"
+  | "CONFIGURATION_INVALID"
   | "UNKNOWN";
+
+// Canonical provider list, derived from the registry. The ONLY ordering source.
+const ALL_PROVIDER_NAMES: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
 
 export type AiProviderHealth = {
   provider: AiProviderName;
@@ -57,123 +78,74 @@ export type InternalState = {
 
 const state = new Map<AiProviderName, InternalState>();
 
-// ─── Dynamic Key Reads ──────────────────────────────────────────────────────
+// ─── Dynamic Key Reads (all delegate to the registry's request-time helper) ───
+// Every key/config read flows through readProviderKey/getProviderModel/
+// getProviderBaseUrl in the registry, so the configured-state and the
+// invocation-state can never disagree (no stale module-level key caches).
 
-export function getAnthropicApiKey(): string | undefined {
-  const v = process.env.ANTHROPIC_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isAnthropicConfigured(): boolean {
-  return Boolean(getAnthropicApiKey());
-}
+export function getZaiApiKey(): string | undefined { return readProviderKey("zai"); }
+export function isZaiConfigured(): boolean { return registryIsProviderConfigured("zai"); }
+export function getZaiBaseUrl(): string { return getProviderBaseUrl("zai") ?? "https://api.z.ai/api/paas/v4"; }
+export function getZaiProposalModel(): string { return getProviderModel("zai", "proposal"); }
+export function getZaiAnalysisModel(): string { return getProviderModel("zai", "extraction"); }
+export function getZaiFastModel(): string { return getProviderModel("zai", "fast"); }
 
-export function getGeminiApiKey(): string | undefined {
-  const v = process.env.GEMINI_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isGeminiConfigured(): boolean {
-  return Boolean(getGeminiApiKey());
-}
+export function getCerebrasApiKey(): string | undefined { return readProviderKey("cerebras"); }
+export function isCerebrasConfigured(): boolean { return registryIsProviderConfigured("cerebras"); }
+export function getCerebrasBaseUrl(): string { return getProviderBaseUrl("cerebras") ?? "https://api.cerebras.ai/v1"; }
+export function getCerebrasProposalModel(): string { return getProviderModel("cerebras", "proposal"); }
+export function getCerebrasAnalysisModel(): string { return getProviderModel("cerebras", "extraction"); }
+export function getCerebrasFastModel(): string { return getProviderModel("cerebras", "fast"); }
 
-export function getOpenAIApiKey(): string | undefined {
-  const v = process.env.OPENAI_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isOpenAIConfigured(): boolean {
-  return Boolean(getOpenAIApiKey());
-}
+export function getAnthropicApiKey(): string | undefined { return readProviderKey("anthropic"); }
+export function isAnthropicConfigured(): boolean { return registryIsProviderConfigured("anthropic"); }
+
+export function getGeminiApiKey(): string | undefined { return readProviderKey("gemini"); }
+export function isGeminiConfigured(): boolean { return registryIsProviderConfigured("gemini"); }
+
+export function getOpenAIApiKey(): string | undefined { return readProviderKey("openai"); }
+export function isOpenAIConfigured(): boolean { return registryIsProviderConfigured("openai"); }
 
 export const DEEPSEEK_OFFICIAL_ENV = "DEEPSEEK_API_KEY";
-const DEEPSEEK_ENV_CANDIDATES = ["DEEPSEEK_API_KEY", "DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"] as const;
-export function getDeepSeekApiKey(): string | undefined {
-  for (const name of DEEPSEEK_ENV_CANDIDATES) {
-    const value = process.env[name];
-    if (value && value.trim().length > 0) return value.trim();
-  }
-  return undefined;
-}
-export function isDeepSeekConfigured(): boolean {
-  return Boolean(getDeepSeekApiKey());
-}
+export function getDeepSeekApiKey(): string | undefined { return readProviderKey("deepseek"); }
+export function isDeepSeekConfigured(): boolean { return registryIsProviderConfigured("deepseek"); }
 export function deepSeekOfficialEnvPresent(): boolean {
   const value = process.env.DEEPSEEK_API_KEY;
   return Boolean(value && value.trim().length > 0);
 }
-export function getDeepSeekModel(): string {
-  return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
-}
+export function getDeepSeekModel(): string { return getProviderModel("deepseek", "proposal"); }
 
-export function getMistralApiKey(): string | undefined {
-  const v = process.env.MISTRAL_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isMistralConfigured(): boolean {
-  return Boolean(getMistralApiKey());
-}
-export function getMistralProposalModel(): string {
-  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest";
-}
-export function getMistralAnalysisModel(): string {
-  return process.env.MISTRAL_ANALYSIS_MODEL || getMistralProposalModel();
-}
-export function getMistralFastModel(): string {
-  return process.env.MISTRAL_FAST_MODEL || "ministral-8b-latest";
-}
-export function getMistralBaseUrl(): string {
-  const v = process.env.MISTRAL_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://api.mistral.ai/v1").replace(/\/+$/, "");
-}
+export function getMistralApiKey(): string | undefined { return readProviderKey("mistral"); }
+export function isMistralConfigured(): boolean { return registryIsProviderConfigured("mistral"); }
+export function getMistralProposalModel(): string { return getProviderModel("mistral", "proposal"); }
+export function getMistralAnalysisModel(): string { return getProviderModel("mistral", "extraction"); }
+export function getMistralFastModel(): string { return getProviderModel("mistral", "fast"); }
+export function getMistralBaseUrl(): string { return getProviderBaseUrl("mistral") ?? "https://api.mistral.ai/v1"; }
 
-export function getGroqApiKey(): string | undefined {
-  const v = process.env.GROQ_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isGroqConfigured(): boolean {
-  return Boolean(getGroqApiKey());
-}
-export function getGroqModel(): string {
-  return process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile";
-}
-export function getGroqBaseUrl(): string {
-  const v = process.env.GROQ_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-}
+export function getGroqApiKey(): string | undefined { return readProviderKey("groq"); }
+export function isGroqConfigured(): boolean { return registryIsProviderConfigured("groq"); }
+export function getGroqModel(): string { return getProviderModel("groq", "proposal"); }
+export function getGroqBaseUrl(): string { return getProviderBaseUrl("groq") ?? "https://api.groq.com/openai/v1"; }
 
-export function getTogetherApiKey(): string | undefined {
-  const v = process.env.TOGETHER_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isTogetherConfigured(): boolean {
-  return Boolean(getTogetherApiKey());
-}
-export function getTogetherProposalModel(): string {
-  return process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo";
-}
-export function getTogetherAnalysisModel(): string {
-  return process.env.TOGETHER_ANALYSIS_MODEL || getTogetherProposalModel();
-}
-export function getTogetherFastModel(): string {
-  return process.env.TOGETHER_FAST_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
-}
-export function getTogetherBaseUrl(): string {
-  const v = process.env.TOGETHER_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://api.together.xyz/v1").replace(/\/+$/, "");
-}
+export function getTogetherApiKey(): string | undefined { return readProviderKey("together"); }
+export function isTogetherConfigured(): boolean { return registryIsProviderConfigured("together"); }
+export function getTogetherProposalModel(): string { return getProviderModel("together", "proposal"); }
+export function getTogetherAnalysisModel(): string { return getProviderModel("together", "extraction"); }
+export function getTogetherFastModel(): string { return getProviderModel("together", "fast"); }
+export function getTogetherBaseUrl(): string { return getProviderBaseUrl("together") ?? "https://api.together.xyz/v1"; }
 
-export function getOpenRouterApiKey(): string | undefined {
-  const v = process.env.OPENROUTER_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
+export function getOpenRouterApiKey(): string | undefined { return readProviderKey("openrouter"); }
+export function isOpenRouterConfigured(): boolean { return registryIsProviderConfigured("openrouter"); }
+/**
+ * Returns the configured OpenRouter model ONLY when it is a valid explicit
+ * `:free` model. Returns null when invalid (openrouter/auto or non-free), so
+ * callers never send a request that could create paid usage.
+ */
+export function getOpenRouterModel(): string | null {
+  const validity = openRouterModelValidity();
+  return validity.valid ? validity.model : null;
 }
-export function isOpenRouterConfigured(): boolean {
-  return Boolean(getOpenRouterApiKey());
-}
-export function getOpenRouterModel(): string {
-  return process.env.OPENROUTER_PROPOSAL_MODEL || "openrouter/auto";
-}
-export function getOpenRouterBaseUrl(): string {
-  const v = process.env.OPENROUTER_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://openrouter.ai/api/v1").replace(/\/+$/, "");
-}
+export function getOpenRouterBaseUrl(): string { return getProviderBaseUrl("openrouter") ?? "https://openrouter.ai/api/v1"; }
 export function getOpenRouterSiteUrl(): string {
   const v = process.env.OPENROUTER_SITE_URL;
   return v && v.trim().length > 0 ? v.trim() : "https://hope-tender-path-b.vercel.app";
@@ -184,17 +156,7 @@ export function getOpenRouterAppName(): string {
 }
 
 export function isProviderConfigured(provider: AiProviderName): boolean {
-  switch (provider) {
-    case "anthropic": return isAnthropicConfigured();
-    case "gemini": return isGeminiConfigured();
-    case "openai": return isOpenAIConfigured();
-    case "mistral": return isMistralConfigured();
-    case "deepseek": return isDeepSeekConfigured();
-    case "groq": return isGroqConfigured();
-    case "together": return isTogetherConfigured();
-    case "openrouter": return isOpenRouterConfigured();
-    default: return false;
-  }
+  return registryIsProviderConfigured(provider);
 }
 
 export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
@@ -205,6 +167,7 @@ export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number>
   MODEL_UNAVAILABLE: 2 * 60_000,
   NETWORK: 30_000,
   MALFORMED_RESPONSE: 60_000,
+  CONFIGURATION_INVALID: 10 * 60_000,
   UNKNOWN: 60_000,
 };
 
@@ -352,13 +315,22 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
 }
 
 export function getAllProviderHealth(): AiProviderHealth[] {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-  return providers.map(getProviderHealth);
+  return ALL_PROVIDER_NAMES.map(getProviderHealth);
 }
 
 export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
   const h = getProviderHealth(provider);
   if (!h.configured) return "NOT_CONFIGURED";
+
+  // OpenRouter with a missing/invalid (non-:free) model is a configuration
+  // problem, surfaced distinctly so operators fix the model rather than wait
+  // for a cooldown. This never consumes a provider attempt.
+  if (provider === "openrouter") {
+    const validity = openRouterModelValidity();
+    if (!validity.valid) {
+      return validity.reason === "MODEL_UNAVAILABLE" ? "MODEL_UNAVAILABLE" : "CONFIGURATION_INVALID";
+    }
+  }
 
   const cooling = isProviderCooledDown(provider);
   if (cooling) {
@@ -367,9 +339,11 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
       case "RATE_LIMIT": return "RATE_LIMITED";
       case "AUTH": return "UNAUTHORIZED";
       case "BILLING": return "BILLING_BLOCKED";
-      case "MODEL_UNAVAILABLE": return "BILLING_BLOCKED";
+      case "MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
       case "TIMEOUT": return "TIMEOUT";
-      case "NETWORK": return "BILLING_BLOCKED";
+      case "NETWORK": return "NETWORK_ERROR";
+      case "MALFORMED_RESPONSE": return "MALFORMED_RESPONSE";
+      case "CONFIGURATION_INVALID": return "CONFIGURATION_INVALID";
       case "UNKNOWN": return "UNKNOWN";
       default: return "COOLING_DOWN";
     }
@@ -430,7 +404,7 @@ export function buildProviderDiagnosticsSnapshot(): {
   providersCoolingDown: AiProviderName[];
   perProvider: ProviderAttemptDiagnostic[];
 } {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const providers: readonly AiProviderName[] = ALL_PROVIDER_NAMES;
   const perProvider: ProviderAttemptDiagnostic[] = providers.map((provider) => {
     const h = getProviderHealth(provider);
     return {
@@ -449,8 +423,7 @@ export function buildProviderDiagnosticsSnapshot(): {
 }
 
 export function getMinCooldownExpiryMs(): number | null {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-  const configured = providers.filter((p) => isProviderConfigured(p));
+  const configured = ALL_PROVIDER_NAMES.filter((p) => isProviderConfigured(p));
   if (configured.length === 0) return null;
   const now = Date.now();
   let minMs = Infinity;

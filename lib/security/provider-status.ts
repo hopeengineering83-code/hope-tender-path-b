@@ -1,18 +1,15 @@
-// Ordered by the canonical runtime fallback chain (mirrors lib/ai.ts
-// CANONICAL_PROVIDER_CHAIN and lib/ai-provider-policy.ts
-// CANONICAL_AI_PROVIDER_CHAIN). Anthropic is intentionally LAST so Anthropic
-// rate limits do not block the app when earlier providers are available.
-// Reorder only via an explicit product decision — see docs/ai-provider-order.md.
-export const AI_PROVIDER_ORDER = [
-  { provider: "Mistral", envName: "MISTRAL_API_KEY", order: 1 },
-  { provider: "Groq", envName: "GROQ_API_KEY", order: 2 },
-  { provider: "OpenRouter", envName: "OPENROUTER_API_KEY", order: 3 },
-  { provider: "Gemini", envName: "GEMINI_API_KEY", order: 4 },
-  { provider: "OpenAI", envName: "OPENAI_API_KEY", order: 5 },
-  { provider: "Together", envName: "TOGETHER_API_KEY", order: 6 },
-  { provider: "DeepSeek", envName: "DEEPSEEK_API_KEY", order: 7 },
-  { provider: "Anthropic", envName: "ANTHROPIC_API_KEY", order: 8 },
-] as const;
+// Ordered by the canonical runtime fallback chain, generated DIRECTLY from the
+// authoritative registry (lib/ai-provider-registry.ts) so there is a single
+// source of truth. Anthropic is intentionally LAST so Anthropic rate limits do
+// not block the app when earlier providers are available.
+// Reorder only via the registry — see docs/ai-provider-order.md.
+import { getCanonicalProviderEntries } from "../ai-provider-registry";
+
+export const AI_PROVIDER_ORDER = getCanonicalProviderEntries().map((entry) => ({
+  provider: entry.displayName,
+  envName: entry.env.apiKey,
+  order: entry.rank,
+}));
 
 export type SafeProviderStatus = {
   provider: string;

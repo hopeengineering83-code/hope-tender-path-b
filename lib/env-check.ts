@@ -5,9 +5,11 @@
  * a clear message rather than silently degrading.
  *
  * ARCHITECTURE: at least one AI provider key is required in production:
- *   - OPENAI_API_KEY / GEMINI_API_KEY / MISTRAL_API_KEY / DEEPSEEK_API_KEY /
- *     GROQ_API_KEY / TOGETHER_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY. The current default proposal
- *     chain is Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude, with
+ *   - ZAI_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / GROQ_API_KEY /
+ *     OPENROUTER_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY /
+ *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical chain (single source of
+ *     truth: lib/ai-provider-registry.ts) is Z.ai GLM → Cerebras → Mistral → Groq
+ *     → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude, with
  *     Claude last so Anthropic rate limits do not block the app.
  *
  * Without EITHER key:
