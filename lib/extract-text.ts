@@ -401,7 +401,7 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
 
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const XLSX = require("xlsx") as typeof import("xlsx");
+  const XLSX = require("@e965/xlsx") as typeof import("@e965/xlsx");
   const workbook = XLSX.read(buffer, { type: "buffer", cellText: true });
   const parts: string[] = [];
   for (const sheetName of workbook.SheetNames) {
