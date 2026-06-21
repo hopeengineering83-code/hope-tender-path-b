@@ -27,6 +27,30 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
+const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
+
+function computePreferredProvider() {
+  const mistralConfigured = isMistralConfigured();
+  const groqConfigured = isGroqConfigured();
+  const openRouterConfigured = isOpenRouterConfigured();
+  const geminiConfigured = isGeminiConfigured();
+  const openaiConfigured = isOpenAIConfigured();
+  const togetherConfigured = isTogetherConfigured();
+  const deepSeekConfigured = isDeepSeekConfigured();
+  const claudeConfigured = isAnthropicConfigured();
+
+  return mistralConfigured ? "mistral"
+    : groqConfigured ? "groq"
+    : openRouterConfigured ? "openrouter"
+    : geminiConfigured ? "gemini"
+    : openaiConfigured ? "openai"
+    : togetherConfigured ? "together"
+    : deepSeekConfigured ? "deepseek"
+    : claudeConfigured ? "claude"
+    : null;
+}
+
 export async function GET() {
   const restore = await restoreProviderHealthBeforeResponse();
   const health = getAllProviderHealth();
@@ -48,6 +72,8 @@ export async function GET() {
 
   const warnings: string[] = [];
   const blockers: string[] = [];
+  const preferredProvider = computePreferredProvider();
+  const noAiProviderReady = !anyConfigured || allConfiguredCooling;
 
   if (!anyConfigured) {
     blockers.push("No AI providers are configured.");
@@ -64,6 +90,9 @@ export async function GET() {
     configuredProviderCount: configuredNames.length,
     allProvidersCooling: allConfiguredCooling,
     runtimeVerified: anyRuntimeVerified,
+    preferredProvider,
+    noAiProviderReady,
+    noAiProviderReadyCode: noAiProviderReady ? "NO_AI_PROVIDER_READY" : null,
     providers: {
       mistral: {
         configured: isMistralConfigured(),
@@ -72,6 +101,7 @@ export async function GET() {
         runtime: providerRuntime.mistral,
         status: providerRuntime.mistral.status,
         isAi: true,
+        fallbackRank: 1,
       },
       groq: {
         configured: isGroqConfigured(),
@@ -79,6 +109,7 @@ export async function GET() {
         runtime: providerRuntime.groq,
         status: providerRuntime.groq.status,
         isAi: true,
+        fallbackRank: 2,
       },
       openrouter: {
         configured: isOpenRouterConfigured(),
@@ -86,6 +117,7 @@ export async function GET() {
         runtime: providerRuntime.openrouter,
         status: providerRuntime.openrouter.status,
         isAi: true,
+        fallbackRank: 3,
       },
       gemini: {
         configured: isGeminiConfigured(),
@@ -93,6 +125,7 @@ export async function GET() {
         runtime: providerRuntime.gemini,
         status: providerRuntime.gemini.status,
         isAi: true,
+        fallbackRank: 4,
       },
       openai: {
         configured: isOpenAIConfigured(),
@@ -100,6 +133,7 @@ export async function GET() {
         runtime: providerRuntime.openai,
         status: providerRuntime.openai.status,
         isAi: true,
+        fallbackRank: 5,
       },
       together: {
         configured: isTogetherConfigured(),
@@ -109,6 +143,7 @@ export async function GET() {
         runtime: providerRuntime.together,
         status: providerRuntime.together.status,
         isAi: true,
+        fallbackRank: 6,
       },
       deepseek: {
         configured: isDeepSeekConfigured(),
@@ -117,12 +152,19 @@ export async function GET() {
         runtime: providerRuntime.deepseek,
         status: providerRuntime.deepseek.status,
         isAi: true,
+        fallbackRank: 7,
       },
       claude: {
         configured: isAnthropicConfigured(),
         runtime: providerRuntime.anthropic,
         status: providerRuntime.anthropic.status,
         isAi: true,
+        fallbackRank: 8,
+      },
+      deterministic: {
+        fallbackRank: 9,
+        isAi: false,
+        status: "UNKNOWN",
       },
     },
     blockers,
