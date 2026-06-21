@@ -303,7 +303,7 @@ export async function GET(req: Request) {
 
   await logAction({
     userId: actor.id,
-    action: "AI_PROVIDER_HEALTH_CHECK",
+    action: "CREATE",
     entityType: "AiProviderHealth",
     entityId: "batch",
     description: `Operator ran batch ${capability} test for ${onlyProvider || "all"} providers`,
