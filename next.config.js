@@ -14,7 +14,13 @@ function assertProductionEnv() {
     throw new Error(`Missing required production variables: ${missing.map(([name]) => name).join(", ")}`);
   }
 
+  // Canonical provider key order — mirrors lib/ai-provider-registry.ts
+  // CANONICAL_AI_PROVIDER_ORDER. This is a build-time guard in a CommonJS file
+  // so the list is duplicated here intentionally; keep it in sync with the
+  // registry order.
   const providerKeys = [
+    "ZAI_API_KEY",
+    "CEREBRAS_API_KEY",
     "MISTRAL_API_KEY",
     "GROQ_API_KEY",
     "OPENROUTER_API_KEY",

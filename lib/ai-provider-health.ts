@@ -320,17 +320,10 @@ export function getAllProviderHealth(): AiProviderHealth[] {
 
 export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
   const h = getProviderHealth(provider);
-  if (!h.configured) return "NOT_CONFIGURED";
 
-  // OpenRouter with a missing/invalid (non-:free) model is a configuration
-  // problem, surfaced distinctly so operators fix the model rather than wait
-  // for a cooldown. This never consumes a provider attempt.
-  if (provider === "openrouter") {
-    const validity = openRouterModelValidity();
-    if (!validity.valid) {
-      return validity.reason === "MODEL_UNAVAILABLE" ? "MODEL_UNAVAILABLE" : "CONFIGURATION_INVALID";
-    }
-  }
+  // No key at all → NOT_CONFIGURED. (OpenRouter with a key but an invalid model
+  // is reported as CONFIGURATION_INVALID below, not NOT_CONFIGURED.)
+  if (!readProviderKey(provider)) return "NOT_CONFIGURED";
 
   const cooling = isProviderCooledDown(provider);
   if (cooling) {
@@ -349,10 +342,22 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
     }
   }
 
+  // A genuine runtime success outranks a configuration warning.
   if (h.lastGenerationSucceededAt) return "GENERATION_VERIFIED";
   if (h.lastAnalysisSucceededAt) return "ANALYSIS_VERIFIED";
   if (h.lastPingSucceededAt) return "CONNECTIVITY_VERIFIED";
 
+  // OpenRouter with a key but a missing/invalid (non-:free) model is a
+  // configuration problem, surfaced distinctly so operators fix the model
+  // rather than see a misleading NOT_CONFIGURED. It never consumes an attempt.
+  if (provider === "openrouter") {
+    const validity = openRouterModelValidity();
+    if (!validity.valid) {
+      return validity.reason === "MODEL_UNAVAILABLE" ? "MODEL_UNAVAILABLE" : "CONFIGURATION_INVALID";
+    }
+  }
+
+  if (!h.configured) return "NOT_CONFIGURED";
   return "CONFIGURED";
 }
 

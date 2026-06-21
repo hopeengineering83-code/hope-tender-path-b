@@ -233,7 +233,7 @@ for (const spec of ALWAYS_REQUIRED) {
 const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
 if (!hasAnyAIKey) {
   const message =
-    "At least one AI provider key is required: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. " +
+    `At least one AI provider key is required: ${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}. ` +
     "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);

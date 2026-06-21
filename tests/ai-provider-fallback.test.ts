@@ -161,25 +161,32 @@ describe("evaluateEnv — preview + DeepSeek only", () => {
 
 // ─── check-env.mjs alignment ─────────────────────────────────────────────────
 
-describe("check-env.mjs — 8-provider policy alignment", () => {
-  it("includes OPENAI_API_KEY in AI_PROVIDER_KEYS", async () => {
+describe("check-env.mjs — 10-provider policy alignment", () => {
+  it("includes all canonical provider keys in AI_PROVIDER_KEYS (incl. ZAI + CEREBRAS)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    assert.match(src, /OPENAI_API_KEY/);
     assert.match(src, /AI_PROVIDER_KEYS/);
+    for (const key of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
+      assert.match(src, new RegExp(key));
+    }
   });
 
-  it("includes DEEPSEEK_API_KEY in AI_PROVIDER_KEYS", async () => {
+  it("the AI_PROVIDER_KEYS entries are declared in canonical order", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    assert.match(src, /DEEPSEEK_API_KEY/);
+    const order = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+    const positions = order.map((k) => src.indexOf(`name: "${k}"`));
+    for (let i = 1; i < positions.length; i++) {
+      assert.ok(positions[i] > positions[i - 1], `${order[i]} must be declared after ${order[i - 1]}`);
+    }
   });
 
-  it("production error message references all provider keys", async () => {
+  it("production error message is generated from AI_PROVIDER_KEYS (references all keys)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    // The hasAnyAIKey block must reference all providers in its message
-    assert.match(src, /OPENAI_API_KEY.*GEMINI_API_KEY.*MISTRAL_API_KEY.*DEEPSEEK_API_KEY.*GROQ_API_KEY.*TOGETHER_API_KEY.*OPENROUTER_API_KEY.*ANTHROPIC_API_KEY/s);
+    // The message is derived from the AI_PROVIDER_KEYS list rather than a stale
+    // hardcoded string, so it always reflects the full canonical key set.
+    assert.match(src, /AI_PROVIDER_KEYS\.map\(\(k\) => k\.name\)\.join/);
   });
 });
 
