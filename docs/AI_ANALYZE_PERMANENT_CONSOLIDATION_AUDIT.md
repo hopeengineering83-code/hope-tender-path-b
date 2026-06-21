@@ -44,7 +44,7 @@ af940250 feat: Add provider health route response fields for fallback chain and 
 ### Environment Configuration
 **Development Requirements (.env.local):**
 ```
-DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"
+DATABASE_URL="postgresql://<username>:<password>@<host>:5432/<database>"
 SESSION_SECRET="at least 32 characters"
 AI_JOBS_WORKER_SECRET="shared secret for worker authentication"
 CRON_SECRET="Vercel Cron secret"
