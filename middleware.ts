@@ -1,9 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { evaluateCsrf } from "./lib/security/csrf";
 import { getProductionCSP } from "./lib/security/csp";
+import { extractRequestId, withRequestId } from "./lib/request-id";
 
 const INTERNAL_GUARD_HEADER = "x-hope-internal-rate-guard";
 const GUARDED_AI_ROUTE = /^\/api\/tenders\/[^/?]+\/(ai-analyze|generate)$/;
+const REQUEST_ID_HEADER = "x-request-id";
 
 async function deriveInternalGuardToken(): Promise<string | null> {
   const secret = process.env.SESSION_SECRET?.trim();
@@ -26,59 +28,109 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+/**
+ * Stamp every response with the request-scoped correlation ID so clients
+ * and operators can trace a single request end-to-end through logs and
+ * the x-request-id response header.
+ */
+function withRequestIdHeader(response: NextResponse, requestId: string): NextResponse {
+  response.headers.set(REQUEST_ID_HEADER, requestId);
+  return response;
+}
+
+/**
+ * Propagate the correlation ID downstream to route handlers by setting
+ * the x-request-id header on the rewritten/forwarded request. API routes
+ * that call `extractRequestId(req)` will see the same ID the middleware
+ * generated, so log lines from middleware and route handler share a key.
+ */
+function withRequestIdDownstream(requestHeaders: Headers, requestId: string): Headers {
+  if (!requestHeaders.has(REQUEST_ID_HEADER)) {
+    requestHeaders.set(REQUEST_ID_HEADER, requestId);
+  }
+  return requestHeaders;
+}
+
 export async function middleware(req: NextRequest) {
-  // 1. CSRF Protection
-  const decision = evaluateCsrf({
-    method: req.method,
-    pathname: req.nextUrl.pathname,
-    expectedOrigin: req.nextUrl.origin,
-    origin: req.headers.get("origin"),
-    referer: req.headers.get("referer"),
-    nodeEnv: process.env.NODE_ENV,
-    csrfMode: process.env.CSRF_MODE,
-    csrfStrictDev: process.env.CSRF_STRICT_DEV,
+  // 0. Request-scoped correlation ID (OBS-003). Generated once per inbound
+  // request, propagated to route handlers via the x-request-id request
+  // header, returned to clients via the x-request-id response header, and
+  // made available to any code running inside `withRequestId` via
+  // `getCurrentRequestId()` (used by the observability logger).
+  const requestId = extractRequestId(req as unknown as Request);
+
+  return withRequestId(requestId, async () => {
+    // 1. CSRF Protection
+    const decision = evaluateCsrf({
+      method: req.method,
+      pathname: req.nextUrl.pathname,
+      expectedOrigin: req.nextUrl.origin,
+      origin: req.headers.get("origin"),
+      referer: req.headers.get("referer"),
+      nodeEnv: process.env.NODE_ENV,
+      csrfMode: process.env.CSRF_MODE,
+      csrfStrictDev: process.env.CSRF_STRICT_DEV,
+    });
+
+    if (!decision.allowed) {
+      return withRequestIdHeader(
+        withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 })),
+        requestId,
+      );
+    }
+
+    // 2. Persistently guard the two large AI handlers without duplicating their
+    // generation logic. The internal proxy signs its forwarded request with a
+    // token derived from SESSION_SECRET; user-supplied bypass headers are removed.
+    if (req.method === "POST" && GUARDED_AI_ROUTE.test(req.nextUrl.pathname)) {
+      const token = await deriveInternalGuardToken();
+      if (!token) {
+        return withRequestIdHeader(
+          withSecurityHeaders(NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 })),
+          requestId,
+        );
+      }
+
+      const requestHeaders = withRequestIdDownstream(new Headers(req.headers), requestId);
+      const suppliedToken = requestHeaders.get(INTERNAL_GUARD_HEADER);
+      requestHeaders.delete(INTERNAL_GUARD_HEADER);
+
+      if (suppliedToken === token) {
+        return withRequestIdHeader(
+          withSecurityHeaders(NextResponse.next({ request: { headers: requestHeaders } })),
+          requestId,
+        );
+      }
+
+      const originalTarget = `${req.nextUrl.pathname}${req.nextUrl.search}`;
+      const guardUrl = req.nextUrl.clone();
+      guardUrl.pathname = "/api/internal/rate-guard";
+      guardUrl.search = "";
+      guardUrl.searchParams.set("target", originalTarget);
+
+      // Also pass the target as a request header. After a middleware rewrite to
+      // an API route, the destination handler's `req.url` reflects the ORIGINAL
+      // request URL (without our `?target=` query) in the Node runtime — so the
+      // query param alone is not reliably readable downstream. Request headers,
+      // by contrast, always propagate via `request: { headers }`. The rate-guard
+      // reads the header first and falls back to the query param.
+      requestHeaders.set("x-hope-guard-target", originalTarget);
+
+      return withRequestIdHeader(
+        withSecurityHeaders(NextResponse.rewrite(guardUrl, { request: { headers: requestHeaders } })),
+        requestId,
+      );
+    }
+
+    // 3. Standard response with security headers. Propagate the request ID
+    // downstream so route handlers see the same correlation ID without
+    // having to generate their own.
+    const downstreamHeaders = withRequestIdDownstream(new Headers(req.headers), requestId);
+    return withRequestIdHeader(
+      withSecurityHeaders(NextResponse.next({ request: { headers: downstreamHeaders } })),
+      requestId,
+    );
   });
-
-  if (!decision.allowed) {
-    return withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 }));
-  }
-
-  // 2. Persistently guard the two large AI handlers without duplicating their
-  // generation logic. The internal proxy signs its forwarded request with a
-  // token derived from SESSION_SECRET; user-supplied bypass headers are removed.
-  if (req.method === "POST" && GUARDED_AI_ROUTE.test(req.nextUrl.pathname)) {
-    const token = await deriveInternalGuardToken();
-    if (!token) {
-      return withSecurityHeaders(NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 }));
-    }
-
-    const requestHeaders = new Headers(req.headers);
-    const suppliedToken = requestHeaders.get(INTERNAL_GUARD_HEADER);
-    requestHeaders.delete(INTERNAL_GUARD_HEADER);
-
-    if (suppliedToken === token) {
-      return withSecurityHeaders(NextResponse.next({ request: { headers: requestHeaders } }));
-    }
-
-    const originalTarget = `${req.nextUrl.pathname}${req.nextUrl.search}`;
-    const guardUrl = req.nextUrl.clone();
-    guardUrl.pathname = "/api/internal/rate-guard";
-    guardUrl.search = "";
-    guardUrl.searchParams.set("target", originalTarget);
-
-    // Also pass the target as a request header. After a middleware rewrite to
-    // an API route, the destination handler's `req.url` reflects the ORIGINAL
-    // request URL (without our `?target=` query) in the Node runtime — so the
-    // query param alone is not reliably readable downstream. Request headers,
-    // by contrast, always propagate via `request: { headers }`. The rate-guard
-    // reads the header first and falls back to the query param.
-    requestHeaders.set("x-hope-guard-target", originalTarget);
-
-    return withSecurityHeaders(NextResponse.rewrite(guardUrl, { request: { headers: requestHeaders } }));
-  }
-
-  // 3. Standard response with security headers.
-  return withSecurityHeaders(NextResponse.next());
 }
 
 export const config = {

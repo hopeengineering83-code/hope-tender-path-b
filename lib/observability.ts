@@ -60,6 +60,8 @@
  * transition is gradual — no big-bang rewrite.
  */
 
+import { getCurrentRequestId } from "./request-id";
+
 // ─── Severity levels ─────────────────────────────────────────────────────
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -96,20 +98,30 @@ interface LogEvent {
   ts: string;
   level: LogLevel;
   msg: string;
-  // Vercel injects x-vercel-id; we don't try to capture per-request
-  // IDs from inside logger because that would couple logger to
-  // request-handling middleware. Operators correlate via the
-  // ts + tenderId fields instead.
+  // Per-request correlation ID propagated via AsyncLocalStorage
+  // (see lib/request-id.ts). Present whenever the calling code is
+  // running inside a `withRequestId()` context — typically an API
+  // route handler or middleware. Absent for background jobs / scripts.
+  requestId?: string;
   [key: string]: unknown;
 }
 
 function emit(level: LogLevel, msg: string, context?: LogContext): void {
   if (LEVEL_RANK[level] < activeLevelRank()) return;
 
+  // Pull the request-scoped correlation ID from AsyncLocalStorage.
+  // Skipped when no context is active (background tasks, scripts) so
+  // those log lines don't get polluted with `requestId: null`.
+  const contextRequestId =
+    typeof context?.requestId === "string" ? context.requestId : undefined;
+  const ambientRequestId = getCurrentRequestId();
+  const requestId = contextRequestId ?? ambientRequestId ?? undefined;
+
   const event: LogEvent = {
     ts: new Date().toISOString(),
     level,
     msg,
+    ...(requestId ? { requestId } : {}),
     ...(context ?? {}),
   };
 
