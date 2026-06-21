@@ -885,7 +885,17 @@ export type ExtractorFieldName =
   | "mandatorySiteVisit"
   | "clientName"
   | "clientContactEmail"
-  | "preBidMeetingDate";
+  | "preBidMeetingDate"
+  | "donorAgency"
+  | "implementingAgency"
+  | "legalClientName"
+  | "clientContactName"
+  | "clientContactTitle"
+  | "clientContactPhone"
+  | "clientAddress"
+  | "country"
+  | "clientCity"
+  | "clientWebsite";
 
 export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "reference",
@@ -901,6 +911,16 @@ export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "clientName",
   "clientContactEmail",
   "preBidMeetingDate",
+  "donorAgency",
+  "implementingAgency",
+  "legalClientName",
+  "clientContactName",
+  "clientContactTitle",
+  "clientContactPhone",
+  "clientAddress",
+  "country",
+  "clientCity",
+  "clientWebsite",
 ];
 
 /**
@@ -923,5 +943,15 @@ export function runExtractorByField(field: ExtractorFieldName, input: ExtractorI
     case "clientName": return extractClientName(input);
     case "clientContactEmail": return extractClientContactEmail(input);
     case "preBidMeetingDate": return extractPreBidMeetingDate(input);
+    case "donorAgency": return extractDonorAgency(input);
+    case "implementingAgency": return extractImplementingAgency(input);
+    case "legalClientName": return extractLegalClientName(input);
+    case "clientContactName": return extractClientContactName(input);
+    case "clientContactTitle": return extractClientContactTitle(input);
+    case "clientContactPhone": return extractClientContactPhone(input);
+    case "clientAddress": return extractClientAddress(input);
+    case "country": return extractCountry(input);
+    case "clientCity": return extractClientCity(input);
+    case "clientWebsite": return extractClientWebsite(input);
   }
 }

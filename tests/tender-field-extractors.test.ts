@@ -172,6 +172,16 @@ describe("Hard safety — sourceQuote is always present on found:true", () => {
         submissionAddress: "Submission address: Room 412, Ministry of Health Building, Churchill Avenue, Addis Ababa, Ethiopia. Open Mon-Fri 08:00-17:00.",
         clientContactEmail: "For inquiries, contact the procurement officer. Contact e-mail: procurement.officer@ministry.gov.et. Clarifications must be submitted in writing.",
         preBidMeetingDate: "A pre-bid conference will be held on 15 July 2026 at 10:00 at the Ministry boardroom. Attendance is encouraged.",
+        donorAgency: "This project is funded by the World Bank's IDA financing window. Donor agency: International Development Association (World Bank Group).",
+        implementingAgency: "Implementing agency: National Health Institute, Ministry of Health. All activities will be supervised by the designated project management unit.",
+        legalClientName: "Legal entity name: Federal Democratic Republic of Ethiopia - Ministry of Health and Family Planning. Registered office address available upon request.",
+        clientContactName: "Contact person: Dr. Abebe Kebede, Senior Procurement Officer. Direct phone available during office hours for procurement inquiries.",
+        clientContactTitle: "Title: Senior Procurement Officer, Procurement and Contracts Division of the Ministry of Health. Designated authority for tender clarifications.",
+        clientContactPhone: "Phone: +251-11-552-1234, Mobile contact for urgent issues: +251-911-234567. Available Mon-Fri 08:00-17:00 local time.",
+        clientAddress: "Client address: Ministry of Health Building, Churchill Avenue, P.O. Box 1234, Addis Ababa, Ethiopia. Reception desk at main lobby.",
+        country: "Country: Ethiopia. The project will be implemented across multiple regions within Ethiopia following the established administration boundaries.",
+        clientCity: "City location: Addis Ababa. Specific implementation site: Kirkos Sub-City with satellite offices in three major zones within the city.",
+        clientWebsite: "Website: https://www.moh.gov.et/procurement. Visit the portal for latest updates. Additional contact: info@moh.gov.et for general inquiries.",
       };
       const text = inputs[field];
       const r = runExtractorByField(field as typeof SUPPORTED_EXTRACTORS[number], { files: [{ fileName: "rfp.pdf", extractedText: text }] });
