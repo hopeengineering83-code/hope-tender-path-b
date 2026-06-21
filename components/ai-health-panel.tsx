@@ -15,6 +15,10 @@ import {
   getTogetherFastModel,
   isOpenRouterConfigured,
   getOpenRouterModel,
+  isZaiConfigured,
+  getZaiProposalModel,
+  isCerebrasConfigured,
+  getCerebrasProposalModel,
   type ProviderRuntimeSnapshot,
   type AiProviderStatus,
 } from "../lib/ai-provider-health";
@@ -23,7 +27,7 @@ import { AIHealthTestButton } from "./ai-health-test-button";
 // Mirrors app/api/ai/health/route.ts AI_FALLBACK_CHAIN. The deterministic
 // draft fallback is intentionally listed as the final non-AI step so the
 // dashboard text matches the runtime chain exactly.
-const AI_FALLBACK_CHAIN = "Canonical: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback. Claude is the last AI provider. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.";
+const AI_FALLBACK_CHAIN = "Canonical: Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback. Claude is the last AI provider. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.";
 
 type ProviderCardData = {
   key: string;
@@ -59,6 +63,8 @@ function splitModels(value: string | undefined, fallback: string[]) {
 }
 
 function getAIHealth(): AIHealthResponse {
+  const zaiConfigured = isZaiConfigured();
+  const cerebrasConfigured = isCerebrasConfigured();
   const claudeConfigured = present(process.env.ANTHROPIC_API_KEY);
   const geminiConfigured = present(process.env.GEMINI_API_KEY);
   const openaiConfigured = present(process.env.OPENAI_API_KEY);
@@ -72,12 +78,14 @@ function getAIHealth(): AIHealthResponse {
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const openRouterModel = getOpenRouterModel();
 
-  // Provider order IS the canonical runtime fallback priority (rank 1..8):
-  //   Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+  // Provider order IS the canonical runtime fallback priority (rank 1..10):
+  //   Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
   // Claude is the LAST AI provider so Anthropic rate limits do not block the
-  // app when other providers are available. A final non-AI entry (rank 9)
+  // app when other providers are available. A final non-AI entry (rank 11)
   // represents the deterministic draft fallback that runs only after every
   // configured AI provider has failed or is unavailable.
+  const zaiRuntime = getProviderRuntimeSnapshot("zai");
+  const cerebrasRuntime = getProviderRuntimeSnapshot("cerebras");
   const mistralRuntime = getProviderRuntimeSnapshot("mistral");
   const groqRuntime = getProviderRuntimeSnapshot("groq");
   const openrouterRuntime = getProviderRuntimeSnapshot("openrouter");
@@ -89,50 +97,61 @@ function getAIHealth(): AIHealthResponse {
 
   const providers: ProviderCardData[] = [
     {
-      key: "mistral", label: "Mistral", rank: 1, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
-      model: getMistralProposalModel(), note: "First-tier provider (also analysis/fast capable)",
+      key: "zai", label: "Z.ai GLM", rank: 1, configured: zaiConfigured, envVar: "ZAI_API_KEY",
+      model: getZaiProposalModel(), note: "First-tier provider (also analysis/fast capable)",
+      detail: null, modelHint: null,
+      runtime: zaiRuntime, status: zaiRuntime.status, isAi: true,
+    },
+    {
+      key: "cerebras", label: "Cerebras", rank: 2, configured: cerebrasConfigured, envVar: "CEREBRAS_API_KEY",
+      model: getCerebrasProposalModel(), note: "Second-tier provider", detail: null, modelHint: null,
+      runtime: cerebrasRuntime, status: cerebrasRuntime.status, isAi: true,
+    },
+    {
+      key: "mistral", label: "Mistral", rank: 3, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
+      model: getMistralProposalModel(), note: "Third-tier provider (also analysis/fast capable)",
       detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
       runtime: mistralRuntime, status: mistralRuntime.status, isAi: true,
     },
     {
-      key: "groq", label: "Groq", rank: 2, configured: groqConfigured, envVar: "GROQ_API_KEY",
-      model: getGroqModel(), note: "Second-tier provider", detail: null, modelHint: null,
+      key: "groq", label: "Groq", rank: 4, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: "Fourth-tier provider", detail: null, modelHint: null,
       runtime: groqRuntime, status: groqRuntime.status, isAi: true,
     },
     {
-      key: "openrouter", label: "OpenRouter", rank: 3, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
-      model: openRouterModel, note: "Third-tier provider", detail: null,
-      modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
-        ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
+      key: "openrouter", label: "OpenRouter", rank: 5, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
+      model: openRouterModel, note: "Fifth-tier provider", detail: null,
+      modelHint: openRouterConfigured && (openRouterModel === "openrouter/auto" || !openRouterModel.endsWith(":free"))
+        ? "OpenRouter model MUST end with :free — openrouter/auto and non-:free models are rejected. Set OPENROUTER_PROPOSAL_MODEL to a :free model."
         : null,
       runtime: openrouterRuntime, status: openrouterRuntime.status, isAi: true,
     },
     {
-      key: "gemini", label: "Gemini", rank: 4, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
-      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Fourth-tier provider",
+      key: "gemini", label: "Gemini", rank: 6, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Sixth-tier provider",
       detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
       modelHint: null, runtime: geminiRuntime, status: geminiRuntime.status, isAi: true,
     },
     {
-      key: "openai", label: "OpenAI", rank: 5, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
-      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Fifth-tier provider",
+      key: "openai", label: "OpenAI", rank: 7, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
+      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Seventh-tier provider",
       detail: null, modelHint: null, runtime: openaiRuntime, status: openaiRuntime.status, isAi: true,
     },
     {
-      key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
-      model: getTogetherProposalModel(), note: "Sixth-tier provider",
+      key: "together", label: "Together", rank: 8, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherProposalModel(), note: "Eighth-tier provider",
       detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
       runtime: togetherRuntime, status: togetherRuntime.status, isAi: true,
     },
     {
-      key: "deepseek", label: "DeepSeek", rank: 7, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
-      model: getDeepSeekModel(), note: "Seventh-tier provider",
+      key: "deepseek", label: "DeepSeek", rank: 9, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: "Ninth-tier provider",
       detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
       modelHint: null, runtime: deepseekRuntime, status: deepseekRuntime.status, isAi: true,
     },
     {
-      key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
-      model: claudeModels[0] ?? null, note: "Eighth-tier (last) AI provider — placed last to avoid Anthropic rate-limit blocking",
+      key: "claude", label: "Claude", rank: 10, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
+      model: claudeModels[0] ?? null, note: "Tenth-tier (last) AI provider — placed last to avoid Anthropic rate-limit blocking",
       detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
       modelHint: null, runtime: claudeRuntime, status: claudeRuntime.status, isAi: true,
     },
@@ -141,7 +160,7 @@ function getAIHealth(): AIHealthResponse {
       // green. The deterministic draft fallback runs only after every
       // configured AI provider has failed, returned no usable result, or is
       // in cooldown. Its output cannot be exported as a final proposal.
-      key: "deterministic", label: "Deterministic draft fallback", rank: 9, configured: true, envVar: "(none — always available)",
+      key: "deterministic", label: "Deterministic draft fallback", rank: 11, configured: true, envVar: "(none — always available)",
       model: null, note: "Final non-AI fallback (not an AI provider). Output is never exportable as a final proposal.",
       detail: null, modelHint: null,
       runtime: {
@@ -172,7 +191,7 @@ function getAIHealth(): AIHealthResponse {
   const warnings: string[] = [];
   const blockers: string[] = [];
   if (!anyConfigured) {
-    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
+    blockers.push("No AI provider key is configured. Set ZAI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
   }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
@@ -284,7 +303,7 @@ export async function AIHealthPanel() {
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${labelTone}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the OpenAI, Gemini, Mistral, DeepSeek, Groq, Together, OpenRouter, and Claude keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the Z.ai, Cerebras, OpenAI, Gemini, Mistral, DeepSeek, Groq, Together, OpenRouter, and Claude keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-bold ${pillTone}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>

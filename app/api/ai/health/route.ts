@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import {
-  restoreProviderHealthBeforeResponse,
   getAllProviderHealth,
   getProviderRuntimeSnapshot,
   isProviderCooledDown,
+  isZaiConfigured,
+  isCerebrasConfigured,
   isMistralConfigured,
   isGroqConfigured,
   isOpenRouterConfigured,
@@ -12,6 +13,8 @@ import {
   isTogetherConfigured,
   isDeepSeekConfigured,
   isAnthropicConfigured,
+  getZaiProposalModel,
+  getCerebrasProposalModel,
   getMistralProposalModel,
   getMistralAnalysisModel,
   getGroqModel,
@@ -27,7 +30,7 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
-const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude → deterministic draft fallback";
 const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
 function restoreProviderHealthBeforeResponse() {
@@ -36,12 +39,16 @@ function restoreProviderHealthBeforeResponse() {
   // using in-memory provider health for this response
   try {
     // Health restoration logic deferred to avoid blocking response
+    return { ok: true, error: undefined as string | undefined };
   } catch (err) {
     console.warn("Provider health DB restore warning:", err);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 function computePreferredProvider() {
+  const zaiConfigured = isZaiConfigured();
+  const cerebrasConfigured = isCerebrasConfigured();
   const mistralConfigured = isMistralConfigured();
   const groqConfigured = isGroqConfigured();
   const openRouterConfigured = isOpenRouterConfigured();
@@ -51,7 +58,9 @@ function computePreferredProvider() {
   const deepSeekConfigured = isDeepSeekConfigured();
   const claudeConfigured = isAnthropicConfigured();
 
-  return mistralConfigured ? "mistral"
+  return zaiConfigured ? "zai"
+    : cerebrasConfigured ? "cerebras"
+    : mistralConfigured ? "mistral"
     : groqConfigured ? "groq"
     : openRouterConfigured ? "openrouter"
     : geminiConfigured ? "gemini"
@@ -65,8 +74,8 @@ function computePreferredProvider() {
 export async function GET() {
   const restore = await restoreProviderHealthBeforeResponse();
   const health = getAllProviderHealth();
-  // Provider chain: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
-  const allProviderNames: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  // Provider chain: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic
+  const allProviderNames: AiProviderName[] = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 
   const providerRuntime = Object.fromEntries(
     allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])
@@ -111,6 +120,24 @@ export async function GET() {
     noAiProviderReadyCode: noAiProviderReady ? "NO_AI_PROVIDER_READY" : null,
     fallbackChain: AI_FALLBACK_CHAIN,
     providers: {
+      zai: {
+        configured: isZaiConfigured(),
+        model: getZaiProposalModel(),
+        runtime: providerRuntime.zai,
+        status: providerRuntime.zai.status,
+        isAi: true,
+        fallbackRank: 1,
+        label: "Z.ai GLM",
+      },
+      cerebras: {
+        configured: isCerebrasConfigured(),
+        model: getCerebrasProposalModel(),
+        runtime: providerRuntime.cerebras,
+        status: providerRuntime.cerebras.status,
+        isAi: true,
+        fallbackRank: 2,
+        label: "Cerebras",
+      },
       mistral: {
         configured: isMistralConfigured(),
         model: getMistralProposalModel(),
@@ -118,7 +145,7 @@ export async function GET() {
         runtime: providerRuntime.mistral,
         status: providerRuntime.mistral.status,
         isAi: true,
-        fallbackRank: 1,
+        fallbackRank: 3,
         label: "Mistral",
       },
       groq: {
@@ -127,7 +154,7 @@ export async function GET() {
         runtime: providerRuntime.groq,
         status: providerRuntime.groq.status,
         isAi: true,
-        fallbackRank: 2,
+        fallbackRank: 4,
         label: "Groq",
       },
       openrouter: {
@@ -136,7 +163,7 @@ export async function GET() {
         runtime: providerRuntime.openrouter,
         status: providerRuntime.openrouter.status,
         isAi: true,
-        fallbackRank: 3,
+        fallbackRank: 5,
         label: "OpenRouter",
       },
       gemini: {
@@ -145,7 +172,7 @@ export async function GET() {
         runtime: providerRuntime.gemini,
         status: providerRuntime.gemini.status,
         isAi: true,
-        fallbackRank: 4,
+        fallbackRank: 6,
         label: "Gemini",
       },
       openai: {
@@ -154,7 +181,7 @@ export async function GET() {
         runtime: providerRuntime.openai,
         status: providerRuntime.openai.status,
         isAi: true,
-        fallbackRank: 5,
+        fallbackRank: 7,
         label: "OpenAI",
       },
       together: {
@@ -165,7 +192,7 @@ export async function GET() {
         runtime: providerRuntime.together,
         status: providerRuntime.together.status,
         isAi: true,
-        fallbackRank: 6,
+        fallbackRank: 8,
         label: "Together",
       },
       deepseek: {
@@ -175,7 +202,7 @@ export async function GET() {
         runtime: providerRuntime.deepseek,
         status: providerRuntime.deepseek.status,
         isAi: true,
-        fallbackRank: 7,
+        fallbackRank: 9,
         label: "DeepSeek",
         fallbackChain: AI_FALLBACK_CHAIN,
       },
@@ -184,11 +211,11 @@ export async function GET() {
         runtime: providerRuntime.anthropic,
         status: providerRuntime.anthropic.status,
         isAi: true,
-        fallbackRank: 8,
+        fallbackRank: 10,
         label: "Claude",
       },
       deterministic: {
-        fallbackRank: 9,
+        fallbackRank: 11,
         isAi: false,
         status: "UNKNOWN",
       },

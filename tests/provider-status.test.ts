@@ -5,20 +5,20 @@ import { AI_PROVIDER_ORDER, getSafeProviderStatus, hasAnyProviderConfigured } fr
 describe("safe provider status", () => {
   it("keeps Anthropic last in provider order", () => {
     assert.equal(AI_PROVIDER_ORDER.at(-1)?.provider, "Anthropic");
-    assert.equal(AI_PROVIDER_ORDER.at(-1)?.order, 8);
+    assert.equal(AI_PROVIDER_ORDER.at(-1)?.order, 10);
   });
 
-  it("uses the canonical runtime order (Mistral first, Anthropic last)", () => {
+  it("uses the canonical runtime order (Z.ai first, Anthropic last)", () => {
     // Mirrors lib/ai.ts CANONICAL_PROVIDER_CHAIN and lib/ai-provider-policy.ts
     // CANONICAL_AI_PROVIDER_CHAIN. Reordering here is a breaking change that
     // requires an explicit product decision.
     assert.deepEqual(
       AI_PROVIDER_ORDER.map((p) => p.provider),
-      ["Mistral", "Groq", "OpenRouter", "Gemini", "OpenAI", "Together", "DeepSeek", "Anthropic"],
+      ["Z.ai", "Cerebras", "Mistral", "Groq", "OpenRouter", "Gemini", "OpenAI", "Together", "DeepSeek", "Anthropic"],
     );
     assert.deepEqual(
       AI_PROVIDER_ORDER.map((p) => p.order),
-      [1, 2, 3, 4, 5, 6, 7, 8],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     );
   });
 

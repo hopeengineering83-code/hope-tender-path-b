@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
-const REQUIRED_CHAIN = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
+const REQUIRED_CHAIN = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude";
 const failures = [];
 
 function read(path) {
@@ -41,7 +41,7 @@ for (const useCase of ["default", "extraction", "proposal", "validation", "fast"
 requireRule("AI prompt trust boundary import is missing", ai.includes('from "./ai-trust-boundary"'));
 requireRule("AI prompt trust boundary is not applied", ai.includes("const trustBoundary = protectPrompt(prompt);") && ai.includes("trustBoundary.protectedPrompt"));
 requireRule("AI health display order drifted", health.includes(REQUIRED_LABELS));
-requireRule("AI health preferred provider is not Mistral-first", health.indexOf('mistralConfigured ? "mistral"') >= 0 && health.indexOf('mistralConfigured ? "mistral"') < health.indexOf(': geminiConfigured ? "gemini"'));
+requireRule("AI health preferred provider is not Z.ai-first", health.indexOf('zaiConfigured ? "zai"') >= 0 && health.indexOf('zaiConfigured ? "zai"') < health.indexOf(': geminiConfigured ? "gemini"'));
 requireRule("AI environment readiness order drifted", envReadiness.includes(REQUIRED_LABELS));
 
 requireRule("Final ZIP assembly helper is missing", download.includes("assembleFinalSubmissionZip"));

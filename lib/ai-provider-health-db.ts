@@ -21,13 +21,13 @@ import {
 } from "./ai-provider-health";
 
 // Persistence iteration is in the canonical runtime chain order
-// (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude)
+// (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic)
 // so that operator-facing artifacts (DB rows, logs, snapshots) read in the
 // same order as lib/ai.ts CANONICAL_PROVIDER_CHAIN. This list is NOT a
 // fallback chain by itself — it only governs the order in which we read/write
 // ProviderHealthSnapshot rows. Anthropic stays last to avoid operator/status
 // confusion.
-const ALL_PROVIDERS: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const ALL_PROVIDERS: AiProviderName[] = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 
 // Module-level guard: only restore from DB once per instance lifetime.
 // Subsequent calls are no-ops so per-request overhead is zero after the first call.

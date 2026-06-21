@@ -21,6 +21,8 @@ function has(value: string | undefined | null): boolean {
 }
 
 export const REQUIRED_PROVIDER_ORDER = [
+  "Z.ai",
+  "Cerebras",
   "Mistral",
   "Groq",
   "OpenRouter",
@@ -33,6 +35,8 @@ export const REQUIRED_PROVIDER_ORDER = [
 
 function configuredAiProviders(): string[] {
   const providers: string[] = [];
+  if (has(process.env.ZAI_API_KEY)) providers.push("Z.ai");
+  if (has(process.env.CEREBRAS_API_KEY)) providers.push("Cerebras");
   if (has(process.env.MISTRAL_API_KEY)) providers.push("Mistral");
   if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
   if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");

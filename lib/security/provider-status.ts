@@ -4,14 +4,16 @@
 // rate limits do not block the app when earlier providers are available.
 // Reorder only via an explicit product decision — see docs/ai-provider-order.md.
 export const AI_PROVIDER_ORDER = [
-  { provider: "Mistral", envName: "MISTRAL_API_KEY", order: 1 },
-  { provider: "Groq", envName: "GROQ_API_KEY", order: 2 },
-  { provider: "OpenRouter", envName: "OPENROUTER_API_KEY", order: 3 },
-  { provider: "Gemini", envName: "GEMINI_API_KEY", order: 4 },
-  { provider: "OpenAI", envName: "OPENAI_API_KEY", order: 5 },
-  { provider: "Together", envName: "TOGETHER_API_KEY", order: 6 },
-  { provider: "DeepSeek", envName: "DEEPSEEK_API_KEY", order: 7 },
-  { provider: "Anthropic", envName: "ANTHROPIC_API_KEY", order: 8 },
+  { provider: "Z.ai", envName: "ZAI_API_KEY", order: 1 },
+  { provider: "Cerebras", envName: "CEREBRAS_API_KEY", order: 2 },
+  { provider: "Mistral", envName: "MISTRAL_API_KEY", order: 3 },
+  { provider: "Groq", envName: "GROQ_API_KEY", order: 4 },
+  { provider: "OpenRouter", envName: "OPENROUTER_API_KEY", order: 5 },
+  { provider: "Gemini", envName: "GEMINI_API_KEY", order: 6 },
+  { provider: "OpenAI", envName: "OPENAI_API_KEY", order: 7 },
+  { provider: "Together", envName: "TOGETHER_API_KEY", order: 8 },
+  { provider: "DeepSeek", envName: "DEEPSEEK_API_KEY", order: 9 },
+  { provider: "Anthropic", envName: "ANTHROPIC_API_KEY", order: 10 },
 ] as const;
 
 export type SafeProviderStatus = {

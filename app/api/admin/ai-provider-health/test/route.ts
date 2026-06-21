@@ -7,6 +7,14 @@ import {
   recordProviderSuccess,
   recordProviderFailure,
   isProviderCooledDown,
+  isZaiConfigured,
+  getZaiApiKey,
+  getZaiBaseUrl,
+  getZaiProposalModel,
+  isCerebrasConfigured,
+  getCerebrasApiKey,
+  getCerebrasBaseUrl,
+  getCerebrasProposalModel,
   isMistralConfigured,
   getMistralApiKey,
   getMistralBaseUrl,
@@ -129,6 +137,8 @@ async function testProvider(
   capability: "ping" | "analysis" | "generation"
 ): Promise<ProviderTestResult> {
   const isConfigured = {
+    zai: isZaiConfigured(),
+    cerebras: isCerebrasConfigured(),
     mistral: isMistralConfigured(),
     groq: isGroqConfigured(),
     openrouter: isOpenRouterConfigured(),
@@ -197,6 +207,8 @@ async function testProvider(
     } else {
       // OpenAI Compatible
       const config: any = {
+        zai: { key: getZaiApiKey()!, url: getZaiBaseUrl(), model: getZaiProposalModel() },
+        cerebras: { key: getCerebrasApiKey()!, url: getCerebrasBaseUrl(), model: getCerebrasProposalModel() },
         mistral: { key: getMistralApiKey()!, url: getMistralBaseUrl(), model: getMistralProposalModel() },
         groq: { key: getGroqApiKey()!, url: getGroqBaseUrl(), model: getGroqModel() },
         openrouter: {
@@ -292,7 +304,7 @@ export async function GET(req: Request) {
   const onlyProvider = url.searchParams.get("provider") as AiProviderName | null;
   const capability = (url.searchParams.get("capability") || "ping") as "ping" | "analysis" | "generation";
 
-  const PROVIDERS: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const PROVIDERS: AiProviderName[] = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   const testers = PROVIDERS.map(p => new ProviderTester(p, capability));
   const results: ProviderTestResult[] = [];
 

@@ -1,6 +1,6 @@
 // AI provider fallback chain tests.
 //
-// Verifies that the multi-provider fallback chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude)
+// Verifies that the multi-provider fallback chain (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic)
 // behaves correctly under various failure modes, and that env-check logic
 // accepts any single provider key as sufficient.
 
@@ -23,7 +23,7 @@ function prodEnv(aiOverrides: Record<string, string | undefined> = {}): Record<s
   };
 }
 
-describe("evaluateEnv — 8-provider coverage", () => {
+describe("evaluateEnv — 10-provider coverage", () => {
   it("passes when only ANTHROPIC_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ ANTHROPIC_API_KEY: "sk-ant-test" }));
     assert.equal(r.ok, true, r.errors.join("; "));
@@ -41,6 +41,16 @@ describe("evaluateEnv — 8-provider coverage", () => {
 
   it("passes when only DEEPSEEK_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ DEEPSEEK_API_KEY: "dsk-test-key" }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("passes when only ZAI_API_KEY is set", () => {
+    const r = evaluateEnv(prodEnv({ ZAI_API_KEY: "zai-test-key" }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("passes when only CEREBRAS_API_KEY is set", () => {
+    const r = evaluateEnv(prodEnv({ CEREBRAS_API_KEY: "cerebras-test-key" }));
     assert.equal(r.ok, true, r.errors.join("; "));
   });
 
@@ -63,12 +73,12 @@ describe("evaluateEnv — 8-provider coverage", () => {
 // ─── isAIEnabled() / isAIConfigured() ────────────────────────────────────────
 // These tests mock process.env directly and restore it after each test.
 
-describe("isAIEnabled — 8-provider awareness", () => {
+describe("isAIEnabled — 10-provider awareness", () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
     // Restore original env
-    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"]) {
+    for (const key of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"]) {
       if (key in originalEnv) {
         process.env[key] = originalEnv[key as keyof typeof originalEnv] as string;
       } else {
@@ -78,6 +88,8 @@ describe("isAIEnabled — 8-provider awareness", () => {
   });
 
   it("returns true when only DEEPSEEK_API_KEY is set", async () => {
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -93,6 +105,8 @@ describe("isAIEnabled — 8-provider awareness", () => {
   });
 
   it("returns true when only OPENAI_API_KEY is set", async () => {
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.MISTRAL_API_KEY;
@@ -105,7 +119,24 @@ describe("isAIEnabled — 8-provider awareness", () => {
     assert.equal(isAIConfigured(), true);
   });
 
+  it("returns true when only ZAI_API_KEY is set", async () => {
+    delete process.env.CEREBRAS_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.MISTRAL_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.TOGETHER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.ZAI_API_KEY = "zai-test-key";
+    const { isAIConfigured } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), true);
+  });
+
   it("returns false when no AI provider is set", async () => {
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -161,7 +192,7 @@ describe("evaluateEnv — preview + DeepSeek only", () => {
 
 // ─── check-env.mjs alignment ─────────────────────────────────────────────────
 
-describe("check-env.mjs — 8-provider policy alignment", () => {
+describe("check-env.mjs — 10-provider policy alignment", () => {
   it("includes OPENAI_API_KEY in AI_PROVIDER_KEYS", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
@@ -175,21 +206,28 @@ describe("check-env.mjs — 8-provider policy alignment", () => {
     assert.match(src, /DEEPSEEK_API_KEY/);
   });
 
+  it("includes ZAI_API_KEY and CEREBRAS_API_KEY in AI_PROVIDER_KEYS", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
+    assert.match(src, /ZAI_API_KEY/);
+    assert.match(src, /CEREBRAS_API_KEY/);
+  });
+
   it("production error message references all provider keys", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
     // The hasAnyAIKey block must reference all providers in its message
-    assert.match(src, /OPENAI_API_KEY.*GEMINI_API_KEY.*MISTRAL_API_KEY.*DEEPSEEK_API_KEY.*GROQ_API_KEY.*TOGETHER_API_KEY.*OPENROUTER_API_KEY.*ANTHROPIC_API_KEY/s);
+    assert.match(src, /ZAI_API_KEY.*CEREBRAS_API_KEY.*OPENAI_API_KEY.*GEMINI_API_KEY.*MISTRAL_API_KEY.*DEEPSEEK_API_KEY.*GROQ_API_KEY.*TOGETHER_API_KEY.*OPENROUTER_API_KEY.*ANTHROPIC_API_KEY/s);
   });
 });
 
-// ─── AIEnvironmentReadiness — 8-provider chain ───────────────────────────────
+// ─── AIEnvironmentReadiness — 10-provider chain ──────────────────────────────
 
 describe("getAIEnvironmentReadiness — DeepSeek support", () => {
   const savedEnv = { ...process.env };
 
   afterEach(() => {
-    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"]) {
+    for (const key of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"]) {
       if (key in savedEnv) {
         process.env[key] = savedEnv[key as keyof typeof savedEnv] as string;
       } else {

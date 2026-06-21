@@ -101,11 +101,11 @@ describe("canonical provider wiring", () => {
     assert.match(source, /"X-Title":\s*getOpenRouterAppName\(\)/);
   });
 
-  it("uses Mistral, Groq, OpenRouter, Gemini, OpenAI, Together, DeepSeek, Claude in that order", () => {
+  it("uses Z.ai, Cerebras, Mistral, Groq, OpenRouter, Gemini, OpenAI, Together, DeepSeek, Anthropic in that order", () => {
     const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
     assert.ok(match);
     const chain = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
-    assert.deepEqual(chain, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(chain, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
   });
 });
 
@@ -115,17 +115,17 @@ describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
   it("returns groq and openrouter provider objects with fallback ranks", () => {
     assert.match(source, /groq:\s*\{/);
     assert.match(source, /openrouter:\s*\{/);
-    assert.match(source, /fallbackRank:\s*6/);
-    assert.match(source, /fallbackRank:\s*7/);
-    assert.match(source, /fallbackRank:\s*8/);
+    assert.match(source, /fallbackRank:\s*4/);
+    assert.match(source, /fallbackRank:\s*5/);
+    assert.match(source, /fallbackRank:\s*10/);
   });
 
-  it("advertises the extended fallback chain with Claude last", () => {
-    assert.match(source, /Together → DeepSeek → Claude → deterministic draft fallback/);
+  it("advertises the extended fallback chain with Anthropic last", () => {
+    assert.match(source, /Together → DeepSeek → Anthropic \/ Claude → deterministic draft fallback/);
   });
 });
 
-describe("AI Health panel renders all eight provider cards from the contract", () => {
+describe("AI Health panel renders all ten provider cards from the contract", () => {
   const source = readFileSync("components/ai-health-panel.tsx", "utf8");
 
   it("includes Groq + OpenRouter labels, env vars, and fallback ranks", () => {
@@ -133,8 +133,8 @@ describe("AI Health panel renders all eight provider cards from the contract", (
     assert.match(source, /label: "OpenRouter"/);
     assert.match(source, /GROQ_API_KEY/);
     assert.match(source, /OPENROUTER_API_KEY/);
-    assert.match(source, /rank: 6/);
-    assert.match(source, /rank: 7/);
+    assert.match(source, /rank: 4/);
+    assert.match(source, /rank: 5/);
   });
 
   it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {
@@ -143,7 +143,7 @@ describe("AI Health panel renders all eight provider cards from the contract", (
     assert.match(source, /Rate-limited|coolingDown/);
   });
 
-  it("nudges pinning a model when OpenRouter uses the auto default", () => {
+  it("nudges pinning a model when OpenRouter uses the auto default or non-:free model", () => {
     assert.match(source, /Set OPENROUTER_PROPOSAL_MODEL/);
   });
 });
@@ -151,27 +151,35 @@ describe("AI Health panel renders all eight provider cards from the contract", (
 describe("AI health contract", () => {
   const source = readFileSync("app/api/ai/health/route.ts", "utf8");
 
-  it("publishes canonical ranks with Mistral first and Claude last", () => {
-    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*1/);
-    assert.match(source, /groq:\s*\{[\s\S]*?fallbackRank:\s*2/);
-    assert.match(source, /openrouter:\s*\{[\s\S]*?fallbackRank:\s*3/);
-    assert.match(source, /claude:\s*\{[\s\S]*?fallbackRank:\s*8/);
-    assert.match(source, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback/);
+  it("publishes canonical ranks with Z.ai first and Claude last", () => {
+    assert.match(source, /zai:\s*\{[\s\S]*?fallbackRank:\s*1/);
+    assert.match(source, /cerebras:\s*\{[\s\S]*?fallbackRank:\s*2/);
+    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*3/);
+    assert.match(source, /groq:\s*\{[\s\S]*?fallbackRank:\s*4/);
+    assert.match(source, /openrouter:\s*\{[\s\S]*?fallbackRank:\s*5/);
+    assert.match(source, /gemini:\s*\{[\s\S]*?fallbackRank:\s*6/);
+    assert.match(source, /openai:\s*\{[\s\S]*?fallbackRank:\s*7/);
+    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*8/);
+    assert.match(source, /deepseek:\s*\{[\s\S]*?fallbackRank:\s*9/);
+    assert.match(source, /claude:\s*\{[\s\S]*?fallbackRank:\s*10/);
+    assert.match(source, /Z\.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic \/ Claude → deterministic draft fallback/);
   });
 
   it("selects the preferred provider in canonical order", () => {
+    const zai = source.indexOf('zaiConfigured ? "zai"');
+    const cerebras = source.indexOf('cerebrasConfigured ? "cerebras"');
     const mistral = source.indexOf('mistralConfigured ? "mistral"');
     const groq = source.indexOf('groqConfigured ? "groq"');
     const openrouter = source.indexOf('openRouterConfigured ? "openrouter"');
     const gemini = source.indexOf('geminiConfigured ? "gemini"');
     const deepseek = source.indexOf('deepSeekConfigured ? "deepseek"');
     const claude = source.indexOf('claudeConfigured ? "claude"');
-    assert.ok(mistral >= 0 && mistral < groq && groq < openrouter && openrouter < gemini && gemini < deepseek && deepseek < claude);
+    assert.ok(zai >= 0 && zai < cerebras && cerebras < mistral && mistral < groq && groq < openrouter && openrouter < gemini && gemini < deepseek && deepseek < claude);
   });
 
   it("includes Mistral and Together at canonical positions", () => {
-    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*1/);
-    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*6/);
+    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*3/);
+    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*8/);
   });
 });
 

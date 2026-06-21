@@ -2,7 +2,7 @@
 //
 // Make provider truth accurate, secure, and based on real capability.
 
-export type AiProviderName = "mistral" | "groq" | "openrouter" | "gemini" | "openai" | "together" | "deepseek" | "anthropic";
+export type AiProviderName = "zai" | "cerebras" | "mistral" | "groq" | "openrouter" | "gemini" | "openai" | "together" | "deepseek" | "anthropic";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -12,6 +12,7 @@ export type AiProviderFailureCategory =
   | "MODEL_UNAVAILABLE"
   | "NETWORK"
   | "MALFORMED_RESPONSE"
+  | "CONFIGURATION_INVALID"
   | "UNKNOWN";
 
 export type AiProviderStatus =
@@ -58,6 +59,54 @@ export type InternalState = {
 const state = new Map<AiProviderName, InternalState>();
 
 // ─── Dynamic Key Reads ──────────────────────────────────────────────────────
+
+// Z.ai GLM — first-tier provider in the canonical chain
+// (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic).
+// OpenAI-compatible REST endpoint. Returns null when ZAI_API_KEY is not configured.
+export function getZaiApiKey(): string | undefined {
+  const v = process.env.ZAI_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isZaiConfigured(): boolean {
+  return Boolean(getZaiApiKey());
+}
+export function getZaiBaseUrl(): string {
+  const v = process.env.ZAI_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://api.z.ai/api/paas/v4").replace(/\/+$/, "");
+}
+export function getZaiProposalModel(): string {
+  return process.env.ZAI_PROPOSAL_MODEL || "glm-4.7-flash";
+}
+export function getZaiAnalysisModel(): string {
+  return process.env.ZAI_ANALYSIS_MODEL || "glm-4.7-flash";
+}
+export function getZaiFastModel(): string {
+  return process.env.ZAI_FAST_MODEL || "glm-4.7-flash";
+}
+
+// Cerebras — second-tier provider in the canonical chain. OpenAI-compatible
+// REST endpoint with a Cerebras-specific `max_completion_tokens` field.
+// Returns null when CEREBRAS_API_KEY is not configured.
+export function getCerebrasApiKey(): string | undefined {
+  const v = process.env.CEREBRAS_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isCerebrasConfigured(): boolean {
+  return Boolean(getCerebrasApiKey());
+}
+export function getCerebrasBaseUrl(): string {
+  const v = process.env.CEREBRAS_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://api.cerebras.ai/v1").replace(/\/+$/, "");
+}
+export function getCerebrasProposalModel(): string {
+  return process.env.CEREBRAS_PROPOSAL_MODEL || "gpt-oss-120b";
+}
+export function getCerebrasAnalysisModel(): string {
+  return process.env.CEREBRAS_ANALYSIS_MODEL || "gpt-oss-120b";
+}
+export function getCerebrasFastModel(): string {
+  return process.env.CEREBRAS_FAST_MODEL || "gpt-oss-120b";
+}
 
 export function getAnthropicApiKey(): string | undefined {
   const v = process.env.ANTHROPIC_API_KEY;
@@ -183,18 +232,28 @@ export function getOpenRouterAppName(): string {
   return v && v.trim().length > 0 ? v.trim() : "Hope Tender Proposal Generator";
 }
 
-export function isProviderConfigured(provider: AiProviderName): boolean {
-  switch (provider) {
-    case "anthropic": return isAnthropicConfigured();
-    case "gemini": return isGeminiConfigured();
-    case "openai": return isOpenAIConfigured();
-    case "mistral": return isMistralConfigured();
-    case "deepseek": return isDeepSeekConfigured();
-    case "groq": return isGroqConfigured();
-    case "together": return isTogetherConfigured();
-    case "openrouter": return isOpenRouterConfigured();
-    default: return false;
-  }
+const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
+  zai: "ZAI_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  openai: "OPENAI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+  groq: "GROQ_API_KEY",
+  together: "TOGETHER_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
+
+function isProviderConfigured(provider: AiProviderName): boolean {
+  if (provider === "zai") return isZaiConfigured();
+  if (provider === "cerebras") return isCerebrasConfigured();
+  if (provider === "deepseek") return isDeepSeekConfigured();
+  if (provider === "mistral") return isMistralConfigured();
+  if (provider === "groq") return isGroqConfigured();
+  if (provider === "together") return isTogetherConfigured();
+  if (provider === "openrouter") return isOpenRouterConfigured();
+  return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
 }
 
 export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
@@ -205,6 +264,7 @@ export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number>
   MODEL_UNAVAILABLE: 2 * 60_000,
   NETWORK: 30_000,
   MALFORMED_RESPONSE: 60_000,
+  CONFIGURATION_INVALID: 60_000,
   UNKNOWN: 60_000,
 };
 
@@ -250,6 +310,7 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   if (/401|403|invalid\s+api\s+key|unauthor|forbidden|api\s+key/.test(lower)) return "AUTH";
   if (/402|insufficient.?balance|payment\s+required|billing|account\s+balance/.test(lower)) return "BILLING";
   if (/timed?\s*out|timeout|abort/.test(lower)) return "TIMEOUT";
+  if (/configuration.?invalid|model.*not.*free|openrouter.*auto/i.test(lower)) return "CONFIGURATION_INVALID";
   if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request/.test(lower)) return "MODEL_UNAVAILABLE";
   if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
   if (/no\s+json|malformed\s+json|invalid\s+json|json\s+parse/.test(lower)) return "MALFORMED_RESPONSE";
@@ -352,7 +413,7 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
 }
 
 export function getAllProviderHealth(): AiProviderHealth[] {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const providers: AiProviderName[] = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   return providers.map(getProviderHealth);
 }
 
@@ -430,7 +491,7 @@ export function buildProviderDiagnosticsSnapshot(): {
   providersCoolingDown: AiProviderName[];
   perProvider: ProviderAttemptDiagnostic[];
 } {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const providers: AiProviderName[] = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   const perProvider: ProviderAttemptDiagnostic[] = providers.map((provider) => {
     const h = getProviderHealth(provider);
     return {
@@ -449,7 +510,7 @@ export function buildProviderDiagnosticsSnapshot(): {
 }
 
 export function getMinCooldownExpiryMs(): number | null {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const providers: AiProviderName[] = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   const configured = providers.filter((p) => isProviderConfigured(p));
   if (configured.length === 0) return null;
   const now = Date.now();

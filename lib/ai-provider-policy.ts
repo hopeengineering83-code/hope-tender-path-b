@@ -1,6 +1,8 @@
 import type { AiProviderName } from "./ai-provider-health";
 
 export const CANONICAL_AI_PROVIDER_CHAIN = [
+  "zai",
+  "cerebras",
   "mistral",
   "groq",
   "openrouter",
@@ -14,6 +16,8 @@ export const CANONICAL_AI_PROVIDER_CHAIN = [
 export type CanonicalAiProvider = (typeof CANONICAL_AI_PROVIDER_CHAIN)[number];
 
 export const CANONICAL_AI_PROVIDER_LABEL_BY_NAME: Readonly<Record<CanonicalAiProvider, string>> = {
+  zai: "Z.ai GLM",
+  cerebras: "Cerebras",
   mistral: "Mistral",
   groq: "Groq",
   openrouter: "OpenRouter",
@@ -21,7 +25,7 @@ export const CANONICAL_AI_PROVIDER_LABEL_BY_NAME: Readonly<Record<CanonicalAiPro
   openai: "OpenAI",
   together: "Together",
   deepseek: "DeepSeek",
-  anthropic: "Claude/Anthropic",
+  anthropic: "Anthropic / Claude",
 };
 
 export const CANONICAL_AI_PROVIDER_LABELS = CANONICAL_AI_PROVIDER_CHAIN.map(
@@ -31,6 +35,8 @@ export const CANONICAL_AI_PROVIDER_LABELS = CANONICAL_AI_PROVIDER_CHAIN.map(
 export const CANONICAL_AI_PROVIDER_DISPLAY = CANONICAL_AI_PROVIDER_LABELS.join(" → ");
 
 export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<CanonicalAiProvider, string>> = {
+  zai: "ZAI_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
   mistral: "MISTRAL_API_KEY",
   groq: "GROQ_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
@@ -42,14 +48,16 @@ export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<CanonicalAiProvider, str
 };
 
 export const CANONICAL_AI_PROVIDER_RANK: Readonly<Record<CanonicalAiProvider, number>> = {
-  mistral: 1,
-  groq: 2,
-  openrouter: 3,
-  gemini: 4,
-  openai: 5,
-  together: 6,
-  deepseek: 7,
-  anthropic: 8,
+  zai: 1,
+  cerebras: 2,
+  mistral: 3,
+  groq: 4,
+  openrouter: 5,
+  gemini: 6,
+  openai: 7,
+  together: 8,
+  deepseek: 9,
+  anthropic: 10,
 };
 
 export function configuredCanonicalProviders(env: NodeJS.ProcessEnv = process.env): CanonicalAiProvider[] {
@@ -63,3 +71,6 @@ export function preferredCanonicalProvider(env: NodeJS.ProcessEnv = process.env)
 export function canonicalProviderLabel(provider: CanonicalAiProvider): string {
   return CANONICAL_AI_PROVIDER_LABEL_BY_NAME[provider];
 }
+
+// Maximum actual outbound provider attempts per request/chunk.
+export const MAX_PROVIDER_ATTEMPTS = 3;
