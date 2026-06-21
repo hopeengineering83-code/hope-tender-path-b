@@ -12,7 +12,7 @@ describe("Provider Health Redaction", () => {
       "OpenAI: sk-abcdef123456",
       "Groq: gsk_abcdef123456",
       "DeepSeek: dsk-abcdef123456",
-      "Gemini: AIzaSyAbcdef1234567890",
+      "Gemini: AIzaSyAbcdef1234567890abcd",
       "Gemini New: AQabcdef1234567890abcdef1234567890",
       "Bearer: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
       "Auth: authorization: sk-ant-abcdef123456"
