@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
-import { resolveTenderAnalysisState } from "../../../../../lib/engine/analysis/tender-analysis-resolver";
+import { resolveTenderAnalysisState } from "../../../../../lib/engine/analysis-state-resolver";
 import { logAction } from "../../../../../lib/audit";
 
 export async function POST(
@@ -15,7 +15,7 @@ export async function POST(
 
     const { id: tenderId } = await params;
 
-    const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId);
+    const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, actor.id);
 
     // Explicitly update tender stage/status based on resolved truth
     let status = undefined;

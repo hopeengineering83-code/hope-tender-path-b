@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus, SubmissionPlanStatus } from "../submission-plan";
-import { resolveTenderAnalysisState } from "./tender-analysis-resolver";
+import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 
 export type PlanTruthStatus =
   | "NO_PLAN"
@@ -11,7 +11,8 @@ export type PlanTruthStatus =
 
 export async function resolvePlanTruth(
   prisma: PrismaClient,
-  tenderId: string
+  tenderId: string,
+  userId?: string
 ): Promise<{
   status: PlanTruthStatus;
   isVerified: boolean;
@@ -19,8 +20,8 @@ export async function resolvePlanTruth(
   totalGenerated: number;
   reason: string;
 }> {
-  const tender = await prisma.tender.findUnique({
-    where: { id: tenderId },
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, ...(userId ? { userId } : {}) },
     include: {
       generatedDocuments: true,
       requirements: true,
@@ -29,7 +30,7 @@ export async function resolvePlanTruth(
 
   if (!tender) throw new Error("Tender not found");
 
-  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId);
+  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
   const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
   const status = deriveSubmissionPlanStatus(tender, plan);
 
