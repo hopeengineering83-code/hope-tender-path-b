@@ -17,7 +17,7 @@ describe("Comprehensive Workflow Regression Scenarios", () => {
     generatedDocuments: [],
     complianceGaps: [],
     analysisExtractionStatus: "FULL_EXTRACTION_AI_ANALYZED",
-    analysisSource: "AI",
+    notes: "Analysis source: AI (chunked multi-call when tender > 60K chars).",
   };
 
   it("Scenario 1: No files blocks analysis", async () => {
@@ -56,7 +56,7 @@ describe("Comprehensive Workflow Regression Scenarios", () => {
   });
 
   it("Scenario 5: Valid extraction permits AI analysis", async () => {
-    const tender = { ...baseTender, analysisSource: null };
+    const tender = { ...baseTender, notes: null };
     const mockPrisma = { tender: { findFirst: async () => tender } };
     const state = await getCanonicalTenderWorkflowState(mockPrisma as any, "u1", "t1");
     assert.equal(state.readyForAnalysis, true);

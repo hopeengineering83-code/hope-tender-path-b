@@ -17,7 +17,7 @@ describe("Workflow Readiness Scenarios", () => {
     generatedDocuments: [],
     complianceGaps: [],
     analysisExtractionStatus: "FULL_EXTRACTION_AI_ANALYZED",
-    analysisSource: "AI",
+    notes: "Analysis source: AI (chunked multi-call when tender > 60K chars).",
   };
 
   it("Scenario 1: No files blocks analysis", async () => {

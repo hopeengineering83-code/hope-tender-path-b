@@ -358,8 +358,13 @@ export async function resolveTenderAnalysisState(
   );
 
   // Legacy notes-based analysis only matters when there is no job record.
+  // CRITICAL FIX (investigation FM-010): the previous regex `/analysis\s+source.*ai/i`
+  // was too permissive — the `.*` greedily matched the substring "ai" inside
+  // "REGEX_FALLBACK_AI_ERROR", causing a false-positive AI_SUCCEEDED for a
+  // tender that actually fell back to regex. The anchored regex below requires
+  // "ai" to appear as a word boundary immediately after "source:".
   const legacyNotesAiAnalyzed =
-    !latestJob && Boolean(tender?.notes && /analysis\s+source.*ai/i.test(tender.notes));
+    !latestJob && Boolean(tender?.notes && /^analysis\s+source:\s*ai\b/im.test(tender.notes));
 
   // Detect if tender files have section markers (submission/evaluation/required docs)
   // but no requirements were extracted — a case that should block generation.
