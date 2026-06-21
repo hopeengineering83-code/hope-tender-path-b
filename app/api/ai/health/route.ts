@@ -102,6 +102,7 @@ export async function GET() {
         status: providerRuntime.mistral.status,
         isAi: true,
         fallbackRank: 1,
+        label: "Mistral",
       },
       groq: {
         configured: isGroqConfigured(),
@@ -110,6 +111,7 @@ export async function GET() {
         status: providerRuntime.groq.status,
         isAi: true,
         fallbackRank: 2,
+        label: "Groq",
       },
       openrouter: {
         configured: isOpenRouterConfigured(),
@@ -118,6 +120,7 @@ export async function GET() {
         status: providerRuntime.openrouter.status,
         isAi: true,
         fallbackRank: 3,
+        label: "OpenRouter",
       },
       gemini: {
         configured: isGeminiConfigured(),
@@ -126,6 +129,7 @@ export async function GET() {
         status: providerRuntime.gemini.status,
         isAi: true,
         fallbackRank: 4,
+        label: "Gemini",
       },
       openai: {
         configured: isOpenAIConfigured(),
@@ -134,6 +138,7 @@ export async function GET() {
         status: providerRuntime.openai.status,
         isAi: true,
         fallbackRank: 5,
+        label: "OpenAI",
       },
       together: {
         configured: isTogetherConfigured(),
@@ -144,6 +149,7 @@ export async function GET() {
         status: providerRuntime.together.status,
         isAi: true,
         fallbackRank: 6,
+        label: "Together",
       },
       deepseek: {
         configured: isDeepSeekConfigured(),
@@ -153,6 +159,7 @@ export async function GET() {
         status: providerRuntime.deepseek.status,
         isAi: true,
         fallbackRank: 7,
+        label: "DeepSeek",
       },
       claude: {
         configured: isAnthropicConfigured(),
@@ -160,6 +167,7 @@ export async function GET() {
         status: providerRuntime.anthropic.status,
         isAi: true,
         fallbackRank: 8,
+        label: "Claude",
       },
       deterministic: {
         fallbackRank: 9,
