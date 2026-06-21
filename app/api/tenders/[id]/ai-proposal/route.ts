@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
@@ -14,8 +14,9 @@ import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
-// Vercel route timeout — Claude proposal generation needs >10s default.
-// 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
+// PERF-001: maxDuration is 60 for Vercel Hobby. For Vercel Pro/Enterprise,
+// set AI_ROUTE_MAX_DURATION in Vercel and manually update this value.
+// Next.js requires a numeric literal — it cannot read env vars here.
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
@@ -77,8 +78,11 @@ function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // SEC-005 FIX: require ADMIN or PROPOSAL_MANAGER.
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = await rateLimitPersistent(`ai-proposal:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {

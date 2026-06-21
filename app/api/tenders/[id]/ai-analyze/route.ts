@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
@@ -34,6 +34,8 @@ import {
   stagePartialResult,
 } from "../../../../../lib/ai-analyze-promotion";
 
+// PERF-001: maxDuration is 60 for Vercel Hobby. For Vercel Pro/Enterprise,
+// update this literal to match your plan limit (Pro=300, Enterprise=900).
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
@@ -877,8 +879,12 @@ async function handleStreamingAnalyze(
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // SEC-005 FIX: require ADMIN or PROPOSAL_MANAGER — any VIEWER could
+  // previously trigger expensive AI calls.
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = rateLimit(`analyze:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {

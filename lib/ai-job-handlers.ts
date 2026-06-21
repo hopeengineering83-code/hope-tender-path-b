@@ -371,6 +371,40 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     await recordStep(ctx.jobId, { stepName: "facts.complete", message: `Filled ${Object.keys(updates).length} empty field(s): ${Object.keys(updates).join(", ")}`, status: "SUCCEEDED" });
     return { fieldsExtracted: Object.keys(facts).length, fieldsUpdated: Object.keys(updates).length, factsFound: facts as unknown as Record<string, unknown> };
   },
+
+  // ─── AI_ANALYZE — runs AI analysis on a tender via the job queue ─────
+  // FIX (FM-003): AI_ANALYZE was listed in SUPPORTED_JOB_TYPES but had no
+  // handler, so the worker would fail any AI_ANALYZE job with "No handler
+  // registered for jobType=AI_ANALYZE". This handler delegates to
+  // runTenderEngine (which includes AI analysis as its first stage).
+  AI_ANALYZE: async (ctx) => {
+    if (!ctx.tenderId) throw new Error("AI_ANALYZE requires tenderId on the job");
+    await recordStep(ctx.jobId, { stepName: "analyze.start", message: `Starting AI analysis for tender ${ctx.tenderId}`, status: "RUNNING" });
+    const heartbeat = setInterval(() => {
+      void recordStep(ctx.jobId, { stepName: "analyze.heartbeat", message: "Analysis running — waiting for AI response", status: "RUNNING" }).catch(() => {});
+    }, 25_000);
+    try {
+      const safeMode = ctx.input?.safe === true;
+      const skipAiRematch = ctx.input?.skipAiRematch === true;
+      const maxChars = typeof ctx.input?.maxChars === "number" ? ctx.input.maxChars : undefined;
+
+      const result = await runTenderEngine(
+        ctx.tenderId,
+        ctx.userId,
+        (stepName: string, message: string) => {
+          void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
+        },
+        { safe: safeMode, skipAiRematch, maxChars },
+      );
+      clearInterval(heartbeat);
+      const reqCount = result?.requirements?.length ?? 0;
+      await recordStep(ctx.jobId, { stepName: "analyze.complete", message: `AI analysis complete. Requirements: ${reqCount}`, status: "SUCCEEDED" });
+      return { analysisSource: "AI", requirementCount: reqCount };
+    } catch (err) {
+      clearInterval(heartbeat);
+      throw err;
+    }
+  },
 };
 
 export function getHandler(jobType: JobType): JobHandler | null {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
@@ -12,6 +12,8 @@ import { autoFillTenderMetadata } from "../../../../../lib/engine/auto-fill-tend
 import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
+// PERF-001: maxDuration is 60 for Vercel Hobby. For Vercel Pro/Enterprise,
+// update this literal to match your plan limit (Pro=300, Enterprise=900).
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
@@ -21,8 +23,11 @@ function requestDiagnosticId() {
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const diagnosticId = requestDiagnosticId();
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized. Sign in again before running the tender engine.", code: "UNAUTHORIZED", nextAction: "LOGIN_AGAIN", diagnosticId }, { status: 401 });
+  // SEC-005 FIX: require ADMIN or PROPOSAL_MANAGER.
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
