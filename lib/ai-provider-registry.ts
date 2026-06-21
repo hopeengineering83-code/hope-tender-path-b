@@ -14,6 +14,11 @@
 // returns API key VALUES, Authorization headers, or raw provider response
 // bodies. Key presence is read at request time via readProviderKey().
 
+import {
+  CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
+  PROVIDER_API_KEY_ENV,
+} from "./ai-provider-catalog.cjs";
+
 export type AiProviderName =
   | "zai"
   | "cerebras"
@@ -26,22 +31,13 @@ export type AiProviderName =
   | "deepseek"
   | "anthropic";
 
-// The canonical automatic provider order. This is the ONLY place the order is
-// declared. Currently-working tier first (zai → cerebras → mistral → groq →
+// The canonical automatic provider order. The single literal lives in the
+// plain-CJS catalog (lib/ai-provider-catalog.cjs) so build-time scripts
+// (next.config.js, scripts/check-env.mjs) consume the SAME order without any
+// duplication. Currently-working tier first (zai → cerebras → mistral → groq →
 // openrouter), remaining supported providers after OpenRouter in the required
 // order (gemini → openai → together → deepseek → anthropic).
-export const CANONICAL_AI_PROVIDER_ORDER = [
-  "zai",
-  "cerebras",
-  "mistral",
-  "groq",
-  "openrouter",
-  "gemini",
-  "openai",
-  "together",
-  "deepseek",
-  "anthropic",
-] as const satisfies readonly AiProviderName[];
+export const CANONICAL_AI_PROVIDER_ORDER: readonly AiProviderName[] = CATALOG_ORDER;
 
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
 
@@ -123,7 +119,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Z.ai GLM",
     rank: 1,
     env: {
-      apiKey: "ZAI_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
       proposalModel: "ZAI_PROPOSAL_MODEL",
       analysisModel: "ZAI_ANALYSIS_MODEL",
@@ -148,7 +144,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Cerebras",
     rank: 2,
     env: {
-      apiKey: "CEREBRAS_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
       proposalModel: "CEREBRAS_PROPOSAL_MODEL",
       analysisModel: "CEREBRAS_ANALYSIS_MODEL",
@@ -173,7 +169,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Mistral",
     rank: 3,
     env: {
-      apiKey: "MISTRAL_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
       proposalModel: "MISTRAL_PROPOSAL_MODEL",
       analysisModel: "MISTRAL_ANALYSIS_MODEL",
@@ -197,7 +193,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Groq",
     rank: 4,
     env: {
-      apiKey: "GROQ_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.groq,
       baseUrl: "GROQ_BASE_URL",
       proposalModel: "GROQ_PROPOSAL_MODEL",
       analysisModel: "GROQ_ANALYSIS_MODEL",
@@ -221,7 +217,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "OpenRouter",
     rank: 5,
     env: {
-      apiKey: "OPENROUTER_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
       proposalModel: "OPENROUTER_PROPOSAL_MODEL",
       analysisModel: "OPENROUTER_ANALYSIS_MODEL",
@@ -247,7 +243,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Gemini",
     rank: 6,
     env: {
-      apiKey: "GEMINI_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
       analysisModel: "GEMINI_ANALYSIS_MODEL",
       fastModel: "GEMINI_EXTRACTION_MODEL",
@@ -270,7 +266,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "OpenAI",
     rank: 7,
     env: {
-      apiKey: "OPENAI_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
       proposalModel: "OPENAI_PROPOSAL_MODEL",
       analysisModel: "OPENAI_ANALYSIS_MODEL",
@@ -294,7 +290,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Together",
     rank: 8,
     env: {
-      apiKey: "TOGETHER_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
       proposalModel: "TOGETHER_PROPOSAL_MODEL",
       analysisModel: "TOGETHER_ANALYSIS_MODEL",
@@ -318,7 +314,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "DeepSeek",
     rank: 9,
     env: {
-      apiKey: "DEEPSEEK_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
       baseUrl: "DEEPSEEK_BASE_URL",
       proposalModel: "DEEPSEEK_PROPOSAL_MODEL",
@@ -343,7 +339,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     displayName: "Anthropic / Claude",
     rank: 10,
     env: {
-      apiKey: "ANTHROPIC_API_KEY",
+      apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",
     },
     requestFormat: "anthropic",

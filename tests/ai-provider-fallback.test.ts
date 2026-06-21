@@ -171,14 +171,18 @@ describe("check-env.mjs — 10-provider policy alignment", () => {
     }
   });
 
-  it("the AI_PROVIDER_KEYS entries are declared in canonical order", async () => {
+  it("derives AI_PROVIDER_KEYS order from the shared catalog (no local order array)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    const order = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
-    const positions = order.map((k) => src.indexOf(`name: "${k}"`));
-    for (let i = 1; i < positions.length; i++) {
-      assert.ok(positions[i] > positions[i - 1], `${order[i]} must be declared after ${order[i - 1]}`);
-    }
+    // Order is owned by the catalog; check-env maps over AI_PROVIDER_API_KEY_ENVS.
+    assert.match(src, /import \{ AI_PROVIDER_API_KEY_ENVS \} from "\.\.\/lib\/ai-provider-catalog\.cjs"/);
+    assert.match(src, /AI_PROVIDER_API_KEY_ENVS\.map\(\(name\) => \(\{/);
+    // The catalog itself is the single source and is in canonical order.
+    const { AI_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
+    assert.deepEqual(AI_PROVIDER_API_KEY_ENVS, [
+      "ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
+      "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+    ]);
   });
 
   it("production error message is generated from AI_PROVIDER_KEYS (references all keys)", async () => {
