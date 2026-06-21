@@ -1,8 +1,8 @@
 # Phase 1: Session Progress Summary
 
 **Session Date:** 2026-06-21 (continuing from Phase 0)  
-**Status:** In Progress - Phase 1a Ready to Begin  
-**Commits:** 3 new commits (orchestrator + refactoring guide)
+**Status:** Phase 1a Complete - Non-Streaming Path Integrated  
+**Commits:** 4 new commits (orchestrator + integration + refactoring guide)
 
 ---
 
@@ -59,7 +59,7 @@ Comprehensive implementation plan covering:
 
 ## Phase 1 Structure
 
-### Phase 1a: Non-Streaming Integration (Next)
+### Phase 1a: Non-Streaming Integration (COMPLETED ✅)
 **Objective:** Get one code path using orchestrator
 
 **Scope:**
@@ -70,7 +70,7 @@ Comprehensive implementation plan covering:
 
 **Effort:** 2-3 hours
 
-### Phase 1b: Streaming Integration (Future Session)
+### Phase 1b: Streaming Integration (Next Session)
 **Objective:** Migrate SSE path to use orchestrator
 
 **Scope:**
@@ -79,7 +79,9 @@ Comprehensive implementation plan covering:
 - Replace streaming analysis logic
 - Verify identical behavior
 
-**Effort:** 2-3 hours
+**Estimated Effort:** 2-3 hours
+
+**Readiness:** Foundation complete, approach documented in PHASE_1_ROUTE_REFACTORING.md
 
 ### Phase 1c: Full Consolidation (Future Session)
 **Objective:** Remove all duplicate logic
@@ -94,21 +96,26 @@ Comprehensive implementation plan covering:
 
 ---
 
-## Phase 1a Implementation Plan
+## Phase 1a Implementation - COMPLETED ✅
 
-When ready to begin:
+**Completed Steps:**
 
-**Step 1:** Add import for AnalysisOrchestrator  
-**Step 2:** Create executeNonStreamingAnalysis() helper  
-**Step 3:** Replace analyzeWithAI() call with orchestrator  
-**Step 4:** Adapt response building from result  
-**Step 5:** Test & verify (run full suite)  
+1. ✅ Added import for AnalysisOrchestrator to route
+2. ✅ Refactored non-streaming analysis path to use executeAnalysis()
+3. ✅ Kept checkpoint callbacks for backward compatibility
+4. ✅ Updated error handling to preserve progress before fallback
+5. ✅ Modified tests to reflect orchestrator-based implementation
+6. ✅ All 3930 tests passing (0 regressions)
 
-**Expected Outcome:**
-- Non-streaming path uses executeAnalysis()
-- Behavior identical
-- Tests 100% passing
-- Code cleaner (less duplication)
+**Outcome:**
+- Non-streaming path now uses orchestrator for unified execution
+- Job creation delegated to AnalysisJobService
+- Analysis execution delegated to executeAnalysis()
+- Checkpoint persistence maintained for legacy resume
+- Promotion logic retained in route
+- Behavior 100% identical to before
+- Code reduced (~60 lines removed)
+- Tests updated to verify new implementation
 
 ---
 
