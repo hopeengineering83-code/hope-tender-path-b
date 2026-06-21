@@ -5,9 +5,11 @@
  * a clear message rather than silently degrading.
  *
  * ARCHITECTURE: at least one AI provider key is required in production:
- *   - OPENAI_API_KEY / GEMINI_API_KEY / MISTRAL_API_KEY / DEEPSEEK_API_KEY /
- *     GROQ_API_KEY / TOGETHER_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY. The current default proposal
- *     chain is Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude, with
+ *   - ZAI_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / GROQ_API_KEY /
+ *     OPENROUTER_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY /
+ *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical chain (single source of
+ *     truth: lib/ai-provider-registry.ts) is Z.ai GLM → Cerebras → Mistral → Groq
+ *     → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude, with
  *     Claude last so Anthropic rate limits do not block the app.
  *
  * Without EITHER key:
@@ -24,40 +26,51 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
 ];
 
+// Canonical provider key order — mirrors lib/ai-provider-registry.ts
+// CANONICAL_AI_PROVIDER_ORDER (zai → cerebras → mistral → groq → openrouter →
+// gemini → openai → together → deepseek → anthropic).
 const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
   {
-    name: "ANTHROPIC_API_KEY",
-    description: "Anthropic Claude API key (sk-ant-...). Last-resort provider; Claude must remain last in the default chain.",
+    name: "ZAI_API_KEY",
+    description: "Z.ai GLM API key. First-tier provider in the canonical chain (general OpenAI-compatible endpoint).",
   },
   {
-    name: "GEMINI_API_KEY",
-    description:
-      "Google Gemini API key (AIza...). First-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases. " +
-      "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
-  },
-  {
-    name: "OPENAI_API_KEY",
-    description: "OpenAI API key (sk-...). Second-tier provider in the canonical chain after Gemini.",
+    name: "CEREBRAS_API_KEY",
+    description: "Cerebras API key. Second-tier provider (OpenAI-compatible, uses max_completion_tokens).",
   },
   {
     name: "MISTRAL_API_KEY",
     description: "Mistral API key. Third-tier proposal/validation provider and analysis fallback.",
   },
   {
-    name: "DEEPSEEK_API_KEY",
-    description: "DeepSeek API key. Fourth-tier fallback for proposal generation via OpenAI-compatible endpoint.",
-  },
-  {
     name: "GROQ_API_KEY",
-    description: "Groq API key. Sixth-tier proposal fallback provider.",
-  },
-  {
-    name: "TOGETHER_API_KEY",
-    description: "Together API key. Fourth-tier proposal fallback provider.",
+    description: "Groq API key. Fourth-tier proposal fallback provider.",
   },
   {
     name: "OPENROUTER_API_KEY",
-    description: "OpenRouter API key. Seventh-tier proposal fallback aggregator.",
+    description: "OpenRouter API key. Fifth-tier aggregator — requires an explicit ':free' model.",
+  },
+  {
+    name: "GEMINI_API_KEY",
+    description:
+      "Google Gemini API key (AIza...). Sixth-tier provider in the canonical chain. " +
+      "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
+  },
+  {
+    name: "OPENAI_API_KEY",
+    description: "OpenAI API key (sk-...). Seventh-tier provider in the canonical chain.",
+  },
+  {
+    name: "TOGETHER_API_KEY",
+    description: "Together API key. Eighth-tier proposal fallback provider.",
+  },
+  {
+    name: "DEEPSEEK_API_KEY",
+    description: "DeepSeek API key. Ninth-tier fallback via OpenAI-compatible endpoint.",
+  },
+  {
+    name: "ANTHROPIC_API_KEY",
+    description: "Anthropic Claude API key (sk-ant-...). Last-resort, emergency-only provider; Claude must remain last in the chain.",
   },
 ];
 
@@ -142,7 +155,7 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
   const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
   if (!hasAnyAIKey) {
     const message =
-      "At least one AI provider key is required (OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY). " +
+      `At least one AI provider key is required (${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}). ` +
       "Without any AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
     if (isProd) errors.push(message);
     else if (isVercelPreview && strictPreview) errors.push(message);
@@ -190,6 +203,8 @@ export function checkEnv(): void {
 
 export function isAIConfigured(): boolean {
   return Boolean(
+    process.env.ZAI_API_KEY ||
+    process.env.CEREBRAS_API_KEY ||
     process.env.ANTHROPIC_API_KEY ||
     process.env.GEMINI_API_KEY ||
     process.env.OPENAI_API_KEY ||

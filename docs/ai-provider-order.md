@@ -1,35 +1,56 @@
 # AI provider order
 
-This document is the canonical operator-facing description of the app's current AI provider priority. It mirrors the runtime chain defined in `lib/ai.ts` (`CANONICAL_PROVIDER_CHAIN` / `PROVIDER_CHAINS`) and the policy module `lib/ai-provider-policy.ts` (`CANONICAL_AI_PROVIDER_CHAIN`).
+This document is the canonical operator-facing description of the app's current AI provider priority. The single source of truth is the authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`). Every other surface — `lib/ai.ts`, `lib/ai-provider-policy.ts`, `lib/ai-provider-health.ts`, `/api/ai/health`, admin health routes, environment checks, and the AI Health panel — derives its order from that registry. There are no separate hardcoded order arrays.
 
 ## Runtime provider chain
 
 The app uses this canonical fallback order for AI analysis, extraction, proposal generation, validation, fast, and reasoning use cases:
 
-1. Mistral
-2. Groq
-3. OpenRouter
-4. Gemini
-5. OpenAI
-6. Together
-7. DeepSeek
-8. Claude / Anthropic
-9. Deterministic draft fallback — only after every configured AI provider has failed, returned no usable result, or is in cooldown. The deterministic fallback is NOT an AI provider and its output is never exportable as a final proposal.
+1. Z.ai GLM (`zai`)
+2. Cerebras (`cerebras`)
+3. Mistral (`mistral`)
+4. Groq (`groq`)
+5. OpenRouter (`openrouter`)
+6. Gemini (`gemini`)
+7. OpenAI (`openai`)
+8. Together (`together`)
+9. DeepSeek (`deepseek`)
+10. Anthropic / Claude (`anthropic`)
+11. Deterministic draft fallback — only after every configured AI provider has failed, returned no usable result, or is in cooldown. The deterministic fallback is NOT an AI provider and its output is never exportable as a final proposal.
 
-Claude / Anthropic is intentionally the last AI provider in the chain so Anthropic rate limits do not block the app when earlier providers are configured and available. It is not "preferred"; it is a last-resort AI provider. Do not change this order unless there is an explicit product decision to reorder the AI chain.
+The currently-working providers are the first five: Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter. The remaining providers (Gemini → OpenAI → Together → DeepSeek → Anthropic) remain fully supported and sit, in that exact order, after OpenRouter.
+
+Anthropic / Claude is intentionally the last AI provider in the chain (an emergency-only, last-resort provider) so Anthropic rate limits do not block the app when earlier providers are configured and available. Do not change this order anywhere except in the registry.
+
+## Vercel Hobby attempt budget
+
+The app runs on Vercel Hobby. Per single request or AI Analyze chunk:
+
+- A maximum of **3 actual outbound provider attempts** are made (`AI_MAX_PROVIDER_ATTEMPTS`, default 3).
+- Unconfigured providers, cooled-down providers, and OpenRouter with an invalid (non-`:free`) model are **skipped without consuming an attempt**.
+- Only real outbound provider requests count toward the budget.
+- One shared deadline applies per route/chunk; at least 5s is reserved for error handling and DB state updates, and fallback providers never run in parallel.
+- Invalid API keys and billing-blocked providers are never retried; rate-limit and transient network failures fail over to the next eligible provider.
+- When the budget is consumed before a provider succeeds, the error code is `ATTEMPT_BUDGET_EXHAUSTED` (distinct from `ALL_PROVIDERS_EXHAUSTED`).
+
+## OpenRouter free-model policy
+
+OpenRouter must use an explicit free model. `openrouter/auto` is rejected, and any model whose identifier does not end in `:free` is rejected (`CONFIGURATION_INVALID` / `MODEL_UNAVAILABLE`). The app never sends an OpenRouter request that could create paid usage; an invalid OpenRouter configuration is treated as "not configured" and skipped.
 
 ## Preferred provider
 
 The preferred provider is the first CONFIGURED provider in the canonical chain. For example:
 
-- if `MISTRAL_API_KEY` is configured, preferred provider is `mistral`;
+- if `ZAI_API_KEY` is configured, preferred provider is `zai`;
+- else if `CEREBRAS_API_KEY` is configured, preferred provider is `cerebras`;
+- else if `MISTRAL_API_KEY` is configured, preferred provider is `mistral`;
 - else if `GROQ_API_KEY` is configured, preferred provider is `groq`;
-- else if `OPENROUTER_API_KEY` is configured, preferred provider is `openrouter`;
+- else if `OPENROUTER_API_KEY` is configured (with a valid `:free` model), preferred provider is `openrouter`;
 - else if `GEMINI_API_KEY` is configured, preferred provider is `gemini`;
 - else if `OPENAI_API_KEY` is configured, preferred provider is `openai`;
 - else if `TOGETHER_API_KEY` is configured, preferred provider is `together`;
 - else if `DEEPSEEK_API_KEY` is configured, preferred provider is `deepseek`;
-- else if `ANTHROPIC_API_KEY` is configured, preferred provider is `claude`;
+- else if `ANTHROPIC_API_KEY` is configured, preferred provider is `anthropic`;
 - else preferred provider is `none`, and AI calls fall back to the deterministic draft fallback.
 
 ## Configured is not the same as runtime-verified
@@ -53,6 +74,6 @@ The deterministic draft fallback is not a provider health state. It is the final
 
 ## Documentation note
 
-Older README text or comments that say "Gemini is first", "OpenAI is second", "Claude is preferred", or that imply any other ordering are stale. The live AI Health panel, `/api/ai/health` route, and `lib/ai.ts` (`CANONICAL_PROVIDER_CHAIN`) are the runtime source of truth: Mistral is first and Claude / Anthropic remains the last AI provider, followed by the deterministic draft fallback.
+Older README text or comments that say "Mistral is first", "Gemini is first", "Claude is preferred", or that imply any other ordering are stale. The authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Z.ai GLM is first, Cerebras second, and Anthropic / Claude remains the last AI provider, followed by the deterministic draft fallback.
 
-Do not change provider fallback order unless there is an explicit product decision to reorder the AI chain.
+Do not change provider fallback order anywhere except in the registry, and only via an explicit product decision.

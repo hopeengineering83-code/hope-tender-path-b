@@ -939,14 +939,20 @@ model AiAnalyzeChunk {
 // provider isn't re-hit immediately after an instance recycles.
 // Never stores API keys, prompts, or raw provider responses.
 model ProviderHealthSnapshot {
-  provider             String    @id   // AiProviderName
-  lastSuccessAt        DateTime?
-  lastFailureAt        DateTime?
-  lastFailureCategory  String?         // AiProviderFailureCategory
-  lastSafeErrorMessage String?         // already redacted by recordProviderFailure
-  consecutiveFailures  Int       @default(0)
-  cooldownUntil        DateTime?
-  updatedAt            DateTime  @updatedAt
+  provider                  String    @id   // AiProviderName
+  lastSuccessAt             DateTime?
+  // Capability-specific success times so a cold start can restore whether a
+  // provider last verified connectivity, analysis, or generation — not just a
+  // generic success. Safe metadata only (timestamps, never keys/prompts).
+  lastPingSucceededAt       DateTime?
+  lastAnalysisSucceededAt   DateTime?
+  lastGenerationSucceededAt DateTime?
+  lastFailureAt             DateTime?
+  lastFailureCategory       String?         // AiProviderFailureCategory
+  lastSafeErrorMessage      String?         // already redacted by recordProviderFailure
+  consecutiveFailures       Int       @default(0)
+  cooldownUntil             DateTime?
+  updatedAt                 DateTime  @updatedAt
 }
 
 // ─── PricingWorkbook + CostLine (G8 fix) ─────────────────────────────────────

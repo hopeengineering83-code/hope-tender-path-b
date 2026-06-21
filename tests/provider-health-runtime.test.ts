@@ -52,9 +52,9 @@ describe("Provider Health Runtime & Status", () => {
     assert.equal(deriveProviderStatus("openai"), "GENERATION_VERIFIED");
   });
 
-  it("Provider order remains exact", () => {
+  it("Provider order remains exact (canonical registry order)", () => {
     const health = getAllProviderHealth();
     const order = health.map(h => h.provider);
-    assert.deepEqual(order, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(order, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
   });
 });

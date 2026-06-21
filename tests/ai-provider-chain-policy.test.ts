@@ -1,48 +1,86 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  getCanonicalProviderEntries,
+} from "../lib/ai-provider-registry";
+import { CANONICAL_PROVIDER_CHAIN } from "../lib/ai";
+import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
 
-const source = readFileSync("lib/ai.ts", "utf8");
-const canonical = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-const displayOrder = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
+// The required canonical automatic provider order — the single source of truth
+// is lib/ai-provider-registry.ts. This array is duplicated here ONLY so the
+// test fails loudly if the registry order ever changes without an explicit
+// product decision.
+const REQUIRED_ORDER = [
+  "zai",
+  "cerebras",
+  "mistral",
+  "groq",
+  "openrouter",
+  "gemini",
+  "openai",
+  "together",
+  "deepseek",
+  "anthropic",
+] as const;
 
-function canonicalChain(): string[] {
-  const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
-  assert.ok(match, "Missing CANONICAL_PROVIDER_CHAIN");
-  return Array.from(match[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
-}
+const REQUIRED_DISPLAY = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude";
 
-function chainFor(useCase: string): string[] {
-  const direct = source.match(new RegExp(`${useCase}:\\s*\\[([^\\]]+)\\]`));
-  if (direct) return Array.from(direct[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
-  const spread = source.match(new RegExp(`${useCase}:\\s*\\[\\.\\.\\.CANONICAL_PROVIDER_CHAIN\\]`));
-  assert.ok(spread, `Missing ${useCase} provider chain`);
-  return canonicalChain();
-}
-
-describe("AI provider chain policy", () => {
-  it("uses the required canonical provider chain with Claude last", () => {
-    assert.deepEqual(canonicalChain(), canonical);
+describe("AI provider chain policy — canonical order", () => {
+  it("registry CANONICAL_AI_PROVIDER_ORDER is exactly the required order", () => {
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [...REQUIRED_ORDER]);
   });
 
-  it("uses the canonical chain for every supported use case", () => {
-    for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
-      assert.deepEqual(chainFor(useCase), canonical, `${useCase} chain mismatch`);
-    }
+  it("lib/ai.ts CANONICAL_PROVIDER_CHAIN derives from the registry order", () => {
+    assert.deepEqual([...CANONICAL_PROVIDER_CHAIN], [...REQUIRED_ORDER]);
   });
 
-  it("includes Mistral and Together in the canonical chain", () => {
-    assert.ok(canonicalChain().includes("mistral"), "mistral must be in canonical chain");
-    assert.ok(canonicalChain().includes("together"), "together must be in canonical chain");
-    assert.equal(canonicalChain()[0], "mistral", "mistral must be first");
-    assert.equal(canonicalChain()[canonicalChain().length - 1], "anthropic", "claude/anthropic must be last");
+  it("lib/ai-provider-policy.ts mirrors the registry order", () => {
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_CHAIN], [...REQUIRED_ORDER]);
   });
 
-  it("documents and implements proposal/section generation in the required order", () => {
-    assert.match(source, /Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
-    assert.match(source, /Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
-    assert.ok(source.indexOf("// Claude (Anthropic) — last resort") > source.indexOf("// Groq/OpenRouter tail"));
-    assert.ok(source.indexOf("// Claude — last resort") > source.indexOf("// Groq/OpenRouter section tail"));
+  it("registry ranks are 1..10 in canonical order", () => {
+    const entries = getCanonicalProviderEntries();
+    entries.forEach((entry, idx) => {
+      assert.equal(entry.provider, REQUIRED_ORDER[idx], `rank ${idx + 1} provider mismatch`);
+      assert.equal(entry.rank, idx + 1, `${entry.provider} rank should be ${idx + 1}`);
+    });
+  });
+
+  it("zai is first, cerebras second, anthropic last", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
+  });
+
+  it("the inactive providers remain supported after OpenRouter in the required order", () => {
+    const afterOpenRouter = REQUIRED_ORDER.slice(REQUIRED_ORDER.indexOf("openrouter") + 1);
+    assert.deepEqual([...afterOpenRouter], ["gemini", "openai", "together", "deepseek", "anthropic"]);
+  });
+
+  it("display-name chain matches the required display order", () => {
+    const display = getCanonicalProviderEntries().map((e) => e.displayName).join(" → ");
+    assert.equal(display, REQUIRED_DISPLAY);
+  });
+});
+
+describe("no other automatic provider order exists in the repository", () => {
+  // Source-level guard: lib/ai.ts must NOT contain a second hardcoded provider
+  // order array. Every use case derives its sequence from the registry order.
+  const aiSource = readFileSync("lib/ai.ts", "utf8");
+
+  it("lib/ai.ts does not declare a literal provider-order array", () => {
+    assert.ok(!/PROVIDER_CHAINS\s*:\s*Record/.test(aiSource), "PROVIDER_CHAINS literal map must not exist");
+    assert.ok(aiSource.includes("CANONICAL_AI_PROVIDER_ORDER"), "lib/ai.ts must derive order from the registry");
+    assert.ok(aiSource.includes("providerChainForUseCase"), "lib/ai.ts must use providerChainForUseCase()");
+  });
+
+  it("does not contain the legacy 'mistral'-first literal order array", () => {
+    assert.ok(
+      !/\[\s*"mistral"\s*,\s*"groq"\s*,\s*"openrouter"/.test(aiSource),
+      "legacy mistral→groq→openrouter literal order array must not exist in lib/ai.ts",
+    );
   });
 });
 
@@ -58,38 +96,27 @@ describe("admin provider-chain ping budget", () => {
     assert.match(route, /if \(onlyProvider && tester\.provider !== onlyProvider\) continue/);
     assert.match(route, /results\.push\(await tester\.run\(\)\)/);
   });
+
+  it("iterates providers in canonical registry order", () => {
+    assert.match(route, /CANONICAL_AI_PROVIDER_ORDER/);
+  });
 });
 
 describe("AI provider status surfaces stay aligned with canonical chain", () => {
   const healthRoute = readFileSync("app/api/ai/health/route.ts", "utf8");
   const envReadiness = readFileSync("lib/ai-environment-readiness.ts", "utf8");
-  const systemReadiness = readFileSync("lib/system-readiness.ts", "utf8");
 
-  it("surfaces the required order in health and readiness", () => {
-    assert.ok(healthRoute.includes(displayOrder));
-    assert.ok(envReadiness.includes(displayOrder));
-    assert.ok(systemReadiness.includes("Gemini") && systemReadiness.includes("OpenRouter"));
+  it("health route + readiness derive the fallback order from the registry", () => {
+    assert.ok(healthRoute.includes("getCanonicalProviderEntries"), "health route must build from the registry");
+    assert.ok(healthRoute.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY"), "health route must use the registry-generated chain string");
+    assert.ok(envReadiness.includes("CANONICAL_AI_PROVIDER_ORDER"), "readiness must iterate the registry order");
   });
 
-  it("surfaces Mistral-first order in the AI health route", () => {
-    assert.match(healthRoute, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude/);
-    assert.ok(healthRoute.indexOf('mistralConfigured ? "mistral"') < healthRoute.indexOf(': geminiConfigured ? "gemini"'));
-    assert.ok(healthRoute.indexOf('fallbackRank: 1,\n        label: "Mistral"') < healthRoute.indexOf('fallbackRank: 8,\n        label: "Claude"'));
-  });
-
-  it("keeps configured-provider checks in the required relative order", () => {
-    assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GROQ_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("GROQ_API_KEY")') < envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("OPENROUTER_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("GEMINI_API_KEY")') < envReadiness.indexOf('present("OPENAI_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("OPENAI_API_KEY")') < envReadiness.indexOf('present("TOGETHER_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("TOGETHER_API_KEY")') < envReadiness.indexOf('present("DEEPSEEK_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("DEEPSEEK_API_KEY")') < envReadiness.indexOf('present("ANTHROPIC_API_KEY")'));
-  });
-
-  it("surfaces Mistral-first order in environment readiness", () => {
-    assert.match(envReadiness, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude/);
-    assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("ANTHROPIC_API_KEY")') > envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
+  it("keeps configured-provider checks in the required canonical relative order", () => {
+    const order = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+    const positions = order.map((k) => envReadiness.indexOf(`status("${k}"`));
+    for (let i = 1; i < positions.length; i++) {
+      assert.ok(positions[i] > positions[i - 1], `${order[i]} must appear after ${order[i - 1]} in readiness`);
+    }
   });
 });

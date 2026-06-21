@@ -1,5 +1,11 @@
 import { prisma, prismaReady } from "./prisma";
 import { resolveStorageProvider } from "./storage";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
+  isProviderConfigured,
+  providerDisplayName,
+} from "./ai-provider-registry";
 
 export type ReadinessSeverity = "OK" | "WARNING" | "CRITICAL";
 
@@ -20,28 +26,14 @@ function has(value: string | undefined | null): boolean {
   return Boolean(value && value.trim().length > 0);
 }
 
-export const REQUIRED_PROVIDER_ORDER = [
-  "Mistral",
-  "Groq",
-  "OpenRouter",
-  "Gemini",
-  "OpenAI",
-  "Together",
-  "DeepSeek",
-  "Claude/Anthropic",
-] as const;
+// Required provider order — generated from the authoritative registry so it
+// never drifts from the single source of truth.
+export const REQUIRED_PROVIDER_ORDER = CANONICAL_AI_PROVIDER_DISPLAY_NAMES;
 
 function configuredAiProviders(): string[] {
-  const providers: string[] = [];
-  if (has(process.env.MISTRAL_API_KEY)) providers.push("Mistral");
-  if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
-  if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");
-  if (has(process.env.GEMINI_API_KEY)) providers.push("Gemini");
-  if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
-  if (has(process.env.TOGETHER_API_KEY)) providers.push("Together");
-  if (has(process.env.DEEPSEEK_API_KEY)) providers.push("DeepSeek");
-  if (has(process.env.ANTHROPIC_API_KEY)) providers.push("Claude/Anthropic");
-  return providers;
+  return CANONICAL_AI_PROVIDER_ORDER
+    .filter((p) => isProviderConfigured(p))
+    .map((p) => providerDisplayName(p));
 }
 
 async function databaseChecks(): Promise<ReadinessCheck[]> {

@@ -139,21 +139,23 @@ describe("provider diagnostics snapshot", () => {
 });
 
 describe("/api/ai/health route contract", () => {
-  it("always exposes a deepseek provider object with the required fields", () => {
+  it("exposes every registry provider (including deepseek) with rank + model", () => {
     const source = readFileSync("app/api/ai/health/route.ts", "utf8");
-    assert.match(source, /deepseek:\s*\{/);
-    assert.match(source, /fallbackRank:\s*7/);
-    assert.match(source, /label:\s*"DeepSeek"/);
-    assert.match(source, /envPresent:/);
-    assert.match(source, /model:\s*getDeepSeekModel\(\)/);
+    // The route builds provider objects from the registry, so deepseek is
+    // included automatically with its registry rank (9) and model.
+    assert.match(source, /getCanonicalProviderEntries/);
+    assert.match(source, /fallbackRank:\s*entry\.rank/);
+    assert.match(source, /model:\s*getProviderModel/);
     assert.match(source, /fallbackChain:/);
-    assert.match(source, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback/);
+    assert.match(source, /CANONICAL_AI_FALLBACK_CHAIN_DISPLAY/);
+    // deepseek is rank 9 in the canonical registry order.
+    const { getProviderEntry } = require("../lib/ai-provider-registry");
+    assert.equal(getProviderEntry("deepseek").rank, 9);
   });
 
-  it("AIHealthPanel renders a DeepSeek card with configure/failing messaging", () => {
+  it("AIHealthPanel renders all registry cards (including DeepSeek) with messaging", () => {
     const source = readFileSync("components/ai-health-panel.tsx", "utf8");
-    assert.match(source, /label: "DeepSeek"/);
-    assert.match(source, /DEEPSEEK_API_KEY/);
+    assert.match(source, /getCanonicalProviderEntries/);
     assert.match(source, /set \{p\.envVar\} in Vercel Production environment/);
     assert.match(source, /Check \{p\.label\} model access or retry after cooldown/);
     assert.match(source, /lg:grid-cols-/);
