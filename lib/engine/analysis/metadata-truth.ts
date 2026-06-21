@@ -27,10 +27,11 @@ export type MetadataTruthSummary = {
 
 export async function resolveMetadataTruth(
   prisma: PrismaClient,
-  tenderId: string
+  tenderId: string,
+  userId?: string
 ): Promise<MetadataTruthSummary> {
-  const tender = await prisma.tender.findUnique({
-    where: { id: tenderId },
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, ...(userId ? { userId } : {}) },
     include: {
       metadataOverrides: true,
       requirements: true,

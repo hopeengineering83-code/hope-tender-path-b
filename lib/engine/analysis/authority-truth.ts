@@ -12,15 +12,16 @@ export type AuthorityTruthStatus =
 
 export async function resolveAuthorityTruth(
   prisma: PrismaClient,
-  tenderId: string
+  tenderId: string,
+  userId?: string
 ): Promise<{
   status: AuthorityTruthStatus;
   score: number;
   result: AuthorityReviewResult | null;
   reason: string;
 }> {
-  const tender = await prisma.tender.findUnique({
-    where: { id: tenderId },
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, ...(userId ? { userId } : {}) },
     include: {
       generatedDocuments: true,
       requirements: true,
@@ -29,7 +30,7 @@ export async function resolveAuthorityTruth(
 
   if (!tender) throw new Error("Tender not found");
 
-  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId);
+  const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
   const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
   const planStatus = deriveSubmissionPlanStatus(tender, plan);
 

@@ -320,11 +320,12 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
  */
 export async function resolveTenderAnalysisState(
   prismaClient: typeof prisma,
-  tenderId: string
+  tenderId: string,
+  userId?: string
 ): Promise<TenderAnalysisStateDetail> {
   // Load the latest AI_ANALYZE job for this tender.
   const latestJob = await prismaClient.aiJob.findFirst({
-    where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE },
+    where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE, ...(userId ? { tender: { userId } } : {}) },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -341,12 +342,12 @@ export async function resolveTenderAnalysisState(
 
   // Gather persisted artefact counts + tender metadata in parallel.
   const [requirementsPersisted, sourceReferencesCreated, tender] = await Promise.all([
-    prismaClient.tenderRequirement.count({ where: { tenderId } }),
+    prismaClient.tenderRequirement.count({ where: { tenderId, ...(userId ? { tender: { userId } } : {}) } }),
     prismaClient.tenderRequirement
-      .count({ where: { tenderId, sourceExactQuote: { not: null } } })
+      .count({ where: { tenderId, sourceExactQuote: { not: null }, ...(userId ? { tender: { userId } } : {}) } })
       .then((n) => n > 0),
-    prismaClient.tender.findUnique({
-      where: { id: tenderId },
+    prismaClient.tender.findFirst({
+      where: { id: tenderId, ...(userId ? { userId } : {}) },
       include: { files: true },
     }),
   ]);
@@ -390,7 +391,7 @@ export async function resolveTenderAnalysisState(
   let chunks: ResolverChunkInput[] = [];
   if (latestJob?.analysisInputHash) {
     chunks = await prismaClient.aiAnalyzeChunk.findMany({
-      where: { tenderId, contentHash: latestJob.analysisInputHash },
+      where: { tenderId, contentHash: latestJob.analysisInputHash, ...(userId ? { tender: { userId } } : {}) },
       select: { status: true, provider: true },
     });
   }

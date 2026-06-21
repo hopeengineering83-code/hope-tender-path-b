@@ -18,10 +18,10 @@ export async function GET(
     const { id: tenderId } = await params;
 
     const [analysis, metadata, plan, authority, workflow] = await Promise.all([
-      resolveTenderAnalysisState(prisma, tenderId),
-      resolveMetadataTruth(prisma, tenderId),
-      resolvePlanTruth(prisma, tenderId),
-      resolveAuthorityTruth(prisma, tenderId),
+      resolveTenderAnalysisState(prisma, tenderId, actor.id),
+      resolveMetadataTruth(prisma, tenderId, actor.id),
+      resolvePlanTruth(prisma, tenderId, actor.id),
+      resolveAuthorityTruth(prisma, tenderId, actor.id),
       getCanonicalTenderWorkflowState(prisma, actor.id, tenderId)
     ]);
 
