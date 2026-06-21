@@ -253,6 +253,9 @@ export async function loadProviderHealthIntoMemory(
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
+        lastPingSucceededAt: null,
+        lastGenerationSucceededAt: null,
+        lastAnalysisSucceededAt: null,
         lastFailureAt: snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
         lastFailureCategory: (snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null,
         lastFailureMessage: snap.lastSafeErrorMessage ?? null,

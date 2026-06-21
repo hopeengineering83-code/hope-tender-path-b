@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  restoreProviderHealthBeforeResponse,
   getAllProviderHealth,
   getProviderRuntimeSnapshot,
   isProviderCooledDown,
@@ -27,6 +28,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
 export async function GET() {
+  const restore = await restoreProviderHealthBeforeResponse();
   const health = getAllProviderHealth();
   const allProviderNames: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 
@@ -124,6 +126,7 @@ export async function GET() {
     },
     blockers,
     warnings,
+    providerHealthRestoreWarning: !restore.ok ? "using in-memory provider health for this response: " + restore.error : undefined,
     nextAction: blockers.length > 0
       ? "CONFIGURE_AI_KEYS"
       : allConfiguredCooling

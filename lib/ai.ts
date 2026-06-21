@@ -664,7 +664,7 @@ export async function generateWithFallback(
     // thrown error and downstream diagnostics are actionable rather than a bare
     // "all providers exhausted". (Mirrors PR #775/#778 intent.)
     const stateSnap = getProviderStateSnapshot(provider);
-    const safeReason = stateSnap.lastFailureMessage ?? stateSnap.lastFailureCategory ?? "no response";
+    const safeReason = stateSnap?.lastFailureMessage ?? stateSnap?.lastFailureCategory ?? "no response";
     failureDetails.push(`${provider}: ${safeReason}`);
     // callProvider already recorded the failure via recordProviderFailure
     // (which redacts messages). Capture the post-attempt snapshot for the
@@ -1407,13 +1407,13 @@ const ANALYSIS_CHUNK_SOFT_LIMIT = 60_000;
 // Each chunk size — kept under 80K so the prompt + chunk fits comfortably
 // in one call. Overlap preserves context across boundaries (a requirement
 // straddling the boundary is captured in both chunks; merge dedupes).
-const ANALYSIS_CHUNK_SIZE = 50_000;
-const ANALYSIS_CHUNK_OVERLAP = 5_000;
+export const ANALYSIS_CHUNK_SIZE = 50_000;
+export const ANALYSIS_CHUNK_OVERLAP = 5_000;
 // Cap to prevent runaway cost on truly enormous PDFs. 6 × 50K = 300K
 // chars covers an extremely long RFP. Anything past 300K is rare.
 const ANALYSIS_MAX_CHUNKS = 6;
 
-function chunkTenderContent(content: string): string[] {
+export function chunkTenderContent(content: string): string[] {
   if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
   const chunks: string[] = [];
   let start = 0;
@@ -1883,7 +1883,7 @@ export function isProviderExhaustedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return PROVIDER_EXHAUSTED_PATTERN.test(msg);
 }
-async function analyzeOneChunkWithRetry(content: string, index: number, total: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
+export async function analyzeOneChunkWithRetry(content: string, index: number, total: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
   try {
     return await analyzeOneChunk(content, index, total, onProviderUsed);
   } catch (err) {

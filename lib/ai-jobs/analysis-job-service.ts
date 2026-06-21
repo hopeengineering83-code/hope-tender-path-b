@@ -39,7 +39,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((f) => {
         if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.name}]\n${f.extractedText}`;
+        return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
     })
     .filter(Boolean)
     .join("\n\n---\n\n");
@@ -179,7 +179,7 @@ export async function runNextChunk(jobId: string, userId: string) {
     .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((f: any) => {
         if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.name}]\n${f.extractedText}`;
+        return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
     })
     .filter(Boolean)
     .join("\n\n---\n\n");
@@ -190,7 +190,7 @@ export async function runNextChunk(jobId: string, userId: string) {
       if (!chunkText) throw new Error(`Chunk ${chunk.chunkIndex} out of bounds (total: ${allChunks.length})`);
 
       let providerUsed: string | undefined;
-      const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p) => {
+      const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p: any) => {
           providerUsed = p;
       });
 
