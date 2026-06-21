@@ -313,9 +313,15 @@ export async function finalizeJob(jobId: string, userId: string) {
 
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {
-        const hasId = r.sourceTenderFileId || r.sourceFileToken;
-        // Strict grounding: mandatory requirements MUST have file, page, and quote
-        return !hasId || !r.sourcePage || !r.sourceQuote;
+        // Treat a file reference as present only when it is a non-empty string —
+        // guards against undefined/null/"" tokens slipping through as truthy.
+        const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
+        const fileToken = typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
+        const hasId = fileId.length > 0 || fileToken.length > 0;
+        const hasPage = typeof r.sourcePage === "number" && r.sourcePage > 0;
+        const hasQuote = typeof r.sourceQuote === "string" && r.sourceQuote.trim().length > 0;
+        // Strict grounding: mandatory requirements MUST have file, page, and quote.
+        return !hasId || !hasPage || !hasQuote;
     });
 
     if (invalidMandatory.length > 0) {
