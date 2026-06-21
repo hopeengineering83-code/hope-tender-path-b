@@ -287,12 +287,13 @@ type TenderRow = {
 export async function computeTenderLifecycle(
   client: PrismaClient,
   tenderId: string,
+  userId?: string,
 ): Promise<TenderLifecycleResult | null> {
   // Load tender + related data in parallel
   const [tender, files, requirements, generatedDocs, complianceRows] =
     await Promise.all([
-      client.tender.findUnique({
-        where: { id: tenderId },
+      client.tender.findFirst({
+        where: { id: tenderId, ...(userId ? { userId } : {}) },
         select: {
           id: true,
           notes: true,
@@ -319,7 +320,7 @@ export async function computeTenderLifecycle(
         },
       }),
       client.tenderFile.findMany({
-        where: { tenderId },
+        where: { tenderId, ...(userId ? { tender: { userId } } : {}) },
         select: {
           id: true,
           fileName: true,
@@ -333,7 +334,7 @@ export async function computeTenderLifecycle(
         },
       }),
       client.tenderRequirement.findMany({
-        where: { tenderId },
+        where: { tenderId, ...(userId ? { tender: { userId } } : {}) },
         select: {
           id: true,
           title: true,
@@ -351,7 +352,7 @@ export async function computeTenderLifecycle(
         },
       }),
       client.generatedDocument.findMany({
-        where: { tenderId },
+        where: { tenderId, ...(userId ? { tender: { userId } } : {}) },
         select: {
           id: true,
           name: true,
@@ -365,7 +366,7 @@ export async function computeTenderLifecycle(
           storagePath: true,
         },
       }),
-      client.complianceMatrix.count({ where: { tenderId } }),
+      client.complianceMatrix.count({ where: { tenderId, ...(userId ? { tender: { userId } } : {}) } }),
     ]);
 
   if (!tender) return null;

@@ -10,12 +10,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    try { await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    let actor;
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const { id: tenderId } = await params;
 
-    const result = await computeTenderLifecycle(prisma, tenderId);
+    const result = await computeTenderLifecycle(prisma, tenderId, actor.id);
 
     if (!result) {
       return NextResponse.json(

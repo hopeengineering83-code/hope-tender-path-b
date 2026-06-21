@@ -583,6 +583,294 @@ export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldO
   return { found: false, reason: "No pre-bid meeting date pattern found in tender text." };
 }
 
+// ─── 14. Donor agency ─────────────────────────────────────────────────────────
+const DONOR_AGENCY_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:donor\s+agency|funding\s+agency|financer|financed\s+by|funded\s+by|grant\s+from|loan\s+from)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
+  { rx: /\b(?:donor|funder|financier)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "MEDIUM" },
+];
+
+export function extractDonorAgency(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of DONOR_AGENCY_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = cutAtNextFieldLabel(m[1].trim().replace(/\s+/g, " ")).split(/[,;]/)[0].trim();
+      if (!looksLikeOrgName(value)) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 200),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 15. Implementing agency ───────────────────────────────────────────────────
+const IMPLEMENTING_AGENCY_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:implementing\s+agency|executing\s+agency|implementing\s+partner|project\s+management\s+unit)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
+  { rx: /\b(?:implementer|executor|implementation)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "MEDIUM" },
+];
+
+export function extractImplementingAgency(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of IMPLEMENTING_AGENCY_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = cutAtNextFieldLabel(m[1].trim().replace(/\s+/g, " ")).split(/[,;]/)[0].trim();
+      if (!looksLikeOrgName(value)) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 200),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 16. Legal client name ────────────────────────────────────────────────────
+const LEGAL_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:legal\s+(?:entity\s+)?name|registered\s+(?:entity\s+)?name|official\s+name|entity\s+legal\s+name)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
+  { rx: /\b(?:legal|official|registered)\s+(?:name|entity)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "MEDIUM" },
+];
+
+export function extractLegalClientName(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of LEGAL_NAME_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = cutAtNextFieldLabel(m[1].trim().replace(/\s+/g, " ")).split(/[,;]/)[0].trim();
+      if (!looksLikeOrgName(value)) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 200),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 17. Contact person name ──────────────────────────────────────────────────
+const CONTACT_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:contact\s+(?:person|name)|focal\s+point|project\s+manager|procurement\s+officer|contact\s+person\s+name)\s*[:\-]\s*([^\n\r]{3,100})/i, confidence: "HIGH" },
+  { rx: /\bcontact\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[,\n]|$)/i, confidence: "MEDIUM" },
+];
+
+export function extractClientContactName(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of CONTACT_NAME_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = m[1].trim().replace(/\s+/g, " ").split(/[,;]/)[0].trim();
+      if (value.length < 3 || value.length > 100) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 100),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 18. Contact title ────────────────────────────────────────────────────────
+const CONTACT_TITLE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:title|designation|position|role)\s*[:\-]\s*([^\n\r]{2,80})/i, confidence: "HIGH" },
+  { rx: /\b(?:Contact|Focal Point):[^:]*\b([A-Z][a-z]+(?:\s+(?:Manager|Officer|Specialist|Director|Head|Chief|Coordinator|Lead|Supervisor))*)\b/i, confidence: "MEDIUM" },
+];
+
+export function extractClientContactTitle(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of CONTACT_TITLE_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = m[1].trim().replace(/\s+/g, " ").split(/[,;]/)[0].trim();
+      if (value.length < 2 || value.length > 80) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 80),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 19. Contact phone ────────────────────────────────────────────────────────
+const PHONE_PATTERN = /\+?[\d\s\-().]{7,30}/;
+const PHONE_CONTEXT = /\b(?:phone|telephone|tel|mobile|cell|contact|call)\b/i;
+
+export function extractClientContactPhone(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    const lines = text.split(/\n/);
+    for (const line of lines) {
+      if (!PHONE_CONTEXT.test(line)) continue;
+      const m = PHONE_PATTERN.exec(line);
+      if (!m) continue;
+      const value = m[0].trim();
+      if (value.length < 7) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 30),
+        sourceQuote: trimQuote(line),
+        sourceFile: file?.fileName ?? null,
+        confidence: "HIGH",
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 20. Client address ───────────────────────────────────────────────────────
+const CLIENT_ADDRESS_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:client\s+)?address\s*[:\-]\s*([^\n\r]{5,200})/i, confidence: "HIGH" },
+  { rx: /\b(?:office|head\s+office|headquarters|registered\s+office)\s+address\s*[:\-]\s*([^\n\r]{5,200})/i, confidence: "HIGH" },
+  { rx: /\blocation\s*[:\-]\s*([^\n\r]{5,200})/i, confidence: "MEDIUM" },
+];
+
+export function extractClientAddress(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of CLIENT_ADDRESS_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = cutAtNextFieldLabel(m[1].trim().replace(/\s+/g, " ")).slice(0, 300);
+      if (value.length < 5) continue;
+      cands.push({
+        found: true,
+        value,
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 21. Country ──────────────────────────────────────────────────────────────
+const COUNTRY_PATTERN = /\b(?:country|nation|state)\s*[:\-]\s*([A-Za-z\s]{3,50})/i;
+
+export function extractCountry(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  const KNOWN_COUNTRIES = ["Ethiopia", "Kenya", "Tanzania", "Uganda", "Rwanda", "Burundi", "Sudan", "South Sudan", "Somalia", "Djibouti", "Eritrea", "Egypt"];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    const m = COUNTRY_PATTERN.exec(text);
+    if (!m) continue;
+    const value = m[1].trim().replace(/\s+/g, " ");
+    if (KNOWN_COUNTRIES.some(c => c.toLowerCase() === value.toLowerCase())) {
+      cands.push({
+        found: true,
+        value: KNOWN_COUNTRIES.find(c => c.toLowerCase() === value.toLowerCase())!,
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: "HIGH",
+      });
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 22. City / location ──────────────────────────────────────────────────────
+const CITY_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:city|location|city\s+location|project\s+location)\s*[:\-]\s*([^\n\r]{2,100})/i, confidence: "HIGH" },
+  { rx: /\b(?:Addis\s+Ababa|Addis\s+Abeba|Adama|Mekelle|Bahir\s+Dar|Hawassa|Dire\s+Dawa|Nairobi|Mombasa|Dar\s+es\s+Salaam|Kigali|Kampala|Juba|Khartoum|Cairo)\b/i, confidence: "HIGH" },
+];
+
+export function extractClientCity(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of CITY_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = (m[1] ?? m[0]).trim().replace(/\s+/g, " ").split(/[,;]/)[0].trim();
+      if (value.length < 2 || value.length > 100) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 100),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 23. Client website ───────────────────────────────────────────────────────
+const WEBSITE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  { rx: /\b(?:website|web\s+site|portal|url|web\s+address)\s*[:\-]\s*(https?:\/\/[^\s\n\r]+|www\.[^\s\n\r]+)/i, confidence: "HIGH" },
+  { rx: /\b(?:https?:\/\/|www\.)[^\s\n\r]{5,200}\b/i, confidence: "MEDIUM" },
+];
+
+export function extractClientWebsite(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of WEBSITE_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      let value = m[1] ? m[1].trim() : m[0].trim();
+      if (!value.startsWith("http")) value = "https://" + value;
+      if (value.length < 10 || value.length > 300) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 300),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
 // ─── Public manifest — which fields the extractor framework supports. ──
 export type ExtractorFieldName =
   | "reference"
