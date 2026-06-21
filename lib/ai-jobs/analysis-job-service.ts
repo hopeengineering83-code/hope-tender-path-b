@@ -1,3 +1,4 @@
+import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { prisma } from "../prisma";
 import { createHash } from "crypto";
 import {
@@ -204,9 +205,8 @@ export async function runNextChunk(jobId: string, userId: string) {
           }
       });
   } catch (err) {
-      const isExhausted = isProviderExhaustedError(err);
-      const category = isExhausted ? "PROVIDER_EXHAUSTED" : "TRANSIENT_ERROR";
-      const safeError = err instanceof Error ? err.message.slice(0, 500) : "Unknown error";
+      const category = toSafeAiFailureCategory(err);
+      const safeError = `AI provider error: ${category}`;
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },
@@ -314,11 +314,24 @@ export async function finalizeJob(jobId: string, userId: string) {
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {
         const hasId = r.sourceTenderFileId || r.sourceFileToken;
-        return !hasId || !r.sourcePage || !r.sourceQuote || (r.sourceConfidence ?? 0) < 0.5;
+        // Strict grounding: mandatory requirements MUST have file, page, and quote
+        return !hasId || !r.sourcePage || !r.sourceQuote;
     });
 
-    if (invalidMandatory.length > 5 && mandatoryReqs.length > 0 && (invalidMandatory.length / mandatoryReqs.length) > 0.5) {
-        console.warn(`[ai-finalize] High ratio of weak sourcing (${invalidMandatory.length}/${mandatoryReqs.length}) for job ${jobId}`);
+    if (invalidMandatory.length > 0) {
+        await prisma.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: "FAILED",
+                finishedAt: new Date(),
+                errorMessage: `Promotion blocked: ${invalidMandatory.length} mandatory requirements lack valid source grounding (file/page/quote).`
+            }
+        });
+        return {
+            status: "FAILED",
+            code: "PROMOTION_BLOCKED_WEAK_GROUNDING",
+            invalidCount: invalidMandatory.length
+        };
     }
 
     // NON-DESTRUCTIVE FIX: version guard
