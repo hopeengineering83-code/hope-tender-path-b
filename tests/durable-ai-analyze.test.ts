@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import * as aiJobs from "../lib/ai-jobs";
+import { chunkTenderContent } from "../lib/ai";
 
 test("durable ai job logic - structural verification", async () => {
     assert.strictEqual(typeof aiJobs.createAnalysisJob, "function", "createAnalysisJob should be a function");
@@ -10,7 +11,7 @@ test("durable ai job logic - structural verification", async () => {
 
 test("durable ai job logic - chunking", () => {
     const text = "A".repeat(100000);
-    const chunks = aiJobs.chunkTenderContent(text);
+    const chunks = chunkTenderContent(text);
     assert.ok(chunks.length > 1, "Should create multiple chunks for 100k chars");
     assert.ok(chunks[0].length <= 80000, "First chunk should be within limit");
 });

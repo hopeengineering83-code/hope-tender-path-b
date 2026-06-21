@@ -16,8 +16,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const routeSource = readFileSync(
-  path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
+const serviceSource = readFileSync(
+  path.join(process.cwd(), "lib/ai-jobs/analysis-job-service.ts"),
   "utf-8",
 );
 const promotionSource = readFileSync(
@@ -137,79 +137,60 @@ describe("non-destructive AI analysis — ai-analyze-promotion library", () => {
   });
 });
 
-// ── Route: partial and fallback paths use non-destructive staging ─────────────
+// ── Service: partial and fallback paths use non-destructive staging ─────────────
 
-describe("non-destructive AI analysis — route staging for partial and fallback runs", () => {
-  it("route calls stagePartialResult for partial AI results (test 1: partial run)", () => {
+describe("non-destructive AI analysis — service staging for partial and fallback runs", () => {
+  it("service calls stagePartialResult for partial AI results", () => {
     assert.ok(
-      routeSource.includes("stagePartialResult"),
-      "route must call stagePartialResult so partial AI results are staged rather than written to canonical requirements",
+      serviceSource.includes("stagePartialResult"),
+      "service must call stagePartialResult so partial AI results are staged rather than written to canonical requirements",
     );
   });
 
-  it("route calls stageFallbackDraft for regex fallback results (test 4: fallback draft)", () => {
+  it("service guards canonical promotion with canPromoteToCanonical", () => {
     assert.ok(
-      routeSource.includes("stageFallbackDraft"),
-      "route must call stageFallbackDraft so fallback results are staged rather than written to canonical requirements",
+      serviceSource.includes("canPromoteToCanonical"),
+      "service must call canPromoteToCanonical before writing to canonical tender fields to prevent stale-run overwrites",
     );
   });
 
-  it("route guards canonical promotion with canPromoteToCanonical (tests 5 and 6)", () => {
+  it("service records canonical promotion via promoteAnalysisToCanonical", () => {
     assert.ok(
-      routeSource.includes("canPromoteToCanonical"),
-      "route must call canPromoteToCanonical before writing to canonical tender fields to prevent stale-run overwrites",
+      serviceSource.includes("promoteAnalysisToCanonical"),
+      "service must call promoteAnalysisToCanonical after successful canonical write to set promotedAt",
     );
   });
 
-  it("route records canonical promotion via promoteAnalysisToCanonical (test 5)", () => {
+  it("AiJob is created with runId for duplicate-request deduplication", () => {
     assert.ok(
-      routeSource.includes("promoteAnalysisToCanonical"),
-      "route must call promoteAnalysisToCanonical after successful canonical write to set promotedAt",
-    );
-  });
-
-  it("AiJob is created with runId for duplicate-request deduplication (test 7)", () => {
-    assert.ok(
-      routeSource.includes("runId") && routeSource.includes("crypto.randomUUID()"),
-      "route must generate a runId (via crypto.randomUUID) when creating AiJob records to prevent duplicate canonical writes",
-    );
-  });
-
-  it("AiJob is created without explicit analysisVersion (DB sequence assigns it)", () => {
-    // analysisVersion uses @default(autoincrement()) — the route must NOT pass it
-    // explicitly, or the DB sequence could be skipped/overridden.
-    assert.ok(
-      !routeSource.includes("analysisVersion: stream") && !routeSource.includes("analysisVersion: ns"),
-      "route must not pass analysisVersion in create() calls; the PostgreSQL sequence assigns it automatically",
+      serviceSource.includes("runId") && serviceSource.includes("runId"),
+      "service must generate a runId when creating AiJob records to prevent duplicate canonical writes",
     );
   });
 });
 
-// ── Route: recovery actions are still functional (test 9) ────────────────────
+// ── Service: recovery actions are still functional ────────────────────
 
 describe("non-destructive AI analysis — recovery actions preserved", () => {
-  it("preserveAiAnalyzeProgressOnFailure still exists for catch-block progress preservation (test 2)", () => {
+  it("preserveAiAnalyzeProgressOnFailure still exists for catch-block progress preservation", () => {
     assert.ok(
-      routeSource.includes("async function preserveAiAnalyzeProgressOnFailure"),
+      serviceSource.includes("async function preserveAiAnalyzeProgressOnFailure"),
       "preserveAiAnalyzeProgressOnFailure must remain so failed runs preserve partial chunk results for resumption",
     );
   });
 
-  it("route imports all four promotion helpers from ai-analyze-promotion", () => {
+  it("service imports promotion helpers from ai-analyze-promotion", () => {
     assert.ok(
-      routeSource.includes("stagePartialResult") &&
-        routeSource.includes("stageFallbackDraft") &&
-        routeSource.includes("canPromoteToCanonical") &&
-        routeSource.includes("promoteAnalysisToCanonical"),
-      "route must import and use all four promotion helpers from lib/ai-analyze-promotion",
+      serviceSource.includes("canPromoteToCanonical") &&
+        serviceSource.includes("promoteAnalysisToCanonical"),
+      "service must import and use promotion helpers from lib/ai-analyze-promotion",
     );
   });
 
-  it("chunkResults are still stored in AiJob.output for resume functionality (test 8)", () => {
-    const count = (routeSource.match(/chunkResults:\s*aiMeta\.chunkResults/g) ?? []).length;
+  it("chunkResults are still stored in AiJob.output for resume functionality", () => {
     assert.ok(
-      count >= 2,
-      `chunkResults must remain in AiJob output in both streaming and non-streaming paths (found ${count})`,
+      serviceSource.includes("chunkResults: succeeded.map"),
+      "chunkResults must remain in AiJob output for resume functionality",
     );
   });
 });

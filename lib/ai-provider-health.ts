@@ -314,6 +314,16 @@ export function restoreProviderState(provider: AiProviderName, snap: InternalSta
   state.set(provider, { ...snap });
 }
 
+export async function restoreProviderHealthBeforeResponse(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { restoreHealthFromDb } = await import("./ai-provider-health-db");
+    const result = await restoreHealthFromDb();
+    return { ok: true, error: result.warning || undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function isProviderCooledDown(provider: AiProviderName): boolean {
   const s = state.get(provider);
   if (!s || !s.cooldownUntil) return false;

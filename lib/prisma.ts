@@ -605,10 +605,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
 
   // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
-  // Earlier bootstrap created these tables with wrong column names
-  // (generatedDocumentId, reviewStatus, reviewNotes). Prisma uses documentId,
-  // action, notes. These ensureColumn calls add the correct columns and copy
-  // existing data over so no rows are lost. All ops are idempotent.
+  // Ensure correct column names exist. The schema uses documentId, action, notes
+  // from initial creation; no data migration from old names is needed.
   await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
   await ensureColumn(client, "DocumentReview", "action", "TEXT");
   await ensureColumn(client, "DocumentReview", "notes", "TEXT");
@@ -619,27 +617,6 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
   await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
-  // Copy data from old column names to new ones where the old columns exist
-  try {
-    await client.$executeRawUnsafe(
-      `UPDATE "DocumentReview" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND "generatedDocumentId" IS NOT NULL`,
-    );
-  } catch { /* old column may not exist on fresh deployments */ }
-  try {
-    await client.$executeRawUnsafe(
-      `UPDATE "DocumentReview" SET "action" = "reviewStatus" WHERE "action" IS NULL AND "reviewStatus" IS NOT NULL`,
-    );
-  } catch { /* old column may not exist on fresh deployments */ }
-  try {
-    await client.$executeRawUnsafe(
-      `UPDATE "DocumentReview" SET "notes" = "reviewNotes" WHERE "notes" IS NULL AND "reviewNotes" IS NOT NULL`,
-    );
-  } catch { /* old column may not exist on fresh deployments */ }
-  try {
-    await client.$executeRawUnsafe(
-      `UPDATE "DocumentComment" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND "generatedDocumentId" IS NOT NULL`,
-    );
-  } catch { /* old column may not exist on fresh deployments */ }
 
   // Notification table
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Notification" (
