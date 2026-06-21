@@ -2,6 +2,7 @@ export type TenderReadinessInput = {
   analysisExtractionStatus?: string | null;
   analysisSource?: string | null;
   analysisSeverity?: "GOOD" | "WARNING" | "POOR" | "UNSAFE" | null;
+  notes?: string | null;
   title?: string | null;
   clientName?: string | null;
   procuringEntityName?: string | null;
@@ -39,11 +40,32 @@ export function traced(r: NonNullable<TenderReadinessInput["requirements"]>[0]) 
   return (r.sourcePageNumber != null && r.sourcePageNumber > 0) || Boolean((r.sourceExactQuote ?? "").trim()) || Boolean((r.sectionReference ?? "").trim()) || (r.sourceConfidence != null && r.sourceConfidence > 0);
 }
 
+/**
+ * Detect analysis source from tender.notes. Same logic as detectAnalysisSource
+ * in lib/engine/analysis-source.ts but inlined here to avoid a circular import.
+ * Returns "AI", "REGEX_FALLBACK_AI_ERROR", or "UNKNOWN".
+ */
+function detectAnalysisSourceFromNotes(notes?: string | null): string {
+  if (!notes) return "UNKNOWN";
+  if (/^analysis\s+source:\s*regex\s+fallback\b/im.test(notes)) return "REGEX_FALLBACK_AI_ERROR";
+  if (/^analysis\s+source:\s*ai\b/im.test(notes)) return "AI";
+  return "UNKNOWN";
+}
+
 export function computeTenderReadinessState(input: TenderReadinessInput): TenderReadinessState {
   const blockers: string[] = [];
   const warnings: string[] = [];
   const extractionStatus = (input.analysisExtractionStatus ?? "").toUpperCase();
-  const analysisSource = (input.analysisSource ?? "UNKNOWN").toUpperCase();
+  // CRITICAL FIX (investigation FM-008): the previous code read
+  // (input.analysisSource ?? "UNKNOWN") which does NOT exist on the Tender
+  // model in production. In production this was always "UNKNOWN", making
+  // analysisTrusted always false, which blocked all downstream readiness.
+  // Now reads the actual tender.notes marker via detectAnalysisSource.
+  // Falls back to input.analysisSource for legacy callers that set it directly.
+  const detectedSource = detectAnalysisSourceFromNotes(input.notes);
+  const analysisSource = (detectedSource === "UNKNOWN" && input.analysisSource
+    ? input.analysisSource.toUpperCase()
+    : detectedSource.toUpperCase());
   const reqs = input.requirements ?? [];
   const gaps = input.complianceGaps ?? [];
 

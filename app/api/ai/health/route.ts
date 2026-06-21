@@ -30,17 +30,6 @@ export const maxDuration = 10;
 const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
 const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
-function restoreProviderHealthBeforeResponse() {
-  // restoreHealthFromDb: attempt to restore provider health state from DB
-  // If restoration fails, log a providerHealthRestoreWarning instead of crashing,
-  // using in-memory provider health for this response
-  try {
-    // Health restoration logic deferred to avoid blocking response
-  } catch (err) {
-    console.warn("Provider health DB restore warning:", err);
-  }
-}
-
 function computePreferredProvider() {
   const mistralConfigured = isMistralConfigured();
   const groqConfigured = isGroqConfigured();
