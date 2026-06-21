@@ -1,6 +1,6 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { prisma } from "../prisma";
-import { createHash } from "crypto";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
@@ -36,22 +36,23 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     throw new Error("Tender not found or access denied");
   }
 
-  const tenderText = tender.files
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((f) => {
-        if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
-    })
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+  // Load the company vault documents exactly as the AI Analyze route does, so
+  // the company-document digest (and therefore the content hash) matches.
+  const company = await prisma.company.findUnique({
+    where: { userId },
+    include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+  });
+
+  // Build the AI-analysis content via the SHARED builder so the durable job
+  // service and the synchronous route produce byte-identical content, hash, and
+  // (via the shared chunker) chunk identity.
+  const tenderText = buildTenderAnalysisContent(tender, company);
 
   if (!tenderText || tenderText.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
   }
 
-  // Normalize whitespace to ensure stable hashing even if extraction formatting shifts slightly
-  const normalizedText = tenderText.replace(/\r\n/g, "\n").trim();
-  const contentHash = createHash("sha256").update(normalizedText).digest("hex");
+  const contentHash = computeAnalysisContentHash(tenderText);
 
   // Create or reuse resumable job
   let job = await prisma.aiJob.findFirst({
