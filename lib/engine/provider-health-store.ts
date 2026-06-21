@@ -253,6 +253,9 @@ export async function loadProviderHealthIntoMemory(
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
+        // The DB snapshot only persists the generic lastSuccessAt; the
+        // per-tier verification timestamps (ping/generation/analysis) are
+        // in-memory only, so they restore as null on a cold start.
         lastPingSucceededAt: null,
         lastGenerationSucceededAt: null,
         lastAnalysisSucceededAt: null,
