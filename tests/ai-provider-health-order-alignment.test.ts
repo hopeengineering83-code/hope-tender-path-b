@@ -296,10 +296,10 @@ describe("AiProviderStatus enum + deriveProviderStatus()", () => {
 
   it("returns runtime_verified after a real generation success (recordProviderSuccess), not after a ping-only success", () => {
     process.env.GROQ_API_KEY = "gsk-test-groq";
-    // Ping-only success must NOT flip the provider to runtime_verified.
+    // Ping-only success marks connectivity but not runtime verification.
     recordProviderPingSuccess("groq");
-    assert.equal(deriveProviderStatus("groq"), "CONFIGURED");
-    // Real generation success DOES flip it.
+    assert.equal(deriveProviderStatus("groq"), "CONNECTIVITY_VERIFIED");
+    // Real generation success DOES flip it to runtime_verified.
     recordProviderSuccess("groq");
     assert.equal(deriveProviderStatus("groq"), "GENERATION_VERIFIED");
     assert.equal(getProviderRuntimeSnapshot("groq").status, "GENERATION_VERIFIED");

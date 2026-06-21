@@ -17,10 +17,9 @@ const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
 const REASONING_MODELS = ["o3-mini", "o1-preview", "gpt-4o"];
 const CLAUDE_REASONING_MODELS = ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest"];
 
+// Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic
 // Claude models in preference order when the last-resort Anthropic provider
-// is reached. The overall proposal provider chain is Mistral → Groq →
-// OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude for proposals,
-// keeping Anthropic last so rate limits do not block the app when earlier
+// is reached, keeping Anthropic last so rate limits do not block the app when earlier
 // providers are available.
 //
 // The default chain prefers stable, widely-available aliases so it works
@@ -3724,7 +3723,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Provider chain for sections:
+  // Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic
   // Claude is tried last so Anthropic rate limits don't block parallel section generation.
 
     // Gemini — first tier

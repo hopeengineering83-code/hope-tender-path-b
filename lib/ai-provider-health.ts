@@ -234,8 +234,8 @@ function redactMessage(message: string | null | undefined): string {
     .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
     .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
     .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9-_]{15,}/g, "[REDACTED]")
-    .replace(/AQ[A-Za-z0-9-_]{20,}/g, "[REDACTED]")
+    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
+    .replace(/\bAQ[A-Za-z0-9_-]{30,}\b/g, "[REDACTED]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
     .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
     .replace(/\s+/g, " ")
@@ -367,9 +367,10 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
       case "RATE_LIMIT": return "RATE_LIMITED";
       case "AUTH": return "UNAUTHORIZED";
       case "BILLING": return "BILLING_BLOCKED";
-      case "MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
+      case "MODEL_UNAVAILABLE": return "BILLING_BLOCKED";
       case "TIMEOUT": return "TIMEOUT";
-      case "NETWORK": return "NETWORK_ERROR";
+      case "NETWORK": return "BILLING_BLOCKED";
+      case "UNKNOWN": return "UNKNOWN";
       default: return "COOLING_DOWN";
     }
   }
