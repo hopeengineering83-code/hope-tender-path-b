@@ -36,14 +36,10 @@ import {
   getAnthropicApiKey,
   type AiProviderName
 } from "@/lib/ai-provider-health";
-import {
-  PER_PROVIDER_TIMEOUT_MS,
-  ANTHROPIC_TIMEOUT_MS,
-  GEMINI_TIMEOUT_MS
-} from "@/lib/timeout-config";
+import { PER_PROVIDER_TIMEOUT_MS, ANTHROPIC_TIMEOUT_MS, GEMINI_TIMEOUT_MS } from "@/lib/timeout-config";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 export type ProviderTestResult = {
   provider: string;
@@ -82,6 +78,20 @@ Respond ONLY with valid JSON.
 `;
 
 const GENERATION_PROMPT = "Write a 2-paragraph professional introduction for a proposal responding to the Alpha Bridge Construction project. Mention our 25 years of experience.";
+
+class ProviderTester {
+  provider: AiProviderName;
+  capability: "ping" | "analysis" | "generation";
+
+  constructor(provider: AiProviderName, capability: "ping" | "analysis" | "generation" = "ping") {
+    this.provider = provider;
+    this.capability = capability;
+  }
+
+  async run(): Promise<ProviderTestResult> {
+    return testProvider(this.provider, this.capability);
+  }
+}
 
 function redactMessage(message: string | null | undefined): string {
   return (message ?? "")
@@ -271,6 +281,39 @@ async function testProvider(
       safeError: redactMessage(err instanceof Error ? err.message : String(err))
     };
   }
+}
+
+export async function GET(req: Request) {
+  let actor;
+  try { actor = await requireRole("ADMIN"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+  const url = new URL(req.url);
+  const onlyProvider = url.searchParams.get("provider") as AiProviderName | null;
+  const capability = (url.searchParams.get("capability") || "ping") as "ping" | "analysis" | "generation";
+
+  const PROVIDERS: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  const testers = PROVIDERS.map(p => new ProviderTester(p, capability));
+  const results: ProviderTestResult[] = [];
+
+  for (const tester of testers) {
+    if (onlyProvider && tester.provider !== onlyProvider) continue;
+    results.push(await tester.run());
+  }
+
+  await logAction({
+    userId: actor.id,
+    action: "AI_PROVIDER_HEALTH_CHECK",
+    entityType: "AiProviderHealth",
+    entityId: "batch",
+    description: `Operator ran batch ${capability} test for ${onlyProvider || "all"} providers`,
+  });
+
+  return NextResponse.json({
+    success: true,
+    capability,
+    results,
+  });
 }
 
 export async function POST(req: Request) {

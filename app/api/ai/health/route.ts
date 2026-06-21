@@ -30,6 +30,7 @@ export const maxDuration = 10;
 export async function GET() {
   const restore = await restoreProviderHealthBeforeResponse();
   const health = getAllProviderHealth();
+  // Provider chain: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
   const allProviderNames: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 
   const providerRuntime = Object.fromEntries(
