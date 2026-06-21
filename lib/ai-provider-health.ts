@@ -367,9 +367,10 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
       case "RATE_LIMIT": return "RATE_LIMITED";
       case "AUTH": return "UNAUTHORIZED";
       case "BILLING": return "BILLING_BLOCKED";
-      case "MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
+      case "MODEL_UNAVAILABLE": return "BILLING_BLOCKED";
       case "TIMEOUT": return "TIMEOUT";
-      case "NETWORK": return "NETWORK_ERROR";
+      case "NETWORK": return "BILLING_BLOCKED";
+      case "UNKNOWN": return "UNKNOWN";
       default: return "COOLING_DOWN";
     }
   }

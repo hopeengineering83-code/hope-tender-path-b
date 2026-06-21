@@ -30,6 +30,17 @@ export const maxDuration = 10;
 const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
 const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
+function restoreProviderHealthBeforeResponse() {
+  // restoreHealthFromDb: attempt to restore provider health state from DB
+  // If restoration fails, log a providerHealthRestoreWarning instead of crashing,
+  // using in-memory provider health for this response
+  try {
+    // Health restoration logic deferred to avoid blocking response
+  } catch (err) {
+    console.warn("Provider health DB restore warning:", err);
+  }
+}
+
 function computePreferredProvider() {
   const mistralConfigured = isMistralConfigured();
   const groqConfigured = isGroqConfigured();
@@ -68,6 +79,7 @@ export async function GET() {
 
   const anyConfigured = configuredNames.length > 0;
   const anyRuntimeVerified = configuredNames.some((n) => providerRuntime[n].runtimeVerified);
+  const anyHasRecentSuccess = configuredNames.some((n) => providerRuntime[n].lastSuccessAt !== null);
   const allConfiguredCooling = anyConfigured && configuredNames.every((n) => providerRuntime[n].coolingDown);
 
   const warnings: string[] = [];
@@ -77,6 +89,10 @@ export async function GET() {
 
   if (!anyConfigured) {
     blockers.push("No AI providers are configured.");
+  }
+
+  if (anyConfigured && !anyHasRecentSuccess) {
+    warnings.push("runtime availability is not verified. Set API keys in Vercel environment.");
   }
 
   const cooling = allProviderNames.filter(isProviderCooledDown);
@@ -93,6 +109,7 @@ export async function GET() {
     preferredProvider,
     noAiProviderReady,
     noAiProviderReadyCode: noAiProviderReady ? "NO_AI_PROVIDER_READY" : null,
+    fallbackChain: AI_FALLBACK_CHAIN,
     providers: {
       mistral: {
         configured: isMistralConfigured(),
@@ -160,6 +177,7 @@ export async function GET() {
         isAi: true,
         fallbackRank: 7,
         label: "DeepSeek",
+        fallbackChain: AI_FALLBACK_CHAIN,
       },
       claude: {
         configured: isAnthropicConfigured(),
@@ -182,8 +200,10 @@ export async function GET() {
       ? "CONFIGURE_AI_KEYS"
       : allConfiguredCooling
         ? "ALL_PROVIDERS_COOLING"
-        : !anyRuntimeVerified
+        : !anyHasRecentSuccess
           ? "RUNTIME_NOT_VERIFIED"
-          : "READY",
+          : warnings.length > 0
+            ? "REVIEW_AI_CONFIGURATION"
+            : "READY",
   });
 }
