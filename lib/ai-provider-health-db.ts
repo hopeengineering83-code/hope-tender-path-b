@@ -58,9 +58,9 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
-        lastPingSucceededAt: (snap as any).lastPingSucceededAt ? (snap as any).lastPingSucceededAt.getTime() : null,
-        lastGenerationSucceededAt: (snap as any).lastGenerationSucceededAt ? (snap as any).lastGenerationSucceededAt.getTime() : null,
-        lastAnalysisSucceededAt: (snap as any).lastAnalysisSucceededAt ? (snap as any).lastAnalysisSucceededAt.getTime() : null,
+        lastPingSucceededAt: snap.lastPingSucceededAt ? snap.lastPingSucceededAt.getTime() : null,
+        lastGenerationSucceededAt: snap.lastGenerationSucceededAt ? snap.lastGenerationSucceededAt.getTime() : null,
+        lastAnalysisSucceededAt: snap.lastAnalysisSucceededAt ? snap.lastAnalysisSucceededAt.getTime() : null,
         lastFailureAt: snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
         lastFailureCategory: (snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null,
         lastFailureMessage: snap.lastSafeErrorMessage ?? null,
@@ -86,25 +86,21 @@ export async function persistAllHealthToDb(): Promise<void> {
       // Skip providers with no recorded state (avoids unnecessary writes)
       if (!s.lastSuccessAt && !s.lastFailureAt) continue;
 
+      const fields = {
+        lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt) : null,
+        lastPingSucceededAt: s.lastPingSucceededAt ? new Date(s.lastPingSucceededAt) : null,
+        lastAnalysisSucceededAt: s.lastAnalysisSucceededAt ? new Date(s.lastAnalysisSucceededAt) : null,
+        lastGenerationSucceededAt: s.lastGenerationSucceededAt ? new Date(s.lastGenerationSucceededAt) : null,
+        lastFailureAt: s.lastFailureAt ? new Date(s.lastFailureAt) : null,
+        lastFailureCategory: s.lastFailureCategory,
+        lastSafeErrorMessage: s.lastFailureMessage,
+        consecutiveFailures: s.consecutiveFailures,
+        cooldownUntil: s.cooldownUntil ? new Date(s.cooldownUntil) : null,
+      };
       await prisma.providerHealthSnapshot.upsert({
         where: { provider },
-        update: {
-          lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt) : null,
-          lastFailureAt: s.lastFailureAt ? new Date(s.lastFailureAt) : null,
-          lastFailureCategory: s.lastFailureCategory,
-          lastSafeErrorMessage: s.lastFailureMessage,
-          consecutiveFailures: s.consecutiveFailures,
-          cooldownUntil: s.cooldownUntil ? new Date(s.cooldownUntil) : null,
-        },
-        create: {
-          provider,
-          lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt) : null,
-          lastFailureAt: s.lastFailureAt ? new Date(s.lastFailureAt) : null,
-          lastFailureCategory: s.lastFailureCategory,
-          lastSafeErrorMessage: s.lastFailureMessage,
-          consecutiveFailures: s.consecutiveFailures,
-          cooldownUntil: s.cooldownUntil ? new Date(s.cooldownUntil) : null,
-        },
+        update: fields,
+        create: { provider, ...fields },
       });
     }
   } catch (err) {

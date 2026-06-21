@@ -81,6 +81,37 @@ describe("/api/ai/health DB restore contract", () => {
   });
 });
 
+describe("provider health DB persistence — capability success times", () => {
+  it("schema stores per-capability success timestamps", async () => {
+    const { readFileSync } = await import("node:fs");
+    const schema = readFileSync("prisma/schema.prisma", "utf8");
+    const model = schema.match(/model ProviderHealthSnapshot \{[\s\S]*?\n\}/)?.[0] ?? "";
+    assert.match(model, /lastPingSucceededAt\s+DateTime\?/);
+    assert.match(model, /lastAnalysisSucceededAt\s+DateTime\?/);
+    assert.match(model, /lastGenerationSucceededAt\s+DateTime\?/);
+  });
+
+  it("ships a migration adding the capability columns", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const path = "prisma/migrations/20260621193000_add_provider_health_capability_times/migration.sql";
+    assert.ok(existsSync(path), "migration must exist");
+    const sql = readFileSync(path, "utf8");
+    assert.match(sql, /lastPingSucceededAt/);
+    assert.match(sql, /lastAnalysisSucceededAt/);
+    assert.match(sql, /lastGenerationSucceededAt/);
+  });
+
+  it("persistAllHealthToDb writes the capability success times (no `as any` casts on restore)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/ai-provider-health-db.ts", "utf8");
+    assert.match(src, /lastAnalysisSucceededAt: s\.lastAnalysisSucceededAt/);
+    assert.match(src, /lastGenerationSucceededAt: s\.lastGenerationSucceededAt/);
+    assert.match(src, /lastPingSucceededAt: s\.lastPingSucceededAt/);
+    // Restore reads the real columns, not `(snap as any)`.
+    assert.doesNotMatch(src, /\(snap as any\)\.lastAnalysisSucceededAt/);
+  });
+});
+
 describe("provider health DB persistence order", () => {
   it("derives the persistence iteration order from the canonical registry", async () => {
     const { readFileSync } = await import("node:fs");
