@@ -177,7 +177,9 @@ export async function findAndReclaimStaleLeases(
     };
   }
 
-  // Reclaim stale jobs by clearing lease and resetting to QUEUED/next attempt
+  // Reclaim stale jobs by clearing lease and resetting to QUEUED
+  // CRITICAL: Must reset status to QUEUED so claimJobWithLease can reclaim it.
+  // If status remains RUNNING without lease, the job becomes unclaimable.
   const staleIds = staleJobs.map((j) => j.id);
 
   await prismaClient.aiJob.updateMany({
@@ -187,6 +189,7 @@ export async function findAndReclaimStaleLeases(
       },
     },
     data: {
+      status: "QUEUED", // Reset to QUEUED so claimJobWithLease can reclaim it
       leaseOwner: null,
       leaseExpiresAt: null,
       nextAttemptAt: now, // Retry immediately
