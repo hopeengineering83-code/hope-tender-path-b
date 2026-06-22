@@ -14,6 +14,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { getTenderAnalysisState, canGenerateFromState, type AnalysisState } from "./state-resolver";
+import { buildAndHashTenderAnalysisContent } from "./content-hash";
 
 export interface AnalysisRequest {
   tenderId: string;
@@ -86,10 +87,8 @@ export async function startOrResumeAnalysis(
       throw new Error(`Job not found or has been superseded`);
     }
 
-    // TODO: Rebuild current content hash and compare
-    // For now, we assume content is stable for resume
-    // In hardening phase 4, this will be fully implemented
-    const currentHash = existingJob.analysisInputHash; // Placeholder
+    // Build current content hash and compare with stored hash
+    const { hash: currentHash } = await buildAndHashTenderAnalysisContent(tenderId, userId, prismaClient);
 
     if (currentHash !== existingJob.analysisInputHash) {
       // Content changed: supersede old job
@@ -148,8 +147,8 @@ export async function startOrResumeAnalysis(
     };
   }
 
-  // Create new job
-  const contentHash = "TODO-build-content-hash"; // Placeholder
+  // Create new job with real content hash
+  const { hash: contentHash } = await buildAndHashTenderAnalysisContent(tenderId, userId, prismaClient);
   const newJob = await prismaClient.aiJob.create({
     data: {
       tenderId,
@@ -244,6 +243,82 @@ export async function approveFallbackAnalysis(
     //   },
     // }),
   ]);
+}
+
+/**
+ * Check if a job is eligible for promotion to canonical.
+ *
+ * Only AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK can be promoted.
+ * Fallback (REGEX_FALLBACK_UNAPPROVED) cannot be promoted without approval.
+ */
+export function canPromoteJobToCanonical(jobStatus: string): boolean {
+  return jobStatus === "SUCCEEDED" || jobStatus === "HUMAN_APPROVED_FALLBACK";
+}
+
+/**
+ * Promote analysis to canonical (authoritative for generation).
+ *
+ * Requires:
+ * - Job status must be SUCCEEDED or HUMAN_APPROVED_FALLBACK
+ * - Cannot be promoted if already promoted
+ * - Fallback (REGEX_FALLBACK_UNAPPROVED) must first be approved
+ */
+export async function promoteAnalysisToCanonical(
+  jobId: string,
+  tenderId: string,
+  userId: string,
+  promotedBy: string,
+  prismaClient: PrismaClient,
+): Promise<void> {
+  const job = await prismaClient.aiJob.findFirst({
+    where: {
+      id: jobId,
+      tenderId,
+      userId,
+      jobType: "AI_ANALYZE",
+    },
+    select: {
+      id: true,
+      status: true,
+      promotedAt: true,
+    },
+  });
+
+  if (!job) {
+    throw new Error("Job not found");
+  }
+
+  if (!canPromoteJobToCanonical(job.status)) {
+    throw new Error(`Cannot promote job with status ${job.status} to canonical`);
+  }
+
+  if (job.promotedAt) {
+    throw new Error("Job is already promoted");
+  }
+
+  await prismaClient.aiJob.update({
+    where: { id: jobId },
+    data: {
+      promotedAt: new Date(),
+      promotedBy,
+    },
+  });
+}
+
+/**
+ * Check if a job is already promoted (canonical).
+ *
+ * Prevents modifications to promoted jobs.
+ */
+export async function isJobPromoted(
+  jobId: string,
+  prismaClient: PrismaClient,
+): Promise<boolean> {
+  const job = await prismaClient.aiJob.findUnique({
+    where: { id: jobId },
+    select: { promotedAt: true },
+  });
+  return job?.promotedAt != null;
 }
 
 /**

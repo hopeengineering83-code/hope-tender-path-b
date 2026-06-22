@@ -223,26 +223,28 @@ RUNNING
 ✅ Superseded jobs are ignored  
 ✅ User-facing messages are appropriate
 
-### Phase 2 Tests (Future)
-- Atomic claiming prevents duplicate execution
-- Fresh QUEUED jobs are claimed immediately
-- Stale RUNNING jobs with expired lease are reclaimed
-- Two concurrent workers: exactly one claim succeeds
+### Phase 2 Tests (This PR — Fallback Safety + Resume Consistency)
+✅ Fallback jobs distinguished from AI_SUCCEEDED  
+✅ Fallback approval requires mandatory reason (5+ chars)  
+✅ Content hash detects tender changes  
+✅ Resume with changed content supersedes old job  
+✅ Only AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK can promote  
+✅ Unapproved fallback cannot be canonical  
+✅ Promoted jobs block new chunk creation  
 
-### Phase 3 Tests (Future)
-- Resume with matching hash resumes exact job
-- Resume with changed content supersedes
-- Content hash is deterministic across paths
-- Completed chunks are reused on resume
+### Phase 3 Tests (Future — Source Grounding + Promotion)
+- Source validation: every requirement has file ID, page, quote
+- File token validation: token references actual tender file
+- Atomic promotion: job status + promotion in transaction (TOCTOU guard)
+- Promotion audit: create AuditLog entry
 
 ### Phase 4+ Tests (Future)
-- Fallback never promoted
-- Fallback approval requires role + reason + audit
-- Generation blocked for partial/fallback/queued/failed
-- Extraction quality blocks providers
-- Source grounding validates before promotion
+- Extraction quality blocks poor input
+- Worker lease expiry + retry scheduling
 - Cross-user access blocked with 403
 - Secrets not leaked in responses/logs
+- Cold restart recovery
+- Provider fallback order verified
 
 ---
 
@@ -251,9 +253,11 @@ RUNNING
 | File | Change | Lines |
 |------|--------|-------|
 | `lib/ai-analyze/state-resolver.ts` | NEW — Authoritative state resolver | 200+ |
-| `lib/ai-analyze/production-analysis-service.ts` | NEW — Orchestration service | 180+ |
-| `tests/ai-analyze-production-phase1.test.ts` | NEW — Phase 1 tests | 250+ |
-| `docs/audits/ai-analyze-production-engine-audit.md` | NEW — This audit | 300+ |
+| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Add content hash builders + promotion logic | 220+ |
+| `lib/ai-analyze/content-hash.ts` | NEW — Deterministic content hashing | 120+ |
+| `tests/ai-analyze-production-phase1.test.ts` | NEW — Phase 1 tests (state resolver) | 250+ |
+| `tests/ai-analyze-production-phase2.test.ts` | NEW — Phase 2 tests (fallback safety + resume) | 200+ |
+| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phase 2 completion | 380+ |
 
 ---
 
@@ -284,19 +288,25 @@ RUNNING
 
 ## Next Phases (Not in This PR)
 
-**Phase 2:** Atomic Claiming Hardening  
-- Add explicit leaseOwner / leaseExpiresAt fields
-- Implement nextAttemptAt for retry scheduling
-- Add lease expiry checks
-
-**Phase 3:** Fallback Safety + Resume  
-- Implement content hash comparison in resume logic
-- Implement supersession when content changes
-- Block fallback promotion
-
-**Phase 4:** Source Grounding + Promotion  
+**Phase 3:** Source Grounding + Promotion  
+- Implement atomic promotion (job status + promotedAt in one transaction)
 - Validate every requirement has file ID, page, quote
 - Validate file tokens against actual tender files
+- Add TOCTOU guard on promotion
+- Create AuditLog entry on approval/promotion
+
+**Phase 4:** Extraction Quality Gates  
+- Block corrupted/gibberish extraction (low character count or only punctuation)
+- Block poor extraction coverage (< 70% of pages successfully extracted)
+- Force mode does NOT bypass final gates
+- Add extraction quality check before AI Analyze
+- Mark analysis state with extraction quality flag
+
+**Phase 5:** Worker Hardening  
+- Add explicit leaseOwner / leaseExpiresAt fields
+- Implement nextAttemptAt for retry scheduling
+- Add lease expiry checks on claim
+- Verify stale RUNNING jobs are reclaimed correctly
 - Atomic promotion in transaction with TOCTOU guard
 
 **Phase 5:** Security Audit  
