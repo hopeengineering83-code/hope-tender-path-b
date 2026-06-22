@@ -21,6 +21,7 @@ import {
 } from "../ai";
 import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
 import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 
 export type AnalysisOrchestrationOptions = {
   force?: boolean;
@@ -186,14 +187,14 @@ export async function executeAnalysis(
     throw new Error("Tender not found or access denied");
   }
 
-  const tenderContent = tender.files
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((f) => {
-      if (!f.extractedText) return "";
-      return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
-    })
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+  // Load company if exists
+  const company = tender.companyId
+    ? await prisma.company.findUnique({ where: { id: tender.companyId } })
+    : null;
+
+  // Use Stage 1 shared builder for deterministic content
+  const tenderContent = buildTenderAnalysisContent(tender, company ?? undefined);
+  const contentHash = computeAnalysisContentHash(tenderContent);
 
   if (!tenderContent || tenderContent.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
