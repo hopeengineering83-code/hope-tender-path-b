@@ -341,7 +341,7 @@ export async function getTenderAnalysisState(
     // All checks passed—analysis is ready for generation
     return {
       ok: true,
-      state: "AI_SUCCEEDED",
+      state: "SUCCEEDED",
       reason: "AI analysis complete, all validations passed",
       blockGeneration: false,
       blockExport: false,
@@ -590,25 +590,34 @@ export async function approveFallbackAnalysis(
         const now = new Date();
 
         // Create/update ComplianceGap for approval UI
-        await tx.complianceGap.upsert({
+        const existing = await tx.complianceGap.findFirst({
           where: {
-            tenderId_title: {
-              tenderId: input.tenderId,
-              title: "ANALYSIS_APPROVAL:REGEX_FALLBACK",
-            },
-          },
-          create: {
             tenderId: input.tenderId,
             title: "ANALYSIS_APPROVAL:REGEX_FALLBACK",
-            severity: "ADVISORY",
-            isResolved: true,
-            description: `Regex fallback analysis approved by ${input.approverId}: ${input.reason}`,
-          },
-          update: {
-            isResolved: true,
-            description: `Regex fallback analysis approved by ${input.approverId}: ${input.reason}`,
           },
         });
+
+        if (existing) {
+          await tx.complianceGap.update({
+            where: { id: existing.id },
+            data: {
+              isResolved: true,
+              description: `Regex fallback analysis approved by ${input.approverId}: ${input.reason}`,
+              resolvedNote: input.reason,
+            },
+          });
+        } else {
+          await tx.complianceGap.create({
+            data: {
+              tenderId: input.tenderId,
+              title: "ANALYSIS_APPROVAL:REGEX_FALLBACK",
+              severity: "ADVISORY",
+              isResolved: true,
+              description: `Regex fallback analysis approved by ${input.approverId}: ${input.reason}`,
+              resolvedNote: input.reason,
+            },
+          });
+        }
 
         // Write immutable audit record
         await tx.auditLog.create({
