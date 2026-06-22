@@ -879,22 +879,24 @@ async function handleStreamingAnalyze(
               console.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
             });
 
-            const fileQualitySnapshots = tenderRecord.files.map((f) => ({
-              totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
-              extractedPages: (f as { extractedPages?: number | null }).extractedPages ?? null,
-              ocrPages: (f as { ocrPages?: number | null }).ocrPages ?? null,
-              failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
-              extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
-            }));
-            const textSamples2 = tenderRecord.files.map((f) => f.extractedText);
-            const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples2);
-            const extractionStatus: ExtractionStatus =
-              analysisMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
-                ? "PARTIAL_EXTRACTION_AI_ANALYZED"
-                : rawExtractionStatus;
-            await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
-              console.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
-            });
+            {
+              const fileQualitySnapshots = tenderRecord.files.map((f) => ({
+                totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
+                extractedPages: (f as { extractedPages?: number | null }).extractedPages ?? null,
+                ocrPages: (f as { ocrPages?: number | null }).ocrPages ?? null,
+                failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
+                extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
+              }));
+              const textSamples = tenderRecord.files.map((f) => f.extractedText);
+              const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
+              const extractionStatus: ExtractionStatus =
+                analysisMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+                  ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+                  : rawExtractionStatus;
+              await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
+                console.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
+              });
+            }
 
             const analysisResult = {
               ai: true, fallback: false,
