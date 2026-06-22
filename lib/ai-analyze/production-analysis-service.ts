@@ -16,12 +16,13 @@ import type { PrismaClient } from "@prisma/client";
 import { getTenderAnalysisState, canGenerateFromState, type AnalysisState } from "./state-resolver";
 import { buildAndHashTenderAnalysisContent } from "./content-hash";
 import { validateAllRequirementSources, type SourceValidationResult } from "./source-validation";
+import { canStartAnalysisWithExtraction, type ExtractionQualityResult } from "./extraction-quality";
 
 export interface AnalysisRequest {
   tenderId: string;
   userId: string;
   requestedJobId?: string; // For resume
-  force?: boolean;
+  force?: boolean; // Skip weak extraction gate (but not corrupted gate)
   deadlineMs?: number;
 }
 
@@ -51,10 +52,13 @@ export async function startOrResumeAnalysis(
   request: AnalysisRequest,
   prismaClient: PrismaClient,
 ): Promise<{
-  jobId: string;
+  jobId?: string;
   isResume: boolean;
   contentHashMismatch?: boolean;
   supersedeReason?: string;
+  extractionQuality?: ExtractionQualityResult;
+  extractionBlocked?: boolean;
+  blockReason?: string;
 }> {
   const { tenderId, userId, requestedJobId, force } = request;
 
@@ -65,6 +69,22 @@ export async function startOrResumeAnalysis(
   });
   if (!tender) {
     throw new Error("Tender not found or access denied");
+  }
+
+  // Gate 1: Check extraction quality (cannot start with corrupted extraction)
+  const extractionCheck = await canStartAnalysisWithExtraction(
+    tenderId,
+    prismaClient,
+    force,
+  );
+
+  if (!extractionCheck.allowed) {
+    return {
+      isResume: false,
+      extractionQuality: extractionCheck.quality,
+      extractionBlocked: true,
+      blockReason: extractionCheck.reason,
+    };
   }
 
   if (requestedJobId) {
