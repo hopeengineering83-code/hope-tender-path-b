@@ -8,7 +8,7 @@ import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
 import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
-import { assembleFinalSubmissionZip } from "../../../../../lib/engine/final-zip-assembly";
+import { assembleFinalSubmissionZip, FINAL_ZIP_MAX_INPUT_BYTES } from "../../../../../lib/engine/final-zip-assembly";
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
@@ -398,13 +398,45 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     zipContents.push({ generatedDocId: doc.id, bytes: content.buffer });
   }
 
+  // PERF-003: pre-flight the total uncompressed input size so we can return
+  // a clean 413 to the caller before JSZip allocates the full archive buffer.
+  // The same cap is enforced defensively inside `assembleFinalSubmissionZip`
+  // in case future callers bypass this route.
+  const totalZipInputBytes = zipContents.reduce(
+    (sum, item) => sum + (item.bytes?.byteLength ?? 0),
+    0,
+  );
+  if (totalZipInputBytes > FINAL_ZIP_MAX_INPUT_BYTES) {
+    const limitMb = Math.floor(FINAL_ZIP_MAX_INPUT_BYTES / (1024 * 1024));
+    const actualMb = (totalZipInputBytes / (1024 * 1024)).toFixed(1);
+    return err(
+      `Final ZIP package would exceed the ${limitMb}MB safety cap (PERF-003). The current package is ~${actualMb}MB of uncompressed document content. Reduce the package size by splitting envelopes or removing non-final documents before exporting.`,
+      413,
+      {
+        code: "FINAL_ZIP_SIZE_CAP_EXCEEDED",
+        limitBytes: FINAL_ZIP_MAX_INPUT_BYTES,
+        actualBytes: totalZipInputBytes,
+      },
+    );
+  }
+
   let assembledZip;
   try {
     assembledZip = await assembleFinalSubmissionZip(entries, zipContents);
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // PERF-003: a size-cap violation thrown by the assembly helper is surfaced
+    // as 413 (Payload Too Large) rather than the generic 422 verification error.
+    if (/PERF-003|safety cap/i.test(detail)) {
+      return err(
+        `Final ZIP package exceeds the ${Math.floor(FINAL_ZIP_MAX_INPUT_BYTES / (1024 * 1024))}MB safety cap (PERF-003). Reduce the package size by splitting envelopes or removing non-final documents.`,
+        413,
+        { code: "FINAL_ZIP_SIZE_CAP_EXCEEDED", limitBytes: FINAL_ZIP_MAX_INPUT_BYTES, detail },
+      );
+    }
     return err("Final ZIP verification failed. Regenerate the affected documents before export.", 422, {
       code: "FINAL_ZIP_VERIFICATION_FAILED",
-      detail: error instanceof Error ? error.message : String(error),
+      detail,
     });
   }
 
@@ -460,7 +492,22 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   if (zipAuthorityNeedsReview) {
     responseHeaders["X-Authority-Review-Status"] = "NEEDS_REVIEW";
   }
-  return new NextResponse(new Uint8Array(zipBuffer), { headers: responseHeaders });
+  // PERF-003: stream the ZIP back to the client instead of returning a single
+  // monolithic buffer. JSZip still materializes the full archive in memory
+  // (we removed the CRC32 re-read pass in `assembleFinalSubmissionZip` to
+  // drop from a ~3x to ~1x memory multiplier), but wrapping the buffer in a
+  // `ReadableStream` lets Vercel start sending headers + the first chunk
+  // immediately and frees the function to flush progressively rather than
+  // buffering the whole response. The Content-Length header is preserved so
+  // clients can show download progress.
+  responseHeaders["Content-Length"] = String(zipBuffer.length);
+  const zipStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(zipBuffer));
+      controller.close();
+    },
+  });
+  return new NextResponse(zipStream, { headers: responseHeaders });
 }
 
 async function proposalPdf(userId: string, tender: any, docId: string | null) {
