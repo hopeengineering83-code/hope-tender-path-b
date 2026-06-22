@@ -1301,6 +1301,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               where: { id },
               data: {
                 analysisSummary: aiResult.summary,
+                ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
                 evaluationMethodology: aiResult.evaluationMethodology || null,
                 exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
                 exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
