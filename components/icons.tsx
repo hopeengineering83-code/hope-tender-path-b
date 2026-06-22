@@ -159,3 +159,57 @@ export function WarningIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** Circle check — success / passed. */
+export function CheckCircleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Circle alert — warning / partial. */
+export function AlertCircleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v4M12 16v.01" />
+    </svg>
+  );
+}
+
+/** Lock — blocked / locked. */
+export function LockIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <rect x="4" y="11" width="16" height="9" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+/** Lightbulb — tip / recommendation. */
+export function LightbulbIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M9 18h6M12 2c-3.9 0-7 3.1-7 7 0 2.3.9 4.3 2.4 5.8.4.4.6.9.6 1.5v.4c0 .8.6 1.3 1.3 1.3h5.4c.7 0 1.3-.6 1.3-1.3v-.4c0-.6.2-1.1.6-1.5C18.1 13.3 19 11.3 19 9c0-3.9-3.1-7-7-7z" />
+    </svg>
+  );
+}
+
+/** Info circle — information. */
+export function InfoIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v.01M12 12v4" />
+    </svg>
+  );
+}
