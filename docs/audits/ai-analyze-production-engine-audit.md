@@ -250,13 +250,22 @@ RUNNING
 ✅ Average characters per page calculated  
 ✅ Integration: startOrResumeAnalysis checks quality before job creation
 
-### Phase 5+ Tests (Future)
-- Worker lease expiry + retry scheduling
-- Cold restart recovery (promote unpromoted SUCCEEDED jobs)
+### Phase 5 Tests (This PR — Worker Hardening + Cold Restart)
+✅ Lease claiming atomically claims exactly one job  
+✅ Fresh QUEUED jobs claimed before stale RUNNING  
+✅ Stale leases (leaseExpiresAt in past) are reclaimed  
+✅ Heartbeat renewal extends lease  
+✅ Cold restart promotes unpromoted SUCCEEDED jobs  
+✅ Concurrent worker races: first to claim wins  
+✅ Lease loss detection: worker can check stillOwnsLease()  
+✅ Worker lifecycle: claim → heartbeat → complete → promote
+
+### Phase 6+ Tests (Future)
+- 20 integration scenarios (all phases combined)
+- Worker + route interaction with concurrent claims
+- Provider fallback order verified
 - Cross-user access blocked with 403
 - Secrets not leaked in responses/logs
-- Provider fallback order verified
-- Concurrent worker races resolved correctly
 
 ---
 
@@ -265,15 +274,19 @@ RUNNING
 | File | Change | Lines |
 |------|--------|-------|
 | `lib/ai-analyze/state-resolver.ts` | NEW — Authoritative state resolver | 200+ |
-| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Content hash, promotion, extraction quality checks | 320+ |
+| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Content hash + promotion + quality + worker lease | 380+ |
 | `lib/ai-analyze/content-hash.ts` | NEW — Deterministic content hashing | 120+ |
 | `lib/ai-analyze/source-validation.ts` | NEW — Source grounding validation | 140+ |
 | `lib/ai-analyze/extraction-quality.ts` | NEW — Extraction quality gates | 180+ |
+| `lib/ai-analyze/worker-lease.ts` | NEW — Worker lease management + cold restart | 260+ |
+| `prisma/schema.prisma` | UPDATED — Add lease fields to AiJob | 15+ |
+| `prisma/migrations/phase5_worker_lease/migration.sql` | NEW — Migration for lease fields + indexes | 12 |
 | `tests/ai-analyze-production-phase1.test.ts` | NEW — Phase 1 tests (state resolver) | 250+ |
 | `tests/ai-analyze-production-phase2.test.ts` | NEW — Phase 2 tests (fallback safety + resume) | 200+ |
 | `tests/ai-analyze-production-phase3.test.ts` | NEW — Phase 3 tests (source + promotion) | 300+ |
 | `tests/ai-analyze-production-phase4.test.ts` | NEW — Phase 4 tests (extraction quality gates) | 280+ |
-| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phases 1-4 completion | 410+ |
+| `tests/ai-analyze-production-phase5.test.ts` | NEW — Phase 5 tests (worker lease + cold restart) | 380+ |
+| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phases 1-5 completion | 420+ |
 
 ---
 
@@ -304,29 +317,34 @@ RUNNING
 
 ## Next Phases (Not in This PR)
 
-**Phase 5:** Worker Hardening + Cold Restart (Days 8-9)
-- Add explicit leaseOwner / leaseExpiresAt fields to AiJob
-- Implement nextAttemptAt for retry scheduling
-- Add lease expiry checks on claim (FOR UPDATE + expiry check)
-- Verify stale RUNNING jobs are reclaimed correctly
-- Cold restart recovery: promote any SUCCEEDED job not yet promoted
-- Worker tests: concurrent claims, stale lease reclaim, cold restart recovery
-- Integration: worker + route + cold restart scenario
-
-**Phase 6:** Integration Tests — 20 behavioral scenarios (Day 9)
-- Scenario 1-3: Job claiming (atomic, race, stale lease)
-- Scenario 4-6: Resume consistency (hash match, content change, supersession)
-- Scenario 7-9: Fallback safety (approval required, promotion blocked, audit)
-- Scenario 10-12: Source validation (missing source, phantom file, TOCTOU)
-- Scenario 13-15: Extraction quality (corrupted, weak, force mode)
-- Scenario 16-18: Cold restart (promoted jobs, unpromoted recovery, worker re-entry)
-- Scenario 19: Cross-user access blocked (403)
-- Scenario 20: Secrets not leaked (no keys/tokens in logs/responses)
+**Phase 6:** Integration Tests — 20 behavioral scenarios (Days 9-10)
+- Scenario 1: Atomic claiming (SKIP LOCKED prevents duplicates)
+- Scenario 2: Concurrent worker races (first to claim wins)
+- Scenario 3: Stale lease reclaiming (expired lease auto-reclaimed)
+- Scenario 4: Resume with matching hash (reuses completed chunks)
+- Scenario 5: Content change triggers supersession
+- Scenario 6: Multiple content changes create chain of superseded jobs
+- Scenario 7: Fallback approval required (REGEX_FALLBACK_UNAPPROVED blocks generation)
+- Scenario 8: Fallback promotion blocks unapproved fallback
+- Scenario 9: Fallback approval audit trail
+- Scenario 10: Source validation blocks missing sources
+- Scenario 11: Phantom file token rejected (TOCTOU guard)
+- Scenario 12: Atomic promotion in transaction
+- Scenario 13: Corrupted extraction blocks analysis (no force override)
+- Scenario 14: Weak extraction blocks without force=true
+- Scenario 15: Force mode allows weak extraction
+- Scenario 16: Cold restart promotes unpromoted SUCCEEDED jobs
+- Scenario 17: Worker lease loss stops processing
+- Scenario 18: Heartbeat renewal extends lease
+- Scenario 19: Cross-user access blocked with 403
+- Scenario 20: Secrets not leaked in logs/responses (no API keys, tokens, etc.)
 
 **Phase 7:** PR Delivery (Day 10)
-- Create DRAFT PR with all acceptance criteria
-- Document all changes in PR body
-- Include test matrix and phase completion checklist
+- Create DRAFT PR for branch `fix/ai-analyze-production-hardening`
+- Document all 5 phases in PR body
+- Include acceptance criteria checklist
+- Include test matrix showing all tests pass
+- Link to foundation PRs (#839, #837, #834)
 - Preview deployment testing
 - Final sanity checks before merge request
 - Atomic promotion in transaction with TOCTOU guard
