@@ -10,15 +10,17 @@
 //   - resolveTenderAnalysisState        (canonical AI Analyze state machine)
 //   - canExportWithAnalysisState        (state → export-allowed)
 //   - buildTenderAnalysisContent + computeAnalysisContentHash (canonical hash)
-// …and adds the binding conditions the spec requires (current-hash match,
-// chunk integrity, mandatory-requirement source grounding, submission-plan
-// confirmation, regex-fallback binding to the exact job + content hash).
+//   - assessExtractionQuality           (corrupted/weak extraction)
+//   - hasValidSubmissionPlan            (real submission-plan signal)
+// …and adds the binding conditions the spec requires: current-content-hash
+// match, chunk integrity, mandatory-requirement source grounding, weak-
+// extraction override (ExtractionQualityOverride), and regex-fallback approval
+// bound to the exact job + content hash (FallbackApprovalRecord).
 //
 // ARCHITECTURE: a PURE decision function `evaluateGenerationReadiness(input)`
 // holds all the logic (fully unit-testable, no DB), and the async
 // `assertTenderReadyForGenerationAndExport({ prisma, ... })` gathers the raw
 // facts from the database and delegates the decision to the pure function.
-// This mirrors the resolveTenderAnalysisState / deriveAnalysisStateDetail split.
 
 import type { PrismaClient } from "@prisma/client";
 import {
@@ -31,6 +33,8 @@ import {
   buildTenderAnalysisContent,
   computeAnalysisContentHash,
 } from "./tender-analysis-content";
+import { assessExtractionQuality } from "../extraction-quality";
+import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
 
 export type GenerationPurpose =
   | "generate"
@@ -43,15 +47,16 @@ export type GenerationPurpose =
 export type GenerationBlockerCode =
   | "OWNERSHIP_TENDER_NOT_FOUND"
   | "EXTRACTION_NO_ACTIVE_FILE"
+  | "EXTRACTION_CORRUPTED"
+  | "EXTRACTION_WEAK_NO_OVERRIDE"
   | "ANALYSIS_NOT_READY"
   | "ANALYSIS_NO_PROMOTED_JOB"
   | "ANALYSIS_HASH_MISMATCH"
+  | "FALLBACK_UNAPPROVED"
   | "CHUNKS_INCOMPLETE"
   | "REQUIREMENTS_MISSING"
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "SUBMISSION_PLAN_MISSING"
-  | "SUBMISSION_PLAN_EMPTY"
-  | "FALLBACK_UNAPPROVED"
   | "GATE_INTERNAL_ERROR";
 
 export interface GenerationReadinessResult {
@@ -62,6 +67,13 @@ export interface GenerationReadinessResult {
 }
 
 // ─── Pure decision input (no Prisma types — fully unit-testable) ──────────────
+
+export interface ReadinessExtractionFile {
+  fileId: string;
+  corrupted: boolean; // hard block, never overridable
+  weak: boolean; // weak but not corrupted
+  hasOverride: boolean; // valid ExtractionQualityOverride exists for this file
+}
 
 export interface ReadinessChunkRow {
   status: string; // QUEUED | RUNNING | SUCCEEDED | FAILED | SKIPPED
@@ -83,19 +95,21 @@ export interface GenerationReadinessInput {
   tenderExistsAndOwned: boolean;
   // B — extraction
   activeFileCount: number;
+  extractionFiles: ReadinessExtractionFile[];
   // C/D — analysis state + content-hash binding
   analysisState: AnalysisState;
   canonicalJobId: string | null; // latest job's id when promoted, else null
   latestJobHash: string | null; // analysisInputHash of the latest eligible job
   currentContentHash: string; // recomputed immediately before authorization
+  // I — regex-fallback approval bound to exact (tenderId, jobId, contentHash)
+  fallbackApprovalBound: boolean;
   // E — chunk integrity for the CURRENT content hash
   currentHashChunks: ReadinessChunkRow[];
   // F — requirement source grounding
   requirementCount: number;
   requirements: ReadinessRequirement[];
-  // H — submission/build plan
-  submissionPlanConfirmed: boolean;
-  submissionPlanDerivedDocumentCount: number;
+  // H — submission/build plan: count of non-superseded GeneratedDocument rows
+  submissionPlanDocumentCount: number;
 }
 
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
@@ -118,9 +132,17 @@ export function evaluateGenerationReadiness(
     return fail("OWNERSHIP_TENDER_NOT_FOUND", "Tender does not exist or does not belong to the requesting user.");
   }
 
-  // B — Extraction readiness (must have at least one active tender file)
+  // B — Extraction readiness.
   if (input.activeFileCount < 1) {
     return fail("EXTRACTION_NO_ACTIVE_FILE", "No active tender file exists. Upload and extract the tender document first.");
+  }
+  for (const file of input.extractionFiles) {
+    if (file.corrupted) {
+      return fail("EXTRACTION_CORRUPTED", "At least one tender file has corrupted extraction. Re-upload a clearer document or run OCR — corrupted extraction can never be overridden.");
+    }
+    if (file.weak && !file.hasOverride) {
+      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no human override on record. Re-extract (run OCR) or record an explicit extraction-quality override before generating/exporting.");
+    }
   }
 
   // D — Eligible AI Analyze job: state must be export-eligible
@@ -148,6 +170,13 @@ export function evaluateGenerationReadiness(
   }
   if (input.latestJobHash !== input.currentContentHash) {
     return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender.");
+  }
+
+  // I — Regex-fallback approval must be bound to the exact current job + hash.
+  //     A tender-wide ComplianceGap alone never authorizes; only a
+  //     FallbackApprovalRecord matching (tenderId, jobId, contentHash) counts.
+  if (input.analysisState === "HUMAN_APPROVED_FALLBACK" && !input.fallbackApprovalBound) {
+    return fail("FALLBACK_UNAPPROVED", "The current analysis is a regex fallback without a durable approval bound to this exact job and content hash. Re-approve the fallback for the current analysis before generating/exporting.");
   }
 
   // E — Chunk integrity for the current content hash. Zero chunk rows is a valid
@@ -182,18 +211,61 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // H — Build/Submission plan must be confirmed and non-empty.
-  if (!input.submissionPlanConfirmed) {
-    return fail("SUBMISSION_PLAN_MISSING", "The submission/build plan has not been confirmed. Build and confirm the submission plan before generating/exporting.");
-  }
-  if (input.submissionPlanDerivedDocumentCount < 1) {
-    return fail("SUBMISSION_PLAN_EMPTY", "The submission/build plan is empty (no derived deliverables). Rebuild the plan from the tender requirements.");
+  // H — Build/Submission plan must exist (at least one non-superseded planned or
+  //     generated document). Matches the canonical hasValidSubmissionPlan signal.
+  if (input.submissionPlanDocumentCount < 1) {
+    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists (no planned or generated documents). Build the submission plan before generating/exporting.");
   }
 
   return { ok: true, purpose: input.purpose };
 }
 
+/**
+ * Resolve the (latest AI_ANALYZE job id, current content hash) binding for a
+ * tender, using the SAME content builder + hash the gate uses. Routes that
+ * record a fallback approval bind it to exactly this pair so the gate's
+ * condition I matches. Returns nulls when the tender is not found/owned.
+ */
+export async function resolveCurrentAnalysisBinding(
+  prisma: PrismaClient,
+  tenderId: string,
+  userId: string,
+): Promise<{ jobId: string | null; contentHash: string | null }> {
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      title: true,
+      description: true,
+      intakeSummary: true,
+      files: { select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true, deletionStatus: true } },
+    },
+  });
+  if (!tender) return { jobId: null, contentHash: null };
+  const activeFiles = tender.files.filter((f) => f.deletionStatus === "ACTIVE");
+  const company = await prisma.company.findUnique({
+    where: { userId },
+    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
+  });
+  const contentHash = computeAnalysisContentHash(
+    buildTenderAnalysisContent(
+      { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: activeFiles },
+      company ?? undefined,
+    ),
+  );
+  const latestJob = await prisma.aiJob.findFirst({
+    where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE, tender: { userId } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  return { jobId: latestJob?.id ?? null, contentHash };
+}
+
 // ─── Async DB-backed entry point ──────────────────────────────────────────────
+
+// Below this average extraction score a file counts as "weak" (overridable).
+// Mirrors the spec's weak-extraction band; corrupted is handled separately and
+// is never overridable.
+const WEAK_EXTRACTION_SCORE_THRESHOLD = 70;
 
 /**
  * THE authoritative readiness gate. Gathers raw facts from the database and
@@ -224,6 +296,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             originalFileName: true,
             extractedText: true,
             classification: true,
+            extractionScore: true,
             createdAt: true,
             deletionStatus: true,
           },
@@ -235,6 +308,18 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     }
 
     const activeFiles = tender.files.filter((f) => f.deletionStatus === "ACTIVE");
+
+    // B — per-file extraction quality + weak-extraction override lookup.
+    const extractionFiles = await Promise.all(
+      activeFiles.map(async (f) => {
+        const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
+        const score = Math.min(f.extractionScore ?? quality.score, quality.score);
+        const corrupted = quality.corrupted;
+        const weak = !corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD;
+        const hasOverride = weak ? await hasActiveExtractionOverride(prisma, { tenderId, tenderFileId: f.id }) : false;
+        return { fileId: f.id, corrupted, weak, hasOverride };
+      }),
+    );
 
     // Company vault digest participates in the canonical hash so vault changes
     // invalidate the analysis exactly as AI Analyze computed it.
@@ -260,6 +345,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       }),
     ]);
 
+    // I — fallback approval binding (only meaningful when the state is a fallback).
+    const fallbackApprovalBound =
+      analysis.state === "HUMAN_APPROVED_FALLBACK" && analysis.canonicalJobId
+        ? await hasBoundFallbackApproval(prisma, { tenderId, jobId: analysis.canonicalJobId, contentHash: currentContentHash })
+        : false;
+
     // E — chunk integrity for the CURRENT content hash only.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
       where: { tenderId, contentHash: currentContentHash, tender: { userId } },
@@ -280,29 +371,25 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
     }));
 
-    // H — submission/build plan confirmation.
-    const plan = await prisma.submissionPlanState.findUnique({
-      where: { tenderId },
-      select: { confirmationStatus: true, provenance: true, derivedDocumentCount: true },
+    // H — real submission-plan signal: non-superseded GeneratedDocument rows.
+    const submissionPlanDocumentCount = await prisma.generatedDocument.count({
+      where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     });
-    const submissionPlanConfirmed =
-      !!plan &&
-      (plan.confirmationStatus === "CONFIRMED" || plan.confirmationStatus === "APPROVED") &&
-      plan.provenance !== "NONE";
 
     return evaluateGenerationReadiness({
       purpose,
       tenderExistsAndOwned: true,
       activeFileCount: activeFiles.length,
+      extractionFiles,
       analysisState: analysis.state,
       canonicalJobId: analysis.canonicalJobId,
       latestJobHash: latestJob?.analysisInputHash ?? null,
       currentContentHash,
+      fallbackApprovalBound,
       currentHashChunks,
       requirementCount: requirements.length,
       requirements: mappedRequirements,
-      submissionPlanConfirmed,
-      submissionPlanDerivedDocumentCount: plan?.derivedDocumentCount ?? 0,
+      submissionPlanDocumentCount,
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.

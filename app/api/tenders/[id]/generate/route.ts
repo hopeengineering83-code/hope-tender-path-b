@@ -23,6 +23,7 @@ import { isValidClientName, containsMetadataPlaceholder, isClientNameContaminate
 import { validateTenderBeforeGeneration, validateTenderBeforeExport } from "../../../../../lib/engine/pre-generation-validation";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
@@ -958,6 +959,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);
   if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
+
+  // ── Central authoritative readiness gate (final consolidated check) ───────
+  // Last fail-closed check before full generation creates documents. Enforces
+  // the binding conditions the per-field gates above do not all enforce
+  // together: a promoted AI Analyze job whose content hash still matches the
+  // current tender, complete analysis chunks, source-grounded mandatory
+  // requirements, weak-extraction override, fallback approval bound to this exact
+  // job+hash, and an existing submission plan. planOnly requests already returned
+  // above, so this runs only on the full-generation path.
+  const centralGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: id, userId, purpose: "generate" });
+  if (!centralGate.ok) {
+    return NextResponse.json({
+      errorCode: centralGate.blockerCode,
+      error: `Generation blocked: ${centralGate.blockerDetail}`,
+      blockers: [centralGate.blockerDetail ?? "Tender is not ready for generation."],
+      nextAction: "RERUN_AI_ANALYZE",
+      diagnosticId: `central-gate-${id}`,
+    }, { status: 422 });
+  }
 
   // Concurrent generation guard — same check used for planOnly mode.
   // Without this, two parallel POST /generate calls could each enter
