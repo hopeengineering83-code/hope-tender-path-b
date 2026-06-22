@@ -1409,7 +1409,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Without this, a deployment with no AI key would destroy a previous
       // trusted AI analysis by taking the legacy deleteMany/canonical-write path.
       if (!nsJobIdForFallback) {
-        const noAiHash = crypto.createHash("sha256").update(id).digest("hex").slice(0, 16);
+        const textDigest = crypto.createHash("sha256").update(tenderRecord.title ?? "").digest("hex").slice(0, 8);
+        const noAiHash = crypto.createHash("sha256").update(`${id}[digest:${textDigest}]`).digest("hex").slice(0, 16);
         nsContentHashForFallback = noAiHash;
         try {
           const noAiJob = await prisma.aiJob.create({
