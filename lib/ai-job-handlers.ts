@@ -21,6 +21,7 @@
 import { recordStep, type JobType } from "./ai-jobs";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
+import { executeAnalysis } from "./engine/analysis-orchestrator";
 import { prisma } from "./prisma";
 import {
   aiRematchExperts,
@@ -33,6 +34,7 @@ import { simulateEvaluatorPanel } from "./engine/evaluator-simulator";
 import { answerTenderCopilotQuestion, type TenderCopilotContext } from "./engine/tender-ai-copilot";
 import { extractCompanyFacts } from "./engine/company-fact-extractor";
 import { generateProposalSectionsParallel, type AIBidWriterInput } from "./ai";
+import { assertTenderReadyForGenerationAndExport } from "./engine/generation-readiness-gate";
 
 export interface JobContext {
   jobId: string;
@@ -101,6 +103,46 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     } catch (err) {
       clearInterval(heartbeat);
       await recordStep(ctx.jobId, { stepName: "engine.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
+      throw err;
+    }
+  },
+
+  // ─── AI_ANALYZE — chunk-based tender analysis with provider fallback ──
+  // Async standalone version of /api/tenders/[id]/ai-analyze. Escapes the 60s
+  // cap for large tenders by running in the worker's budget. Uses the
+  // AnalysisOrchestrator for deterministic content hashing, checkpoint resume,
+  // and consistent analysisSource state machine (AI vs PARTIAL_AI).
+  AI_ANALYZE: async (ctx) => {
+    if (!ctx.tenderId) throw new Error("AI_ANALYZE requires tenderId on the job");
+    await recordStep(ctx.jobId, { stepName: "analyze.start", message: "Starting tender analysis", status: "RUNNING" });
+
+    const heartbeat = setInterval(() => {
+      void recordStep(ctx.jobId, { stepName: "analyze.heartbeat", message: "Analysis running — waiting for AI response", status: "RUNNING" }).catch(() => {});
+    }, 25_000);
+
+    try {
+      const result = await executeAnalysis(ctx.tenderId, ctx.userId, {
+        force: ctx.input?.force === true,
+        deadlineMs: 55_000,
+        onProgress: async (event) => {
+          const msg = event.message || event.status || event.phase;
+          void recordStep(ctx.jobId, { stepName: `analyze.${event.phase}`, message: msg, status: "RUNNING" }).catch(() => {});
+        },
+      });
+
+      clearInterval(heartbeat);
+      await recordStep(ctx.jobId, { stepName: "analyze.complete", message: `Analysis complete — ${result.requirementCount} requirements extracted`, status: "SUCCEEDED" });
+      return {
+        analysisSource: result.analysisSource,
+        requirementCount: result.requirementCount,
+        isPartial: result.isPartial,
+        success: result.success,
+        totalChunks: result.totalChunks,
+        completedChunks: result.completedChunks,
+      };
+    } catch (err) {
+      clearInterval(heartbeat);
+      await recordStep(ctx.jobId, { stepName: "analyze.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
       throw err;
     }
   },
@@ -195,6 +237,21 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
   // input.sectionFilter — optional ProposalSectionId[] to limit scope.
   PROPOSAL_GENERATION: async (ctx) => {
     if (!ctx.tenderId) throw new Error("PROPOSAL_GENERATION requires tenderId on the job");
+
+    // Central readiness gate — the background path must not be able to create a
+    // GeneratedDocument unless the tender is demonstrably ready. Fail-closed:
+    // a blocked gate creates ZERO GeneratedDocument rows.
+    const readiness = await assertTenderReadyForGenerationAndExport({
+      prisma,
+      tenderId: ctx.tenderId,
+      userId: ctx.userId,
+      purpose: "background-proposal-generation",
+    });
+    if (!readiness.ok) {
+      await recordStep(ctx.jobId, { stepName: "proposal.gate", message: `Blocked by readiness gate: ${readiness.blockerCode} — ${readiness.blockerDetail}`, status: "FAILED" });
+      throw new Error(`PROPOSAL_GENERATION blocked by readiness gate (${readiness.blockerCode}): ${readiness.blockerDetail}`);
+    }
+
     await recordStep(ctx.jobId, { stepName: "proposal.load", message: "Loading tender + company context", status: "RUNNING" });
 
     const [tender, company] = await Promise.all([
@@ -370,27 +427,6 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     await prisma.company.update({ where: { id: company.id }, data: updates });
     await recordStep(ctx.jobId, { stepName: "facts.complete", message: `Filled ${Object.keys(updates).length} empty field(s): ${Object.keys(updates).join(", ")}`, status: "SUCCEEDED" });
     return { fieldsExtracted: Object.keys(facts).length, fieldsUpdated: Object.keys(updates).length, factsFound: facts as unknown as Record<string, unknown> };
-  },
-
-  // FM-003 FIX: AI_ANALYZE was listed in SUPPORTED_JOB_TYPES but had no handler.
-  AI_ANALYZE: async (ctx) => {
-    if (!ctx.tenderId) throw new Error("AI_ANALYZE requires tenderId on the job");
-    await recordStep(ctx.jobId, { stepName: "analyze.start", message: `Starting AI analysis for tender ${ctx.tenderId}`, status: "RUNNING" });
-    const heartbeat = setInterval(() => {
-      void recordStep(ctx.jobId, { stepName: "analyze.heartbeat", message: "Analysis running — waiting for AI response", status: "RUNNING" }).catch(() => {});
-    }, 25_000);
-    try {
-      const safeMode = ctx.input?.safe === true;
-      const skipAiRematch = ctx.input?.skipAiRematch === true;
-      const maxChars = typeof ctx.input?.maxChars === "number" ? ctx.input.maxChars : undefined;
-      const result = await runTenderEngine(ctx.tenderId, ctx.userId, (stepName: string, message: string) => {
-        void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
-      }, { safe: safeMode, skipAiRematch, maxChars });
-      clearInterval(heartbeat);
-      const reqCount = result?.requirements?.length ?? 0;
-      await recordStep(ctx.jobId, { stepName: "analyze.complete", message: `AI analysis complete. Requirements: ${reqCount}`, status: "SUCCEEDED" });
-      return { analysisSource: "AI", requirementCount: reqCount };
-    } catch (err) { clearInterval(heartbeat); throw err; }
   },
 };
 

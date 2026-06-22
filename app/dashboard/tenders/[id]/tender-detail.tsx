@@ -21,6 +21,9 @@ import { SparklesIcon, BoltIcon, CheckIcon, ArrowRightIcon, DownloadIcon } from 
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "../../../../components/canonical-status-badge";
 import type { CanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
+import { GenerationGatesPanel } from "../../../../components/GenerationGatesPanel";
+import { ExtractionQualityPanel } from "../../../../components/ExtractionQualityPanel";
+import { checkGenerationGates } from "../../../../lib/generation-gates";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -616,10 +619,12 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   }
 
   // Collapsible diagnostic panel state — persisted per tender in localStorage.
-  const PANEL_IDS = ["metadata", "submission-plan", "requirements", "controls", "score", "workspace", "files", "expert-matches", "project-matches", "generated-docs"] as const;
+  const PANEL_IDS = ["extraction-quality", "metadata", "generation-gates", "submission-plan", "requirements", "controls", "score", "workspace", "files", "expert-matches", "project-matches", "generated-docs"] as const;
   type PanelId = (typeof PANEL_IDS)[number];
   const PANEL_DEFAULTS: Record<PanelId, boolean> = {
+    "extraction-quality": true,
     "metadata": true,
+    "generation-gates": true,
     "submission-plan": true,
     "requirements": true,
     "controls": false,
@@ -2170,12 +2175,50 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       </div>
 
       <CollapsiblePanel
+        title="Extraction Quality"
+        isOpen={panels["extraction-quality"]}
+        onToggle={() => togglePanel("extraction-quality")}
+      >
+        <ExtractionQualityPanel
+          files={tender.files.map((f) => ({
+            totalPages: f.totalPages ?? null,
+            extractedPages: f.extractedPages ?? null,
+            ocrPages: f.ocrPages ?? null,
+            failedPages: f.failedPages ?? null,
+            extractionScore: f.extractionScore ?? null,
+          }))}
+          analysisExtractionStatus={tender.analysisExtractionStatus ?? undefined}
+        />
+      </CollapsiblePanel>
+
+      <CollapsiblePanel
         title="Metadata Completion"
         isOpen={panels["metadata"]}
         onToggle={() => togglePanel("metadata")}
       >
         <MetadataCompletionPanel tenderId={tender.id} />
       </CollapsiblePanel>
+
+      {(() => {
+        const gates = checkGenerationGates({
+          extractionStatus: (tender.analysisExtractionStatus as any) ?? null,
+          requirementCount: tender.requirements.length,
+          hasProcuringEntity: !!(tender.procuringEntityName || tender.clientName),
+          hasSubmissionMethod: !!tender.submissionMethod,
+          hasSubmissionEmails: !!tender.submissionEmails,
+          hasEvaluationMethodology: !!tender.evaluationMethodology,
+          buildsSubmissionPlan: true,
+        });
+        return (
+          <CollapsiblePanel
+            title="Document Generation Readiness"
+            isOpen={panels["generation-gates"]}
+            onToggle={() => togglePanel("generation-gates")}
+          >
+            <GenerationGatesPanel gates={gates} />
+          </CollapsiblePanel>
+        );
+      })()}
 
       <CollapsiblePanel
         title="Submission Plan"
