@@ -509,3 +509,56 @@ describe("analyzeWithAI — partial jobs remain resumable", () => {
     );
   });
 });
+
+// ── Regression: analysisSource metadata preservation ────────────────────────────
+
+describe("analysisSource metadata — regression test for PR #837", () => {
+  it("route preserves PARTIAL_AI analysisSource when isPartial=true in non-streaming path", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
+      "utf-8",
+    );
+    // After PR #837 fix: analysisSourceForJob variable computed from isPartial
+    assert.ok(
+      src.includes('const analysisSourceForJob = aiMeta.isPartial ? "PARTIAL_AI" : "AI"'),
+      "non-streaming path must compute analysisSource dynamically based on isPartial, not hardcode to AI",
+    );
+    // And then used in job.output
+    assert.ok(
+      src.includes("analysisSource: analysisSourceForJob"),
+      "non-streaming path must store the computed analysisSourceForJob in job output",
+    );
+  });
+
+  it("route preserves PARTIAL_AI analysisSource when isPartial=true in streaming path", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
+      "utf-8",
+    );
+    // After PR #837 fix: analysisSourceForStreamingJob variable computed from isPartial
+    assert.ok(
+      src.includes('const analysisSourceForStreamingJob = analysisMeta.isPartial ? "PARTIAL_AI" : "AI"'),
+      "streaming path must compute analysisSource dynamically based on isPartial, not hardcode to AI",
+    );
+    // And then used in job.output
+    assert.ok(
+      src.includes("analysisSource: analysisSourceForStreamingJob"),
+      "streaming path must store the computed analysisSourceForStreamingJob in job output",
+    );
+  });
+
+  it("route response analysisSource matches job.output analysisSource", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
+      "utf-8",
+    );
+    // Both paths should compute analysisSource the same way for the response
+    const partialAiPatterns = (
+      src.match(/\(aiMeta\.isPartial \? "PARTIAL_AI" : "AI"\)|analysisMeta\.isPartial \? "PARTIAL_AI" : "AI"/g) ?? []
+    ).length;
+    assert.ok(
+      partialAiPatterns >= 2,
+      "route must compute analysisSource consistently: once for job.output, once for response analysisSource",
+    );
+  });
+});

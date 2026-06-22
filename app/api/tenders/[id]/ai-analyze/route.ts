@@ -963,12 +963,13 @@ async function handleStreamingAnalyze(
               },
             }).catch(() => {});
           } else {
+            const analysisSourceForStreamingJob = analysisMeta.isPartial ? "PARTIAL_AI" : "AI";
             await prisma.aiJob.update({
               where: { id: analysisJobId },
               data: {
                 status: analysisMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
                 finishedAt: new Date(),
-                output: JSON.stringify({ isPartial: analysisMeta.isPartial, totalChunks: analysisMeta.totalChunks, completedChunks: analysisMeta.completedChunks, failedChunks: analysisMeta.failedChunks, skippedChunks: analysisMeta.skippedChunks, chunkProviders: analysisMeta.chunkProviders, chunkResults: analysisMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: analysisMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
+                output: JSON.stringify({ isPartial: analysisMeta.isPartial, totalChunks: analysisMeta.totalChunks, completedChunks: analysisMeta.completedChunks, failedChunks: analysisMeta.failedChunks, skippedChunks: analysisMeta.skippedChunks, chunkProviders: analysisMeta.chunkProviders, chunkResults: analysisMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: analysisSourceForStreamingJob, nextAction: analysisMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
               },
             }).catch(() => {});
 
@@ -1383,6 +1384,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // PARTIAL_SUCCESS = some chunks succeeded, some failed/skipped due to deadline.
         if (analysisJob) {
           analysisJobId = analysisJob.id;
+          const analysisSourceForJob = aiMeta.isPartial ? "PARTIAL_AI" : "AI";
           await prisma.aiJob.update({
             where: { id: analysisJob.id },
             data: {
@@ -1398,7 +1400,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 chunkResults: aiMeta.chunkResults,
                 contentHash,
                 resumedFromJobId: continueJobId,
-                analysisSource: "AI",
+                analysisSource: analysisSourceForJob,
                 nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
               }),
             },
