@@ -29,6 +29,7 @@ import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-pla
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
 import { assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
+import { checkGenerationGates } from "../../../../../lib/generation-gates";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -329,6 +330,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       blockers: ["metadataContaminated: client name was extracted from portal noise — requires manual correction before generation is allowed"],
       nextAction: "EDIT_TENDER_METADATA",
       diagnosticId: `metadata-contaminated-${id}`,
+    }, { status: 422 });
+  }
+
+  // ── Generation gates check ──────────────────────────────────────────────
+  // Check: extraction quality, client details, requirements, submission plan.
+  const generationGates = checkGenerationGates({
+    extractionStatus: (tender.analysisExtractionStatus as any) ?? null,
+    requirementCount: tender.requirements.length,
+    hasProcuringEntity: !!(tender.procuringEntityName || tender.clientName),
+    hasSubmissionMethod: !!tender.submissionMethod,
+    hasSubmissionEmails: !!tender.submissionEmails,
+    hasEvaluationMethodology: !!tender.evaluationMethodology,
+    buildsSubmissionPlan: true,
+  });
+  if (!generationGates.allGatesMet) {
+    return NextResponse.json({
+      errorCode: "GENERATION_GATES_FAILED",
+      error: "Generation blocked: not all readiness gates are met.",
+      blockers: generationGates.blockers,
+      recommendations: generationGates.recommendations,
+      gates: generationGates,
+      nextAction: "OPEN_GENERATION_GATES",
+      diagnosticId: `generation-gates-failed-${id}`,
     }, { status: 422 });
   }
 
