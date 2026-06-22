@@ -17,6 +17,12 @@ import { getTenderAnalysisState, canGenerateFromState, type AnalysisState } from
 import { buildAndHashTenderAnalysisContent } from "./content-hash";
 import { validateAllRequirementSources, type SourceValidationResult } from "./source-validation";
 import { canStartAnalysisWithExtraction, type ExtractionQualityResult } from "./extraction-quality";
+import {
+  claimJobWithLease,
+  renewJobLease,
+  stillOwnsLease,
+  type LeaseConfig,
+} from "./worker-lease";
 
 export interface AnalysisRequest {
   tenderId: string;
@@ -432,6 +438,91 @@ export async function isJobPromoted(
     select: { promotedAt: true },
   });
   return job?.promotedAt != null;
+}
+
+/**
+ * Worker: Claim next AI_ANALYZE job with lease.
+ *
+ * Used by worker/queue handler to claim jobs for execution.
+ * Returns job ID if claimed, null if no jobs available.
+ *
+ * Lease model ensures only one worker processes each job.
+ */
+export async function workerClaimNextAnalysisJob(
+  leaseConfig: LeaseConfig,
+  prismaClient: PrismaClient,
+): Promise<{
+  jobId: string;
+  tenderId: string | null;
+  userId: string;
+  leaseExpiresAt: Date;
+} | null> {
+  const leaseResult = await claimJobWithLease(leaseConfig, prismaClient);
+
+  if (!leaseResult) {
+    return null;
+  }
+
+  // Fetch job details for worker to process
+  const job = await prismaClient.aiJob.findUnique({
+    where: { id: leaseResult.jobId },
+    select: {
+      id: true,
+      tenderId: true,
+      userId: true,
+    },
+  });
+
+  if (!job) {
+    return null; // Job disappeared (very unlikely)
+  }
+
+  return {
+    jobId: job.id,
+    tenderId: job.tenderId,
+    userId: job.userId,
+    leaseExpiresAt: leaseResult.leaseExpiresAt,
+  };
+}
+
+/**
+ * Worker: Heartbeat to renew job lease.
+ *
+ * Worker calls periodically while processing to keep the lease active.
+ * If heartbeat fails, worker should stop processing (lease lost).
+ */
+export async function workerHeartbeatAnalysisJob(
+  jobId: string,
+  workerOwnerId: string,
+  prismaClient: PrismaClient,
+): Promise<{ renewed: boolean; leaseExpiresAt?: Date; reason?: string }> {
+  const renewed = await renewJobLease(jobId, workerOwnerId, prismaClient);
+
+  if (!renewed) {
+    return {
+      renewed: false,
+      reason: "Lease not owned by worker or already expired",
+    };
+  }
+
+  return {
+    renewed: true,
+    leaseExpiresAt: renewed.newLeaseExpiresAt,
+  };
+}
+
+/**
+ * Worker: Check if still owns lease before continuing work.
+ *
+ * Worker should check this before each significant operation.
+ * If false, worker should stop immediately (another worker claimed it).
+ */
+export async function workerVerifyStillOwnsLease(
+  jobId: string,
+  workerOwnerId: string,
+  prismaClient: PrismaClient,
+): Promise<boolean> {
+  return stillOwnsLease(jobId, workerOwnerId, prismaClient);
 }
 
 /**
