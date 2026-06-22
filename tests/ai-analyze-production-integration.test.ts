@@ -34,9 +34,11 @@ import {
 
 describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
   let prisma: PrismaClient;
-  let testTenderId: string;
-  let testUserId: string;
-  let testApproverId: string;
+  // Test IDs are created per test using prisma.aiJob.create()
+  // These are placeholders used before test setup
+  const testTenderId = "test-tender-" + Math.random().toString(36).substr(2, 9);
+  const testUserId = "test-user-" + Math.random().toString(36).substr(2, 9);
+  const testApproverId = "test-approver-" + Math.random().toString(36).substr(2, 9);
 
   beforeAll(async () => {
     prisma = new PrismaClient();

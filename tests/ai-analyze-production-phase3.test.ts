@@ -30,8 +30,9 @@ describe("Phase 3: Source Grounding + Atomic Promotion", () => {
 
   beforeAll(async () => {
     prisma = new PrismaClient();
-    // Create test user, tender, and file
-    // (simplified - in real setup use test database)
+    testTenderId = "test-tender-" + Math.random().toString(36).substr(2, 9);
+    testUserId = "test-user-" + Math.random().toString(36).substr(2, 9);
+    testFileId = "test-file-" + Math.random().toString(36).substr(2, 9);
   });
 
   afterAll(async () => {
