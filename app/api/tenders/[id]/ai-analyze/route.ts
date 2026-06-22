@@ -997,9 +997,10 @@ async function handleStreamingAnalyze(
           }));
           const textSamples = tenderRecord.files.map((f) => f.extractedText);
           const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
+          const aiMeta = analysisMeta;
           const extractionStatus: ExtractionStatus = isFallback
             ? "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
-            : analysisMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+            : aiMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
               ? "PARTIAL_EXTRACTION_AI_ANALYZED"
               : rawExtractionStatus;
           await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
@@ -1043,6 +1044,7 @@ async function handleStreamingAnalyze(
         const sseResumableJobId = !isFallback && (analysisMeta.isPartial || (analysisMeta.completedChunks > 0))
           ? analysisJobId
           : null;
+        const sseProviderRetryAfterMs = isFallback ? getMinCooldownExpiryMs() : null;
         emit({
           phase: "complete",
           fallback: isFallback,
@@ -1051,7 +1053,7 @@ async function handleStreamingAnalyze(
           jobId: analysisJobId,
           message: `Analysis complete — ${analysisResult.requirementCount} requirements extracted`,
           resumableJobId: sseResumableJobId,
-          providerRetryAfterMs: isFallback ? getMinCooldownExpiryMs() : null,
+          providerRetryAfterMs: sseProviderRetryAfterMs,
         });
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
