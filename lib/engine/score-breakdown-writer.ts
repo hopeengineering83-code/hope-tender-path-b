@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 // Score breakdown writer (G3 fix)
 //
 // THE PROBLEM
@@ -113,7 +114,7 @@ export async function writeScoreBreakdown(input: ScoreBreakdown): Promise<{ writ
       written += 1;
     } catch (err) {
       // One bad row should never block the rest. Log and move on.
-      console.warn(`[score-breakdown-writer] Failed to upsert ${input.entityType}/${input.entityId}/${dim}:`, err instanceof Error ? err.message : err);
+      logger.warn(`[score-breakdown-writer] Failed to upsert ${input.entityType}/${input.entityId}/${dim}:`, { detail: err instanceof Error ? err.message : err });
     }
   }
   return { written };

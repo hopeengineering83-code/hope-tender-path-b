@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
 import { logAction } from "../audit";
@@ -166,7 +167,7 @@ export async function runTenderEngine(
           };
           analysisMethod = "AI";
         } catch (err) {
-          console.error("[engine] AI analysis failed — falling back to regex:", err);
+          logger.error("[engine] AI analysis failed — falling back to regex:", { detail: err });
           analysisMethod = "REGEX_FALLBACK_AI_ERROR";
           analysisFallbackReason = err instanceof Error ? err.message : String(err);
           analysis = analyzeTender(tender);
@@ -230,7 +231,7 @@ export async function runTenderEngine(
       ? inferredSector
       : (tender.category || null);
     if (inferredSector !== "General Consultancy / Engineering") {
-      console.info(`[run-tender-engine] Inferred tender sector: "${inferredSector}" (used for matching instead of tender.category="${tender.category}")`);
+      logger.info(`[run-tender-engine] Inferred tender sector: "${inferredSector}" (used for matching instead of tender.category="${tender.category}")`);
     }
 
     progress("engine.match", `Running deterministic matching across ${knowledge.experts.length} expert(s) and ${knowledge.projects.length} project(s)`);
@@ -275,7 +276,7 @@ export async function runTenderEngine(
         expertScoreBreakdowns: aiRematch.expertScoreBreakdowns,
         projectScoreBreakdowns: aiRematch.projectScoreBreakdowns,
       };
-      if (aiRematch.warning) console.warn("[run-tender-engine] main-engine AI rematch warning:", aiRematch.warning);
+      if (aiRematch.warning) logger.warn("[run-tender-engine] main-engine AI rematch warning:", { detail: aiRematch.warning });
     }
 
     const filesWithText = tender.files.filter((f) => typeof f.extractedText === "string" && f.extractedText.length > 200);
@@ -309,9 +310,9 @@ export async function runTenderEngine(
             req.sourceConfidence = coord.confidence;
           }
         }
-        console.info(`[run-tender-engine] requirement source extractor: ${bestByReqId.size}/${analysis.requirements.length} requirements matched to a source paragraph.`);
+        logger.info(`[run-tender-engine] requirement source extractor: ${bestByReqId.size}/${analysis.requirements.length} requirements matched to a source paragraph.`);
       } catch (eErr) {
-        console.warn("[run-tender-engine] requirement source extractor failed:", eErr instanceof Error ? eErr.message : eErr);
+        logger.warn("[run-tender-engine] requirement source extractor failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
       }
     }
 
@@ -418,7 +419,7 @@ export async function runTenderEngine(
         await writeScoreBreakdown({ tenderId, entityType: "PROJECT", entityId: project.id, perspectives, source: aiPerspectives ? "AI_REMATCH" : "ENGINE_MATCH" });
       }
     } catch (sErr) {
-      console.warn("[run-tender-engine] score breakdown write failed:", sErr instanceof Error ? sErr.message : sErr);
+      logger.warn("[run-tender-engine] score breakdown write failed:", { detail: sErr instanceof Error ? sErr.message : sErr });
     }
 
     const matrixRows = compliance.matrices.map((matrix) => ({ tenderId, requirementId: matrix.requirementId, evidenceType: matrix.evidenceType, evidenceSource: matrix.evidenceSource, evidenceReference: matrix.evidenceReference ?? null, supportLevel: matrix.supportStatus, notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null }));

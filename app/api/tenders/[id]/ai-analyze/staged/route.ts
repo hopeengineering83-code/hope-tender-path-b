@@ -1,3 +1,4 @@
+import { logger } from "../../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
@@ -66,7 +67,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("[ai-analyze/staged]", {
+    logger.error("[ai-analyze/staged]", {
       tenderId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       message: error instanceof Error ? error.message : String(error),

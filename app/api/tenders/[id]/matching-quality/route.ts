@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -74,7 +75,7 @@ export async function GET(
     });
   } catch (error) {
     const diagnosticId = randomUUID();
-    console.error("[matching-quality]", {
+    logger.error("[matching-quality]", {
       route: "/api/tenders/[id]/matching-quality",
       tenderId: id,
       diagnosticId,

@@ -11,7 +11,24 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { evaluateEnv, isAIConfigured } from "../lib/env-check";
+import { __testing__ as featureFlagTesting } from "../lib/engine/feature-flags";
+import { AI_ANALYSIS_TIMEOUT_MS, AI_PROPOSAL_TIMEOUT_MS } from "../lib/timeout-config";
+
+// Recursively collect source files (excluding node_modules/.next/tests) so the
+// secret-leak test scans the actual codebase, not just the test process env.
+function collectSourceFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry === ".next" || entry === ".git" || entry === "tests" || entry === "e2e") continue;
+    const full = join(dir, entry);
+    const st = statSync(full);
+    if (st.isDirectory()) collectSourceFiles(full, acc);
+    else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry)) acc.push(full);
+  }
+  return acc;
+}
 
 describe("Environment Variable Reconciliation", () => {
   const originalEnv: Record<string, string | undefined> = {};
@@ -163,34 +180,29 @@ describe("Environment Variable Reconciliation", () => {
   });
 
   describe("Secret Leak Prevention", () => {
-    it("API keys are never exported to NEXT_PUBLIC_* or client bundles", () => {
-      const secretEnvVars = [
-        "ANTHROPIC_API_KEY",
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
-        "GEMINI_API_KEY",
-        "OPENAI_API_KEY",
-        "TOGETHER_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "SENTRY_DSN",
-        "DATABASE_URL",
-        "SESSION_SECRET",
-        "BLOB_READ_WRITE_TOKEN",
-        "AI_JOBS_WORKER_SECRET",
-        "CRON_SECRET",
-        "ADMIN_SECRET",
-      ];
+    it("no secret is exposed via a NEXT_PUBLIC_* variable anywhere in the source tree", () => {
+      // Real check: scan every source file for a NEXT_PUBLIC_ variable whose
+      // name contains a secret-bearing token. process.env alone proves nothing
+      // (the test runner simply has no such var set) — a leak lives in CODE that
+      // reads `process.env.NEXT_PUBLIC_<SECRET>` and ships it to the client bundle.
+      const SECRET_TOKENS = /(API_KEY|SECRET|DATABASE_URL|DSN|TOKEN|PASSWORD|PRIVATE)/i;
+      const NEXT_PUBLIC_REF = /NEXT_PUBLIC_[A-Z0-9_]+/g;
 
-      for (const secret of secretEnvVars) {
-        assert.strictEqual(
-          process.env[`NEXT_PUBLIC_${secret}`],
-          undefined,
-          `${secret} should never be exported as NEXT_PUBLIC_${secret}`,
-        );
+      const offenders: string[] = [];
+      for (const file of collectSourceFiles(process.cwd())) {
+        const src = readFileSync(file, "utf8");
+        const matches = src.match(NEXT_PUBLIC_REF);
+        if (!matches) continue;
+        for (const ref of matches) {
+          if (SECRET_TOKENS.test(ref)) offenders.push(`${file}: ${ref}`);
+        }
       }
+
+      assert.deepStrictEqual(
+        offenders,
+        [],
+        `Secret-bearing NEXT_PUBLIC_* references found (these leak to the client bundle):\n${offenders.join("\n")}`,
+      );
     });
 
     it("error messages never include secret values in plaintext", () => {
@@ -252,18 +264,15 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(result.ok); // Env-check doesn't validate these; runtime does
     });
 
-    it("boolean flags (true/false strings) are parsed correctly", () => {
-      const validTrue = ["1", "true", "yes", "on"];
-      const validFalse = ["0", "false", "no", "off", ""];
+    it("boolean flags are parsed by the real isTruthy helper (lib/engine/feature-flags)", () => {
+      // Exercise the actual parser the app uses, not an inline re-implementation.
+      const { isTruthy } = featureFlagTesting;
 
-      for (const val of validTrue) {
-        const flag = ["1", "true", "yes", "on"].includes(val.trim().toLowerCase());
-        assert.ok(flag);
+      for (const val of ["1", "true", "yes", "on", "TRUE", " Yes "]) {
+        assert.ok(isTruthy(val), `"${val}" should parse as truthy`);
       }
-
-      for (const val of validFalse.slice(0, -1)) {
-        const flag = ["1", "true", "yes", "on"].includes(val.trim().toLowerCase());
-        assert.ok(!flag);
+      for (const val of ["0", "false", "no", "off", "", "nope", undefined]) {
+        assert.ok(!isTruthy(val as string | undefined), `"${String(val)}" should parse as falsy`);
       }
     });
 
@@ -424,12 +433,17 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(result.ok); // Build still succeeds
     });
 
-    it("validates that worker and cron secrets are at least 16 characters when present", () => {
-      const shortSecret = "a".repeat(15);
-      const goodSecret = "a".repeat(16);
-
-      assert.ok(shortSecret.length < 16);
-      assert.ok(goodSecret.length >= 16);
+    it("the cron/worker routes actually enforce a minimum secret length in code", () => {
+      // Real check: the enforcement must exist in the route source, not just be
+      // asserted on a literal. Both endpoints reject secrets shorter than 16.
+      const cronSrc = readFileSync(
+        join(process.cwd(), "app/api/cron/cleanup-old-records/route.ts"),
+        "utf8",
+      );
+      assert.ok(
+        /secret\.length\s*<\s*16/.test(cronSrc),
+        "cleanup-old-records cron route must reject secrets shorter than 16 chars",
+      );
     });
   });
 
@@ -501,27 +515,33 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(result.ok);
     });
 
-    it("BOOTSTRAP_ADMIN_PASSWORD must be at least 16 characters if enabled", () => {
-      const short = "a".repeat(15);
-      const good = "a".repeat(16);
-
-      assert.ok(short.length < 16);
-      assert.ok(good.length >= 16);
+    it("bootstrap-admin enforcement lives in lib/prisma.ts (dev-only + password strength)", () => {
+      // Real check: the guard must exist in source. lib/prisma.ts is responsible
+      // for refusing bootstrap-admin in production and enforcing password rules.
+      const prismaSrc = readFileSync(join(process.cwd(), "lib/prisma.ts"), "utf8");
+      assert.ok(
+        /BOOTSTRAP_ADMIN_ENABLED/.test(prismaSrc),
+        "lib/prisma.ts must reference BOOTSTRAP_ADMIN_ENABLED to gate bootstrap admin",
+      );
+      assert.ok(
+        /BOOTSTRAP_ADMIN_PASSWORD/.test(prismaSrc),
+        "lib/prisma.ts must reference BOOTSTRAP_ADMIN_PASSWORD for password enforcement",
+      );
     });
   });
 
   describe("Timeout and Capacity Configuration", () => {
-    it("AI_ANALYSIS_TIMEOUT_MS and AI_PROPOSAL_TIMEOUT_MS must be between 5s and 600s", () => {
-      const validTimeouts = [5_000, 30_000, 220_000, 600_000];
-      const invalidTimeouts = [100, 2_000, 700_000, -1_000];
+    it("the real timeout constants are clamped to safe bounds by lib/timeout-config", () => {
+      // These constants are computed at import time from env via readTimeoutMs,
+      // which clamps out-of-range / non-numeric values. Asserting on the real
+      // exported values verifies the clamping actually happened.
+      assert.ok(Number.isFinite(AI_ANALYSIS_TIMEOUT_MS), "AI_ANALYSIS_TIMEOUT_MS must be a finite number");
+      assert.ok(AI_ANALYSIS_TIMEOUT_MS > 0, "AI_ANALYSIS_TIMEOUT_MS must be positive");
+      assert.ok(AI_ANALYSIS_TIMEOUT_MS <= 600_000, "AI_ANALYSIS_TIMEOUT_MS must not exceed 600s");
 
-      for (const timeout of validTimeouts) {
-        assert.ok(timeout >= 5_000 && timeout <= 600_000);
-      }
-
-      for (const timeout of invalidTimeouts) {
-        assert.ok(!(timeout >= 5_000 && timeout <= 600_000));
-      }
+      assert.ok(Number.isFinite(AI_PROPOSAL_TIMEOUT_MS), "AI_PROPOSAL_TIMEOUT_MS must be a finite number");
+      assert.ok(AI_PROPOSAL_TIMEOUT_MS >= 10_000, "AI_PROPOSAL_TIMEOUT_MS floor is 10s");
+      assert.ok(AI_PROPOSAL_TIMEOUT_MS <= 300_000, "AI_PROPOSAL_TIMEOUT_MS ceiling is 300s");
     });
 
     it("AI_JOB_STUCK_AFTER_MS and AI_JOB_PROGRESS_STUCK_AFTER_MS define stale job thresholds", () => {

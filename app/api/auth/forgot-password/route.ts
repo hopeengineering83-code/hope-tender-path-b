@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -91,7 +92,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
   } catch (error) {
-    console.error("[forgot-password] request failed", {
+    logger.error("[forgot-password] request failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return NextResponse.json(

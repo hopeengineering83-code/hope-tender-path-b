@@ -6,7 +6,7 @@ import { ensureCompanyForUser } from "./company-workspace";
 import { assessExtractionQuality } from "./extraction-quality";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
 import { inferTenderMetadata } from "./engine/tender-metadata";
-import { reportError } from "./observability";
+import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
@@ -303,7 +303,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
   } catch (error) {
     if (storedUploads.length > 0) await cleanupStoredUploads(storedUploads);
     const message = sanitizeError(error);
-    console.error(`[upload-first tender] failed (requestId=${requestId}):`, error);
+    logger.error(`[upload-first tender] failed (requestId=${requestId}):`, { detail: error });
     void reportError(error, { route: "/api/tenders/upload-first", requestId });
     return NextResponse.json({
       success: false,

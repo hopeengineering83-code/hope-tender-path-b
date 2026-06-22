@@ -1,5 +1,6 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
@@ -21,8 +22,10 @@ function requestDiagnosticId() {
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const diagnosticId = requestDiagnosticId();
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized. Sign in again before running the tender engine.", code: "UNAUTHORIZED", nextAction: "LOGIN_AGAIN", diagnosticId }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
@@ -67,12 +70,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (invalidFields.length > 0) {
       const patch = computeStoredMetadataPatch(tender);
       await prisma.tender.update({ where: { id: tender.id }, data: patch });
-      console.warn(`[engine] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before run: ${invalidFields.join(", ")}`);
+      logger.warn(`[engine] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before run: ${invalidFields.join(", ")}`);
       for (const field of invalidFields) (tender as Record<string, unknown>)[field] = null;
     }
 
     const metadataAutoFill = await autoFillTenderMetadata(tender, prisma);
-    if (metadataAutoFill.filled.length > 0) console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
+    if (metadataAutoFill.filled.length > 0) logger.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
 
     const effectiveExtractionFiles = tender.files.map((file) => {
       const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
@@ -108,7 +111,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ]);
       if (reviewedExpertsCount + reviewedProjectsCount > LARGE_VAULT_SYNC_THRESHOLD) {
         effectiveSkipAiRematch = true;
-        console.info(`[engine] tender=${id} large vault (${reviewedExpertsCount} experts + ${reviewedProjectsCount} projects) — auto-applying skipAiRematch to prevent 60s timeout`);
+        logger.info(`[engine] tender=${id} large vault (${reviewedExpertsCount} experts + ${reviewedProjectsCount} projects) — auto-applying skipAiRematch to prevent 60s timeout`);
       }
     }
 
@@ -142,7 +145,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), inputStats, metadataAutoFill, diagnosticId });
   } catch (error) {
-    console.error("Engine run failed:", { diagnosticId, error: sanitizeError(error) });
+    logger.error("Engine run failed:", { diagnosticId, error: sanitizeError(error) });
     const mapped = actionableEngineError(error);
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }

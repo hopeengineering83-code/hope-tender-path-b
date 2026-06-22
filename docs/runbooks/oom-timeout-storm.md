@@ -23,6 +23,8 @@ Gateway Timeout on the dashboard or AI Analyze.
   `FUNCTION_RUNTIME_LIMIT` in the error metadata.
 - Vercel → Project → Usage shows a sharp spike in function invocations and
   "Edge function execution timeout" or "Function execution duration" alerts.
+- The `/api/health` endpoint itself may start returning slow / 504 under
+  memory pressure (it does a small DB probe).
 
 ## Immediate steps (first 5 minutes)
 
@@ -34,82 +36,86 @@ Gateway Timeout on the dashboard or AI Analyze.
      `maxDuration`.
    - `/api/ai-jobs/run-next` → worker pulling too many jobs concurrently.
 
-2. **Check tender file sizes** — query the DB for the largest recent uploads:
+2. **Reduce concurrency** — temporarily raise the in-app concurrency guard
+   by setting (in Vercel → Settings → Environment Variables):
+   ```
+   AI_JOB_MAX_CONCURRENCY=1
+   AI_MAX_PROVIDER_ATTEMPTS=1
+   ```
+   Redeploy (empty commit). This stops the worker from pulling multiple
+   long-running jobs at once.
+
+3. **Check tender file sizes** — query the DB for the largest recent uploads:
    ```sql
-   SELECT id, "originalFileName", "mimeType", 
-          octet_length("extractedText") AS extracted_bytes,
-          octet_length("fileContent") AS file_bytes
+   SELECT id, "originalName", "mimeType", octet_length("fileContent") AS bytes
    FROM "TenderFile"
-   ORDER BY file_bytes DESC LIMIT 10;
+   ORDER BY bytes DESC LIMIT 10;
    ```
    Any single file > 15 MB is a strong OOM suspect.
 
-3. **If a specific user is the source** (e.g. they uploaded a 200-page PDF),
+4. **If a specific user is the source** (e.g. they uploaded a 200-page PDF),
    ask them to pause; in extreme cases, mark the tender's files as inactive
    so other users' jobs are not blocked behind it.
 
-4. **Communicate** — notify users:
-   "We are investigating elevated timeouts. Some long-running operations may
-   fail; please retry in a few minutes."
+5. **Communicate** — post to `/api/notifications`: "We are investigating
+   elevated timeouts. Some long-running operations may fail; please retry
+   in a few minutes."
 
 ## Recovery steps
 
 1. **Reduce the size of the offending tender input.** If a tender file is
    exceptionally large, advise the user to split it, or pre-extract the text
-   out-of-band and upload only the relevant excerpt. The text extraction
+   out-of-band and upload only the relevant excerpt. The `extract-text.ts`
    pipeline holds the extracted text in memory; smaller input = lower peak RSS.
 
-2. **Pause AI Analyze jobs temporarily** — if OOM is persistent:
-   - Stop the worker: Temporarily pause `/api/ai-jobs/run-next` invocations
-     by removing it from the cron jobs in `vercel.json` (or disabling the
-     scheduled function).
-   - Wait 5–10 minutes for the storm to subside.
-   - Resume: re-enable `/api/ai-jobs/run-next`.
+2. **Lower AI Analyze chunk size** — set (Vercel env):
+   ```
+   AI_ANALYZE_CHUNK_TOKENS=4000
+   ```
+   This reduces the per-chunk memory footprint at the cost of more chunks.
 
 3. **Re-run failed jobs** — after the storm subsides, list FAILED jobs and
-   investigate:
-   ```sql
-   SELECT id, "jobType", "tenderId", "errorMessage", "createdAt"
-   FROM "AiJob"
-   WHERE status = 'FAILED'
-   ORDER BY "createdAt" DESC
-   LIMIT 20;
+   requeue them:
+   ```bash
+   # Admin only — requires ADMIN session cookie
+   curl -s https://YOUR_DEPLOYMENT_URL/api/admin/release-stuck-jobs \
+     -H "Cookie: $ADMIN_COOKIE" | jq .   # POST to release stuck ones
    ```
-   Then recreate them (ADMIN only via database or internal tool).
+   Then let the worker pick them up naturally via `/api/ai-jobs/run-next`.
 
 4. **Consider upgrading Vercel plan.** If OOM/timeout storms are recurring on
    legitimate workloads (not a single oversized file), upgrade to Vercel
    **Pro**:
    - Pro raises the function memory cap to 3 GB and max duration to 300s.
-   - After upgrading, update route timeout settings via `vercel.json` or
-     Vercel dashboard.
+   - Configure the affected routes in `vercel.json` `functions` block with
+     higher `maxDuration` and `memory` once on Pro.
 
 5. **Forward-fix code** — if a specific route has a memory leak (e.g. holds
    the full tender text + extracted chunks + provider response in memory
-   simultaneously), open a ticket to stream/chunk the work. The chunked AI
-   Analyze pipeline already exists to mitigate this — verify the route is
-   actually using it.
+   simultaneously), open a ticket to stream/chunk the work. The seven-pass
+   generator and the chunked AI Analyze pipeline already exist to mitigate
+   this — verify the route is actually using them.
 
 ## Verification
 
 - Vercel → Logs shows no new `OUT_OF_MEMORY` or `FUNCTION_RUNTIME_LIMIT`
   entries for 15+ minutes.
+- `/api/health` returns 200 consistently.
 - A test AI Analyze on a moderate-sized tender (≤ 5 MB extracted text)
-  completes without timing out and reaches `COMPLETED`.
+  completes within `maxDuration` and reaches `COMPLETED`.
 - No new 504 responses from the dashboard or upload routes.
 - Vercel → Usage shows function invocations / durations returning to
   baseline.
-- Users report that the app is responsive again.
 
 ## Escalation
 
 - **On-call engineer:** page if 5xx rate from Vercel exceeds 10% of requests
-  for 5 minutes, or if the app becomes unusable.
+  for 5 minutes, or if `/api/health` itself starts 504ing.
 - **Vercel support:** open a ticket at https://vercel.com/support if the
   platform itself is degraded (check https://www.vercel-status.com/ first).
 - **Plan upgrade approval:** Pro plan spend needs manager sign-off; raise a
   purchase request before flipping the project to Pro if it is not already
   pre-approved.
 - **Post-mortem:** file within 48 hours covering which route OOMed, the input
-  size, the concurrency at the time, and the fix (pausing jobs, code fix, or
-  plan upgrade).
+  size, the concurrency at the time, and the fix (env var change, code fix,
+  or plan upgrade).

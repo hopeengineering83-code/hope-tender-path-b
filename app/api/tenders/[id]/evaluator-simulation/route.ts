@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
@@ -99,7 +100,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         sharedCriteria = comprehension.criteria.map((criterion) => ({ id: criterion.id, criterion: criterion.criterion, weight: criterion.weight }));
       }
     } catch (error) {
-      console.warn(`[evaluator-simulation] Deep comprehension unavailable: ${sanitizeError(error)}`);
+      logger.warn(`[evaluator-simulation] Deep comprehension unavailable: ${sanitizeError(error)}`);
     }
   }
 
@@ -132,7 +133,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     result = await simulateEvaluatorPanel({ tenderTitle: tender.title, proposalMarkdown: proposalContext, evaluationCriteria: tender.evaluationMethodology ?? "", context });
   } catch (error) {
-    console.error(`[evaluator-simulation] Provider failure for tender ${id}: ${sanitizeError(error)}`);
+    logger.error(`[evaluator-simulation] Provider failure for tender ${id}: ${sanitizeError(error)}`);
     return NextResponse.json({ error: "Evaluator simulation failed. Retry or review provider configuration.", code: "EVALUATOR_PROVIDER_FAILED" }, { status: 502 });
   }
 

@@ -129,18 +129,15 @@ describe("AI Analyze route checkpoint integration", () => {
     assert.ok(route.includes("upsertAnalyzeChunkStarted"));
     assert.ok(route.includes("upsertAnalyzeChunkSucceeded"));
     assert.ok(route.includes("upsertAnalyzeChunkFailed"));
-    // Phase 1: Non-streaming path uses orchestrator wrapper which sets up callbacks
-    assert.ok(route.includes("executeAnalysisViaOrchestrator"));
-    assert.ok(route.includes("onChunkStart:") && route.includes("upsertAnalyzeChunkStarted"));
+    assert.ok(route.includes("onChunkStart: onChunkStartNonStream"));
+    assert.ok(route.includes("onChunkComplete: onChunkCompleteNonStream"));
+    assert.ok(route.includes("onChunkFailure: onChunkFailureNonStream"));
   });
 
   it("keeps AiJob.output progress for UI compatibility", () => {
     const route = read("app/api/tenders/[id]/ai-analyze/route.ts");
-    // Phase 1: Orchestrator stores output with result and chunkResults for UI progress
-    assert.ok(route.includes("executeAnalysisViaOrchestrator"));
-    // Orchestrator preserves progress in job output on error or partial completion
-    const orchestrator = read("lib/engine/analysis-orchestrator.ts");
-    assert.ok(orchestrator.includes("chunkResults: analysisMeta.chunkResults"));
+    assert.ok(route.includes("buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)"));
+    assert.ok(route.includes("preserveAiAnalyzeProgressOnFailure"));
   });
 });
 

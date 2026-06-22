@@ -8,24 +8,24 @@ keeps every deployment around and supports **instant rollback** to the
 previous good deployment, which is almost always faster than forward-fixing.
 
 Trigger this runbook when:
+- `/api/health` flips from 200 to 503 within minutes of a deploy.
 - Vercel → Deployments shows the latest deployment with `Error` or `Building`
   status while the previous one was `Ready`.
-- The error rate in Vercel logs jumps immediately after a deploy (> 5% 5xx).
-- Multiple users report previously-working pages are broken.
-- A critical API route that worked yesterday now returns 500.
+- The error rate in Vercel logs jumps immediately after a deploy.
+- A user reports a previously-working page is broken.
 
 ## Symptoms
 
 - The Vercel "Production Deployment" tab shows a new deployment that
   immediately started erroring.
-- Dashboard / tender detail page shows `app/error.tsx` (the Next.js error
-  boundary) or a blank page on load — typically a runtime error in a client
-  component or a missing export.
-- API routes that worked yesterday now return 500 with stack traces pointing
-  at recently-merged code.
-- Vercel function logs show a new error pattern starting at the exact
-  timestamp of the deployment.
-- Error rate jumps from near-zero to 5%+ immediately after the deploy
+- `/api/health` returns 503, or returns 200 but `release` (commit SHA) is
+  the new broken commit.
+- UI shows `app/error.tsx` (the Next.js error boundary) or a blank page on
+  load — typically a runtime error in a client component or a missing
+  export.
+- API routes that worked yesterday now return 500 with stack traces
+  pointing at recently-merged code.
+- Vercel function logs show a new error pattern starting at the deploy
   timestamp.
 
 ## Immediate steps (first 5 minutes)
@@ -37,14 +37,12 @@ Trigger this runbook when:
 
 2. **Identify the good previous deployment.** In Vercel → Deployments, find
    the most recent deployment with `Ready` status and a green checkmark.
-   Note the deployment URL (`https://hope-tender-path-b-abc123.vercel.app`)
-   and verify it responds without 500 errors by testing a simple route:
+   Copy its deployment URL (`https://hope-tender-path-b-abc123.vercel.app`)
+   and verify `/api/health` returns 200 there:
    ```bash
-   # Test authentication (requires a valid session cookie)
-   curl -sS https://hope-tender-path-b-abc123.vercel.app/api/tenders \
-     -H "Cookie: session=<valid-session>" -w "HTTP %{http_code}\n"
+   curl -sS -o /tmp/prev.json -w "HTTP %{http_code}\n" \
+     https://hope-tender-path-b-abc123.vercel.app/api/health
    ```
-   You should get HTTP 200, not 500.
 
 3. **Instant rollback** — Vercel → Deployments → click the three-dot menu on
    the last-known-good deployment → "Promote to Production". This swaps the
@@ -55,13 +53,12 @@ Trigger this runbook when:
      ```
    - The rollback takes effect within seconds.
 
-4. **Verify the rollback** — test that the app responds normally:
+4. **Verify the rollback** — hit the production URL:
    ```bash
-   # Test a simple authenticated route
-   curl -sS https://YOUR_PRODUCTION_URL/api/tenders \
-     -H "Cookie: session=<valid-session>" -w "HTTP %{http_code}\n"
+   curl -sS https://YOUR_PRODUCTION_URL/api/health | jq .
    ```
-   You should see HTTP 200, not 500 or 504.
+   The `release` field should now be the previous commit SHA, and `ok`
+   should be `true`.
 
 5. **Communicate** — post to `/api/notifications`: "We rolled back the
    latest deploy due to a regression. The app is healthy again on the
@@ -86,9 +83,8 @@ Trigger this runbook when:
    Vercel.
 
 3. **Check whether a missing env var is the cause** — if the deploy added
-   code that reads a new env var and it was not set in Vercel, set it now
-   and redeploy rather than reverting. Check the diff for `process.env` or
-   `env()` calls.
+   code that reads a new env var (e.g. a new `AI_ANALYZE_CHUNK_TOKENS`) and
+   it was not set in Vercel, set it now and redeploy rather than reverting.
 
 4. **Forward-fix or revert:**
    - **Forward-fix** (preferred for small, well-understood bugs): branch off
@@ -120,14 +116,14 @@ Trigger this runbook when:
 
 ## Verification
 
+- `/api/health` returns 200 with `ok: true` and the `release` SHA matches
+  the rollback target (or the new forward-fix deploy).
 - The user-reported broken flow now works (reproduce the original report
   and confirm it is fixed).
-- API routes that were returning 500 now return 200.
-- Vercel → Logs shows the error rate back to baseline (< 1%) for at least
-  10 minutes.
+- Vercel → Logs shows the error rate back to baseline for at least 10
+  minutes.
 - Vercel → Deployments shows the rollback / forward-fix deployment as the
   current Production deployment.
-- Dashboard loads and you can open tenant detail pages without 500 errors.
 - CI is green on the forward-fix branch before merge.
 
 ## Escalation

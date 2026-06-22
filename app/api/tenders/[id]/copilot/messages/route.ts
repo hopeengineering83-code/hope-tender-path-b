@@ -1,3 +1,4 @@
+import { logger } from "../../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
@@ -31,7 +32,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
     return NextResponse.json({ success: true, messages });
   } catch (err) {
-    console.error("[copilot/messages GET]", err);
+    logger.error("[copilot/messages GET]", { detail: err });
     return NextResponse.json({ error: "Failed to load messages" }, { status: 500 });
   }
 }
@@ -59,7 +60,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true, deleted: result.count });
   } catch (err) {
-    console.error("[copilot/messages DELETE]", err);
+    logger.error("[copilot/messages DELETE]", { detail: err });
     return NextResponse.json({ error: "Failed to delete messages" }, { status: 500 });
   }
 }

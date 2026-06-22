@@ -53,8 +53,8 @@ Trigger this runbook when `/api/ai/health` returns `allProvidersCooling: true`,
    restored."
 
 5. **Record the incident** — note timestamp, deployment URL
-   (from Vercel dashboard), and the failure categories of each provider.
-   This is needed for the post-mortem.
+  (`VERCEL_GIT_COMMIT_SHA` from `/api/health`), and the failure categories of
+   each provider. This is needed for the post-mortem.
 
 ## Recovery steps
 

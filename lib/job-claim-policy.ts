@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { Prisma } from "@prisma/client";
 import { prisma, prismaReady } from "./prisma";
 import type { JobType } from "./ai-jobs";
@@ -58,7 +59,7 @@ export async function claimJobForCaller(options: {
       userId: candidate.userId,
     };
   } catch (err) {
-    console.error("[job-claim] Atomic claim failed:", err);
+    logger.error("[job-claim] Atomic claim failed:", { detail: err });
     return null;
   }
 }

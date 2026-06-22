@@ -62,10 +62,9 @@ Trigger this runbook when:
    retry loop magnified by the browser — the underlying trigger was one
    failed request, but the retries keep the bucket full.
 
-4. **Confirm the database is up** — if the rate limiter can't reach the DB,
-   it fails closed and returns 429 on every request (see `database-outage.md`
-   to check DB connectivity). The user's 429 may be a symptom of a DB outage,
-   not a rate-limit problem.
+4. **Confirm `/api/health` is 200** — if it is 503, the limiter is failing
+   closed because the DB is down (see `database-outage.md`). The user's 429
+   is a symptom of the DB outage, not a rate-limit problem.
 
 5. **Communicate** — tell the user directly (Slack / email if possible):
    "We see you are being rate-limited. Please stop clicking for 60 seconds
@@ -121,9 +120,9 @@ Trigger this runbook when:
 
 - The affected user can load the dashboard, open a tender, and trigger one
   AI Analyze without seeing a 429.
-- `RateLimitBucket` table for the user's key hashes shows `count` well below
-  the limit and `resetAt` advancing normally as new requests come in.
-- Database connectivity is working (confirm via `psql`).
+- `RateLimitBucket` for the user's key hashes shows `count` well below the
+  limit and `resetAt` advancing normally as new requests come in.
+- `/api/health` returns 200 (DB is healthy, limiter DB-backed).
 - Vercel logs show no new `[rate-limit]` rejections for the user over a
   10-minute observation window.
 - Other users are unaffected (a targeted `DELETE` should not have touched

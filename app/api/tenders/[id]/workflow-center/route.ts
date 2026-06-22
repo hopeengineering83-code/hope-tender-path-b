@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
@@ -109,7 +110,7 @@ export async function GET(
       stages
     });
   } catch (error) {
-    console.error("[workflow-center]", error);
+    logger.error("[workflow-center]", { detail: error });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import crypto from "crypto";
 import { prisma } from "./prisma";
 import { safeParseJsonObject } from "./safe-json";
@@ -62,7 +63,7 @@ export async function getAnalyzeCheckpoints(tenderId: string, userId: string, co
       orderBy: { chunkIndex: "asc" },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,
@@ -106,7 +107,7 @@ export async function upsertAnalyzeChunkStarted(input: ChunkIdentity) {
       },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,
@@ -154,7 +155,7 @@ export async function upsertAnalyzeChunkSucceeded(input: ChunkIdentity & { provi
       },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,
@@ -201,7 +202,7 @@ export async function upsertAnalyzeChunkFailed(input: ChunkIdentity & { provider
       },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,
@@ -251,7 +252,7 @@ export async function getLatestAnalyzeCheckpointProgress(tenderId: string, userI
       select: { contentHash: true },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,
@@ -274,7 +275,7 @@ export async function clearAnalyzeCheckpoints(tenderId: string, userId: string, 
       where: { tenderId, userId, contentHash },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,
@@ -294,7 +295,7 @@ export async function clearAnalyzeCheckpointsForContentHashMismatch(tenderId: st
       where: { tenderId, userId, contentHash: { not: contentHash } },
     });
   } catch (err) {
-    console.error("[ai-analyze-checkpoints]", {
+    logger.error("[ai-analyze-checkpoints]", {
       code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
       operation,
       diagnosticId,

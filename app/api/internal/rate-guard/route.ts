@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
@@ -99,7 +100,7 @@ export async function POST(req: Request) {
 
   const token = deriveInternalGuardToken();
   if (!token) {
-    console.error("[rate-guard] SESSION_SECRET is unavailable; guarded AI route denied");
+    logger.error("[rate-guard] SESSION_SECRET is unavailable; guarded AI route denied");
     return NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 });
   }
 
@@ -119,7 +120,7 @@ export async function POST(req: Request) {
       headers: responseHeaders(upstream),
     });
   } catch (error) {
-    console.error(`[rate-guard] guarded upstream request failed: ${sanitizeError(error)}`);
+    logger.error(`[rate-guard] guarded upstream request failed: ${sanitizeError(error)}`);
     return NextResponse.json({ error: "Guarded AI request failed" }, { status: 502 });
   }
 }

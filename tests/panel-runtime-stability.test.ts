@@ -67,10 +67,7 @@ describe("panel routes — structured error response fields", () => {
       const src = readFileSync(resolve(process.cwd(), file), "utf8");
       // OBS-001: routes migrated from console.error to logger.error (which internally
       // calls console.error in lib/observability.ts). Accept either form.
-      assert.ok(
-        src.includes("console.error") || src.includes("logger.error"),
-        `${panel} must log errors`,
-      );
+      assert.ok(src.includes("console.error") || src.includes("logger.error"), `${panel} must log errors`);
       assert.ok(src.includes("route:"), `${panel} structured log must include route:`);
       assert.ok(src.includes("tenderId"), `${panel} structured log must include tenderId`);
       assert.ok(src.includes("errorClass"), `${panel} structured log must include errorClass`);

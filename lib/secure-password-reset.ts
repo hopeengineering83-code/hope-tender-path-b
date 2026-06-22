@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "./prisma";
@@ -89,7 +90,7 @@ export async function handleSecurePasswordReset(req: Request) {
     if (error instanceof Error && error.message === "INVALID_RESET_TOKEN") {
       return NextResponse.json(invalidReset, { status: 400 });
     }
-    console.error("[password-reset] request failed", {
+    logger.error("[password-reset] request failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return NextResponse.json({ error: "Password reset is temporarily unavailable" }, { status: 503 });

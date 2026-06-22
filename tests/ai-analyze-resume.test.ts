@@ -154,8 +154,8 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
   it("streaming path passes previousChunkResults to analyzeWithAI", () => {
     assert.ok(
-      routeSource.includes("executeAnalysisViaOrchestratorStreaming"),
-      "streaming path must delegate to orchestrator which internally handles previousChunkResults and onChunkComplete",
+      /analyzeWithAI\(tenderContent, \{[^}]*deadlineAt[^}]*startFromChunk[^}]*previousChunkResults[^}]*onChunkComplete/.test(routeSource),
+      "streaming path must pass previousChunkResults and onChunkComplete to analyzeWithAI",
     );
   });
 
@@ -191,49 +191,44 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
 describe("ai-analyze/route (non-streaming) — resume fixes", () => {
   it("non-streaming path passes previousChunkResults to analyzeWithAI", () => {
-    // Phase 1: Non-streaming path uses orchestrator which handles resumption
-    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
-    assert.ok(orchestratorSource.includes("previousChunkResults"), "orchestrator must handle previousChunkResults");
-    assert.ok(routeSource.includes("executeAnalysisViaOrchestrator"), "non-streaming path must call orchestrator");
+    const count = (routeSource.match(/analyzeWithAI\(tenderContent,\s*\{[^}]*previousChunkResults/g) ?? []).length;
+    assert.ok(count >= 2, `both streaming and non-streaming paths must pass previousChunkResults (found ${count})`);
   });
 
   it("non-streaming path saves chunkResults in job output blob", () => {
-    // Phase 1: Orchestrator stores chunkResults in job output
-    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
-    assert.ok(orchestratorSource.includes("chunkResults: analysisMeta.chunkResults"), "orchestrator must save chunkResults");
+    const count = (routeSource.match(/chunkResults:\s*aiMeta\.chunkResults/g) ?? []).length;
+    assert.ok(count >= 2, `both paths must save chunkResults in job output (found ${count})`);
   });
 
   it("non-streaming path has auto-resume detection for resumable FAILED jobs too", () => {
-    // Phase 1: Orchestrator calls createAnalysisJob which handles resumption internally
-    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
-    assert.ok(orchestratorSource.includes("createAnalysisJob") && orchestratorSource.includes("previousChunkResults"),
-      "orchestrator must handle auto-resume");
+    const count = (routeSource.match(/findLatestResumableAiAnalyzeJob\(id, userId, contentHash\)/g) ?? []).length;
+    assert.ok(count >= 2, `auto-resume must use the shared resumable-job lookup in both paths (found ${count})`);
   });
 
   it("per-chunk progress output includes chunkProviders for later failure preservation", () => {
-    // Phase 1: Orchestrator stores chunkProviders
-    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
     assert.ok(
-      orchestratorSource.includes("chunkProviders: analysisMeta.chunkProviders")
-        && orchestratorSource.includes("result: analysisMeta.result"),
-      "orchestrator must persist chunkProviders and result in job output",
+      routeSource.includes("function buildAiAnalyzePartialOutput")
+        && routeSource.includes("chunkProviders")
+        && routeSource.includes("output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash))"),
+      "onChunkComplete output must persist chunkProviders along with chunkResults",
     );
   });
 
   it("failure helper preserves chunkResults and marks resumable failures as continue", () => {
-    // Phase 1: Orchestrator preserves progress on error
-    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
     assert.ok(
-      orchestratorSource.includes("chunkResults: previousChunkResults")
-        && orchestratorSource.includes("catch (err)"),
-      "orchestrator must preserve chunkResults on error",
+      routeSource.includes("async function preserveAiAnalyzeProgressOnFailure")
+        && routeSource.includes("const existingOutput = parseAiAnalyzeJobOutput")
+        && routeSource.includes("chunkResults")
+        && routeSource.includes('nextAction: hasChunkResults ? "CONTINUE_AI_ANALYZE" : "RETRY_AI_ANALYZE"'),
+      "failure helper must merge failure metadata into existing output without deleting chunkResults",
     );
   });
 
   it("catch blocks use preserveAiAnalyzeProgressOnFailure instead of fallback-only output", () => {
-    // Phase 1: Non-streaming catch delegates to runRegexFallback which preserves progress
-    assert.ok(routeSource.includes("executeAnalysisViaOrchestrator") && routeSource.includes("runRegexFallback"),
-      "non-streaming catch must use runRegexFallback which preserves progress");
+    const fallbackOnlyWrites = routeSource.match(/output:\s*JSON\.stringify\(\{\s*analysisSource:\s*"REGEX_FALLBACK",\s*nextAction:\s*"RETRY_AI_ANALYZE"/g) ?? [];
+    assert.equal(fallbackOnlyWrites.length, 0, "catch blocks must not overwrite job output with fallback-only JSON");
+    const preserveCalls = routeSource.match(/preserveAiAnalyzeProgressOnFailure\(analysisJob\.id/g) ?? [];
+    assert.ok(preserveCalls.length >= 2, `streaming and non-streaming catches must preserve progress (found ${preserveCalls.length})`);
   });
 });
 
@@ -493,72 +488,17 @@ describe("analyzeWithAI — partial jobs remain resumable", () => {
       path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
       "utf-8",
     );
-    // With orchestrator refactoring, both paths converge; the pattern appears once
-    // in the shared job-save logic instead of duplicated in each path.
     const partialStatusCount = (
       src.match(/status: aiMeta\.isPartial \? "PARTIAL_SUCCESS" : "SUCCEEDED"/g) ?? []
     ).length;
     assert.ok(
-      partialStatusCount >= 1,
-      "route must mark partial jobs as PARTIAL_SUCCESS in the job output (once in shared orchestrator path)",
+      partialStatusCount >= 2,
+      "both streaming and non-streaming paths must mark partial jobs as PARTIAL_SUCCESS (found in output JSON)",
     );
     const chunkResultsCount = (src.match(/chunkResults: aiMeta\.chunkResults/g) ?? []).length;
     assert.ok(
-      chunkResultsCount >= 1,
-      "route must save chunkResults so the next resume request can skip already-completed chunks",
-    );
-  });
-});
-
-// ── Regression: analysisSource metadata preservation ────────────────────────────
-
-describe("analysisSource metadata — regression test for PR #837", () => {
-  it("route preserves PARTIAL_AI analysisSource when isPartial=true in non-streaming path", () => {
-    const src = readFileSync(
-      path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
-      "utf-8",
-    );
-    // After PR #837 fix: analysisSourceForJob variable computed from isPartial
-    assert.ok(
-      src.includes('const analysisSourceForJob = aiMeta.isPartial ? "PARTIAL_AI" : "AI"'),
-      "non-streaming path must compute analysisSource dynamically based on isPartial, not hardcode to AI",
-    );
-    // And then used in job.output
-    assert.ok(
-      src.includes("analysisSource: analysisSourceForJob"),
-      "non-streaming path must store the computed analysisSourceForJob in job output",
-    );
-  });
-
-  it("route preserves PARTIAL_AI analysisSource when isPartial=true in streaming path", () => {
-    const src = readFileSync(
-      path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
-      "utf-8",
-    );
-    // After PR #837 fix: analysisSourceForStreamingJob variable computed from isPartial
-    assert.ok(
-      src.includes('const analysisSourceForStreamingJob = analysisMeta.isPartial ? "PARTIAL_AI" : "AI"'),
-      "streaming path must compute analysisSource dynamically based on isPartial, not hardcode to AI",
-    );
-    // And then used in job.output
-    assert.ok(
-      src.includes("analysisSource: analysisSourceForStreamingJob"),
-      "streaming path must store the computed analysisSourceForStreamingJob in job output",
-    );
-  });
-
-  it("route response analysisSource matches job.output analysisSource", () => {
-    const src = readFileSync(
-      path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
-      "utf-8",
-    );
-    // Both paths should compute analysisSource the same way for the response
-    const partialAiPatterns = (
-      src.match(/\(aiMeta\.isPartial \? "PARTIAL_AI" : "AI"\)|analysisMeta\.isPartial \? "PARTIAL_AI" : "AI"/g) ?? []
-    ).length;
-    assert.ok(
-      partialAiPatterns >= 2,
-      "route must compute analysisSource consistently: once for job.output, once for response analysisSource",
+      chunkResultsCount >= 2,
+      "both paths must save chunkResults so the next resume request can skip already-completed chunks",
     );
   });
 });

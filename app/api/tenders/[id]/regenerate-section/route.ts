@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Section-level proposal regeneration API.
 //
 // POST /api/tenders/[id]/regenerate-section
@@ -13,7 +14,7 @@
 // for stitching it back into the full proposal display.
 
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
@@ -23,6 +24,7 @@ import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -67,8 +69,10 @@ function buildProjectEvidenceLines(projects: { name?: string | null; evidences?:
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = await rateLimitPersistent(`regen-section:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
@@ -153,19 +157,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (experts.length === 0) {
     if (vaultExperts.length > 0) {
       experts = vaultExperts;
-      console.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
+      logger.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
     } else {
       experts = tender.expertMatches.map((m) => m.expert);
-      if (experts.length > 0) console.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
+      if (experts.length > 0) logger.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
     }
   }
   if (projects.length === 0) {
     if (vaultProjects.length > 0) {
       projects = vaultProjects as typeof projects;
-      console.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
+      logger.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
     } else {
       projects = tender.projectMatches.map((m) => m.project);
-      if (projects.length > 0) console.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
+      if (projects.length > 0) logger.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
     }
   }
 
@@ -294,9 +298,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     try {
       const { generateWithFallback } = await import("../../../../../lib/ai");
-      sectionMarkdown = await generateWithFallback(spec.userPrompt, { systemPrompt: spec.systemPrompt });
+      sectionMarkdown = await generateWithFallback(spec.userPrompt, {
+        systemPrompt: spec.systemPrompt,
+        // OBS-004 — fire-and-forget per-tenant AI usage tracking.
+        onProviderAttempt: (provider, success, latencyMs, failureCategory) => {
+          void recordAiUsage({
+            userId,
+            tenderId: id,
+            provider,
+            useCase: "proposal",
+            latencyMs,
+            success,
+            failureCategory: failureCategory ?? null,
+          });
+        },
+      });
     } catch (err) {
-      console.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
+      logger.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
     }
 
     if (!sectionMarkdown || sectionMarkdown.trim().length < 50) {
@@ -317,7 +335,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fallback: false,
     });
   } catch (error) {
-    console.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
+    logger.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
     return NextResponse.json({ error: "Section regeneration failed. Retry or review server logs." }, { status: 500 });
   }
 }

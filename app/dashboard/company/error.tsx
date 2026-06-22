@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { logger } from "../../../lib/observability";
 
 export default function CompanyVaultError({
   error,
@@ -11,7 +12,7 @@ export default function CompanyVaultError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[CompanyVaultError]", error);
+    logger.error("[CompanyVaultError]", { detail: error });
   }, [error]);
 
   return (

@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 // DB-backed persistence layer for provider health state.
 //
 // The in-memory tracker in lib/ai-provider-health.ts resets on every
@@ -72,7 +73,7 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
     return { restored: true, skipped: false, warning: null };
   } catch (err) {
     const warning = "Provider health DB restore failed; using in-memory provider health for this response.";
-    console.warn("[ai-health-db] Failed to restore provider health from DB:", err instanceof Error ? err.message : String(err));
+    logger.warn("[ai-health-db] Failed to restore provider health from DB:", { detail: err instanceof Error ? err.message : String(err) });
     return { restored: false, skipped: false, warning };
   }
 }
@@ -104,6 +105,6 @@ export async function persistAllHealthToDb(): Promise<void> {
       });
     }
   } catch (err) {
-    console.warn("[ai-health-db] Failed to persist provider health to DB:", err instanceof Error ? err.message : String(err));
+    logger.warn("[ai-health-db] Failed to persist provider health to DB:", { detail: err instanceof Error ? err.message : String(err) });
   }
 }

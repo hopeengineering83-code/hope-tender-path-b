@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 /**
  * Multi-Perspective AI Matcher.
  * Scores experts/projects across twelve evaluator lenses. The route performs
@@ -447,7 +448,7 @@ export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequir
   try {
     raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
-    console.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   const parsed = parseAssessmentArray(raw);
@@ -470,7 +471,7 @@ export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequi
   try {
     raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
-    console.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   const parsed = parseAssessmentArray(raw);

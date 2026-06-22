@@ -31,7 +31,7 @@ Trigger this runbook when:
 - Vercel logs show `/api/ai-jobs/run-next` returning 200 with no job pulled
   (because the stuck job is already marked RUNNING and the worker refuses
   to double-pull).
-- The database is reachable and other operations work — this is not a
+- `/api/health` is otherwise healthy (DB up, providers up) — this is not a
   database outage, it is a job-state consistency problem.
 
 ## Immediate steps (first 5 minutes)
@@ -58,8 +58,8 @@ Trigger this runbook when:
    common cause; see `oom-timeout-storm.md` for mitigation.
 
 4. **Check the DB connection.** A worker that lost its DB connection mid-run
-   cannot update the job row to `FAILED`. Verify that the AiJob table is
-   reachable:
+   cannot update the job row to `FAILED`. Verify `/api/health` returns 200
+   and that the AiJob table is reachable:
    ```bash
    psql "$DATABASE_URL" -c 'SELECT id, status, "startedAt" FROM "AiJob" ORDER BY "startedAt" DESC LIMIT 10;'
    ```

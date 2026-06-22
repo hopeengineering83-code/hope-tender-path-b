@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { PrismaClient } from "@prisma/client";
 import { checkEnv } from "./env-check";
 import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
@@ -72,7 +73,7 @@ async function verifyConnectivity(client: PrismaClient): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       const isTransient = /can't reach|connection refused|ECONNREFUSED|ETIMEDOUT|connect timeout|unable to connect|network socket/i.test(msg);
       if (isTransient && attempt < MAX_ATTEMPTS) {
-        console.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in ${BACKOFF_MS / 1000}s…`);
+        logger.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in ${BACKOFF_MS / 1000}s…`);
         await new Promise((r) => setTimeout(r, BACKOFF_MS));
         continue;
       }
@@ -951,6 +952,27 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  // OBS-004 — per-tenant AI cost monitoring. Stores only safe metadata
+  // (provider, use case, token counts, latency, failure category). Never
+  // stores API keys, prompts, or responses.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiUsageRecord" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "tenderId" TEXT,
+    "jobId" TEXT,
+    "provider" TEXT NOT NULL,
+    "useCase" TEXT NOT NULL,
+    "model" TEXT,
+    "inputTokens" INTEGER NOT NULL DEFAULT 0,
+    "outputTokens" INTEGER NOT NULL DEFAULT 0,
+    "latencyMs" INTEGER NOT NULL DEFAULT 0,
+    "success" BOOLEAN NOT NULL DEFAULT false,
+    "failureCategory" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE SET NULL
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -1010,10 +1032,14 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // TenderMetadataOverride indexes (migration 20260608*)
     `CREATE UNIQUE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_field_key" ON "TenderMetadataOverride"("tenderId", "field")`,
     `CREATE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_idx" ON "TenderMetadataOverride"("tenderId")`,
+    // AiUsageRecord indexes (migration 20260620_add_ai_usage_records — OBS-004)
+    `CREATE INDEX IF NOT EXISTS "AiUsageRecord_userId_createdAt_idx" ON "AiUsageRecord"("userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "AiUsageRecord_tenderId_createdAt_idx" ON "AiUsageRecord"("tenderId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "AiUsageRecord_provider_createdAt_idx" ON "AiUsageRecord"("provider", "createdAt")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
-      console.warn("[bootstrap] index skipped:", e instanceof Error ? e.message : e);
+      logger.warn("[bootstrap] index skipped:", { detail: e instanceof Error ? e.message : e });
     }
   }
 
@@ -1058,7 +1084,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   ];
   for (const sql of fkStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
-      console.warn("[bootstrap] FK constraint skipped:", e instanceof Error ? e.message : e);
+      logger.warn("[bootstrap] FK constraint skipped:", { detail: e instanceof Error ? e.message : e });
     }
   }
 
@@ -1085,7 +1111,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   const policy = resolveBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {
-      console.warn(
+      logger.warn(
         "[bootstrap] Skipping bootstrap admin seed in production. Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable.",
       );
     }
@@ -1112,7 +1138,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     });
     // Never echo the actual password — only confirm an admin was created.
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[bootstrap] Seeded ${BOOTSTRAP_ADMIN_EMAIL} (development).`);
+      logger.info(`[bootstrap] Seeded ${BOOTSTRAP_ADMIN_EMAIL} (development).`);
     }
   }
 }
@@ -1120,7 +1146,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 function ensureBootstrapped(): Promise<void> {
   if (!g.prismaReady) {
     g.prismaReady = bootstrap(prisma).catch((err: unknown) => {
-      console.error("[bootstrap] failed:", err);
+      logger.error("[bootstrap] failed:", { detail: err });
       g.prismaReady = undefined; // allow retry on next request
       throw err;
     });

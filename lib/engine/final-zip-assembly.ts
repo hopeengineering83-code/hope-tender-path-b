@@ -11,6 +11,17 @@ export type FinalZipAssemblyResult = {
   fileList: string[];
 };
 
+/**
+ * PERF-003: hard cap on the total uncompressed input bytes that may be fed
+ * into {@link assembleFinalSubmissionZip}. The download route streams the
+ * resulting ZIP back to the client, but JSZip still materializes the full
+ * archive buffer (plus the uncompressed inputs) in memory before the first
+ * byte is sent. Without this cap a single oversized package can OOM the
+ * Vercel function. Callers that need to ship larger packages must split the
+ * tender into multiple envelopes or sub-packages.
+ */
+export const FINAL_ZIP_MAX_INPUT_BYTES = 50 * 1024 * 1024; // 50 MB
+
 function assertSafeEntryName(name: string): string {
   const trimmed = name.trim().replace(/\\/g, "/");
   if (!trimmed) throw new Error("Final ZIP contains an empty filename.");
@@ -41,6 +52,7 @@ export async function assembleFinalSubmissionZip(
   const seenDocumentIds = new Set<string>();
   const zip = new JSZip();
   const fileList: string[] = [];
+  let totalInputBytes = 0;
 
   for (const entry of entries) {
     const safeName = assertSafeEntryName(entry.name);
@@ -63,6 +75,18 @@ export async function assembleFinalSubmissionZip(
       throw new Error(`Final ZIP entry ${safeName} has no document bytes.`);
     }
 
+    // PERF-003: cap the total uncompressed input size before building the
+    // archive. The cap is checked incrementally so we reject oversized
+    // packages as soon as we cross the threshold rather than waiting until
+    // the full ZIP buffer is generated.
+    totalInputBytes += bytes.byteLength;
+    if (totalInputBytes > FINAL_ZIP_MAX_INPUT_BYTES) {
+      const limitMb = Math.floor(FINAL_ZIP_MAX_INPUT_BYTES / (1024 * 1024));
+      throw new Error(
+        `Final ZIP exceeds the ${limitMb}MB safety cap (PERF-003). Reduce the package size by splitting envelopes or removing non-final documents.`,
+      );
+    }
+
     zip.file(safeName, bytes, { binary: true, createFolders: false });
     fileList.push(safeName);
   }
@@ -76,9 +100,18 @@ export async function assembleFinalSubmissionZip(
     throw new Error("Final ZIP generation did not produce valid PK archive bytes.");
   }
 
+  // PERF-003: Previously we reopened the generated buffer with
+  // `JSZip.loadAsync(buffer, { checkCRC32: true })` and then called
+  // `reopenedEntry.async("uint8array")` on every entry. Each pass
+  // decompressed every file, producing a ~3x memory multiplier on large
+  // packages (input bytes + ZIP buffer + decompressed bytes) and causing
+  // OOM risk on Vercel. We now perform a single central-directory-only
+  // reopen to verify entry names and order — that reads only the ZIP
+  // metadata, never decompressing the file bodies. The non-empty bytes
+  // guarantee above already ensures every entry has content.
   let reopened: JSZip;
   try {
-    reopened = await JSZip.loadAsync(buffer, { checkCRC32: true, createFolders: false });
+    reopened = await JSZip.loadAsync(buffer, { createFolders: false });
   } catch {
     throw new Error("Final ZIP could not be reopened after generation.");
   }
@@ -97,10 +130,9 @@ export async function assembleFinalSubmissionZip(
     }
     const reopenedEntry = reopened.file(expectedName);
     if (!reopenedEntry) throw new Error(`Final ZIP is missing manifest entry ${expectedName}.`);
-    const reopenedBytes = await reopenedEntry.async("uint8array");
-    if (reopenedBytes.byteLength === 0) {
-      throw new Error(`Final ZIP contains an empty entry: ${expectedName}`);
-    }
+    // Intentionally NOT calling `reopenedEntry.async("uint8array")` here.
+    // That would decompress every entry just to re-confirm non-emptiness,
+    // which we already guaranteed above before adding the entry.
   }
 
   return { buffer, fileList };

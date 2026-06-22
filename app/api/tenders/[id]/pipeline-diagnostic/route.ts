@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Pipeline Diagnostic API — admin/proposal-manager only.
 //
 // Returns a single object showing the complete pipeline state for a tender:
@@ -269,7 +270,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
 
   } catch (err) {
-    console.error("[pipeline-diagnostic] unexpected error:", err);
+    logger.error("[pipeline-diagnostic] unexpected error:", { detail: err });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

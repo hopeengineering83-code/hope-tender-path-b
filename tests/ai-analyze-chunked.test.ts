@@ -482,17 +482,22 @@ describe("non-streaming resume: previousChunkResults normalization (regression)"
 
   it("non-streaming path now passes previousChunkResults to analyzeWithAI — verified in route.ts", () => {
     // This is a documentation/contract test.
-    // The route now delegates to executeAnalysisViaOrchestrator which handles
-    // previousChunkResults and onChunkComplete internally. The orchestrator pattern
-    // ensures resume state is properly maintained without the route handling it directly.
+    // The fix applied to app/api/tenders/[id]/ai-analyze/route.ts line ~886
+    // changed the analyzeWithAI() call from:
+    //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk })
+    // to:
+    //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkComplete })
+    // Without this fix, resume on the non-streaming path was silently re-processing
+    // all previously-completed chunks instead of starting from startFromChunk with
+    // their cached results injected.
     const routeSrc = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
       "utf8",
     );
-    // The non-streaming path must call the orchestrator which handles resume internally.
+    // The non-streaming call must include previousChunkResults in the options object.
     assert.ok(
-      /executeAnalysisViaOrchestrator/.test(routeSrc),
-      "non-streaming path must delegate to orchestrator which internally handles previousChunkResults and onChunkComplete",
+      /analyzeWithAI\(tenderContent, \{[^}]*deadlineAt[^}]*startFromChunk[^}]*previousChunkResults[^}]*onChunkComplete/.test(routeSrc),
+      "non-streaming analyzeWithAI call must pass previousChunkResults and onChunkComplete to enable resume",
     );
   });
 });

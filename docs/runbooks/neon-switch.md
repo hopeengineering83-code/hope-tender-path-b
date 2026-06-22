@@ -35,8 +35,8 @@ account / region.
    drop `SubmissionPlanState`).
 5. **Verify schema** with `scripts/check-critical-schema.mjs` and
    `scripts/verify-retroactive-init.mjs`.
-6. **Smoke test** — login works, AI Analyze works, file uploads work,
-   database queries succeed.
+6. **Smoke test** — `/api/health` returns 200, login works, AI Analyze
+   works, file uploads work.
 7. **Run blob migration dry-run** —
    `DRY_RUN=true npx tsx scripts/migrate-db-files-to-blob.ts`.
 
@@ -54,17 +54,19 @@ account / region.
 
 ## Verification
 
-- Database is reachable: `psql "$DATABASE_URL" -c "SELECT 1;"` succeeds
-- Login works; tenders list loads; file uploads succeed without 500 errors
-- The provider health panel on the dashboard renders without errors
-- AI Analyze jobs can be queued and run to completion
+- `/api/health` returns 200 with `ok: true`, `status: "healthy"`, and all
+  five critical tables (`RateLimitBucket`, `PasswordResetToken`,
+  `SubmissionPlanState`, `AiAnalyzeChunk`, `AiJob`) are `true`.
+- Login works; tenders load; file uploads succeed.
+- `/api/ai/health` returns 200 with provider status.
+- The dashboard provider-health panel renders without errors.
 - The "Last successful switch" line at the bottom of
-  `scripts/neon-switch-checklist.md` is updated with the date
+  `scripts/neon-switch-checklist.md` is updated with the date.
 
 ## Escalation
 
 - **On-call engineer:** page if `pg_restore` reports missing-table or
-  permission-denied errors, or if the app returns 500 after the switch.
+  permission-denied errors, or if `/api/health` is 503 after the switch.
 - **Neon support:** open a ticket at https://console.neon.tech/support if
   the new project refuses connections or the restore fails.
 - **Rollback plan:** if the new project is broken, revert `DATABASE_URL` in

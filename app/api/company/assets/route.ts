@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { forbiddenResponse, getSession, requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -106,7 +107,7 @@ export async function POST(req: Request) {
       companyId: company.id,
     });
   } catch (error) {
-    console.error("[company-assets] storage write failed", {
+    logger.error("[company-assets] storage write failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return privateJson({ error: "Company asset storage is unavailable" }, { status: 503 });
@@ -153,7 +154,7 @@ export async function POST(req: Request) {
       fileContent: stored.fileContent ?? null,
       fileName: validation.safeFileName,
     }).catch(() => undefined);
-    console.error("[company-assets] database write failed", {
+    logger.error("[company-assets] database write failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return privateJson({ error: "Company asset could not be saved" }, { status: 500 });
@@ -173,7 +174,7 @@ export async function POST(req: Request) {
         data: { storagePath: "", fileContent: null },
       });
     } catch (error) {
-      console.warn("[company-assets] superseded asset cleanup deferred", {
+      logger.warn("[company-assets] superseded asset cleanup deferred", {
         assetId: old.id,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       });
@@ -222,7 +223,7 @@ export async function DELETE(req: Request) {
     });
     await prisma.companyAsset.delete({ where: { id } });
   } catch (error) {
-    console.error("[company-assets] delete failed", {
+    logger.error("[company-assets] delete failed", {
       assetId: id,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });

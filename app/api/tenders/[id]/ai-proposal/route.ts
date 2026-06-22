@@ -1,5 +1,6 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
@@ -77,8 +78,10 @@ function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = await rateLimitPersistent(`ai-proposal:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
@@ -277,10 +280,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   experts = expertSelection.evidence;
   projects = projectSelection.evidence;
-  if (expertSelection.usedReviewedVaultFallback) console.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`);
-  if (projectSelection.usedReviewedVaultFallback) console.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`);
-  if (experts.length === 0 && tender.expertMatches.length > 0) console.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.");
-  if (projects.length === 0 && tender.projectMatches.length > 0) console.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");
+  if (expertSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`);
+  if (projectSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`);
+  if (experts.length === 0 && tender.expertMatches.length > 0) logger.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.");
+  if (projects.length === 0 && tender.projectMatches.length > 0) logger.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");
 
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
   // Skip cache for chunked requests — each chunk returns a partial proposal
@@ -463,7 +466,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {
       const msg = sanitizeError(aiError);
-      console.error("Benchmark AI proposal failed in /ai-proposal route:", msg);
+      logger.error("Benchmark AI proposal failed in /ai-proposal route:", { detail: msg });
 
       // Rate limit: don't overwrite any existing proposal — ask user to retry
       if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
@@ -560,7 +563,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { id: proposalJobId },
       data: { status: "FAILED", errorMessage: safeError, finishedAt: new Date(), updatedAt: new Date() },
     }).catch(() => {});
-    console.error("Proposal generation route error:", safeError);
+    logger.error("Proposal generation route error:", { detail: safeError });
     return NextResponse.json({ error: "Proposal generation failed. Retry or review server logs.", proposalJobId }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
@@ -172,7 +173,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   } catch (err) {
     // Never let the prohibition check block validation; it's a
     // best-effort safety net.
-    console.warn("[validate] Deterministic prohibition check failed (non-critical):", err instanceof Error ? err.message : err);
+    logger.warn("[validate] Deterministic prohibition check failed (non-critical):", { detail: err instanceof Error ? err.message : err });
   }
 
   const requiredNames = safeParseArr(tender.exactFileNaming);

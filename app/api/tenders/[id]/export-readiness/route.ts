@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -102,7 +103,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    console.error("Export readiness route failed", error);
+    logger.error("Export readiness route failed", { detail: error });
     return jsonError("Export-readiness route failed.", 500, {
       code: "EXPORT_READINESS_RUNTIME_ERROR",
       detail: error instanceof Error ? error.message : String(error),
