@@ -316,14 +316,15 @@ async function executeAnalysisViaOrchestrator(
       const parsed = parseJobOutput(job.output);
       if (parsed) {
         const aiResult = (parsed as any).result ?? { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" };
+        const totalChunks = parsed.totalChunks ?? result.totalChunks ?? 1;
         meta = {
           result: aiResult,
           isPartial: parsed.isPartial ?? false,
-          totalChunks: parsed.totalChunks ?? result.totalChunks,
-          completedChunks: parsed.completedChunks ?? result.completedChunks,
-          failedChunks: parsed.failedChunks ?? result.failedChunks,
+          totalChunks,
+          completedChunks: parsed.completedChunks ?? result.completedChunks ?? 0,
+          failedChunks: (parsed.failedChunks ?? result.failedChunks) ?? 0,
           skippedChunks: parsed.skippedChunks ?? 0,
-          chunkProviders: Array.isArray(parsed.chunkProviders) ? parsed.chunkProviders : Array(result.totalChunks).fill(null),
+          chunkProviders: Array.isArray(parsed.chunkProviders) ? parsed.chunkProviders : Array(totalChunks).fill(null),
           chunkResults: Array.isArray(parsed.chunkResults) ? parsed.chunkResults : [],
         };
       }
