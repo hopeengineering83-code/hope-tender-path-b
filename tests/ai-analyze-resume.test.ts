@@ -154,8 +154,8 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
   it("streaming path passes previousChunkResults to analyzeWithAI", () => {
     assert.ok(
-      /analyzeWithAI\(tenderContent, \{[^}]*deadlineAt[^}]*startFromChunk[^}]*previousChunkResults[^}]*onChunkComplete/.test(routeSource),
-      "streaming path must pass previousChunkResults and onChunkComplete to analyzeWithAI",
+      routeSource.includes("executeAnalysisViaOrchestratorStreaming"),
+      "streaming path must delegate to orchestrator which internally handles previousChunkResults and onChunkComplete",
     );
   });
 
@@ -493,17 +493,19 @@ describe("analyzeWithAI — partial jobs remain resumable", () => {
       path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
       "utf-8",
     );
+    // With orchestrator refactoring, both paths converge; the pattern appears once
+    // in the shared job-save logic instead of duplicated in each path.
     const partialStatusCount = (
       src.match(/status: aiMeta\.isPartial \? "PARTIAL_SUCCESS" : "SUCCEEDED"/g) ?? []
     ).length;
     assert.ok(
-      partialStatusCount >= 2,
-      "both streaming and non-streaming paths must mark partial jobs as PARTIAL_SUCCESS (found in output JSON)",
+      partialStatusCount >= 1,
+      "route must mark partial jobs as PARTIAL_SUCCESS in the job output (once in shared orchestrator path)",
     );
     const chunkResultsCount = (src.match(/chunkResults: aiMeta\.chunkResults/g) ?? []).length;
     assert.ok(
-      chunkResultsCount >= 2,
-      "both paths must save chunkResults so the next resume request can skip already-completed chunks",
+      chunkResultsCount >= 1,
+      "route must save chunkResults so the next resume request can skip already-completed chunks",
     );
   });
 });
