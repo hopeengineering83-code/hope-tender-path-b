@@ -1,4 +1,22 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+// Request-scoped correlation context — server-only module
+// Import only from server-side code (routes, middleware, server components)
+// Do NOT import in client components or client-side utilities
+
+let requestIdStorage: any = null;
+
+// Lazy-load AsyncLocalStorage only on the server side
+function getStorage() {
+  if (requestIdStorage === null && typeof window === 'undefined') {
+    try {
+      const { AsyncLocalStorage } = require("node:async_hooks") as any;
+      requestIdStorage = new (AsyncLocalStorage as any)();
+    } catch {
+      // Client environment or not available
+      requestIdStorage = false;
+    }
+  }
+  return requestIdStorage || null;
+}
 
 export function generateRequestId(): string {
   return crypto.randomUUID();
@@ -12,27 +30,24 @@ export function extractRequestId(req: Request): string {
   );
 }
 
-// ─── Request-scoped correlation context ───────────────────────────────────
-//
-// AsyncLocalStorage propagates a value through the async call tree without
-// threading it through every function signature. The middleware sets the
-// request ID once per inbound request; any logger / error handler / DB
-// call downstream can read it via `getCurrentRequestId()` without changes
-// to its own call signature.
-const requestIdStorage = new AsyncLocalStorage<string>();
-
 /**
  * Run `fn` with `requestId` set as the active request-scoped correlation ID.
  * Downstream code can retrieve it via `getCurrentRequestId()`.
+ * Server-only: do not call from client code.
  */
 export function withRequestId<T>(requestId: string, fn: () => T): T {
-  return requestIdStorage.run(requestId, fn);
+  const storage = getStorage();
+  if (!storage) return fn();
+  return storage.run(requestId, fn);
 }
 
 /**
  * Returns the request-scoped correlation ID for the current async context,
- * or `null` if none has been set (e.g. background tasks, scripts).
+ * or `null` if none has been set (e.g. background tasks, scripts, or client).
+ * Safe to call from both server and client (returns null on client).
  */
 export function getCurrentRequestId(): string | null {
-  return requestIdStorage.getStore() ?? null;
+  const storage = getStorage();
+  if (!storage) return null;
+  return storage.getStore() ?? null;
 }
