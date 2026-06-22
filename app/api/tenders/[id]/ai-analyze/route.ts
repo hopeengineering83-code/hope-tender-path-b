@@ -370,6 +370,153 @@ async function executeAnalysisViaOrchestrator(
   }
 }
 
+// Phase 2: Orchestrator wrapper for streaming path
+// Reuses non-streaming orchestrator but integrates SSE event emission
+async function executeAnalysisViaOrchestratorStreaming(
+  tenderId: string,
+  userId: string,
+  contentHash: string,
+  emit: (event: Record<string, unknown>) => void,
+  options: {
+    force?: boolean;
+  } = {},
+): Promise<{
+  jobId: string;
+  meta: AnalysisWithMeta;
+  effectiveExtractionMethod: string;
+} | null> {
+  try {
+    const result = await executeAnalysis(tenderId, userId, {
+      force: options.force,
+      deadlineMs: SAFE_DEADLINE_MS,
+      onProgress: async (event) => {
+        if (event.phase === "analyzing" && event.chunk !== undefined) {
+          emit({
+            phase: "analyzing",
+            chunk: event.chunk,
+            totalChunks: event.totalChunks,
+            message: event.message,
+          });
+        }
+      },
+      onChunkStart: async (info) => {
+        emit({
+          phase: "analyzing",
+          chunk: info.chunkIndex + 1,
+          totalChunks: info.totalChunks,
+          message: `Starting analysis of chunk ${info.chunkIndex + 1} of ${info.totalChunks}…`,
+        });
+        await upsertAnalyzeChunkStarted({
+          tenderId,
+          userId,
+          contentHash,
+          chunkIndex: info.chunkIndex,
+          totalChunks: info.totalChunks,
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/streaming] checkpoint start failed:", e instanceof Error ? e.message : String(e));
+        });
+      },
+      onChunkComplete: async (info) => {
+        emit({
+          phase: "analyzing",
+          chunk: info.chunkIndex + 1,
+          totalChunks: info.totalChunks,
+          message: `Completed chunk ${info.chunkIndex + 1} of ${info.totalChunks}${info.provider ? ` using ${info.provider}` : ""}.`,
+        });
+        await upsertAnalyzeChunkSucceeded({
+          tenderId,
+          userId,
+          contentHash,
+          chunkIndex: info.chunkIndex,
+          totalChunks: info.totalChunks,
+          result: info.result,
+          provider: info.provider,
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/streaming] checkpoint complete failed:", e instanceof Error ? e.message : String(e));
+        });
+      },
+      onChunkFailure: async (info) => {
+        emit({
+          phase: "analyzing",
+          chunk: info.chunkIndex + 1,
+          totalChunks: info.totalChunks,
+          message: `Chunk ${info.chunkIndex + 1} failed: ${info.errorMessage.slice(0, 100)}`,
+        });
+        await upsertAnalyzeChunkFailed({
+          tenderId,
+          userId,
+          contentHash,
+          chunkIndex: info.chunkIndex,
+          totalChunks: info.totalChunks,
+          errorMessage: info.errorMessage,
+          provider: info.provider,
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/streaming] checkpoint failure failed:", e instanceof Error ? e.message : String(e));
+        });
+      },
+    });
+
+    const job = await prisma.aiJob.findUnique({
+      where: { id: result.jobId },
+      select: { output: true },
+    });
+
+    let meta: AnalysisWithMeta | null = null;
+    if (job?.output) {
+      const parsed = parseJobOutput(job.output);
+      if (parsed) {
+        const aiResult = (parsed as any).result ?? { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" };
+        const totalChunks = parsed.totalChunks ?? result.totalChunks ?? 1;
+        const chunkResults = Array.isArray(parsed.chunkResults)
+          ? (parsed.chunkResults as Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>)
+          : [];
+        meta = {
+          result: aiResult,
+          isPartial: parsed.isPartial ?? false,
+          totalChunks,
+          completedChunks: parsed.completedChunks ?? result.completedChunks ?? 0,
+          failedChunks: (parsed.failedChunks ?? result.failedChunks) ?? 0,
+          skippedChunks: parsed.skippedChunks ?? 0,
+          chunkProviders: Array.isArray(parsed.chunkProviders) ? parsed.chunkProviders : Array(totalChunks).fill(null),
+          chunkResults,
+        };
+      }
+    }
+
+    if (!meta) {
+      meta = {
+        result: { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" },
+        isPartial: result.isPartial,
+        totalChunks: result.totalChunks,
+        completedChunks: result.completedChunks,
+        failedChunks: result.failedChunks,
+        skippedChunks: 0,
+        chunkProviders: Array(result.totalChunks).fill(null),
+        chunkResults: [],
+      };
+    }
+
+    const tenderRecord = await prisma.tender.findUnique({
+      where: { id: tenderId },
+      select: { files: { select: { extractionMethod: true, ocrPages: true } } },
+    });
+
+    const effectiveExtractionMethod = tenderRecord?.files.some(
+      (f: { extractionMethod?: string | null; ocrPages?: number | null }) =>
+        f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
+    ) ? "ocr" : "text";
+
+    return {
+      jobId: result.jobId,
+      meta,
+      effectiveExtractionMethod,
+    };
+  } catch (err) {
+    console.error("[ai-analyze/streaming] execution failed:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming helper — runs the same analysis logic but emits progress
 // events over a text/event-stream response so the browser can show real-time
