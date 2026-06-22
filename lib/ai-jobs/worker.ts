@@ -13,6 +13,7 @@
 import { prisma } from "../prisma";
 import { executeAnalysis, type AnalysisOrchestrationOptions } from "../engine/analysis-orchestrator";
 import type { AnalysisJobCreateInput } from "./analysis-job-service";
+import { logger } from "../observability";
 
 export type JobWorkerOptions = {
   maxConcurrentJobs?: number;
@@ -33,7 +34,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
     retryBackoffMs = 5000,
   } = options;
 
-  console.log("[worker] draining analysis job queue...");
+  logger.info("[worker] draining analysis job queue...");
 
   // Find jobs ready to process
   const queuedJobs = await prisma.aiJob.findMany({
@@ -52,7 +53,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
     take: maxConcurrentJobs,
   });
 
-  console.log(`[worker] found ${queuedJobs.length} jobs to process`);
+  logger.info(`[worker] found ${queuedJobs.length} jobs to process`);
 
   let processed = 0;
   let succeeded = 0;
@@ -61,7 +62,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
   for (const job of queuedJobs) {
     try {
       processed++;
-      console.log(`[worker] processing job ${job.id} (${processed}/${queuedJobs.length})`);
+      logger.info(`[worker] processing job ${job.id} (${processed}/${queuedJobs.length})`);
 
       // Mark job as RUNNING
       await prisma.aiJob.update({
@@ -84,7 +85,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
         onProgress: (event) => {
           // Log progress for monitoring
           if (event.phase === "complete") {
-            console.log(`[worker] job ${job.id} phase complete: ${event.message}`);
+            logger.info(`[worker] job ${job.id} phase complete`, { message: event.message });
           }
         },
       });
@@ -101,11 +102,11 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
       });
 
       succeeded++;
-      console.log(`[worker] job ${job.id} ${finalStatus}`);
+      logger.info(`[worker] job ${job.id} ${finalStatus}`);
     } catch (err) {
       failed++;
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[worker] job ${job.id} failed:`, errorMsg);
+      logger.error(`[worker] job ${job.id} failed`, { error: errorMsg });
 
       // Handle retry logic
       const shouldRetry = job.retries < maxRetries && isTransientError(errorMsg);
@@ -121,7 +122,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
             startedAt: nextRetry, // Reschedule for later
           },
         });
-        console.log(`[worker] job ${job.id} scheduled for retry ${job.retries + 1}`);
+        logger.info(`[worker] job ${job.id} scheduled for retry ${job.retries + 1}`);
       } else {
         // Permanent failure
         await prisma.aiJob.update({
@@ -133,7 +134,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
             retries: job.retries,
           },
         });
-        console.log(`[worker] job ${job.id} permanently failed`);
+        logger.info(`[worker] job ${job.id} permanently failed`);
       }
     }
   }

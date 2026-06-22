@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 
 export async function GET(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
+  const userId = actor.id;
   await prismaReady;
 
   const { searchParams } = new URL(req.url);
