@@ -16,6 +16,7 @@ import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../..
 import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -88,6 +89,14 @@ async function finalPackageGate(userId: string, tender: any) {
 
   const critical = tender.complianceGaps.filter((g: any) => !g.isResolved && g.severity === "CRITICAL");
   if (critical.length) return { ok: false as const, response: err("Final export blocked by unresolved CRITICAL compliance gaps.", 409, { code: "CRITICAL_COMPLIANCE_GAPS", reasons: critical.map((g: any) => g.title) }) };
+
+  // Central authoritative readiness gate (condition K) — the final, fail-closed
+  // check immediately before the ZIP is assembled. Enforces current-content-hash
+  // match, canonical promotion, chunk integrity, mandatory-requirement source
+  // grounding, and a confirmed non-empty submission plan, so a stale/partial/
+  // unapproved-fallback analysis can never reach the final package.
+  const centralGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
+  if (!centralGate.ok) return { ok: false as const, response: err(`Final ZIP blocked: ${centralGate.blockerDetail}`, 409, { code: centralGate.blockerCode }) };
 
   return { ok: true as const, companyId: company.id };
 }

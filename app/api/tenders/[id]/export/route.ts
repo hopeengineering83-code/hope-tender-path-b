@@ -10,6 +10,7 @@ import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingesti
 import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
 import { reportError, logger } from "../../../../../lib/observability";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -187,6 +188,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           blockers: authorityResult.blockers.filter((b) => b.severity === "CRITICAL").map((b) => b.detail),
         },
         { status: 422 },
+      );
+    }
+
+    // Central authoritative readiness gate (condition K) — the final, fail-closed
+    // check immediately before the export package is created. Enforces
+    // current-content-hash match, canonical promotion, chunk integrity,
+    // mandatory-requirement source grounding, and a confirmed non-empty
+    // submission plan so a stale/partial/unapproved-fallback analysis can never
+    // be marked EXPORTED.
+    const centralGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: id, userId, purpose: "export" });
+    if (!centralGate.ok) {
+      return NextResponse.json(
+        { error: `Export blocked: ${centralGate.blockerDetail}`, code: centralGate.blockerCode },
+        { status: 409 },
       );
     }
 
