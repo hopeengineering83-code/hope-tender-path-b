@@ -18,6 +18,7 @@ import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
+import { executeAnalysis } from "../../../../../lib/engine/analysis-orchestrator";
 import {
   AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,
