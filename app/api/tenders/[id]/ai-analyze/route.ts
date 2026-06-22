@@ -750,6 +750,7 @@ async function handleStreamingAnalyze(
         const effectiveExtractionMethod = orchestratorResult.effectiveExtractionMethod;
         const analysisJobId = orchestratorResult.jobId;
 
+        // Stage result first (required by database guard for atomic promotion)
         if (analysisMeta.isPartial) {
           // Non-destructive: stage partial result without touching canonical tender data.
           await stagePartialResult(analysisJobId, {
@@ -761,7 +762,20 @@ async function handleStreamingAnalyze(
             completedChunks: analysisMeta.completedChunks,
             totalChunks: analysisMeta.totalChunks,
           });
-        } else if (await canPromoteToCanonical(analysisJobId, id)) {
+        } else {
+          // Stage successful analysis result before promotion
+          await stagePartialResult(analysisJobId, {
+            requirements: aiResult.requirements,
+            summary: aiResult.summary,
+            chunkResults: analysisMeta.chunkResults,
+            contentHash,
+            isPartial: false,
+            completedChunks: analysisMeta.completedChunks,
+            totalChunks: analysisMeta.totalChunks,
+          });
+        }
+
+        if (!analysisMeta.isPartial && (await canPromoteToCanonical(analysisJobId, id))) {
               // Full success: promote atomically to canonical.
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
