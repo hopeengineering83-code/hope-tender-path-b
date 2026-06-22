@@ -2180,8 +2180,14 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
         onToggle={() => togglePanel("extraction-quality")}
       >
         <ExtractionQualityPanel
-          files={tender.files}
-          analysisExtractionStatus={tender.analysisExtractionStatus}
+          files={tender.files.map((f) => ({
+            totalPages: f.totalPages ?? null,
+            extractedPages: f.extractedPages ?? null,
+            ocrPages: f.ocrPages ?? null,
+            failedPages: f.failedPages ?? null,
+            extractionScore: f.extractionScore ?? null,
+          }))}
+          analysisExtractionStatus={tender.analysisExtractionStatus ?? undefined}
         />
       </CollapsiblePanel>
 
