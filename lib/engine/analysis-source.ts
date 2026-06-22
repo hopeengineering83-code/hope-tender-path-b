@@ -86,12 +86,49 @@ export type AnalysisGateResult =
 /** Throws/returns the standard "regex fallback unapproved" blocker for
  * routes that must not produce final-quality output from regex fallback
  * analysis. Returns {ok: true} when the analysis is AI or human-approved.
+ *
+ * FM-009 FIX: Tries the canonical resolver (resolveTenderAnalysisState)
+ * first, which checks both tender.notes AND AiJob/AiAnalyzeChunk rows.
+ * Falls back to detectAnalysisSourceWithApproval if the canonical resolver
+ * is unavailable.
  */
 export async function assertAnalysisReadyForFinalGeneration(
   client: PrismaClient,
   tenderId: string,
   tender: TenderAnalysisSourceLike,
 ): Promise<AnalysisGateResult> {
+  // Try the canonical resolver first — it looks at AiJob rows, not just notes.
+  try {
+    const tenderRow = await client.tender.findUnique({
+      where: { id: tenderId },
+      select: { userId: true },
+    });
+    if (tenderRow) {
+      const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
+      const detail = await resolveTenderAnalysisState(null as any, tenderId, tenderRow.userId);
+      if (detail.state === "AI_SUCCEEDED" || detail.state === "HUMAN_APPROVED_FALLBACK") {
+        return { ok: true };
+      }
+      if (detail.state === "NOT_STARTED") {
+        return {
+          ok: false,
+          code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+          message: "Analysis source has not been confirmed. Run AI analysis before final proposal generation, or approve the current analysis as sufficient.",
+          nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
+        };
+      }
+      return {
+        ok: false,
+        code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+        message: "Latest analysis used the regex fallback (AI providers failed). Final proposal generation is blocked until AI analysis is re-run successfully, or a human explicitly approves the fallback analysis as sufficient.",
+        nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
+      };
+    }
+  } catch {
+    // Fall through to the legacy notes-based check.
+  }
+
+  // Legacy fallback: notes-based detection only.
   const source = await detectAnalysisSourceWithApproval(client, tenderId, tender);
   if (source === "AI" || source === "HUMAN_APPROVED_REGEX_FALLBACK") return { ok: true };
   if (source === "UNKNOWN") {

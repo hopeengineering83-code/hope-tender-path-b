@@ -122,7 +122,11 @@ check("pricing totals are bounded", pricingCreate.includes("MAX_TOTAL") && prici
 
 const aiAnalyze = read("app/api/tenders/[id]/ai-analyze/route.ts");
 check("AI source references validated", aiAnalyze.includes("validTenderFileIds.has(req.sourceFileToken)") && !aiAnalyze.includes("sourceTenderFileId: req.sourceFileToken ?? null"), "AI-returned source IDs must match uploaded tender files");
-check("AI vault hash includes content digest", aiAnalyze.includes('[digest:${textDigest}]'), "analysis checkpoints must invalidate when reviewed vault text changes");
+// The vault content digest was moved to lib/engine/tender-analysis-content.ts
+// (the shared content+hash builder) during the Stage 1 unification (PR #821).
+// Check there instead of the route file.
+const tenderAnalysisContent = read("lib/engine/tender-analysis-content.ts");
+check("AI vault hash includes content digest", tenderAnalysisContent.includes("[digest:${textDigest}]"), "analysis checkpoints must invalidate when reviewed vault text changes");
 
 console.log(JSON.stringify({ ok: failures.length === 0, checks, failures }, null, 2));
 if (failures.length > 0) process.exitCode = 1;
