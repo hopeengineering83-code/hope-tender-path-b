@@ -8,9 +8,14 @@ import { isNonClientEntityLabel, nonClientEntityLabelPattern } from "../lib/engi
 test("top-level pdfjs-dist stays aligned with pdf-parse worker dependency", () => {
   const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
   const direct = lock.packages?.["node_modules/pdfjs-dist"]?.version;
+  // npm may deduplicate pdfjs-dist to the top level (no nested copy under pdf-parse).
+  // In that case pdf-parse uses the top-level version, which is inherently aligned.
+  // If a nested copy exists, it must match the top-level version.
   const transitive = lock.packages?.["node_modules/pdf-parse/node_modules/pdfjs-dist"]?.version;
   assert.equal(direct, "5.4.296");
-  assert.equal(transitive, "5.4.296");
+  if (transitive !== undefined) {
+    assert.equal(transitive, "5.4.296");
+  }
 });
 
 test("distinct beneficiary/employer/donor labels do not become client without explicit procuring entity", () => {
