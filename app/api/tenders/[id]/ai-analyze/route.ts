@@ -369,7 +369,8 @@ async function handleStreamingAnalyze(
 
         // Shared builder — IDENTICAL content + hash to the non-streaming path
         // and the durable job service, so all execution paths share one
-        // chunk-state identity.
+        // chunk-state identity. Content includes vault digest like [digest:${textDigest}]
+        // so analysis checkpoints invalidate when reviewed vault text changes.
         const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
         const contentHash = computeAnalysisContentHash(tenderContent);
         if (force) {
