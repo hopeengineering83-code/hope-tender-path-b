@@ -952,6 +952,27 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  // OBS-004 — per-tenant AI cost monitoring. Stores only safe metadata
+  // (provider, use case, token counts, latency, failure category). Never
+  // stores API keys, prompts, or responses.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiUsageRecord" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "tenderId" TEXT,
+    "jobId" TEXT,
+    "provider" TEXT NOT NULL,
+    "useCase" TEXT NOT NULL,
+    "model" TEXT,
+    "inputTokens" INTEGER NOT NULL DEFAULT 0,
+    "outputTokens" INTEGER NOT NULL DEFAULT 0,
+    "latencyMs" INTEGER NOT NULL DEFAULT 0,
+    "success" BOOLEAN NOT NULL DEFAULT false,
+    "failureCategory" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE SET NULL
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -1011,6 +1032,10 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // TenderMetadataOverride indexes (migration 20260608*)
     `CREATE UNIQUE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_field_key" ON "TenderMetadataOverride"("tenderId", "field")`,
     `CREATE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_idx" ON "TenderMetadataOverride"("tenderId")`,
+    // AiUsageRecord indexes (migration 20260620_add_ai_usage_records — OBS-004)
+    `CREATE INDEX IF NOT EXISTS "AiUsageRecord_userId_createdAt_idx" ON "AiUsageRecord"("userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "AiUsageRecord_tenderId_createdAt_idx" ON "AiUsageRecord"("tenderId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "AiUsageRecord_provider_createdAt_idx" ON "AiUsageRecord"("provider", "createdAt")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {

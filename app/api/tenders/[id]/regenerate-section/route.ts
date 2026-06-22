@@ -24,6 +24,7 @@ import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -297,7 +298,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     try {
       const { generateWithFallback } = await import("../../../../../lib/ai");
-      sectionMarkdown = await generateWithFallback(spec.userPrompt, { systemPrompt: spec.systemPrompt });
+      sectionMarkdown = await generateWithFallback(spec.userPrompt, {
+        systemPrompt: spec.systemPrompt,
+        // OBS-004 — fire-and-forget per-tenant AI usage tracking.
+        onProviderAttempt: (provider, success, latencyMs, failureCategory) => {
+          void recordAiUsage({
+            userId,
+            tenderId: id,
+            provider,
+            useCase: "proposal",
+            latencyMs,
+            success,
+            failureCategory: failureCategory ?? null,
+          });
+        },
+      });
     } catch (err) {
       logger.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
     }
