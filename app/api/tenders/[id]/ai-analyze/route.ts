@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";
+import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult, type AIRequirement } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { invalidateDashboardCache } from "../../../../../lib/dashboard-cache";
@@ -727,55 +727,133 @@ async function handleStreamingAnalyze(
           new Promise<void>((r) => setTimeout(r, 2_000)),
         ]).catch(() => {});
 
-        // Delegate to orchestrator wrapper which handles:
-        // - Job creation/resumption
-        // - Checkpoint callbacks for durability
-        // - Provider health restoration
-        // - Progress emission
-        // This eliminates ~300 lines of duplicate code from the inline path
-        const orchestratorResult = isAIEnabled()
-          ? await executeAnalysisViaOrchestratorStreaming(id, userId, contentHash, emit, { force })
-          : null;
+        let analysisMeta: AnalysisWithMeta | null = null;
+        let aiResult: AIAnalysisResult | null = null;
+        let effectiveExtractionMethod = "text";
+        let analysisJobId: string | null = null;
+        let isFallback = false;
 
-        if (!orchestratorResult) {
-          emit({ phase: "error", message: "AI analysis failed — using fallback extraction", code: "AI_DISABLED_OR_FAILED" });
-          controller.close();
-          return;
+        // Try orchestrator-based AI analysis first
+        if (isAIEnabled()) {
+          try {
+            emit({ phase: "analyzing", message: "Starting AI analysis…" });
+            const orchestratorResult = await executeAnalysisViaOrchestratorStreaming(id, userId, contentHash, emit, { force });
+            if (orchestratorResult) {
+              analysisMeta = orchestratorResult.meta;
+              aiResult = orchestratorResult.meta.result;
+              effectiveExtractionMethod = orchestratorResult.effectiveExtractionMethod;
+              analysisJobId = orchestratorResult.jobId;
+              emit({ phase: "saving", message: "Saving analysis results…" });
+            } else {
+              throw new Error("Orchestrator returned null");
+            }
+          } catch (aiError) {
+            const msg = aiError instanceof Error ? aiError.message : String(aiError);
+            console.error("[ai-analyze/streaming] AI analysis failed:", msg);
+            // Restore health from DB and fall back to regex
+            void persistAllHealthToDb().catch(() => {});
+            // Will fall through to regex fallback below
+            isFallback = true;
+          }
+        } else {
+          isFallback = true;
         }
 
-        emit({ phase: "saving", message: "Saving analysis results…" });
+        // Fallback to regex analysis if AI failed or is disabled
+        if (!analysisMeta || !aiResult || isFallback) {
+          emit({ phase: "analyzing", message: "Using regex-based extraction…" });
+          const fallbackResult = analyzeTender(tenderRecord);
+          const aiResultFallback: AIAnalysisResult = {
+            summary: fallbackResult.summary,
+            requirements: fallbackResult.requirements.map((r) => ({
+              title: r.title,
+              description: r.description,
+              requirementType: r.requirementType || "DOCUMENT",
+              priority: r.priority || "HIGH",
+              sourceExtractionMethod: "text",
+            })) as AIRequirement[],
+            exactFileNaming: fallbackResult.exactFileNaming,
+            exactFileOrder: fallbackResult.exactFileOrder,
+            evaluationMethodology: "",
+            submissionNotes: "",
+          };
+          aiResult = aiResultFallback;
+          analysisMeta = {
+            result: aiResultFallback,
+            isPartial: false,
+            totalChunks: 0,
+            completedChunks: 0,
+            failedChunks: 0,
+            skippedChunks: 0,
+            chunkProviders: [],
+            chunkResults: [],
+          };
+          isFallback = true;
+        }
+        // Guarantee they're not null from this point forward
+        if (!aiResult || !analysisMeta) {
+          throw new Error("[ai-analyze/streaming] Analysis result and metadata must be set");
+        }
 
-        const analysisMeta = orchestratorResult.meta;
-        const aiResult = analysisMeta.result;
-        const effectiveExtractionMethod = orchestratorResult.effectiveExtractionMethod;
-        const analysisJobId = orchestratorResult.jobId;
+        // Create job for fallback if needed
+        if (!analysisJobId && isFallback) {
+          try {
+            const fallbackJob = await prisma.aiJob.create({
+              data: {
+                tenderId: id,
+                userId,
+                jobType: "AI_ANALYZE",
+                status: "RUNNING",
+                startedAt: new Date(),
+                input: JSON.stringify({ fallback: true, contentHash }),
+              },
+              select: { id: true },
+            });
+            analysisJobId = fallbackJob.id;
+          } catch (jobErr) {
+            console.error("[ai-analyze/streaming] fallback job creation failed:", jobErr instanceof Error ? jobErr.message : String(jobErr));
+          }
+        }
 
         // Stage result first (required by database guard for atomic promotion)
-        if (analysisMeta.isPartial) {
-          // Non-destructive: stage partial result without touching canonical tender data.
-          await stagePartialResult(analysisJobId, {
-            requirements: aiResult.requirements,
-            summary: aiResult.summary,
-            chunkResults: analysisMeta.chunkResults,
-            contentHash,
-            isPartial: true,
-            completedChunks: analysisMeta.completedChunks,
-            totalChunks: analysisMeta.totalChunks,
-          });
-        } else {
-          // Stage successful analysis result before promotion
-          await stagePartialResult(analysisJobId, {
-            requirements: aiResult.requirements,
-            summary: aiResult.summary,
-            chunkResults: analysisMeta.chunkResults,
-            contentHash,
-            isPartial: false,
-            completedChunks: analysisMeta.completedChunks,
-            totalChunks: analysisMeta.totalChunks,
-          });
+        if (analysisJobId) {
+          if (isFallback) {
+            // Stage fallback draft
+            await stageFallbackDraft(analysisJobId, {
+              requirements: aiResult.requirements,
+              summary: aiResult.summary,
+              chunkResults: analysisMeta.chunkResults,
+              contentHash: contentHash || "",
+              isPartial: false,
+              completedChunks: 0,
+              totalChunks: 0,
+            }).catch(() => {});
+          } else if (analysisMeta.isPartial) {
+            // Non-destructive: stage partial result without touching canonical tender data.
+            await stagePartialResult(analysisJobId, {
+              requirements: aiResult.requirements,
+              summary: aiResult.summary,
+              chunkResults: analysisMeta.chunkResults,
+              contentHash,
+              isPartial: true,
+              completedChunks: analysisMeta.completedChunks,
+              totalChunks: analysisMeta.totalChunks,
+            }).catch(() => {});
+          } else {
+            // Stage successful analysis result before promotion
+            await stagePartialResult(analysisJobId, {
+              requirements: aiResult.requirements,
+              summary: aiResult.summary,
+              chunkResults: analysisMeta.chunkResults,
+              contentHash,
+              isPartial: false,
+              completedChunks: analysisMeta.completedChunks,
+              totalChunks: analysisMeta.totalChunks,
+            }).catch(() => {});
+          }
         }
 
-        if (!analysisMeta.isPartial && (await canPromoteToCanonical(analysisJobId, id))) {
+        if (!analysisMeta.isPartial && analysisJobId && (await canPromoteToCanonical(analysisJobId, id))) {
               // Full success: promote atomically to canonical.
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
@@ -873,84 +951,107 @@ async function handleStreamingAnalyze(
             }
           }
 
-          await prisma.aiJob.update({
-            where: { id: analysisJobId },
-            data: {
-              status: analysisMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
-              finishedAt: new Date(),
-              output: JSON.stringify({ isPartial: analysisMeta.isPartial, totalChunks: analysisMeta.totalChunks, completedChunks: analysisMeta.completedChunks, failedChunks: analysisMeta.failedChunks, skippedChunks: analysisMeta.skippedChunks, chunkProviders: analysisMeta.chunkProviders, chunkResults: analysisMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: analysisMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
-            },
-          }).catch(() => {});
-
-          const chunkResults = buildChunkStepResults(analysisMeta);
-          for (let stepIdx = 0; stepIdx < chunkResults.length; stepIdx++) {
-            const step = chunkResults[stepIdx];
-            await prisma.aiJobStep.create({
-              data: { jobId: analysisJobId, stepIndex: stepIdx, stepName: step.stepName, status: step.status, startedAt: new Date(), finishedAt: new Date(), message: step.output },
+        // Update job record with results
+        if (analysisJobId) {
+          if (isFallback) {
+            await prisma.aiJob.update({
+              where: { id: analysisJobId },
+              data: {
+                status: "PARTIAL_SUCCESS",
+                finishedAt: new Date(),
+                output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", reason: "AI fallback to regex", requirementCount: aiResult.requirements.length }),
+              },
             }).catch(() => {});
-          }
-            void persistAllHealthToDb().catch((e: unknown) => {
-              console.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
-            });
+          } else {
+            await prisma.aiJob.update({
+              where: { id: analysisJobId },
+              data: {
+                status: analysisMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                finishedAt: new Date(),
+                output: JSON.stringify({ isPartial: analysisMeta.isPartial, totalChunks: analysisMeta.totalChunks, completedChunks: analysisMeta.completedChunks, failedChunks: analysisMeta.failedChunks, skippedChunks: analysisMeta.skippedChunks, chunkProviders: analysisMeta.chunkProviders, chunkResults: analysisMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: analysisMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
+              },
+            }).catch(() => {});
 
-            {
-              const fileQualitySnapshots = tenderRecord.files.map((f) => ({
-                totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
-                extractedPages: (f as { extractedPages?: number | null }).extractedPages ?? null,
-                ocrPages: (f as { ocrPages?: number | null }).ocrPages ?? null,
-                failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
-                extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
-              }));
-              const textSamples = tenderRecord.files.map((f) => f.extractedText);
-              const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
-              const extractionStatus: ExtractionStatus =
-                analysisMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
-                  ? "PARTIAL_EXTRACTION_AI_ANALYZED"
-                  : rawExtractionStatus;
-              await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
-                console.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
-              });
+            const chunkResults = buildChunkStepResults(analysisMeta);
+            for (let stepIdx = 0; stepIdx < chunkResults.length; stepIdx++) {
+              const step = chunkResults[stepIdx];
+              await prisma.aiJobStep.create({
+                data: { jobId: analysisJobId, stepIndex: stepIdx, stepName: step.stepName, status: step.status, startedAt: new Date(), finishedAt: new Date(), message: step.output },
+              }).catch(() => {});
             }
+          }
+        }
 
-            const analysisResult = {
-              ai: true, fallback: false,
-              analysisSource: (analysisMeta.isPartial ? "PARTIAL_AI" : "AI") as "AI" | "PARTIAL_AI",
-              summary: aiResult.summary, requirementCount: aiResult.requirements.length,
-              providerDiagnostics: buildProviderDiagnosticsSnapshot(),
-            };
-            void persistAllHealthToDb().catch((e: unknown) => {
-              console.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
-            });
+        void persistAllHealthToDb().catch((e: unknown) => {
+          console.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
+        });
 
-            emit({ phase: "complete", message: "Analysis complete", analysisSource: analysisResult.analysisSource, summary: analysisResult.summary, requirementCount: analysisResult.requirementCount });
-            controller.close();
+        // Calculate and persist extraction status
+        {
+          const fileQualitySnapshots = tenderRecord.files.map((f) => ({
+            totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
+            extractedPages: (f as { extractedPages?: number | null }).extractedPages ?? null,
+            ocrPages: (f as { ocrPages?: number | null }).ocrPages ?? null,
+            failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
+            extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
+          }));
+          const textSamples = tenderRecord.files.map((f) => f.extractedText);
+          const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
+          const extractionStatus: ExtractionStatus = isFallback
+            ? "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
+            : analysisMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+              ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+              : rawExtractionStatus;
+          await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
+            console.error("[ai-analyze/stream] analysisExtractionStatus persist failed:", e instanceof Error ? e.message : String(e));
+          });
+        }
 
-            await logAction({
-              userId, action: "AI_ANALYZE", entityType: "Tender", entityId: id,
-              description: `Analyzed tender "${tenderRecord.title}" — ${analysisResult.requirementCount} requirements extracted (streaming)`,
-              metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount, forcedPoorExtraction: force, streaming: true },
-              requestId,
-            });
+        // Build analysis result
+        const analysisResult = {
+          ai: !isFallback,
+          fallback: isFallback,
+          analysisSource: isFallback ? "REGEX_FALLBACK" : (analysisMeta.isPartial ? "PARTIAL_AI" : "AI"),
+          summary: aiResult.summary,
+          requirementCount: aiResult.requirements.length,
+          providerDiagnostics: buildProviderDiagnosticsSnapshot(),
+        };
 
-            void createNotification({
-              userId, type: "TENDER_ANALYZED", title: `Analysis complete for "${tenderRecord.title}"`,
-              body: `${analysisResult.requirementCount} requirements extracted by AI.`,
-              entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}`,
-            });
+        await logAction({
+          userId,
+          action: "AI_ANALYZE",
+          entityType: "Tender",
+          entityId: id,
+          description: `Analyzed tender "${tenderRecord.title}" — ${analysisResult.requirementCount} requirements extracted (streaming)${isFallback ? " using fallback" : ""}`,
+          metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount, forcedPoorExtraction: force, streaming: true },
+          requestId,
+        });
 
-            void invalidateDashboardCache(id);
+        void createNotification({
+          userId,
+          type: "TENDER_ANALYZED",
+          title: `Analysis complete for "${tenderRecord.title}"`,
+          body: `${analysisResult.requirementCount} requirements extracted${isFallback ? " using regex extraction" : " by AI"}.`,
+          entityType: "Tender",
+          entityId: id,
+          link: `/dashboard/tenders/${id}`,
+        });
 
-            // Emit final completion event with all required fields for frontend
-            const sseResumableJobId = (analysisMeta.isPartial || (analysisMeta.completedChunks > 0))
-              ? analysisJobId : null;
-            emit({
-              phase: "complete",
-              status: analysisMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED",
-              requirementCount: analysisResult.requirementCount,
-              jobId: analysisJobId,
-              message: `Analysis complete — ${analysisResult.requirementCount} requirements extracted`,
-              resumableJobId: sseResumableJobId,
-            });
+        void invalidateDashboardCache(id);
+
+        // Emit final completion event with all required fields for frontend
+        const sseResumableJobId = !isFallback && (analysisMeta.isPartial || (analysisMeta.completedChunks > 0))
+          ? analysisJobId
+          : null;
+        emit({
+          phase: "complete",
+          fallback: isFallback,
+          status: isFallback ? "REGEX_FALLBACK" : (analysisMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED"),
+          requirementCount: analysisResult.requirementCount,
+          jobId: analysisJobId,
+          message: `Analysis complete — ${analysisResult.requirementCount} requirements extracted`,
+          resumableJobId: sseResumableJobId,
+        });
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
         const safe = raw.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);

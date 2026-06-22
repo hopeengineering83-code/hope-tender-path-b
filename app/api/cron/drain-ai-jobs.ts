@@ -1,28 +1,24 @@
-/**
- * Vercel Cron endpoint for draining the AI analysis job queue.
- *
- * This endpoint is called on a schedule (e.g., every 5 minutes) to process
- * queued analysis jobs in the background.
- *
- * Vercel Cron configuration in vercel.json:
- * {
- *   "crons": [
- *     {
- *       "path": "/api/cron/drain-ai-jobs",
- *       "schedule": "*/5 * * * *"  // Every 5 minutes
- *     }
- *   ]
- * }
- */
+// Vercel Cron endpoint for draining the AI analysis job queue.
+// This endpoint is called on a schedule (every 5 minutes) to process
+// queued analysis jobs in the background.
+//
+// Vercel Cron configuration in vercel.json:
+// {
+//   "crons": [
+//     {
+//       "path": "/api/cron/drain-ai-jobs",
+//       "schedule": "0 0/5 * * * *"
+//     }
+//   ]
+// }
 
 import { NextResponse } from "next/server";
 import { prismaReady } from "../../../lib/prisma";
 import { drainAnalysisJobQueue, getJobQueueStats } from "../../../lib/ai-jobs/worker";
 
-export const maxDuration = 50; // Cron jobs can run up to 5 min on Pro, we use 50s to be safe
+export const maxDuration = 50;
 
 export async function GET(req: Request) {
-  // Verify this is a Vercel Cron request by checking the Authorization header
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.VERCEL_CRON_SECRET;
 
@@ -39,7 +35,6 @@ export async function GET(req: Request) {
     console.log("[cron] starting AI job queue drain...");
     const startTime = Date.now();
 
-    // Drain the job queue
     const result = await drainAnalysisJobQueue({
       maxConcurrentJobs: 3,
       deadlineMs: 45000,
@@ -49,7 +44,6 @@ export async function GET(req: Request) {
 
     const duration = Date.now() - startTime;
 
-    // Get queue statistics for monitoring
     const stats = await getJobQueueStats();
 
     const summary = {
@@ -64,7 +58,6 @@ export async function GET(req: Request) {
 
     console.log("[cron] queue drain complete:", JSON.stringify(summary, null, 2));
 
-    // Log a warning if queue is backing up
     const queuedCount = stats.jobsByStatus.find(
       (s) => s.jobType === "AI_ANALYZE" && s.status === "QUEUED"
     )?._count ?? 0;
