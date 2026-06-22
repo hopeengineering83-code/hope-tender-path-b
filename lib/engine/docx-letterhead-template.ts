@@ -1,3 +1,4 @@
+import { logger, reportError } from "../observability";
 import JSZip from "jszip";
 
 function basename(path: string): string {
@@ -58,7 +59,8 @@ async function copyTemplateMedia(templateZip: JSZip, generatedZip: JSZip) {
       const data = await file.async("nodebuffer");
       generatedZip.file(name, data);
     } catch (error) {
-      console.error(`[letterhead] Could not copy media ${name}:`, error);
+      void reportError(error, { module: "docx-letterhead-template" });
+      logger.error(`[letterhead] Could not copy media ${name}:`, { error: error });
     }
   }
 }
@@ -115,7 +117,8 @@ export async function applyUploadedDocxLetterheadTemplate(
 
     return await generatedZip.generateAsync({ type: "nodebuffer" });
   } catch (error) {
-    console.error("[letterhead] Failed to apply uploaded Word letterhead. Falling back to generated letterhead.", error);
+    void reportError(error, { module: "docx-letterhead-template" });
+    logger.error("[letterhead] Failed to apply uploaded Word letterhead. Falling back to generated letterhead.", { error: error });
     return generatedDocx;
   }
 }

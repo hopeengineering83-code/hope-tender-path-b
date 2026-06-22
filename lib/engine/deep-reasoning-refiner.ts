@@ -33,6 +33,7 @@
  * configured — caller falls back to the original markdown.
  */
 
+import { logger, reportError } from "../observability";
 import { critiqueProposalWithAI, critiqueProposalWithTools, rewriteProposalWithCritique } from "../ai";
 import { formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { formatConstraintsForCritique, formatViolationsForCritique, validateConstraints, violationsAsWeakAxes } from "./constraint-validator";
@@ -205,7 +206,8 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         critique = await critiqueProposalWithAI(critiqueInput, "reasoning");
       }
     } catch (err) {
-      console.warn(`[deep-reasoning-refiner] Critique iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
+      void reportError(err, { module: "deep-reasoning-refiner" });
+      logger.warn(`[deep-reasoning-refiner] Critique iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
@@ -230,7 +232,7 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         status: "critique-failed",
         critiqueLength: critique?.length ?? 0,
       });
-      console.info(`[deep-reasoning-refiner] Iteration ${iteration}: critique pass returned empty or thin output (${critique?.length ?? 0} chars). Stopping.`);
+      logger.info(`[deep-reasoning-refiner] Iteration ${iteration}: critique pass returned empty or thin output (${critique?.length ?? 0} chars). Stopping.`);
       break;
     }
 
@@ -247,7 +249,8 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         noFinancial: input.noFinancial === true,
       },  "reasoning");
     } catch (err) {
-      console.warn(`[deep-reasoning-refiner] Rewrite iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
+      void reportError(err, { module: "deep-reasoning-refiner" });
+      logger.warn(`[deep-reasoning-refiner] Rewrite iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
@@ -272,7 +275,7 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         status: "rejected-thin-output",
         critiqueLength: critique.length,
       });
-      console.warn(`[deep-reasoning-refiner] Iteration ${iteration}: rewrite returned thin output (${rewritten?.length ?? 0} chars vs ${workingMarkdown.length}). Discarding.`);
+      logger.warn(`[deep-reasoning-refiner] Iteration ${iteration}: rewrite returned thin output (${rewritten?.length ?? 0} chars vs ${workingMarkdown.length}). Discarding.`);
       break;
     }
 
@@ -296,7 +299,7 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         status: "rejected-low-score",
         critiqueLength: critique.length,
       });
-      console.info(`[deep-reasoning-refiner] Iteration ${iteration}: rewrite did not improve score (${workingScore.total} → ${newScore.total}). Discarding.`);
+      logger.info(`[deep-reasoning-refiner] Iteration ${iteration}: rewrite did not improve score (${workingScore.total} → ${newScore.total}). Discarding.`);
       break;
     }
 
@@ -313,14 +316,14 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
       status: "applied",
       critiqueLength: critique.length,
     });
-    console.info(`[deep-reasoning-refiner] Iteration ${iteration}/${maxIterations}: ${workingScore.total - lift} → ${workingScore.total} (+${lift}). Weak axes remaining: ${effectiveWeakAxesAfter.length} (constraints: ${postConstraintAxes.length}).`);
+    logger.info(`[deep-reasoning-refiner] Iteration ${iteration}/${maxIterations}: ${workingScore.total - lift} → ${workingScore.total} (+${lift}). Weak axes remaining: ${effectiveWeakAxesAfter.length} (constraints: ${postConstraintAxes.length}).`);
 
     if (workingScore.total >= scoreThreshold) {
-      console.info(`[deep-reasoning-refiner] Iteration ${iteration}: hit score threshold ${scoreThreshold}. Stopping.`);
+      logger.info(`[deep-reasoning-refiner] Iteration ${iteration}: hit score threshold ${scoreThreshold}. Stopping.`);
       break;
     }
     if (lift < minLift) {
-      console.info(`[deep-reasoning-refiner] Iteration ${iteration}: lift ${lift} < ${minLift} — diminishing returns. Stopping.`);
+      logger.info(`[deep-reasoning-refiner] Iteration ${iteration}: lift ${lift} < ${minLift} — diminishing returns. Stopping.`);
       break;
     }
   }

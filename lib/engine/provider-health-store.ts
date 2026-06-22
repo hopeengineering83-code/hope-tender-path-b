@@ -11,6 +11,7 @@
 //   - Error messages are redacted before storage.
 //   - loadProviderHealthIntoMemory() is idempotent: skip after first load per process.
 
+import { logger, reportError } from "../observability";
 import { prisma } from "@/lib/prisma";
 import {
   recordProviderFailure,
@@ -118,7 +119,8 @@ export async function markProviderFailed(
       },
     });
   } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderFailed:", err instanceof Error ? err.message : String(err));
+    void reportError(err, { module: "provider-health-store" });
+    logger.warn("[provider-health-store] Failed to persist markProviderFailed:", { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -147,7 +149,8 @@ export async function markProviderAnalysisOK(provider: string): Promise<void> {
       },
     });
   } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderAnalysisOK:", err instanceof Error ? err.message : String(err));
+    void reportError(err, { module: "provider-health-store" });
+    logger.warn("[provider-health-store] Failed to persist markProviderAnalysisOK:", { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -172,7 +175,8 @@ export async function markProviderOK(provider: string): Promise<void> {
       },
     });
   } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderOK:", err instanceof Error ? err.message : String(err));
+    void reportError(err, { module: "provider-health-store" });
+    logger.warn("[provider-health-store] Failed to persist markProviderOK:", { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -219,7 +223,8 @@ export async function getProviderHealthSummary(): Promise<Array<{
       lastTestedAt: r.lastFailureAt ?? r.lastSuccessAt ?? r.updatedAt,
     }));
   } catch (err) {
-    console.warn("[provider-health-store] Failed to fetch health summary:", err instanceof Error ? err.message : String(err));
+    void reportError(err, { module: "provider-health-store" });
+    logger.warn("[provider-health-store] Failed to fetch health summary:", { error: err instanceof Error ? err.message : String(err) });
     return [];
   }
 }
@@ -271,7 +276,8 @@ export async function loadProviderHealthIntoMemory(
       }
     }
   } catch (err) {
-    console.warn("[provider-health-store] loadProviderHealthIntoMemory failed:", err instanceof Error ? err.message : String(err));
+    void reportError(err, { module: "provider-health-store" });
+    logger.warn("[provider-health-store] loadProviderHealthIntoMemory failed:", { error: err instanceof Error ? err.message : String(err) });
   }
 }
 

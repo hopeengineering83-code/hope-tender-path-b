@@ -2,6 +2,7 @@
  * @deprecated LEGACY — NOT called by any route. Active engine is generate-elite.ts.
  * Kept as reference only. DO NOT re-route to this file.
  */
+import { logger, reportError } from "../observability";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   AlignmentType, BorderStyle, Header, Footer, ImageRun,
@@ -456,9 +457,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       }
       generatedCount++;
     } catch (err) {
+      void reportError(err, { module: "generate" });
       const message = err instanceof Error ? err.message : String(err);
       failures.push(`${doc.name}: ${message}`);
-      console.error(`[generate] failed for doc "${doc.name}":`, err);
+      logger.error(`[generate] failed for doc "${doc.name}":`, { error: err });
     }
   }
 
@@ -469,6 +471,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 
   if (failures.length > 0) {
-    console.warn(`[generate] partial: ${generatedCount}/${docsToGenerate.length} docs generated. Failed: ${failures.join(" | ")}`);
+    logger.warn(`[generate] partial: ${generatedCount}/${docsToGenerate.length} docs generated. Failed: ${failures.join(" | ")}`);
   }
 }

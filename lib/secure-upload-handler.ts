@@ -1,3 +1,4 @@
+import { logger, reportError } from "./observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
 import { requireRole } from "./auth";
@@ -157,10 +158,11 @@ export async function handleSecureUpload(req: Request) {
         });
       }
     } catch (error) {
+      void reportError(error, { module: "secure-upload-handler" });
       if (stored) {
         await storage.deleteFile({ storagePath: stored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
       }
-      console.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
+      logger.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
       results.push({ success: false, fileName: file.name, error: "Upload processing failed. Use the request ID when contacting support.", requestId });
     }
   }
@@ -181,7 +183,8 @@ export async function handleSecureUpload(req: Request) {
         : await runCompanyKnowledgeSafetyImport(prisma, company.id);
       companyImport = { ...primary, safetyImport: safety } as unknown as Record<string, unknown>;
     } catch (error) {
-      console.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
+      void reportError(error, { module: "secure-upload-handler" });
+      logger.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
       companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
     }
   }

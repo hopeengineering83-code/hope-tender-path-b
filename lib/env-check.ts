@@ -21,6 +21,7 @@
  * development never throws on AI-key absence, it warns. Production always throws.
  */
 
+import { logger, reportError } from "./observability";
 const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "DATABASE_URL", description: "PostgreSQL connection string (postgresql://...)" },
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
@@ -175,9 +176,9 @@ export function checkEnv(): void {
   const { errors, warnings } = evaluateEnv();
 
   if (warnings.length > 0) {
-    console.warn("\n⚠  ENVIRONMENT WARNINGS:");
-    for (const w of warnings) console.warn(`  ⚠ ${w}`);
-    console.warn("");
+    logger.warn("\n⚠  ENVIRONMENT WARNINGS:");
+    for (const w of warnings) logger.warn(`  ⚠ ${w}`);
+    logger.warn("");
   }
 
   if (errors.length > 0) {
@@ -196,7 +197,7 @@ export function checkEnv(): void {
       "═══════════════════════════════════════════════════════════",
       "",
     ];
-    console.error(lines.join("\n"));
+    logger.error(lines.join("\n"));
     throw new Error(`Environment validation failed: ${errors.join("; ")}`);
   }
 }

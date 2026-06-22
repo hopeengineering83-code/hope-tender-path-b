@@ -1,3 +1,4 @@
+import { logger, reportError } from "../observability";
 import { generateWithFallback } from "../ai";
 import { buildEvidencePromptBlock, verifyEvidenceIds, type EvidenceGraph, type EvidenceNode } from "../evidence-graph";
 import { COPILOT_TIMEOUT_MS } from "../timeout-config";
@@ -122,7 +123,7 @@ export async function answerTenderCopilotQuestion(input: { question: string; con
     const raw = await withCopilotTimeout(generateWithFallback(prompt, { systemPrompt: SYSTEM_PROMPT }));
     parsed = parseJson(raw);
     if (parsed) break;
-    if (attempt === 0) console.warn("[copilot] Malformed JSON on first attempt — retrying.");
+    if (attempt === 0) logger.warn("[copilot] Malformed JSON on first attempt — retrying.");
   }
   if (!parsed) throw new Error("AI copilot returned malformed JSON after retry. Please rephrase the question.");
 
@@ -156,7 +157,7 @@ export async function answerTenderCopilotQuestion(input: { question: string; con
     evidenceUsed = verified.slice(0, 12);
     evidenceDropped = dropped;
     if (dropped.length > 0) {
-      console.warn(`[copilot] Dropped ${dropped.length} unrecognised evidenceId(s):`, dropped.slice(0, 5));
+      logger.warn(`[copilot] Dropped ${dropped.length} unrecognised evidenceId(s):`, { error: dropped.slice(0, 5) });
     }
   }
 

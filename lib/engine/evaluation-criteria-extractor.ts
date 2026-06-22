@@ -30,6 +30,7 @@
  *     prohibitions (defensive cap; real tenders have ≤ 12)
  */
 
+import { logger, reportError } from "../observability";
 import { generateWithFallback, isAIEnabled } from "../ai";
 import { getComprehensionCache } from "./comprehension-cache";
 
@@ -340,7 +341,7 @@ export async function extractDeepTenderComprehension(tenderText: string): Promis
   const cache = getComprehensionCache<DeepTenderComprehension>();
   const cached = cache.get(text);
   if (cached) {
-    console.info(`[evaluation-criteria-extractor] Comprehension cache HIT — skipping AI call.`);
+    logger.info(`[evaluation-criteria-extractor] Comprehension cache HIT — skipping AI call.`);
     return cached;
   }
 
@@ -349,14 +350,15 @@ export async function extractDeepTenderComprehension(tenderText: string): Promis
   try {
     raw = await generateWithFallback(prompt, { systemPrompt: ANALYST_SYSTEM_PROMPT });
   } catch (err) {
+    void reportError(err, { module: "evaluation-criteria-extractor" });
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[evaluation-criteria-extractor] AI call failed: ${msg} — comprehension skipped, falling through to regex analyzer.`);
+    logger.warn(`[evaluation-criteria-extractor] AI call failed: ${msg} — comprehension skipped, falling through to regex analyzer.`);
     return null;
   }
 
   const parsed = parseComprehensionJson(raw);
   if (!parsed) {
-    console.warn("[evaluation-criteria-extractor] AI returned malformed JSON — comprehension skipped.");
+    logger.warn("[evaluation-criteria-extractor] AI returned malformed JSON — comprehension skipped.");
     return null;
   }
   cache.set(text, parsed);

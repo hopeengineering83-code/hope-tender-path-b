@@ -34,6 +34,7 @@
  * legacy lexical match.
  */
 
+import { logger, reportError } from "../observability";
 import { generateWithFallback, isAIEnabled } from "../ai";
 import type { DeepTenderComprehension } from "./evaluation-criteria-extractor";
 
@@ -380,13 +381,14 @@ export async function alignMatchesToEvaluatorCriteria(input: {
   try {
     raw = await generateWithFallback(prompt, { systemPrompt: ALIGNER_SYSTEM_PROMPT });
   } catch (err) {
-    console.warn(`[semantic-match-aligner] AI call failed: ${err instanceof Error ? err.message : String(err)} — alignment skipped.`);
+    void reportError(err, { module: "semantic-match-aligner" });
+    logger.warn(`[semantic-match-aligner] AI call failed: ${err instanceof Error ? err.message : String(err)} — alignment skipped.`);
     return null;
   }
 
   const report = parseAlignmentReport(raw, input.comprehension);
   if (!report) {
-    console.warn("[semantic-match-aligner] AI returned malformed JSON — alignment skipped.");
+    logger.warn("[semantic-match-aligner] AI returned malformed JSON — alignment skipped.");
     return null;
   }
   return report;

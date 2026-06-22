@@ -2,6 +2,7 @@
 // is immediately searchable and usable by the analysis engine.
 // Supports: PDF, DOCX/DOC, XLSX/XLS, PPTX/PPT, CSV, TXT, RTF, ODS, ODP + images.
 
+import { logger, reportError } from "./observability";
 import { isExtractionCorrupted } from "./engine/extraction-quality-gate";
 
 const MAX_EXTRACTED_TEXT_CHARS = 500_000;
@@ -24,8 +25,9 @@ export async function extractTextFromBuffer(
     if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
     return "";
   } catch (err) {
+    void reportError(err, { module: "extract-text" });
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[extract-text] ${fileName} (${mimeType}):`, err);
+    logger.error(`[extract-text] ${fileName} (${mimeType}):`, { error: err });
     return `[Extraction failed for ${fileName}: ${message.slice(0, 240)}]`;
   }
 }
@@ -252,7 +254,8 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
   } catch (err) {
-    console.warn("[extract-text] @anthropic-ai/sdk not available for OCR fallback:", err);
+    void reportError(err, { module: "extract-text" });
+    logger.warn("[extract-text] @anthropic-ai/sdk not available for OCR fallback:", { error: err });
     return "";
   }
 
@@ -263,7 +266,7 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
   // The cap above is enforced by the model itself on big files.
   const knownPages = typeof pageCount === "number" ? pageCount : null;
   if (knownPages && knownPages > PDF_OCR_MAX_PAGES_PER_CALL) {
-    console.warn(`[extract-text] PDF has ${knownPages} pages; OCR call may be slow / costly (cap is ${PDF_OCR_MAX_PAGES_PER_CALL} pages).`);
+    logger.warn(`[extract-text] PDF has ${knownPages} pages; OCR call may be slow / costly (cap is ${PDF_OCR_MAX_PAGES_PER_CALL} pages).`);
   }
 
   const base64Pdf = buffer.toString("base64");
@@ -310,17 +313,18 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
       .trim();
     return text;
   } catch (err) {
+    void reportError(err, { module: "extract-text" });
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[extract-text] Claude vision OCR failed (${modelName}):`, msg);
+    logger.warn(`[extract-text] Claude vision OCR failed (${modelName}):`, { error: msg });
     return "";
   }
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
   const results: Array<{ source: string; text: string; pages: number }> = [];
-  try { const r = await extractPdfWithPdfParse(buffer); results.push({ source: "pdf-parse", ...r }); } catch (error) { console.warn("[extract-text] pdf-parse failed:", error); }
-  try { const r = await extractPdfWithPdf2Json(buffer); results.push({ source: "pdf2json", ...r }); } catch (error) { console.warn("[extract-text] pdf2json failed:", error); }
-  try { const r = await extractPdfWithPdfJs(buffer); results.push({ source: "pdfjs", ...r }); } catch (error) { console.warn("[extract-text] pdfjs failed:", error); }
+  try { const r = await extractPdfWithPdfParse(buffer); results.push({ source: "pdf-parse", ...r }); } catch (error) { void reportError(error, { module: "extract-text" }); logger.warn("[extract-text] pdf-parse failed:", { error: error }); }
+  try { const r = await extractPdfWithPdf2Json(buffer); results.push({ source: "pdf2json", ...r }); } catch (error) { void reportError(error, { module: "extract-text" }); logger.warn("[extract-text] pdf2json failed:", { error: error }); }
+  try { const r = await extractPdfWithPdfJs(buffer); results.push({ source: "pdfjs", ...r }); } catch (error) { void reportError(error, { module: "extract-text" }); logger.warn("[extract-text] pdfjs failed:", { error: error }); }
 
   const best = results.sort((a, b) => b.text.length - a.text.length)[0];
   const pages = best?.pages || results.find((r) => r.pages > 0)?.pages || "unknown";
@@ -353,9 +357,9 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   if ((hasNoTextLayer || hasCorruptedText) && ocrEnabled) {
     const ocrReason = hasCorruptedText ? "CORRUPTED_TEXT" : "NO_TEXT_LAYER";
     if (hasNoTextLayer) {
-      console.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
+      logger.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
     } else {
-      console.info(`[extract-text] PDF text layer detected as corrupted (${best!.text.length} chars, garbage content) — running Claude vision OCR fallback. ocrReason=${ocrReason}`);
+      logger.info(`[extract-text] PDF text layer detected as corrupted (${best!.text.length} chars, garbage content) — running Claude vision OCR fallback. ocrReason=${ocrReason}`);
     }
     const ocrText = await extractPdfWithClaudeVision(buffer, pages);
     if (ocrText && ocrText.length >= 20) {
@@ -365,12 +369,12 @@ async function extractPdf(buffer: Buffer): Promise<string> {
       return normalizeExtractedText(`[PDF text extracted via Claude vision OCR — ${pages} page(s). ocrReason=${ocrReason}]\n\n${ocrText.trim()}`);
     }
     if (hasCorruptedText) {
-      console.warn("[extract-text] Claude vision OCR returned empty for corrupted text — falling back to corrupted extraction.");
+      logger.warn("[extract-text] Claude vision OCR returned empty for corrupted text — falling back to corrupted extraction.");
       // Return the corrupted text with a warning prefix so downstream
       // quality gates can still detect and flag it.
       return normalizeExtractedText(`[PDF text extracted but detected as corrupted — ocrReason=${ocrReason} — OCR returned empty. Review extraction quality before AI Analyze.]\n\n${best!.text}`);
     }
-    console.warn("[extract-text] Claude vision OCR returned empty — returning scanned-PDF placeholder.");
+    logger.warn("[extract-text] Claude vision OCR returned empty — returning scanned-PDF placeholder.");
   }
 
   if (!best?.text || best.text.length < 20) {
@@ -383,7 +387,7 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   // If OCR was not enabled but text is corrupted, surface a warning prefix
   // so the quality panel and AI gate can detect it.
   if (!ocrEnabled && isExtractionCorrupted(best.text)) {
-    console.warn(`[extract-text] PDF text layer is corrupted but OCR is disabled — returning corrupted text with warning prefix. Set PDF_OCR_ENABLED=true to enable OCR fallback.`);
+    logger.warn(`[extract-text] PDF text layer is corrupted but OCR is disabled — returning corrupted text with warning prefix. Set PDF_OCR_ENABLED=true to enable OCR fallback.`);
     return normalizeExtractedText(`[PDF text extracted but detected as corrupted — ocrReason=CORRUPTED_TEXT — OCR required but not configured (set PDF_OCR_ENABLED=true). Review extraction quality before AI Analyze.]\n\n${best.text}`);
   }
 

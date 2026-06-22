@@ -5,6 +5,7 @@
  * selected rows into TenderExpertMatch / TenderProjectMatch.
  */
 
+import { logger, reportError } from "../observability";
 import { generateWithFallback } from "../ai";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
 import {
@@ -447,7 +448,8 @@ export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequir
   try {
     raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
-    console.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
+    void reportError(err, { module: "ai-multi-perspective-matcher" });
+    logger.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   const parsed = parseAssessmentArray(raw);
@@ -470,7 +472,8 @@ export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequi
   try {
     raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
-    console.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
+    void reportError(err, { module: "ai-multi-perspective-matcher" });
+    logger.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   const parsed = parseAssessmentArray(raw);

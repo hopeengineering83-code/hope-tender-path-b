@@ -1,3 +1,4 @@
+import { logger, reportError } from "./observability";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
@@ -199,7 +200,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
   } catch {
-    console.warn("[ai] ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — falling back to Gemini.");
+    logger.warn("[ai] ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — falling back to Gemini.");
     return null;
   }
 
@@ -237,7 +238,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
           .trim();
         const stopReason = (response as { stop_reason?: string }).stop_reason;
         if (stopReason === "max_tokens") {
-          console.warn(`[ai:claude] Output truncated at max_tokens (${effectiveMaxTokens}). Consider increasing token budget for this call.`);
+          logger.warn(`[ai:claude] Output truncated at max_tokens (${effectiveMaxTokens}). Consider increasing token budget for this call.`);
         }
         if (text.length === 0) {
           attemptError = `${modelName}: empty response`;
@@ -255,7 +256,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
           if (strictAuth) {
             throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
           }
-          console.warn(`[ai] Claude auth error on ${modelName} — continuing to next provider (set AI_PROVIDER_STRICT_AUTH=true to hard-fail): ${msg.slice(0, 100)}`);
+          logger.warn(`[ai] Claude auth error on ${modelName} — continuing to next provider (set AI_PROVIDER_STRICT_AUTH=true to hard-fail): ${msg.slice(0, 100)}`);
           return null;
         }
         // 429 — rate limit. Retry this model with backoff before falling
@@ -263,7 +264,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
         if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg)) {
           if (attempt < 2) {
             const delayMs = 2000 * Math.pow(2, attempt); // 2s, 4s
-            console.warn(`[ai] Claude rate-limit on ${modelName} (attempt ${attempt + 1}/3) — backing off ${delayMs}ms.`);
+            logger.warn(`[ai] Claude rate-limit on ${modelName} (attempt ${attempt + 1}/3) — backing off ${delayMs}ms.`);
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             continue;
           }
@@ -273,7 +274,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
         // 404 / model not found / invalid request — don't retry, move on
         if (/404|not.?found|model_not_found|invalid_request/i.test(msg)) break;
         // Other errors — log and move on
-        console.warn(`[ai] Claude generation failed (${modelName}): ${msg} — moving to next model.`);
+        logger.warn(`[ai] Claude generation failed (${modelName}): ${msg} — moving to next model.`);
         break;
       }
     }
@@ -281,7 +282,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
   }
 
   if (errors.length > 0) {
-    console.warn(`[ai] All Claude models exhausted. Errors: ${errors.join(" | ")} — falling back to Gemini.`);
+    logger.warn(`[ai] All Claude models exhausted. Errors: ${errors.join(" | ")} — falling back to Gemini.`);
     // When every model failed due to rate-limiting, throw a rate-limit error so
     // generateWithFallback's catch handler records RATE_LIMIT (60s cooldown)
     // instead of treating a null return as "empty response" (UNKNOWN, 30s).
@@ -316,7 +317,7 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 3): Prom
       const msg = err instanceof Error ? err.message : String(err);
       if (isRateLimitError(msg) && attempt < maxRetries - 1) {
         const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
-        console.warn(`[ai] Rate limit hit (attempt ${attempt + 1}/${maxRetries}), retrying after ${delay}ms...`);
+        logger.warn(`[ai] Rate limit hit (attempt ${attempt + 1}/${maxRetries}), retrying after ${delay}ms...`);
         await sleep(delay);
         lastError = err;
         continue;
@@ -577,8 +578,9 @@ async function callProvider(
         recordProviderSuccess("gemini");
         return r;
       } catch (err) {
+        void reportError(err, { module: "ai" });
         recordProviderFailure("gemini", err);
-        console.warn(`[ai] Gemini failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(`[ai] Gemini failed: ${err instanceof Error ? err.message : String(err)}`);
         return null;
       }
     }
@@ -614,7 +616,7 @@ async function callProvider(
       }
 
       const r = await generateWithDeepSeek(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
-        console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
         recordProviderFailure("deepseek", err);
         return null;
       });
@@ -656,7 +658,7 @@ export async function generateWithFallback(
   const chain = providerChainForUseCase(useCase);
   const trustBoundary = protectPrompt(prompt);
   if (trustBoundary.suspicious) {
-    console.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
+    logger.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
   }
   const tried: string[] = [];
   // Per-provider attempt log. Built as we iterate so the NoAiProviderReadyError
@@ -819,14 +821,14 @@ async function generateWithOpenAI(
       const body = await res.text().catch(() => "");
       if (res.status === 401 || res.status === 403) {
         // Auth errors: record failure but return null so fallback chain continues.
-        console.warn(`[ai] OpenAI auth error (${res.status}) — skipping to next provider.`);
+        logger.warn(`[ai] OpenAI auth error (${res.status}) — skipping to next provider.`);
         return null;
       }
       if (res.status === 429) {
-        console.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to next provider.`);
+        logger.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to next provider.`);
         return null;
       }
-      console.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
+      logger.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
       return null;
     }
 
@@ -836,24 +838,25 @@ async function generateWithOpenAI(
     };
 
     if (data.error?.message) {
-      console.warn(`[ai] OpenAI API error: ${data.error.message}`);
+      logger.warn(`[ai] OpenAI API error: ${data.error.message}`);
       return null;
     }
 
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
-      console.warn(`[ai] OpenAI ${model} returned empty content.`);
+      logger.warn(`[ai] OpenAI ${model} returned empty content.`);
       return null;
     }
     return text;
   } catch (err) {
+    void reportError(err, { module: "ai" });
     clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
-      console.warn(`[ai] OpenAI fetch timed out after 20000ms — falling through.`);
+      logger.warn(`[ai] OpenAI fetch timed out after 20000ms — falling through.`);
       return null;
     }
-    console.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to next provider.`);
+    logger.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to next provider.`);
     return null;
   }
 }
@@ -922,14 +925,14 @@ async function generateWithDeepSeek(
         if (strictAuth) {
           throw new Error(`DeepSeek API key invalid (${res.status}): ${sanitized}`);
         }
-        console.warn(`[ai] DeepSeek auth error (${res.status}) — continuing to deterministic fallback: ${sanitized}`);
+        logger.warn(`[ai] DeepSeek auth error (${res.status}) — continuing to deterministic fallback: ${sanitized}`);
         return null;
       }
       if (res.status === 429) {
-        console.warn(`[ai] DeepSeek rate limit (429) on ${model} — skipping to deterministic fallback.`);
+        logger.warn(`[ai] DeepSeek rate limit (429) on ${model} — skipping to deterministic fallback.`);
         return null;
       }
-      console.warn(`[ai] DeepSeek error ${res.status} on ${model}: ${sanitized} — skipping.`);
+      logger.warn(`[ai] DeepSeek error ${res.status} on ${model}: ${sanitized} — skipping.`);
       return null;
     }
 
@@ -940,13 +943,13 @@ async function generateWithDeepSeek(
 
     if (data.error?.message) {
       const sanitized = data.error.message.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
-      console.warn(`[ai] DeepSeek API error: ${sanitized}`);
+      logger.warn(`[ai] DeepSeek API error: ${sanitized}`);
       return null;
     }
 
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
-      console.warn(`[ai] DeepSeek ${model} returned empty content.`);
+      logger.warn(`[ai] DeepSeek ${model} returned empty content.`);
       return null;
     }
     return text;
@@ -954,7 +957,7 @@ async function generateWithDeepSeek(
     clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
-      console.warn(`[ai] DeepSeek fetch timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms — falling through.`);
+      logger.warn(`[ai] DeepSeek fetch timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms — falling through.`);
       return null;
     }
     const sanitized = msg.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
@@ -962,7 +965,7 @@ async function generateWithDeepSeek(
       const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
       if (strictAuth) throw err;
     }
-    console.warn(`[ai] DeepSeek fetch failed: ${sanitized} — falling through to deterministic.`);
+    logger.warn(`[ai] DeepSeek fetch failed: ${sanitized} — falling through to deterministic.`);
     return null;
   }
 }
@@ -1054,16 +1057,16 @@ async function generateOpenAICompatible(params: {
       if (res.status === 401 || res.status === 403) {
         const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
         if (strictAuth) throw new Error(`${providerLabel} API key invalid (${res.status}): ${sanitized}`);
-        console.warn(`[ai] ${providerLabel} auth error (${res.status}) — continuing to next provider: ${sanitized}`);
+        logger.warn(`[ai] ${providerLabel} auth error (${res.status}) — continuing to next provider: ${sanitized}`);
         note(`auth error HTTP ${res.status}: ${sanitized}`);
         return null;
       }
       if (res.status === 429) {
-        console.warn(`[ai] ${providerLabel} rate limit (429) on ${model} — skipping to next provider.`);
+        logger.warn(`[ai] ${providerLabel} rate limit (429) on ${model} — skipping to next provider.`);
         note(`rate limit HTTP 429 on ${model}: ${sanitized}`);
         return null;
       }
-      console.warn(`[ai] ${providerLabel} error ${res.status} on ${model}: ${sanitized} — skipping.`);
+      logger.warn(`[ai] ${providerLabel} error ${res.status} on ${model}: ${sanitized} — skipping.`);
       note(`HTTP ${res.status} on ${model}: ${sanitized}`);
       return null;
     }
@@ -1071,13 +1074,13 @@ async function generateOpenAICompatible(params: {
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
     if (data.error?.message) {
       const sanitized = data.error.message.replace(/(sk|gsk)[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]").slice(0, 200);
-      console.warn(`[ai] ${providerLabel} API error: ${sanitized}`);
+      logger.warn(`[ai] ${providerLabel} API error: ${sanitized}`);
       note(`API error: ${sanitized}`);
       return null;
     }
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
-      console.warn(`[ai] ${providerLabel} ${model} returned empty content.`);
+      logger.warn(`[ai] ${providerLabel} ${model} returned empty content.`);
       note(`${model} returned empty content`);
       return null;
     }
@@ -1086,7 +1089,7 @@ async function generateOpenAICompatible(params: {
     clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
-      console.warn(`[ai] ${providerLabel} fetch timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms — falling through.`);
+      logger.warn(`[ai] ${providerLabel} fetch timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms — falling through.`);
       note(`timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms`);
       return null;
     }
@@ -1094,7 +1097,7 @@ async function generateOpenAICompatible(params: {
       const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
       if (strictAuth) throw err;
     }
-    console.warn(`[ai] ${providerLabel} fetch failed: ${msg.slice(0, 200)} — falling through.`);
+    logger.warn(`[ai] ${providerLabel} fetch failed: ${msg.slice(0, 200)} — falling through.`);
     note(`fetch failed: ${msg.slice(0, 200)}`);
     return null;
   }
@@ -2036,10 +2039,10 @@ export async function analyzeOneChunkWithRetry(content: string, index: number, t
     const msg = err instanceof Error ? err.message : String(err);
     // Don't retry if all providers are exhausted/cooled down — waiting 1.5s won't help
     if (isProviderExhaustedError(err)) {
-      console.warn(`[ai] chunk ${index + 1}/${total} hit provider exhaustion error (all in cooldown) — not retrying. Error: ${msg.slice(0, 200)}`);
+      logger.warn(`[ai] chunk ${index + 1}/${total} hit provider exhaustion error (all in cooldown) — not retrying. Error: ${msg.slice(0, 200)}`);
       throw err;
     }
-    console.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
+    logger.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
     return await analyzeOneChunk(content, index, total, onProviderUsed);
   }
@@ -2101,7 +2104,7 @@ export async function analyzeWithAI(
     }
   }
 
-  console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
+  logger.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
   const previousChunkResults = (opts?.previousChunkResults ?? [])
     .filter((entry): entry is AnalysisChunkCacheEntry => {
       return Number.isInteger(entry?.index)
@@ -2165,11 +2168,12 @@ export async function analyzeWithAI(
           try { await opts.onChunkComplete({ completed, totalChunks: chunks.length, chunkIndex: item.index, result: res, provider: chunkProvider }); } catch { /* non-fatal */ }
         }
       } catch (err) {
+        void reportError(err, { module: "ai" });
         const msg = err instanceof Error ? err.message : String(err);
         failures.push(`chunk ${item.index + 1}: ${msg}`);
         failedChunks++;
         try { await opts?.onChunkFailure?.({ chunkIndex: item.index, totalChunks: chunks.length, errorMessage: msg, provider: chunkProviders[item.index] ?? null }); } catch { /* non-fatal */ }
-        console.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
+        logger.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
         // Brief backoff after transient failure so a rate-limited provider
         // has recovery time before the next chunk. Skip when deadline is near.
         const hasDeadlineRoom = opts?.deadlineAt === undefined || Date.now() + 15_000 < opts.deadlineAt;
@@ -2191,7 +2195,7 @@ export async function analyzeWithAI(
   }
 
   if (failures.length > 0) {
-    console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${completedChunks} that succeeded. Errors: ${failures.join(" | ")}`);
+    logger.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${completedChunks} that succeeded. Errors: ${failures.join(" | ")}`);
   }
 
   const isPartial = skippedChunks > 0 || failedChunks > 0;
@@ -2246,7 +2250,7 @@ ${text.slice(0, 60_000)}`;
       (e) => e && typeof e === "object" && typeof e.fullName === "string" && e.fullName.trim().length > 2,
     );
   } catch {
-    console.warn("[extractExpertsFromText] JSON parse failed, returning empty");
+    logger.warn("[extractExpertsFromText] JSON parse failed, returning empty");
     return [];
   }
 }
@@ -2291,7 +2295,7 @@ ${text.slice(0, 60_000)}`;
       (p) => p && typeof p === "object" && typeof p.name === "string" && p.name.trim().length > 3,
     );
   } catch {
-    console.warn("[extractProjectsFromText] JSON parse failed, returning empty");
+    logger.warn("[extractProjectsFromText] JSON parse failed, returning empty");
     return [];
   }
 }
@@ -2389,7 +2393,7 @@ export async function generateWithClaudeTools(
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
   } catch {
-    console.warn("[ai:tools] @anthropic-ai/sdk not installed — tool-use unavailable.");
+    logger.warn("[ai:tools] @anthropic-ai/sdk not installed — tool-use unavailable.");
     return null;
   }
 
@@ -2429,12 +2433,12 @@ export async function generateWithClaudeTools(
           if (strictAuth) {
             throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY. (${msg})`);
           }
-          console.warn(`[ai:tools] Claude auth error on ${modelName} — falling back: ${msg.slice(0, 100)}`);
+          logger.warn(`[ai:tools] Claude auth error on ${modelName} — falling back: ${msg.slice(0, 100)}`);
           aborted = true;
           break;
         }
         if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg) && turn < MAX_TOOL_TURNS - 1) {
-          console.warn(`[ai:tools] Claude rate-limit on ${modelName} mid-loop — aborting this model.`);
+          logger.warn(`[ai:tools] Claude rate-limit on ${modelName} mid-loop — aborting this model.`);
         }
         aborted = true;
         break;
@@ -2470,8 +2474,9 @@ export async function generateWithClaudeTools(
             content: JSON.stringify(result),
           });
         } catch (execErr) {
+          void reportError(execErr, { module: "ai" });
           const msg = execErr instanceof Error ? execErr.message : String(execErr);
-          console.warn(`[ai:tools] tool ${block.name} threw: ${msg}`);
+          logger.warn(`[ai:tools] tool ${block.name} threw: ${msg}`);
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
@@ -2485,13 +2490,13 @@ export async function generateWithClaudeTools(
 
     if (!aborted) {
       // Loop exhausted without end_turn — log and try the next model with a fresh conversation.
-      console.warn(`[ai:tools] ${modelName} did not finish within ${MAX_TOOL_TURNS} tool turns. Trying next model.`);
+      logger.warn(`[ai:tools] ${modelName} did not finish within ${MAX_TOOL_TURNS} tool turns. Trying next model.`);
       messages.splice(1); // reset to initial user message
     }
-    if (attemptError) console.warn(`[ai:tools] ${attemptError}`);
+    if (attemptError) logger.warn(`[ai:tools] ${attemptError}`);
   }
 
-  console.warn(`[ai:tools] All Claude models exhausted — tool-use returning null.`);
+  logger.warn(`[ai:tools] All Claude models exhausted — tool-use returning null.`);
   return null;
 }
 
@@ -2675,7 +2680,7 @@ export async function critiqueProposalWithTools(
   if (!isClaudeEnabled()) return null;
   if (tools.length === 0) return null;
   if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
-    console.warn(`[ai] critiqueProposalWithTools: skipping — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    logger.warn(`[ai] critiqueProposalWithTools: skipping — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
     return null;
   }
   const prompt = buildCritiquePrompt(input);
@@ -2687,7 +2692,8 @@ export async function critiqueProposalWithTools(
       generateWithClaudeTools(prompt, CRITIC_SYSTEM_PROMPT, tools, executor),
     );
   } catch (err) {
-    console.warn(`[ai] critiqueProposalWithTools failed: ${err instanceof Error ? err.message : String(err)}`);
+    void reportError(err, { module: "ai" });
+    logger.warn(`[ai] critiqueProposalWithTools failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -2701,7 +2707,7 @@ export async function critiqueProposalWithTools(
 export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: AiUseCase = "proposal"): Promise<string | null> {
   if (!isAIEnabled()) return null;
   if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
-    console.warn(`[ai] critiqueProposalWithAI: skipping critique — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    logger.warn(`[ai] critiqueProposalWithAI: skipping critique — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
     return null;
   }
 
@@ -2718,7 +2724,7 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: 
     }
     if (apiKey && !isProviderCooledDown("gemini")) {
       try { return await withRefinementTimeout(generateWithBestModel(prompt)); }
-      catch (e) { console.warn(`[ai] critiqueProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
+      catch (e) { void reportError(e, { module: "ai" }); logger.warn(`[ai] critiqueProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
     if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
       const r = await withRefinementTimeout(
@@ -2739,7 +2745,8 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: 
       if (r) return r;
     }
   } catch (err) {
-    console.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
+    void reportError(err, { module: "ai" });
+    logger.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   return null;
@@ -2752,7 +2759,7 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: 
 export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCase: AiUseCase = "proposal"): Promise<string | null> {
   if (!isAIEnabled()) return null;
   if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
-    console.warn(`[ai] rewriteProposalWithCritique: skipping rewrite — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    logger.warn(`[ai] rewriteProposalWithCritique: skipping rewrite — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
     return null;
   }
 
@@ -2773,7 +2780,7 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCa
         const r = await withRefinementTimeout(generateWithBestModel(prompt));
         lastProposalProvider = "gemini";
         return r;
-      } catch (e) { console.warn(`[ai] rewriteProposalWithCritique Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
+      } catch (e) { void reportError(e, { module: "ai" }); logger.warn(`[ai] rewriteProposalWithCritique Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
     if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
       const r = await withRefinementTimeout(
@@ -2794,7 +2801,8 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCa
       if (r) { lastProposalProvider = "claude"; return r; }
     }
   } catch (err) {
-    console.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
+    void reportError(err, { module: "ai" });
+    logger.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   return null;
@@ -2821,7 +2829,7 @@ export async function refineProposalWithAI(input: {
   if (input.weakAxes.length === 0) return null;
   if (!isAIEnabled()) return null;
   if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
-    console.warn(`[ai] refineProposalWithAI: skipping refinement — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget. Original output kept as-is.`);
+    logger.warn(`[ai] refineProposalWithAI: skipping refinement — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget. Original output kept as-is.`);
     return null;
   }
 
@@ -2872,7 +2880,8 @@ ${input.currentMarkdown}
         );
         if (r) { lastProposalProvider = "openai"; return r; }
       } catch (e) {
-        console.warn(`[ai] refineProposalWithAI OpenAI failed: ${e instanceof Error ? e.message : String(e)}`);
+        void reportError(e, { module: "ai" });
+        logger.warn(`[ai] refineProposalWithAI OpenAI failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (apiKey && !isProviderCooledDown("gemini")) {
@@ -2880,7 +2889,7 @@ ${input.currentMarkdown}
         const r = await withRefinementTimeout(generateWithBestModel(prompt));
         lastProposalProvider = "gemini";
         return r;
-      } catch (e) { console.warn(`[ai] refineProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
+      } catch (e) { void reportError(e, { module: "ai" }); logger.warn(`[ai] refineProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
     if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
       try {
@@ -2888,7 +2897,7 @@ ${input.currentMarkdown}
           generateWithMistral(prompt, REFINEMENT_SYSTEM_PROMPT, undefined, "proposal").then((v) => v ?? Promise.reject(new Error("null"))),
         );
         if (r) { lastProposalProvider = "mistral"; return r; }
-      } catch (e) { console.warn(`[ai] refineProposalWithAI Mistral failed: ${e instanceof Error ? e.message : String(e)}`); }
+      } catch (e) { void reportError(e, { module: "ai" }); logger.warn(`[ai] refineProposalWithAI Mistral failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
     if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
       try {
@@ -2896,7 +2905,7 @@ ${input.currentMarkdown}
           generateWithDeepSeek(prompt, REFINEMENT_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
         );
         if (r) { lastProposalProvider = "deepseek"; return r; }
-      } catch (e) { console.warn(`[ai] refineProposalWithAI DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); }
+      } catch (e) { void reportError(e, { module: "ai" }); logger.warn(`[ai] refineProposalWithAI DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
     const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, REFINEMENT_SYSTEM_PROMPT)).catch(() => null);
     if (tail) { lastProposalProvider = tail.provider; return tail.text; }
@@ -2906,7 +2915,8 @@ ${input.currentMarkdown}
       if (r) { lastProposalProvider = "claude"; return r; }
     }
   } catch (err) {
-    console.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
+    void reportError(err, { module: "ai" });
+    logger.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   return null;
@@ -3699,15 +3709,16 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       lastProposalProvider = "gemini";
       return geminiResult;
     } catch (geminiErr) {
+      void reportError(geminiErr, { module: "ai" });
       recordProviderFailure("gemini", geminiErr);
-      console.warn(`[ai] Gemini failed for proposal: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying next provider.`);
+      logger.warn(`[ai] Gemini failed for proposal: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying next provider.`);
     }
   }
 
   // OpenAI — second tier
   if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
     const openAiResult = await generateWithOpenAI(prompt).catch((e) => {
-      console.warn(`[ai] OpenAI failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn(`[ai] OpenAI failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
       recordProviderFailure("openai", e);
       return null;
     });
@@ -3717,7 +3728,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // Mistral — third tier
   if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
     const mistralResult = await generateWithMistral(prompt).catch((e) => {
-      console.warn(`[ai] Mistral failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn(`[ai] Mistral failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
       recordProviderFailure("mistral", e);
       return null;
     });
@@ -3733,7 +3744,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // DeepSeek — fifth tier
   if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
     const deepSeekResult = await generateWithDeepSeek(prompt).catch((e) => {
-      console.warn(`[ai] DeepSeek failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn(`[ai] DeepSeek failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
       recordProviderFailure("deepseek", e);
       return null;
     });
@@ -3770,7 +3781,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
           lastProposalProvider = "claude";
           return toolResult;
         }
-        console.warn("[ai] tool-use generation returned null — falling back to single-call Claude path.");
+        logger.warn("[ai] tool-use generation returned null — falling back to single-call Claude path.");
       }
       const claudeResult = await generateWithClaude(prompt);
       if (claudeResult) {
@@ -3780,8 +3791,9 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       }
       recordProviderFailure("anthropic", new Error("empty response"));
     } catch (err) {
+      void reportError(err, { module: "ai" });
       recordProviderFailure("anthropic", err);
-      console.warn(`[ai] Claude failed for proposal: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`[ai] Claude failed for proposal: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -3887,7 +3899,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: text, source: "gemini", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying OpenAI.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying OpenAI.`);
     }
   }
 
@@ -3902,7 +3915,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: text, source: "openai", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Mistral.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Mistral.`);
     }
   }
 
@@ -3917,7 +3931,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: text, source: "mistral", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Mistral failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" Mistral failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
     }
   }
 
@@ -3932,7 +3947,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: text, source: "together", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Together failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" Together failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
     }
   }
 
@@ -3947,7 +3963,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: text, source: "deepseek", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" DeepSeek failed (${err instanceof Error ? err.message : String(err)}) — trying Groq/OpenRouter.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" DeepSeek failed (${err instanceof Error ? err.message : String(err)}) — trying Groq/OpenRouter.`);
     }
   }
 
@@ -3962,7 +3979,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: tail.text, source: tail.provider, durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
     }
   }
 
@@ -3977,7 +3995,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: claudeResult, source: "claude", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Claude failed (${err instanceof Error ? err.message : String(err)}) — using deterministic fallback.`);
+      void reportError(err, { module: "ai" });
+      logger.warn(`[ai] section "${spec.id}" Claude failed (${err instanceof Error ? err.message : String(err)}) — using deterministic fallback.`);
     }
   }
 
@@ -4091,7 +4110,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
           drillDownInfo = ` [section-c-drilldown=${drillResult.source}(${Math.round(drillResult.durationMs / 100) / 10}s)]`;
         }
       } else {
-        console.warn(`[ai] section-C drill-down failed (${drillResult.error ?? "unknown"}) — keeping first-pass Section C.`);
+        logger.warn(`[ai] section-C drill-down failed (${drillResult.error ?? "unknown"}) — keeping first-pass Section C.`);
         drillDownInfo = ` [section-c-drilldown=skipped]`;
       }
     }
@@ -4128,7 +4147,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     .map((s) => `${s.id}=${s.source}(${Math.round(s.durationMs / 100) / 10}s)`)
     .join(" ");
   const modeLabel = isChunked ? `chunked[${sectionFilter!.join(",")}]` : deepMode ? "deep" : "standard";
-  console.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
+  logger.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
 
   // Stitch in canonical order. Cover+Summary first, then A+B, then C,
   // then D+Appendices+Declaration. The downstream section-reorderer in
