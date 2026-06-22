@@ -34,6 +34,7 @@ import { simulateEvaluatorPanel } from "./engine/evaluator-simulator";
 import { answerTenderCopilotQuestion, type TenderCopilotContext } from "./engine/tender-ai-copilot";
 import { extractCompanyFacts } from "./engine/company-fact-extractor";
 import { generateProposalSectionsParallel, type AIBidWriterInput } from "./ai";
+import { assertTenderReadyForGenerationAndExport } from "./engine/generation-readiness-gate";
 
 export interface JobContext {
   jobId: string;
@@ -236,6 +237,21 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
   // input.sectionFilter — optional ProposalSectionId[] to limit scope.
   PROPOSAL_GENERATION: async (ctx) => {
     if (!ctx.tenderId) throw new Error("PROPOSAL_GENERATION requires tenderId on the job");
+
+    // Central readiness gate — the background path must not be able to create a
+    // GeneratedDocument unless the tender is demonstrably ready. Fail-closed:
+    // a blocked gate creates ZERO GeneratedDocument rows.
+    const readiness = await assertTenderReadyForGenerationAndExport({
+      prisma,
+      tenderId: ctx.tenderId,
+      userId: ctx.userId,
+      purpose: "background-proposal-generation",
+    });
+    if (!readiness.ok) {
+      await recordStep(ctx.jobId, { stepName: "proposal.gate", message: `Blocked by readiness gate: ${readiness.blockerCode} — ${readiness.blockerDetail}`, status: "FAILED" });
+      throw new Error(`PROPOSAL_GENERATION blocked by readiness gate (${readiness.blockerCode}): ${readiness.blockerDetail}`);
+    }
+
     await recordStep(ctx.jobId, { stepName: "proposal.load", message: "Loading tender + company context", status: "RUNNING" });
 
     const [tender, company] = await Promise.all([

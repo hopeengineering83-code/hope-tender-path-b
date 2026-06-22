@@ -105,7 +105,11 @@ export async function assertAnalysisReadyForFinalGeneration(
     });
     if (tenderRow) {
       const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
-      const detail = await resolveTenderAnalysisState(null as any, tenderId, tenderRow.userId);
+      // FIX (central readiness gate): pass the real Prisma client. The previous
+      // `null as any` made resolveTenderAnalysisState throw on its first query,
+      // which the catch below swallowed — silently demoting this gate to the
+      // notes-only legacy path and defeating the canonical AiJob/chunk checks.
+      const detail = await resolveTenderAnalysisState(client, tenderId, tenderRow.userId);
       if (detail.state === "AI_SUCCEEDED" || detail.state === "HUMAN_APPROVED_FALLBACK") {
         return { ok: true };
       }
