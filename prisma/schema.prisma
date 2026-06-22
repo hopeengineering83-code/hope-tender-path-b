@@ -884,6 +884,10 @@ model AiJob {
   promotedAt          DateTime?
   promotedBy          String?
   supersededBy        String?
+  // Phase 5: Worker lease management for distributed claiming
+  leaseOwner          String?   // Worker ID/pod name that owns current lease
+  leaseExpiresAt      DateTime? // When lease expires (lease holder must heartbeat)
+  nextAttemptAt       DateTime? // When to retry after failure/lease expiry
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   steps         AiJobStep[]
@@ -892,6 +896,8 @@ model AiJob {
   @@index([userId, status])
   @@index([tenderId, jobType])
   @@index([status, createdAt])
+  @@index([leaseExpiresAt, status])
+  @@index([nextAttemptAt, status])
 }
 
 model AiJobStep {
