@@ -12,7 +12,8 @@
  * and failure recovery.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";
 import { getTenderAnalysisState, canGenerateFromState } from "../lib/ai-analyze/state-resolver";
 import {
@@ -40,11 +41,11 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
   const testUserId = "test-user-" + Math.random().toString(36).substr(2, 9);
   const testApproverId = "test-approver-" + Math.random().toString(36).substr(2, 9);
 
-  beforeAll(async () => {
+  before(async () => {
     prisma = new PrismaClient();
   });
 
-  afterAll(async () => {
+  after(async () => {
     await prisma.$disconnect();
   });
 
@@ -70,11 +71,11 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // Only one should succeed
       const successCount = [claim1, claim2].filter((c) => c !== null).length;
-      expect(successCount).toBe(1);
+      assert.strictEqual(successCount, 1);
 
       // Claimed job should be RUNNING
       const claimed = await prisma.aiJob.findUnique({ where: { id: job.id } });
-      expect(claimed?.status).toBe("RUNNING");
+      assert.strictEqual(claimed?.status, "RUNNING");
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -96,14 +97,14 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         { leaseOwnerWorkerId: "worker-1" },
         prisma,
       );
-      expect(claim1?.jobId).toBe(job.id);
+      assert.strictEqual(claim1?.jobId, job.id);
 
       // Worker 2 tries to claim same job (should fail)
       const claim2 = await claimJobWithLease(
         { leaseOwnerWorkerId: "worker-2" },
         prisma,
       );
-      expect(claim2).toBeNull();
+      assert.strictEqual(claim2, null);
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -124,14 +125,14 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // Reclaim stale jobs
       const reclaim = await findAndReclaimStaleLeases(prisma);
-      expect(reclaim.staleJobs).toContain(staleJob.id);
+      assert(reclaim.staleJobs.includes(staleJob.id));
 
       // Job should be reclaimable now
       const claim = await claimJobWithLease(
         { leaseOwnerWorkerId: "worker-new" },
         prisma,
       );
-      expect(claim?.jobId).toBe(staleJob.id);
+      assert.strictEqual(claim?.jobId, staleJob.id);
 
       await prisma.aiJob.delete({ where: { id: staleJob.id } });
     });
@@ -145,7 +146,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         { tenderId: testTenderId, userId: testUserId },
         prisma,
       );
-      expect(result1.jobId).toBeTruthy();
+      assert(result1.jobId);
       const jobId1 = result1.jobId!;
 
       // Same tender, same content → resume same job
@@ -153,8 +154,8 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         { tenderId: testTenderId, userId: testUserId, requestedJobId: jobId1 },
         prisma,
       );
-      expect(result2.isResume).toBe(true);
-      expect(result2.jobId).toBe(jobId1);
+      assert.strictEqual(result2.isResume, true);
+      assert.strictEqual(result2.jobId, jobId1);
 
       if (result2.jobId) {
         await prisma.aiJob.delete({ where: { id: result2.jobId } });
@@ -193,8 +194,8 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // State resolver should skip superseded job
       const state = await getTenderAnalysisState(testTenderId, testUserId, prisma);
-      expect(state.jobId).toBe(job2.id);
-      expect(state.state).toBe("QUEUED");
+      assert.strictEqual(state.jobId, job2.id);
+      assert.strictEqual(state.state, "QUEUED");
 
       await prisma.aiJob.deleteMany({
         where: { tenderId: testTenderId },
@@ -245,7 +246,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // State resolver should find latest non-superseded
       const state = await getTenderAnalysisState(testTenderId, testUserId, prisma);
-      expect(state.jobId).toBe(job3.id);
+      assert.strictEqual(state.jobId, job3.id);
 
       await prisma.aiJob.deleteMany({
         where: { tenderId: testTenderId },
@@ -273,7 +274,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         testUserId,
         prisma,
       );
-      expect(permission.permitted).toBe(false);
+      assert.strictEqual(permission.permitted, false);
 
       await prisma.aiJob.delete({ where: { id: fallback.id } });
     });
@@ -299,7 +300,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         prisma,
         false,
       );
-      expect(result.promoted).toBe(false);
+      assert.strictEqual(result.promoted, false);
 
       await prisma.aiJob.delete({ where: { id: fallback.id } });
     });
@@ -329,7 +330,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
       const approved = await prisma.aiJob.findUnique({
         where: { id: fallback.id },
       });
-      expect(approved?.status).toBe("HUMAN_APPROVED_FALLBACK");
+      assert.strictEqual(approved?.status, "HUMAN_APPROVED_FALLBACK");
 
       // TODO: Verify AuditLog entry created with reason
 
@@ -355,7 +356,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
       // This scenario demonstrates the integration point
       // When requirements exist and sources are validated, promotion would check
 
-      expect(job).toBeTruthy();
+      assert(job);
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -380,7 +381,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
       // Source validation should reject phantom file token
       // validateRequirementSource would fail on this
 
-      expect(fileId).toBeTruthy();
+      assert(fileId);
     });
 
     it("Scenario 12: Atomic promotion in transaction", async () => {
@@ -404,11 +405,11 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         false,
       );
 
-      expect(result.promoted).toBe(true);
+      assert.strictEqual(result.promoted, true);
 
       const promoted = await prisma.aiJob.findUnique({ where: { id: job.id } });
-      expect(promoted?.promotedAt).not.toBeNull();
-      expect(promoted?.promotedBy).toBe("system");
+      assert.notStrictEqual(promoted?.promotedAt, null);
+      assert.strictEqual(promoted?.promotedBy, "system");
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -437,7 +438,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         prisma,
         true,
       );
-      expect(result.allowed).toBe(false);
+      assert.strictEqual(result.allowed, false);
 
       await prisma.tenderFile.delete({ where: { id: file.id } });
     });
@@ -461,7 +462,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         prisma,
         false,
       );
-      expect(result.allowed).toBe(false);
+      assert.strictEqual(result.allowed, false);
 
       await prisma.tenderFile.delete({ where: { id: file.id } });
     });
@@ -485,7 +486,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         prisma,
         true, // force=true
       );
-      expect(result.allowed).toBe(true);
+      assert.strictEqual(result.allowed, true);
 
       await prisma.tenderFile.delete({ where: { id: file.id } });
     });
@@ -508,11 +509,11 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // Cold restart recovery
       const count = await coldRestartPromoteSucceededJobs(prisma);
-      expect(count).toBe(1);
+      assert.strictEqual(count, 1);
 
       const promoted = await prisma.aiJob.findUnique({ where: { id: job.id } });
-      expect(promoted?.promotedAt).not.toBeNull();
-      expect(promoted?.promotedBy).toBe("cold-restart");
+      assert.notStrictEqual(promoted?.promotedAt, null);
+      assert.strictEqual(promoted?.promotedBy, "cold-restart");
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -531,7 +532,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
       });
 
       // Worker 1 has lease
-      expect(await renewJobLease(job.id, "worker-1", prisma)).not.toBeNull();
+      assert.notStrictEqual(await renewJobLease(job.id, "worker-1", prisma), null);
 
       // Another worker claims it (lease lost)
       await prisma.aiJob.update({
@@ -541,7 +542,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // Worker 1 tries to renew (should fail)
       const result = await renewJobLease(job.id, "worker-1", prisma);
-      expect(result).toBeNull();
+      assert.strictEqual(result, null);
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -568,10 +569,8 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         prisma,
         5 * 60 * 1000,
       );
-      expect(result?.renewed).toBe(true);
-      expect(result?.newLeaseExpiresAt.getTime()).toBeGreaterThan(
-        oldExpiry!.getTime(),
-      );
+      assert.strictEqual(result?.renewed, true);
+      assert(result?.newLeaseExpiresAt.getTime()! > oldExpiry!.getTime());
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -602,7 +601,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
         prisma,
       );
       // User 2 shouldn't find user 1's job
-      expect(state.state).toBe("NOT_STARTED");
+      assert.strictEqual(state.state, "NOT_STARTED");
 
       await prisma.aiJob.delete({ where: { id: job.id } });
     });
@@ -629,7 +628,7 @@ describe("Phase 6: Integration Tests — 20 Behavioral Scenarios", () => {
 
       // Input is returned as-is (should be encrypted in transit)
       // Logs should NOT contain input with secrets
-      expect(fetched?.input).toBeTruthy();
+      assert(fetched?.input);
       // In production, route would strip sensitive fields before returning
 
       await prisma.aiJob.delete({ where: { id: job.id } });
