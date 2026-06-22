@@ -112,7 +112,7 @@ export async function executeAnalysis(
           previousChunkResults = parsed.chunkResults.filter(
             (r: any) => r.index !== undefined && r.result !== undefined
           );
-          startFromChunk = previousChunkResults.length > 0 ? 0 : (parsed.completedChunks ?? 0);
+          startFromChunk = previousChunkResults.length > 0 ? previousChunkResults.length : (parsed.completedChunks ?? 0);
         }
       } catch {
         // If output can't be parsed, start fresh
@@ -265,11 +265,14 @@ export async function executeAnalysis(
           skippedChunks: analysisMeta.skippedChunks,
           chunkProviders: analysisMeta.chunkProviders,
           chunkResults: analysisMeta.chunkResults,
+          contentHash,
           analysisSource,
         }),
         errorMessage,
       },
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error(`[orchestrator] Failed to update job ${jobId} status:`, err instanceof Error ? err.message : String(err));
+    });
   }
 
   // Phase: Complete
