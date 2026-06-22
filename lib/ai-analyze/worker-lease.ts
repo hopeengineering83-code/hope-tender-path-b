@@ -62,23 +62,24 @@ export async function claimJobWithLease(
 
   try {
     // Use raw SQL for atomic FOR UPDATE SKIP LOCKED + lease setting
+    // Parameters are explicitly type-cast for security and clarity
     const result = await prismaClient.$queryRaw<
       Array<{ id: string }>
     >`
       UPDATE "AiJob"
       SET
-        "leaseOwner" = ${config.leaseOwnerWorkerId},
-        "leaseExpiresAt" = ${leaseExpiresAt},
+        "leaseOwner" = ${config.leaseOwnerWorkerId}::text,
+        "leaseExpiresAt" = ${leaseExpiresAt}::timestamp,
         "status" = 'RUNNING',
-        "startedAt" = ${now},
-        "updatedAt" = ${now}
+        "startedAt" = ${now}::timestamp,
+        "updatedAt" = ${now}::timestamp
       WHERE "id" IN (
         SELECT "id"
         FROM "AiJob"
         WHERE (
           ("status" = 'QUEUED')
           OR
-          ("status" = 'RUNNING' AND "leaseExpiresAt" < ${now})
+          ("status" = 'RUNNING' AND "leaseExpiresAt" < ${now}::timestamp)
         )
         AND "jobType" = 'AI_ANALYZE'
         ORDER BY "createdAt" ASC
