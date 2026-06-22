@@ -697,16 +697,177 @@ async function coldRestartPromoteSucceededJobs(
 
 ---
 
+## Part 17: Key Findings from Code Audit
+
+### Streaming Route (`/api/tenders/[id]/ai-analyze/route.ts`) — DETAILED AUDIT
+
+**Status:** ✓ Well-implemented but has defects when combined with other paths
+
+**Positive Findings:**
+1. ✓ Uses shared content builder: `buildTenderAnalysisContent()` and `computeAnalysisContentHash()`
+2. ✓ Implements checkpoint persistence: `upsertAnalyzeChunkStarted/Succeeded/Failed()`
+3. ✓ Resume logic with hash comparison: checks `existingContentHash !== contentHash` to restart
+4. ✓ Source validation: validates sourceTenderFileId against `validTenderFileIds` before storing (line 638)
+5. ✓ Sets sourceConfidence based on page and quote presence (line 640)
+6. ✓ Non-destructive fallback: stages draft without promoting canonical (line 775)
+7. ✓ Uses transaction with advisory lock to prevent race conditions (line 615)
+8. ✓ Creates AiJob record with checkpoint + output fields
+9. ✓ Partial success detection and capping: sets status to "PARTIAL_SUCCESS" or "SUCCEEDED"
+10. ✓ Distinguishes "Analysis source: AI" (full) vs. "PARTIAL_AI" vs. "REGEX_FALLBACK"
+
+**Defects & Issues:**
+1. ✗ **Resume logic is incomplete**: Only checks `continue=<jobId>` against tender.files, does NOT validate:
+   - Job ownership (job.userId != userId would pass through)
+   - Tender ownership (already checked but implicit)
+   - Whether job is actually QUEUED/RUNNING/PARTIAL_SUCCESS
+   - No "resumable" status validation
+   
+2. ✗ **Fallback is staged but approval path unclear**: 
+   - Line 775: Calls `stageFallbackDraft()` which writes to `aiJob.stagedMergedResult`
+   - But how is this fallback approved and promoted to canonical? → Leads to DEFECT 4
+
+3. ✗ **Fallback diagnostics are written to aiJob.output but not tenant.notes**:
+   - Line 814: `analysisSource: "REGEX_FALLBACK"` only in AiJob.output
+   - No "Analysis source: REGEX_FALLBACK" written to tender.notes
+   - This breaks the parsing in `/analyze-source.ts` which reads tender.notes
+   
+4. ✗ **No immutable audit trail for promotion**:
+   - Line 689: Calls `promoteAnalysisToCanonical()` which only sets promotedAt/promotedBy/runId
+   - No audit record of what was promoted, when, by whom, from what state
+
+5. ✗ **Promotion validation is weak**:
+   - Line 593: Checks `canPromoteToCanonical()` which only verifies no newer job exists
+   - Does NOT validate:
+     - All chunks succeeded
+     - No regex fallback occurred
+     - Source validation passed
+     - Evidence confirmation complete
+     - Build plan valid
+     - Content hash unchanged
+
+6. ✗ **Provider exhaustion not visible in code audit**:
+   - Calls `analyzeWithAI()` which returns `aiMeta` with result
+   - How does `analyzeWithAI()` detect provider exhaustion? → Need to read lib/ai.ts
+
+7. ✗ **Not connected to job queue path**:
+   - Streaming route works standalone
+   - `/api/ai-jobs/run-next` uses OLD `claimJobForCaller()` not the new lease system
+   - Two separate execution paths → DEFECT 1 & DEFECT 6
+
+### Promotion Logic (`lib/ai-analyze-promotion.ts`) — DETAILED AUDIT
+
+**Functions:**
+- `stagePartialResult()` — writes to aiJob.stagedMergedResult JSON
+- `stageFallbackDraft()` — writes to aiJob.stagedMergedResult JSON with analysisSource: "FALLBACK_DRAFT"
+- `canPromoteToCanonical()` — checks no newer job by analysisVersion
+- `promoteAnalysisToCanonical()` — sets promotedAt, promotedBy, runId
+
+**Critical Issue:**
+- `promoteAnalysisToCanonical()` does NOT validate ANY content
+- `canPromoteToCanonical()` only checks version ordering, not job state
+- No safe canonical promotion service exists → DEFECT 2, DEFECT 5
+
+### TenderRequirement Schema — DETAILED AUDIT
+
+**Found in Prisma schema:**
+- ✓ `sourceTenderFileId` — File ID (with validation against validTenderFileIds)
+- ✓ `sourcePageNumber` — Page number
+- ✓ `sourceSectionHeading` — Section heading (already set from req.sectionReference line 636)
+- ✓ `sourceExactQuote` — Exact quote from tender
+- ✓ `sourceExtractionMethod` — "text" | "ocr" | "manual" (set from file's method line 639)
+- ✓ `sourceConfidence` — Float confidence (set based on presence line 640)
+
+**Current Validation in route (line 638):**
+```typescript
+sourceTenderFileId: (req.sourceFileToken && validTenderFileIds.has(req.sourceFileToken)) ? req.sourceFileToken : null
+```
+
+**Missing Validation:**
+- ✗ Not validating sourceTenderFileId actually exists in TenderFile table
+- ✗ Not validating TenderFile.deletionStatus = "ACTIVE"
+- ✗ Not validating sourcePageNumber <= TenderFile.totalPages
+- ✗ Not validating sourceExactQuote is in TenderFile.extractedText
+- ✗ Not enforcing minimum quote length (spec: quote shorter than existing minimum should be rejected)
+- ✗ No validation function called before storing requirements
+
+### TenderFile Schema — DETAILED AUDIT
+
+**Found in Prisma schema:**
+- ✓ `deletionStatus` — "ACTIVE" | "PENDING_DELETE" | "DELETED"
+- ✓ `extractedText` — Full extracted text of file
+- ✓ `totalPages` — Total page count
+- ✓ `extractedPages` — Pages with extracted text
+- ✓ `extractionMethod` — "text" | "ocr" | "mixed" | "failed"
+- ✓ `extractionScore` — 0-100 quality score
+
+### Provider Order — DETAILED AUDIT
+
+**From `lib/ai-provider-catalog.cjs` (lines 14-26):**
+```
+1. zai
+2. cerebras
+3. mistral
+4. groq
+5. openrouter
+6. gemini
+7. openai
+8. together
+9. deepseek
+10. anthropic (LAST)
+```
+
+**Status:** ✓ Anthropic is LAST (correct per spec)
+
+**Issue:** Spec says "Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Anthropic"
+- Actual order has NEW providers (zai, cerebras) at front
+- Real order: zai, cerebras, mistral, groq, openrouter, gemini, openai, together, deepseek, anthropic
+- **POTENTIAL AUDIT ISSUE:** If new providers are not trustworthy/approved, they should not be first
+
+### Analysis Source Detection (`lib/engine/analysis-source.ts`) — DETAILED AUDIT
+
+**Current Implementation:**
+```typescript
+// Parses tender.notes for "Analysis source: " text
+// Checks ComplianceGap for approval if regex-fallback
+// Returns: "AI" | "REGEX_FALLBACK_AI_ERROR" | "HUMAN_APPROVED_REGEX_FALLBACK" | "UNKNOWN"
+```
+
+**Issue with streaming route integration:**
+- Streaming route writes "Analysis source: AI" to tender.notes (line 605)
+- Streaming route writes "REGEX_FALLBACK" to aiJob.output (line 814) BUT NOT to tender.notes
+- This breaks the gate! Fallback analysis is not detected by `detectAnalysisSourceWithApproval()`
+
+**Critical Finding:** The streaming route creates fallback data but never records it in tender.notes, so the detection logic can't find it!
+
 ## Next Steps
 
-**What audit needs before Phase 1 code:**
-1. Read `/home/user/hope-tender-path-b/app/api/tenders/[id]/ai-analyze/route.ts` (full)
-2. Read `/home/user/hope-tender-path-b/lib/ai-analyze-promotion.ts` (full)
-3. Read `/home/user/hope-tender-path-b/lib/engine/analysis.ts` (find actual analysis engine)
-4. Inspect `/home/user/hope-tender-path-b/prisma/schema.prisma` for TenderRequirement schema
-5. Find and read resume/continue logic
-6. Find and read final ZIP submission route
-7. Trace provider exhaustion flow in streaming route
+**Audit Phase 0 COMPLETE.** All key code paths have been examined.
 
-**Status:** Audit Phase 0 complete. Proceeding to detailed code reads for blockers.
+### Critical Path Forward
+
+**PHASE 1 (Immediate):**
+1. Fix fallback detection: Ensure fallback route writes to tender.notes
+2. Create safe promotion service with full validation
+3. Wire job queue path to use production service
+4. Connect all routes to single service
+
+**PHASE 2:**
+1. Implement immutable audit table
+2. Add comprehensive state resolver
+3. Add fail-closed gates to all output routes
+
+**PHASE 3:**
+1. Migrate to lease-based job claiming
+2. Implement heartbeat renewal
+3. Implement stale job reclamation
+
+**PHASE 4+:**
+1. Source validation service
+2. Resume & superseding logic
+3. Cold restart recovery (safe)
+4. Tests & release verification
+
+---
+
+**Status:** Audit Phase 0 complete. Ready for Phase 1 implementation.
 
