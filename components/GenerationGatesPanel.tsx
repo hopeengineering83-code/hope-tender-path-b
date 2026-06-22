@@ -1,6 +1,6 @@
 'use client';
 
-import { CheckCircle2, AlertCircle, AlertTriangle, Lock, Lightbulb } from 'lucide-react';
+import { CheckCircleIcon, AlertCircleIcon, WarningIcon, LockIcon, LightbulbIcon } from './icons';
 import type { GenerationGateStatus } from '@/lib/generation-gates';
 
 interface GenerationGatesPanelProps {
@@ -43,12 +43,12 @@ export function GenerationGatesPanel({
         <h3 className="font-semibold text-gray-900">Document Generation Readiness</h3>
         {gates.allGatesMet ? (
           <div className="flex items-center gap-2 text-green-700">
-            <CheckCircle2 className="w-5 h-5" />
+            <CheckCircleIcon />
             <span className="text-sm font-medium">Ready</span>
           </div>
         ) : (
           <div className="flex items-center gap-2 text-red-700">
-            <Lock className="w-5 h-5" />
+            <LockIcon />
             <span className="text-sm font-medium">Blocked</span>
           </div>
         )}
@@ -66,9 +66,9 @@ export function GenerationGatesPanel({
             }`}
           >
             {item.passed ? (
-              <CheckCircle2 className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+              <CheckCircleIcon className="text-green-600 mt-0.5 flex-shrink-0" />
             ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+              <AlertCircleIcon className="text-red-600 mt-0.5 flex-shrink-0" />
             )}
             <div className="flex-1 min-w-0">
               <p className={`text-sm font-medium ${item.passed ? 'text-green-900' : 'text-red-900'}`}>
@@ -86,7 +86,7 @@ export function GenerationGatesPanel({
       {gates.blockers.length > 0 && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
           <div className="flex items-start gap-2 mb-2">
-            <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+            <WarningIcon className="text-red-600 mt-0.5 flex-shrink-0" />
             <h4 className="font-medium text-red-900">Blocked - Cannot Generate</h4>
           </div>
           <ul className="text-sm text-red-800 space-y-1">
@@ -104,7 +104,7 @@ export function GenerationGatesPanel({
       {gates.recommendations.length > 0 && (
         <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded">
           <div className="flex items-start gap-2 mb-2">
-            <Lightbulb className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <LightbulbIcon className="text-blue-600 mt-0.5 flex-shrink-0" />
             <h4 className="font-medium text-blue-900">Recommendations</h4>
           </div>
           <ul className="text-sm text-blue-800 space-y-1">

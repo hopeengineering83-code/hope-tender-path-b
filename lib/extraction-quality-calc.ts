@@ -1,4 +1,4 @@
-import type { ExtractionStatus } from "@prisma/client";
+type ExtractionStatus = string;
 
 export interface ExtractedFile {
   id: string;

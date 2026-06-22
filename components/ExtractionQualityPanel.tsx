@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertCircle, CheckCircle, AlertTriangle, FileText } from 'lucide-react';
+import { CheckCircleIcon, AlertCircleIcon, WarningIcon } from './icons';
 
 interface ExtractionQualityMetrics {
   totalPages: number | null;
@@ -35,15 +35,15 @@ export function ExtractionQualityPanel({
 
   const getStatusIcon = () => {
     if (analysisExtractionStatus === 'FULL_EXTRACTION_AI_ANALYZED') {
-      return <CheckCircle className="w-5 h-5 text-green-600" />;
+      return <CheckCircleIcon className="text-green-600" />;
     }
     if (analysisExtractionStatus?.includes('PARTIAL')) {
-      return <AlertTriangle className="w-5 h-5 text-yellow-600" />;
+      return <WarningIcon className="text-yellow-600" />;
     }
     if (analysisExtractionStatus?.includes('REGEX_FALLBACK') || analysisExtractionStatus?.includes('WEAK')) {
-      return <AlertCircle className="w-5 h-5 text-orange-600" />;
+      return <AlertCircleIcon className="text-orange-600" />;
     }
-    return <FileText className="w-5 h-5 text-gray-400" />;
+    return <AlertCircleIcon className="text-gray-400" />;
   };
 
   const getStatusLabel = () => {
