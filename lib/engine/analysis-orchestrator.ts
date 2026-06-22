@@ -177,13 +177,12 @@ export async function executeAnalysis(
     });
   };
 
-  // Fetch tender for access check and to load companyId
+  // Fetch tender for access check
   const tenderForAccess = await prisma.tender.findUnique({
     where: { id: tenderId },
     select: {
       id: true,
       userId: true,
-      companyId: true,
     },
   });
 
@@ -214,26 +213,25 @@ export async function executeAnalysis(
     throw new Error("Tender not found");
   }
 
-  // Load company if exists for shared builder input
-  let company: Parameters<typeof buildTenderAnalysisContent>[1] | undefined;
-  if (tenderForAccess.companyId) {
-    const companyRecord = await prisma.company.findUnique({
-      where: { id: tenderForAccess.companyId },
-      select: {
-        documents: {
-          select: {
-            category: true,
-            originalFileName: true,
-            extractedText: true,
-          },
-          take: 5,
-          orderBy: { createdAt: "desc" as const },
+  // Load company if exists for shared builder input (user has a 1:1 company relation)
+  const companyRecord = await prisma.company.findUnique({
+    where: { userId },
+    select: {
+      documents: {
+        select: {
+          category: true,
+          originalFileName: true,
+          extractedText: true,
         },
+        take: 5,
+        orderBy: { createdAt: "desc" as const },
       },
-    });
-    if (companyRecord) {
-      company = companyRecord;
-    }
+    },
+  }).catch(() => null);
+
+  let company: Parameters<typeof buildTenderAnalysisContent>[1] | undefined;
+  if (companyRecord?.documents?.length) {
+    company = companyRecord;
   }
 
   // Use Stage 1 shared builder for deterministic content

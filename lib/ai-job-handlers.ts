@@ -21,6 +21,7 @@
 import { recordStep, type JobType } from "./ai-jobs";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
+import { executeAnalysis } from "./engine/analysis-orchestrator";
 import { prisma } from "./prisma";
 import {
   aiRematchExperts,
@@ -101,6 +102,46 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     } catch (err) {
       clearInterval(heartbeat);
       await recordStep(ctx.jobId, { stepName: "engine.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
+      throw err;
+    }
+  },
+
+  // ─── AI_ANALYZE — chunk-based tender analysis with provider fallback ──
+  // Async standalone version of /api/tenders/[id]/ai-analyze. Escapes the 60s
+  // cap for large tenders by running in the worker's budget. Uses the
+  // AnalysisOrchestrator for deterministic content hashing, checkpoint resume,
+  // and consistent analysisSource state machine (AI vs PARTIAL_AI).
+  AI_ANALYZE: async (ctx) => {
+    if (!ctx.tenderId) throw new Error("AI_ANALYZE requires tenderId on the job");
+    await recordStep(ctx.jobId, { stepName: "analyze.start", message: "Starting tender analysis", status: "RUNNING" });
+
+    const heartbeat = setInterval(() => {
+      void recordStep(ctx.jobId, { stepName: "analyze.heartbeat", message: "Analysis running — waiting for AI response", status: "RUNNING" }).catch(() => {});
+    }, 25_000);
+
+    try {
+      const result = await executeAnalysis(ctx.tenderId, ctx.userId, {
+        force: ctx.input?.force === true,
+        deadlineMs: 55_000,
+        onProgress: async (event) => {
+          const msg = event.message || event.status || event.phase;
+          void recordStep(ctx.jobId, { stepName: `analyze.${event.phase}`, message: msg, status: "RUNNING" }).catch(() => {});
+        },
+      });
+
+      clearInterval(heartbeat);
+      await recordStep(ctx.jobId, { stepName: "analyze.complete", message: `Analysis complete — ${result.requirementCount} requirements extracted`, status: "SUCCEEDED" });
+      return {
+        analysisSource: result.analysisSource,
+        requirementCount: result.requirementCount,
+        isPartial: result.isPartial,
+        success: result.success,
+        totalChunks: result.totalChunks,
+        completedChunks: result.completedChunks,
+      };
+    } catch (err) {
+      clearInterval(heartbeat);
+      await recordStep(ctx.jobId, { stepName: "analyze.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
       throw err;
     }
   },
