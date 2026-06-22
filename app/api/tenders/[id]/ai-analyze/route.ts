@@ -1051,6 +1051,7 @@ async function handleStreamingAnalyze(
           jobId: analysisJobId,
           message: `Analysis complete — ${analysisResult.requirementCount} requirements extracted`,
           resumableJobId: sseResumableJobId,
+          providerRetryAfterMs: isFallback ? getMinCooldownExpiryMs() : null,
         });
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
