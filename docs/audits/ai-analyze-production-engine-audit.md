@@ -241,13 +241,22 @@ RUNNING
 ✅ Double promotion prevented  
 ✅ Promotion audit ready (AuditLog schema needed)
 
-### Phase 4+ Tests (Future)
-- Extraction quality blocks poor input
+### Phase 4 Tests (This PR — Extraction Quality Gates)
+✅ Corrupted extraction detected (< 50 chars)  
+✅ Coverage percentage calculated (pages extracted / total)  
+✅ Weak extraction (<70% coverage) blocks analysis  
+✅ Force mode bypasses weak gate but NOT corrupted gate  
+✅ Quality status determined (FULL / PARTIAL / OCR_REQUIRED / WEAK / FALLBACK)  
+✅ Average characters per page calculated  
+✅ Integration: startOrResumeAnalysis checks quality before job creation
+
+### Phase 5+ Tests (Future)
 - Worker lease expiry + retry scheduling
+- Cold restart recovery (promote unpromoted SUCCEEDED jobs)
 - Cross-user access blocked with 403
 - Secrets not leaked in responses/logs
-- Cold restart recovery
 - Provider fallback order verified
+- Concurrent worker races resolved correctly
 
 ---
 
@@ -256,13 +265,15 @@ RUNNING
 | File | Change | Lines |
 |------|--------|-------|
 | `lib/ai-analyze/state-resolver.ts` | NEW — Authoritative state resolver | 200+ |
-| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Add content hash builders + atomic promotion | 280+ |
+| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Content hash, promotion, extraction quality checks | 320+ |
 | `lib/ai-analyze/content-hash.ts` | NEW — Deterministic content hashing | 120+ |
 | `lib/ai-analyze/source-validation.ts` | NEW — Source grounding validation | 140+ |
+| `lib/ai-analyze/extraction-quality.ts` | NEW — Extraction quality gates | 180+ |
 | `tests/ai-analyze-production-phase1.test.ts` | NEW — Phase 1 tests (state resolver) | 250+ |
 | `tests/ai-analyze-production-phase2.test.ts` | NEW — Phase 2 tests (fallback safety + resume) | 200+ |
 | `tests/ai-analyze-production-phase3.test.ts` | NEW — Phase 3 tests (source + promotion) | 300+ |
-| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phases 1-3 completion | 390+ |
+| `tests/ai-analyze-production-phase4.test.ts` | NEW — Phase 4 tests (extraction quality gates) | 280+ |
+| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phases 1-4 completion | 410+ |
 
 ---
 
@@ -293,34 +304,31 @@ RUNNING
 
 ## Next Phases (Not in This PR)
 
-**Phase 4:** Extraction Quality Gates  
-- Block corrupted/gibberish extraction (low character count or only punctuation)
-- Block poor extraction coverage (< 70% of pages successfully extracted)
-- Force mode does NOT bypass final gates
-- Add extraction quality check before AI Analyze
-- Mark analysis state with extraction quality flag
-- Tests: corrupted extraction blocked, weak extraction blocked, force mode tested
-
-**Phase 5:** Worker Hardening + Cold Restart  
-- Add explicit leaseOwner / leaseExpiresAt fields
+**Phase 5:** Worker Hardening + Cold Restart (Days 8-9)
+- Add explicit leaseOwner / leaseExpiresAt fields to AiJob
 - Implement nextAttemptAt for retry scheduling
-- Add lease expiry checks on claim
+- Add lease expiry checks on claim (FOR UPDATE + expiry check)
 - Verify stale RUNNING jobs are reclaimed correctly
 - Cold restart recovery: promote any SUCCEEDED job not yet promoted
-- Tests: concurrent worker races, stale lease reclaim, cold restart
+- Worker tests: concurrent claims, stale lease reclaim, cold restart recovery
+- Integration: worker + route + cold restart scenario
 
-**Phase 6:** Integration Tests (20 behavioral scenarios)  
-- All 7 phases combined in realistic workflows
-- Worker + route interaction with concurrent claims
-- Provider fallback chain (streaming → queued → fallback)
-- Extraction quality gates honored
-- Cross-user access blocked (403)
-- Secrets not leaked in logs/responses
+**Phase 6:** Integration Tests — 20 behavioral scenarios (Day 9)
+- Scenario 1-3: Job claiming (atomic, race, stale lease)
+- Scenario 4-6: Resume consistency (hash match, content change, supersession)
+- Scenario 7-9: Fallback safety (approval required, promotion blocked, audit)
+- Scenario 10-12: Source validation (missing source, phantom file, TOCTOU)
+- Scenario 13-15: Extraction quality (corrupted, weak, force mode)
+- Scenario 16-18: Cold restart (promoted jobs, unpromoted recovery, worker re-entry)
+- Scenario 19: Cross-user access blocked (403)
+- Scenario 20: Secrets not leaked (no keys/tokens in logs/responses)
 
-**Phase 7:** PR Delivery  
+**Phase 7:** PR Delivery (Day 10)
 - Create DRAFT PR with all acceptance criteria
+- Document all changes in PR body
+- Include test matrix and phase completion checklist
 - Preview deployment testing
-- Final sanity checks before merge
+- Final sanity checks before merge request
 - Atomic promotion in transaction with TOCTOU guard
 
 **Phase 5:** Security Audit  
