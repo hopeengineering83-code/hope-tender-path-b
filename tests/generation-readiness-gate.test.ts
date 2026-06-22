@@ -37,6 +37,7 @@ function ready(overrides: Partial<GenerationReadinessInput> = {}): GenerationRea
     requirementCount: 1,
     requirements: [groundedMandatory()],
     submissionPlanDocumentCount: 4,
+    isLegacyAnalyzed: false,
     ...overrides,
   };
 }
@@ -247,4 +248,25 @@ test("ownership failure blocks before any other check", () => {
 test("zero chunk rows (single-shot success) is acceptable", () => {
   const r = evaluateGenerationReadiness(ready({ currentHashChunks: [] }));
   assert.equal(r.ok, true, JSON.stringify(r));
+});
+
+// Legacy-analyzed tenders (no promoted job but has analysis).
+test("legacy-analyzed tender (no job, has requirements) passes gate", () => {
+  const r = evaluateGenerationReadiness(ready({
+    canonicalJobId: null,
+    latestJobHash: null,
+    isLegacyAnalyzed: true,
+  }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+});
+
+test("tender without job AND without requirements still blocks", () => {
+  const r = evaluateGenerationReadiness(ready({
+    canonicalJobId: null,
+    latestJobHash: null,
+    requirementCount: 0,
+    requirements: [],
+    isLegacyAnalyzed: false,
+  }));
+  assert.equal(r.blockerCode, "ANALYSIS_NO_PROMOTED_JOB");
 });

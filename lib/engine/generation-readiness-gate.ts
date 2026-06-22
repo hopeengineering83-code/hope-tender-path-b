@@ -110,6 +110,8 @@ export interface GenerationReadinessInput {
   requirements: ReadinessRequirement[];
   // H — submission/build plan: count of non-superseded GeneratedDocument rows
   submissionPlanDocumentCount: number;
+  // Legacy analysis detection: tender was analyzed outside the AI job system
+  isLegacyAnalyzed: boolean;
 }
 
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
@@ -157,19 +159,23 @@ export function evaluateGenerationReadiness(
   }
 
   // D — canonical promotion is mandatory (a SUCCEEDED job without promotion
-  //     cannot authorize final generation/export).
-  if (!input.canonicalJobId) {
+  //     cannot authorize final generation/export). Legacy-analyzed tenders (no
+  //     promoted job but has analysis) are allowed to proceed as a special case.
+  if (!input.canonicalJobId && !input.isLegacyAnalyzed) {
     return fail("ANALYSIS_NO_PROMOTED_JOB", "The latest AI Analyze result has not been canonically promoted. Promotion is required before generation/export.");
   }
 
   // C — Current content hash must equal the eligible job's analysisInputHash.
   //     Any change to active tender-file content or analyzed inputs invalidates
   //     the prior analysis (and, by extension, any prior fallback approval).
-  if (!input.latestJobHash) {
-    return fail("ANALYSIS_HASH_MISMATCH", "The eligible AI Analyze job has no recorded content hash; analysis cannot be trusted for generation/export.");
-  }
-  if (input.latestJobHash !== input.currentContentHash) {
-    return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender.");
+  //     For legacy-analyzed tenders with no job, skip hash-binding validation.
+  if (!input.isLegacyAnalyzed) {
+    if (!input.latestJobHash) {
+      return fail("ANALYSIS_HASH_MISMATCH", "The eligible AI Analyze job has no recorded content hash; analysis cannot be trusted for generation/export.");
+    }
+    if (input.latestJobHash !== input.currentContentHash) {
+      return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender.");
+    }
   }
 
   // I — Regex-fallback approval must be bound to the exact current job + hash.
@@ -376,6 +382,11 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     });
 
+    // Legacy analysis detection: tender has analysis (requirements exist) but no
+    // promoted job. These are tenders analyzed outside the current AI job system.
+    const isLegacyAnalyzed =
+      !analysis.canonicalJobId && requirements.length > 0;
+
     return evaluateGenerationReadiness({
       purpose,
       tenderExistsAndOwned: true,
@@ -390,6 +401,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirementCount: requirements.length,
       requirements: mappedRequirements,
       submissionPlanDocumentCount,
+      isLegacyAnalyzed,
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.
