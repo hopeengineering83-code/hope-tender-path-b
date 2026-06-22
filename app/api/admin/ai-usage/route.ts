@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
+import { logger } from "../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -128,7 +129,7 @@ export async function GET(req: NextRequest) {
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("admin/ai-usage GET failed", error);
+    logger.error("admin/ai-usage GET failed", { error: error instanceof Error ? error.message : String(error) });
     return err("AI usage lookup failed.", 500, {
       code: "AI_USAGE_RUNTIME_ERROR",
       detail: error instanceof Error ? error.message : String(error),

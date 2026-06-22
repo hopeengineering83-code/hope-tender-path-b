@@ -82,8 +82,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     status = normalizeStatus(body.status);
     resolutionNote = normalizeNote(body.resolutionNote);
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
   const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, title: true } });

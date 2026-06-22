@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { prismaReady } from "../../../lib/prisma";
 import { drainAnalysisJobQueue, getJobQueueStats } from "../../../lib/ai-jobs/worker";
+import { logger } from "../../../lib/observability";
 
 export const maxDuration = 50;
 
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
   try {
     await prismaReady;
 
-    console.log("[cron] starting AI job queue drain...");
+    logger.info("[cron] starting AI job queue drain...");
     const startTime = Date.now();
 
     const result = await drainAnalysisJobQueue({
@@ -56,20 +57,20 @@ export async function GET(req: Request) {
       timestamp: new Date().toISOString(),
     };
 
-    console.log("[cron] queue drain complete:", JSON.stringify(summary, null, 2));
+    logger.info("[cron] queue drain complete", { summary });
 
     const queuedCount = stats.jobsByStatus.find(
       (s) => s.jobType === "AI_ANALYZE" && s.status === "QUEUED"
     )?._count ?? 0;
 
     if (queuedCount > 10) {
-      console.warn(`[cron] WARNING: ${queuedCount} jobs still queued, consider increasing frequency`);
+      logger.warn(`[cron] WARNING: ${queuedCount} jobs still queued, consider increasing frequency`);
     }
 
     return NextResponse.json(summary);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("[cron] queue drain failed:", errorMsg);
+    logger.error("[cron] queue drain failed", { error: errorMsg });
 
     return NextResponse.json(
       {

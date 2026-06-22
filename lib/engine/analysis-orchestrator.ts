@@ -22,6 +22,7 @@ import {
 import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
 import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
+import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
   force?: boolean;
@@ -321,7 +322,7 @@ export async function executeAnalysis(
         errorMessage,
       },
     }).catch((err) => {
-      console.error(`[orchestrator] Failed to update job ${jobId} status:`, err instanceof Error ? err.message : String(err));
+      logger.error(`[orchestrator] Failed to update job ${jobId} status`, { error: err instanceof Error ? err.message : String(err) });
     });
   }
 

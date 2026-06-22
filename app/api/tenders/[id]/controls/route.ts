@@ -135,8 +135,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let control;
   try {
     control = normalizeTenderControlPayload(await req.json());
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid control payload" }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "Invalid control payload" }, { status: 400 });
   }
 
   const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, title: true, notes: true, status: true, stage: true } });
