@@ -783,10 +783,26 @@ async function handleStreamingAnalyze(
               // Do NOT set output here — preserveAiAnalyzeProgressOnFailure already
               // wrote chunkResults into AiJob.output for resume; overwriting would
               // destroy the saved chunk data.
-              await prisma.aiJob.update({
-                where: { id: streamFallbackJobId },
-                data: { status: "FAILED", finishedAt: new Date() },
-              }).catch(() => {});
+              const fallbackNotesLine = `Analysis source: REGEX_FALLBACK (${diagnostics.category ?? "UNKNOWN"}) — re-run analysis or approve fallback to proceed.`;
+              const existingNotes = (tenderRecord.notes ?? "").split("\n");
+              const updatedNotes = existingNotes
+                .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
+                .concat([fallbackNotesLine, diagnosticsLine])
+                .join("\n")
+                .trim() || null;
+
+              await Promise.all([
+                prisma.aiJob.update({
+                  where: { id: streamFallbackJobId },
+                  data: { status: "FAILED", finishedAt: new Date() },
+                }).catch(() => {}),
+                prisma.tender.update({
+                  where: { id },
+                  data: { notes: updatedNotes, analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" },
+                }).catch((e: unknown) => {
+                  console.error("[ai-analyze/stream] failed to update tender notes on fallback:", e instanceof Error ? e.message : String(e));
+                }),
+              ]);
 
               // Invalidate dashboard cache when job fails
               invalidateDashboardCache(id);
@@ -809,10 +825,26 @@ async function handleStreamingAnalyze(
               completedChunks: 0,
               totalChunks: Math.ceil(tenderContent.length / 50_000),
             });
-            await prisma.aiJob.update({
-              where: { id: analysisJob.id },
-              data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
-            }).catch(() => {});
+            const fallbackNotesLine = `Analysis source: REGEX_FALLBACK (${diagnostics.category ?? "UNKNOWN"}) — re-run analysis or approve fallback to proceed.`;
+            const existingNotes = (tenderRecord.notes ?? "").split("\n");
+            const updatedNotes = existingNotes
+              .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
+              .concat([fallbackNotesLine, diagnosticsLine])
+              .join("\n")
+              .trim() || null;
+
+            await Promise.all([
+              prisma.aiJob.update({
+                where: { id: analysisJob.id },
+                data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
+              }).catch(() => {}),
+              prisma.tender.update({
+                where: { id },
+                data: { notes: updatedNotes, analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" },
+              }).catch((e: unknown) => {
+                console.error("[ai-analyze/stream] failed to update tender notes on no-provider fallback:", e instanceof Error ? e.message : String(e));
+              }),
+            ]);
 
             // Invalidate dashboard cache when job fails
             invalidateDashboardCache(id);
@@ -1456,6 +1488,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Invalidate dashboard cache when job completes via fallback
         invalidateDashboardCache(id);
       }
+    }
+
+    // If fallback happened, update tender.notes so detectAnalysisSourceWithApproval() can find it
+    if (analysisResult.fallback && analysisResult.fallbackDiagnostics) {
+      const fallbackNotesLine = `Analysis source: REGEX_FALLBACK (${analysisResult.fallbackDiagnostics.category ?? "UNKNOWN"}) — re-run analysis or approve fallback to proceed.`;
+      const diagnosticsLine = formatFallbackDiagnosticsLine(analysisResult.fallbackDiagnostics);
+      const existingNotes = (tenderRecord.notes ?? "").split("\n");
+      const updatedNotes = existingNotes
+        .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
+        .concat([fallbackNotesLine, diagnosticsLine])
+        .join("\n")
+        .trim() || null;
+
+      await prisma.tender.update({
+        where: { id },
+        data: { notes: updatedNotes },
+      }).catch((e: unknown) => {
+        console.error("[ai-analyze/non-stream] failed to update tender notes on fallback:", e instanceof Error ? e.message : String(e));
+      });
     }
 
     await logAction({
