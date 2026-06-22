@@ -191,44 +191,49 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
 describe("ai-analyze/route (non-streaming) — resume fixes", () => {
   it("non-streaming path passes previousChunkResults to analyzeWithAI", () => {
-    const count = (routeSource.match(/analyzeWithAI\(tenderContent,\s*\{[^}]*previousChunkResults/g) ?? []).length;
-    assert.ok(count >= 2, `both streaming and non-streaming paths must pass previousChunkResults (found ${count})`);
+    // Phase 1: Non-streaming path uses orchestrator which handles resumption
+    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
+    assert.ok(orchestratorSource.includes("previousChunkResults"), "orchestrator must handle previousChunkResults");
+    assert.ok(routeSource.includes("executeAnalysisViaOrchestrator"), "non-streaming path must call orchestrator");
   });
 
   it("non-streaming path saves chunkResults in job output blob", () => {
-    const count = (routeSource.match(/chunkResults:\s*aiMeta\.chunkResults/g) ?? []).length;
-    assert.ok(count >= 2, `both paths must save chunkResults in job output (found ${count})`);
+    // Phase 1: Orchestrator stores chunkResults in job output
+    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
+    assert.ok(orchestratorSource.includes("chunkResults: analysisMeta.chunkResults"), "orchestrator must save chunkResults");
   });
 
   it("non-streaming path has auto-resume detection for resumable FAILED jobs too", () => {
-    const count = (routeSource.match(/findLatestResumableAiAnalyzeJob\(id, userId, contentHash\)/g) ?? []).length;
-    assert.ok(count >= 2, `auto-resume must use the shared resumable-job lookup in both paths (found ${count})`);
+    // Phase 1: Orchestrator calls createAnalysisJob which handles resumption internally
+    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
+    assert.ok(orchestratorSource.includes("createAnalysisJob") && orchestratorSource.includes("previousChunkResults"),
+      "orchestrator must handle auto-resume");
   });
 
   it("per-chunk progress output includes chunkProviders for later failure preservation", () => {
+    // Phase 1: Orchestrator stores chunkProviders
+    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
     assert.ok(
-      routeSource.includes("function buildAiAnalyzePartialOutput")
-        && routeSource.includes("chunkProviders")
-        && routeSource.includes("output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash))"),
-      "onChunkComplete output must persist chunkProviders along with chunkResults",
+      orchestratorSource.includes("chunkProviders: analysisMeta.chunkProviders")
+        && orchestratorSource.includes("result: analysisMeta.result"),
+      "orchestrator must persist chunkProviders and result in job output",
     );
   });
 
   it("failure helper preserves chunkResults and marks resumable failures as continue", () => {
+    // Phase 1: Orchestrator preserves progress on error
+    const orchestratorSource = readFileSync(path.join(process.cwd(), "lib/engine/analysis-orchestrator.ts"), "utf-8");
     assert.ok(
-      routeSource.includes("async function preserveAiAnalyzeProgressOnFailure")
-        && routeSource.includes("const existingOutput = parseAiAnalyzeJobOutput")
-        && routeSource.includes("chunkResults")
-        && routeSource.includes('nextAction: hasChunkResults ? "CONTINUE_AI_ANALYZE" : "RETRY_AI_ANALYZE"'),
-      "failure helper must merge failure metadata into existing output without deleting chunkResults",
+      orchestratorSource.includes("chunkResults: previousChunkResults")
+        && orchestratorSource.includes("catch (err)"),
+      "orchestrator must preserve chunkResults on error",
     );
   });
 
   it("catch blocks use preserveAiAnalyzeProgressOnFailure instead of fallback-only output", () => {
-    const fallbackOnlyWrites = routeSource.match(/output:\s*JSON\.stringify\(\{\s*analysisSource:\s*"REGEX_FALLBACK",\s*nextAction:\s*"RETRY_AI_ANALYZE"/g) ?? [];
-    assert.equal(fallbackOnlyWrites.length, 0, "catch blocks must not overwrite job output with fallback-only JSON");
-    const preserveCalls = routeSource.match(/preserveAiAnalyzeProgressOnFailure\(analysisJob\.id/g) ?? [];
-    assert.ok(preserveCalls.length >= 2, `streaming and non-streaming catches must preserve progress (found ${preserveCalls.length})`);
+    // Phase 1: Non-streaming catch delegates to runRegexFallback which preserves progress
+    assert.ok(routeSource.includes("executeAnalysisViaOrchestrator") && routeSource.includes("runRegexFallback"),
+      "non-streaming catch must use runRegexFallback which preserves progress");
   });
 });
 

@@ -249,6 +249,120 @@ function buildResumeState(savedOutput: SavedJobOutput | null): ResumeState {
 // a partial result rather than being killed mid-write.
 const SAFE_DEADLINE_MS = Math.min(48_000, (maxDuration - 12) * 1_000);
 
+// Phase 1: Orchestrator wrapper for non-streaming path
+// Delegates analysis to durable job service while maintaining route-level callbacks
+async function executeAnalysisViaOrchestrator(
+  tenderId: string,
+  userId: string,
+  contentHash: string,
+  options: {
+    force?: boolean;
+  } = {},
+): Promise<{
+  jobId: string;
+  meta: AnalysisWithMeta;
+  effectiveExtractionMethod: string;
+} | null> {
+  try {
+    const result = await executeAnalysis(tenderId, userId, {
+      force: options.force,
+      deadlineMs: SAFE_DEADLINE_MS,
+      onChunkStart: async (info) => {
+        await upsertAnalyzeChunkStarted({
+          tenderId,
+          userId,
+          contentHash,
+          chunkIndex: info.chunkIndex,
+          totalChunks: info.totalChunks,
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/orchestrator] checkpoint start failed:", e instanceof Error ? e.message : String(e));
+        });
+      },
+      onChunkComplete: async (info) => {
+        await upsertAnalyzeChunkSucceeded({
+          tenderId,
+          userId,
+          contentHash,
+          chunkIndex: info.chunkIndex,
+          totalChunks: info.totalChunks,
+          result: info.result,
+          provider: info.provider,
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/orchestrator] checkpoint complete failed:", e instanceof Error ? e.message : String(e));
+        });
+      },
+      onChunkFailure: async (info) => {
+        await upsertAnalyzeChunkFailed({
+          tenderId,
+          userId,
+          contentHash,
+          chunkIndex: info.chunkIndex,
+          totalChunks: info.totalChunks,
+          errorMessage: info.errorMessage,
+          provider: info.provider,
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/orchestrator] checkpoint failure failed:", e instanceof Error ? e.message : String(e));
+        });
+      },
+    });
+
+    const job = await prisma.aiJob.findUnique({
+      where: { id: result.jobId },
+      select: { output: true },
+    });
+
+    let meta: AnalysisWithMeta | null = null;
+    if (job?.output) {
+      const parsed = parseJobOutput(job.output);
+      if (parsed) {
+        const aiResult = (parsed as any).result ?? { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" };
+        meta = {
+          result: aiResult,
+          isPartial: parsed.isPartial ?? false,
+          totalChunks: parsed.totalChunks ?? result.totalChunks,
+          completedChunks: parsed.completedChunks ?? result.completedChunks,
+          failedChunks: parsed.failedChunks ?? result.failedChunks,
+          skippedChunks: parsed.skippedChunks ?? 0,
+          chunkProviders: Array.isArray(parsed.chunkProviders) ? parsed.chunkProviders : Array(result.totalChunks).fill(null),
+          chunkResults: Array.isArray(parsed.chunkResults) ? parsed.chunkResults : [],
+        };
+      }
+    }
+
+    if (!meta) {
+      meta = {
+        result: { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" },
+        isPartial: result.isPartial,
+        totalChunks: result.totalChunks,
+        completedChunks: result.completedChunks,
+        failedChunks: result.failedChunks,
+        skippedChunks: 0,
+        chunkProviders: Array(result.totalChunks).fill(null),
+        chunkResults: [],
+      };
+    }
+
+    const tenderRecord = await prisma.tender.findUnique({
+      where: { id: tenderId },
+      select: { files: { select: { extractionMethod: true, ocrPages: true } } },
+    });
+
+    const effectiveExtractionMethod = tenderRecord?.files.some(
+      (f: { extractionMethod?: string | null; ocrPages?: number | null }) =>
+        f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
+    ) ? "ocr" : "text";
+
+    return {
+      jobId: result.jobId,
+      meta,
+      effectiveExtractionMethod,
+    };
+  } catch (err) {
+    console.error("[ai-analyze/orchestrator] execution failed:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming helper — runs the same analysis logic but emits progress
 // events over a text/event-stream response so the browser can show real-time
@@ -1036,159 +1150,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (isAIEnabled()) {
       try {
-        // Shared builder — IDENTICAL content + hash to the streaming path and
-        // the durable job service (lib/ai-jobs/analysis-job-service.ts), so all
-        // execution paths share one chunk-state identity.
+        // Phase 1: Use orchestrator for non-streaming analysis
         const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
-
-        // Compute content hash for continuation validation and auto-resume discovery
         const contentHash = computeAnalysisContentHash(tenderContent);
-        if (force) {
-          await clearAnalyzeCheckpoints(id, userId, contentHash);
-        } else {
-          await clearAnalyzeCheckpointsForContentHashMismatch(id, userId, contentHash);
-          const durableChunks = await getCompletedChunkResults(id, userId, contentHash);
-          if (durableChunks.length > 0) {
-            previousChunkResults = durableChunks;
-            startFromChunk = 0;
-            existingContentHash = contentHash;
-          }
-        }
-        if (!continueJobId && !force) {
-          const resumableJob = await findLatestResumableAiAnalyzeJob(id, userId, contentHash);
-          if (resumableJob) {
-            continueJobId = resumableJob.id;
-            previousChunkResults = resumableJob.previousChunkResults;
-            startFromChunk = 0;
-            existingContentHash = contentHash;
-          }
-        }
-        if (existingContentHash && existingContentHash !== contentHash) {
-          startFromChunk = undefined;
-          previousChunkResults = [];
-          continueJobId = null;
-        }
 
-        // Clean up stale RUNNING jobs before creating a new one.
-        // When a Vercel function is killed by the platform timeout, the job
-        // stays RUNNING indefinitely. Mark any RUNNING job older than 90s as
-        // FAILED so the UI doesn't show a phantom "in progress" state.
-        await prisma.aiJob.updateMany({
-          where: {
-            tenderId: id,
-            userId,
-            jobType: "AI_ANALYZE",
-            status: "RUNNING",
-            startedAt: { lt: new Date(Date.now() - 90_000) },
-          },
-          data: { status: "FAILED", finishedAt: new Date(), errorMessage: "Timed out (cleaned up by subsequent request)" },
-        }).catch(() => {});
-
-        // Create an AiJob record to track this synchronous analysis run
         nsContentHashForFallback = contentHash;
         const nsRunId = crypto.randomUUID();
-        // analysisVersion is assigned by the PostgreSQL sequence — no application value needed.
-
-        let analysisJob: { id: string } | null = null;
-        try {
-          analysisJob = await prisma.aiJob.create({
-            data: {
-              tenderId: id,
-              userId,
-              jobType: "AI_ANALYZE",
-              status: "RUNNING",
-              startedAt: new Date(),
-              input: JSON.stringify({
-                contentLength: tenderContent.length,
-                chunkCount: Math.ceil(tenderContent.length / 50_000),
-                contentHash,
-              }),
-            },
-            select: { id: true },
-          });
-          nsJobIdForFallback = analysisJob?.id ?? null;
-        } catch (jobCreateErr) {
-          console.warn("[ai-analyze] Failed to create AiJob record — continuing without job tracking:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
-        }
 
         // Restore provider cooldown state from DB before analysis.
-        // A 2-second timeout prevents a slow DB from blocking the analysis.
-        // The in-memory state is still usable without a successful restore.
         await Promise.race([
           restoreHealthFromDb(),
           new Promise<void>((r) => setTimeout(r, 2_000)),
         ]).catch(() => {});
 
-        const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
-        const onChunkStartNonStream = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
-          await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
-            console.error("[ai-analyze/non-stream] checkpoint start write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
-          });
-        };
-        const onChunkCompleteNonStream = async ({
-          completed,
-          totalChunks,
-          chunkIndex,
-          result,
-          provider,
-        }: {
-          completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>;
-          totalChunks: number;
-          chunkIndex?: number;
-          result?: AIAnalysisResult;
-          provider?: string | null;
-        }) => {
-          if (typeof chunkIndex === "number" && result) {
-            await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch((e: unknown) => {
-              console.error("[ai-analyze/non-stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
-            });
-          }
-          if (analysisJob) {
-            await prisma.aiJob.update({
-              where: { id: analysisJob.id },
-              data: {
-                output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
-              },
-            }).catch((e: unknown) => {
-              console.error("[ai-analyze/non-stream] AiJob partial output update failed (non-critical):", e instanceof Error ? e.message : String(e));
-            });
-          }
-        };
-        const onChunkFailureNonStream = async ({
-          chunkIndex,
-          totalChunks,
-          errorMessage,
-          provider,
-        }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
-          await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch((e: unknown) => {
-            console.error("[ai-analyze/non-stream] checkpoint failed write failed — chunk may be retried on resume:", e instanceof Error ? e.message : String(e));
-          });
-        };
-        let aiMeta: AnalysisWithMeta;
-        try {
-          aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkStart: onChunkStartNonStream, onChunkComplete: onChunkCompleteNonStream, onChunkFailure: onChunkFailureNonStream }),
-            AI_ANALYSIS_TIMEOUT_MS,
-          );
-        } catch (aiErr) {
-          // Fail the job before re-throwing
-          if (analysisJob) {
-            const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-            const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
-            await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
-              analysisSource: "REGEX_FALLBACK",
-              errorMessage: safeErrMsg,
-              status: "FAILED",
-            });
-          }
-          throw aiErr;
+        // Call orchestrator for analysis
+        const orchResult = await executeAnalysisViaOrchestrator(id, userId, contentHash, { force });
+        if (!orchResult) {
+          throw new Error("Orchestrator failed to execute analysis");
         }
-        const aiResult = aiMeta.result;
 
-        const effectiveExtractionMethodNonStreaming: string = tenderRecord.files.some(
-          (f: { extractionMethod?: string | null; ocrPages?: number | null }) =>
-            f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
-        ) ? "ocr" : "text";
+        const analysisJob = { id: orchResult.jobId };
+        nsJobIdForFallback = orchResult.jobId;
+        const aiMeta = orchResult.meta;
+        const aiResult = aiMeta.result;
+        const effectiveExtractionMethodNonStreaming = orchResult.effectiveExtractionMethod;
 
         if (aiMeta.isPartial) {
           // Non-destructive: stage partial result without touching canonical tender data.

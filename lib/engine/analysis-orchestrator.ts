@@ -270,15 +270,22 @@ export async function executeAnalysis(
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Analysis failed";
     errorMessage = msg;
+    // Preserve any partial progress made before failure
+    const chunkProviders: Array<string | null> = Array(totalChunks).fill(null);
+    for (const prev of previousChunkResults) {
+      if (Number.isInteger(prev.index) && prev.index >= 0 && prev.index < totalChunks) {
+        chunkProviders[prev.index] = prev.provider ?? null;
+      }
+    }
     analysisMeta = {
       result: { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" },
       isPartial: true,
       totalChunks,
-      completedChunks: 0,
-      failedChunks: totalChunks,
+      completedChunks: previousChunkResults.length,
+      failedChunks: totalChunks - previousChunkResults.length,
       skippedChunks: 0,
-      chunkProviders: Array(totalChunks).fill(null),
-      chunkResults: [],
+      chunkProviders,
+      chunkResults: previousChunkResults,
     };
   }
 
@@ -311,6 +318,7 @@ export async function executeAnalysis(
           chunkResults: analysisMeta.chunkResults,
           contentHash,
           analysisSource,
+          result: analysisMeta.result,
         }),
         errorMessage,
       },
