@@ -41,29 +41,31 @@ describe("approve-analysis route — source inspection", () => {
   // The /api/tenders/[id]/approve-analysis route flows through Prisma so
   // it cannot be invoked in this pure test runner. Instead, this is a
   // contract check that the route file exists and uses the helpers from
-  // analysis-source.ts (not a parallel ad-hoc implementation).
+  // production-analysis-service.ts (not a parallel ad-hoc implementation).
   it("exists and uses the canonical helpers", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("app/api/tenders/[id]/approve-analysis/route.ts", "utf8");
-    assert.match(source, /approveRegexFallbackAnalysis/);
-    assert.match(source, /revokeRegexFallbackApproval/);
+    assert.match(source, /approveFallbackAnalysis/);
+    assert.match(source, /revokeFallbackApproval/);
     assert.match(source, /requireRole\(\s*"ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\s*\)/);
   });
 });
 
-describe("generate route — regex fallback gate", () => {
-  it("imports the gate from analysis-source.ts and calls it", async () => {
+describe("generate route — comprehensive analysis gate", () => {
+  it("imports getTenderAnalysisState and stateCheckToGate from production-analysis-service", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    assert.match(source, /assertAnalysisReadyForFinalGeneration/);
+    assert.match(source, /getTenderAnalysisState/);
+    assert.match(source, /stateCheckToGate/);
     // Make sure the gate is actually invoked, not just imported.
-    assert.match(source, /await\s+assertAnalysisReadyForFinalGeneration\(/);
+    assert.match(source, /await\s+getTenderAnalysisState\(/);
   });
-  it("ai-proposal route also imports and invokes the gate", async () => {
+  it("ai-proposal route also imports and invokes the comprehensive gate", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("app/api/tenders/[id]/ai-proposal/route.ts", "utf8");
-    assert.match(source, /assertAnalysisReadyForFinalGeneration/);
-    assert.match(source, /await\s+assertAnalysisReadyForFinalGeneration\(/);
+    assert.match(source, /getTenderAnalysisState/);
+    assert.match(source, /stateCheckToGate/);
+    assert.match(source, /await\s+getTenderAnalysisState\(/);
   });
 });
 

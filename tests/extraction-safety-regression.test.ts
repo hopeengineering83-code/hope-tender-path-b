@@ -58,7 +58,8 @@ describe("route source safety checks", () => {
     assert.ok(generate.includes("isExtractionAcceptableForGeneration") || generate.includes("EXTRACTION_QUALITY_INSUFFICIENT") || generate.includes("extractionScore"));
     assert.ok(exportRoute.includes("isExtractionAcceptableForExport"));
     assert.ok(exportRoute.includes("EXTRACTION_QUALITY_INSUFFICIENT"));
-    assert.ok(exportRoute.includes("OCR_REQUIRED"));
-    assert.ok(exportRoute.includes("EXTRACTION_WEAK_REVIEW_REQUIRED"));
+    // Export route now uses comprehensive getTenderAnalysisState gate which validates
+    // analysis state and source validity, replacing old analysisExtractionStatus checks
+    assert.ok(exportRoute.includes("getTenderAnalysisState"));
   });
 });

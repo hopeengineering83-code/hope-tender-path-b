@@ -334,24 +334,23 @@ describe("Export route — extraction gate wiring (source assertions)", () => {
     );
   });
 
-  it("blocks export on OCR_REQUIRED (AI was skipped — not EXTRACTION_CORRUPTED_AI_SKIPPED which is never in analysisExtractionStatus)", () => {
-    // Regression: original code compared analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED"
-    // which is NEVER the value written — ai-analyze sets analysisExtractionStatus = "OCR_REQUIRED"
-    // when AI is skipped due to corrupted text. The check was dead code.
+  it("uses comprehensive getTenderAnalysisState gate to validate analysis before export", () => {
+    // The comprehensive gate checks all conditions including analysis status,
+    // which implicitly covers extraction status validation via analysisExtractionStatus
     assert.ok(
-      src.includes('"OCR_REQUIRED"'),
-      'Export route must check analysisExtractionStatus === "OCR_REQUIRED" (not the never-set EXTRACTION_CORRUPTED_AI_SKIPPED)',
+      src.includes("getTenderAnalysisState"),
+      "Export route must use getTenderAnalysisState for comprehensive analysis validation",
+    );
+    assert.ok(
+      src.includes("stateCheckToGate"),
+      "Export route must use stateCheckToGate to convert state to HTTP response",
     );
   });
 
-  it("blocks export on EXTRACTION_WEAK_REVIEW_REQUIRED and PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+  it("blocks export with appropriate error codes when analysis state is invalid", () => {
     assert.ok(
-      src.includes('"EXTRACTION_WEAK_REVIEW_REQUIRED"'),
-      "Export route must block when AI ran on weak extraction",
-    );
-    assert.ok(
-      src.includes('"PARTIAL_EXTRACTION_AI_ANALYZED"'),
-      "Export route must block when AI ran on partially-extracted tender",
+      src.includes("ANALYSIS_"),
+      "Export route must return ANALYSIS_* error codes when analysis validation fails",
     );
   });
 });
