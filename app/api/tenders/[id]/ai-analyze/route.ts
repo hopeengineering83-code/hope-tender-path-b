@@ -35,6 +35,7 @@ import {
   stageFallbackDraft,
   stagePartialResult,
 } from "../../../../../lib/ai-analyze-promotion";
+import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -550,7 +551,26 @@ async function handleStreamingAnalyze(
             const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
             try {
               aiMeta = await withTimeout(
-                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkStart, onChunkComplete, onChunkFailure }),
+                analyzeWithAI(tenderContent, {
+                  deadlineAt,
+                  startFromChunk,
+                  previousChunkResults,
+                  onChunkStart,
+                  onChunkComplete,
+                  onChunkFailure,
+                  // OBS-004 — fire-and-forget per-tenant AI usage tracking.
+                  onProviderAttempt: (provider, success, latencyMs, failureCategory) => {
+                    void recordAiUsage({
+                      userId,
+                      tenderId: id,
+                      provider,
+                      useCase: "extraction",
+                      latencyMs,
+                      success,
+                      failureCategory: failureCategory ?? null,
+                    });
+                  },
+                }),
                 AI_ANALYSIS_TIMEOUT_MS,
               );
             } catch (aiErr) {
@@ -1170,7 +1190,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkStart: onChunkStartNonStream, onChunkComplete: onChunkCompleteNonStream, onChunkFailure: onChunkFailureNonStream }),
+            analyzeWithAI(tenderContent, {
+              deadlineAt,
+              startFromChunk,
+              previousChunkResults,
+              onChunkStart: onChunkStartNonStream,
+              onChunkComplete: onChunkCompleteNonStream,
+              onChunkFailure: onChunkFailureNonStream,
+              // OBS-004 — fire-and-forget per-tenant AI usage tracking.
+              onProviderAttempt: (provider, success, latencyMs, failureCategory) => {
+                void recordAiUsage({
+                  userId,
+                  tenderId: id,
+                  provider,
+                  useCase: "extraction",
+                  latencyMs,
+                  success,
+                  failureCategory: failureCategory ?? null,
+                });
+              },
+            }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {

@@ -651,7 +651,24 @@ async function callProvider(
 
 export async function generateWithFallback(
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase; onProviderUsed?: (provider: AiProviderName) => void; deadlineAt?: number },
+  opts?: {
+    systemPrompt?: string;
+    geminiModel?: string;
+    useCase?: AiUseCase;
+    onProviderUsed?: (provider: AiProviderName) => void;
+    // OBS-004 — fire-and-forget hook so callers (which know userId/tenderId)
+    // can persist a usage record per actual outbound provider attempt. The
+    // callback is invoked for every provider that actually ran (success or
+    // failure), never for skipped (unconfigured / cooling / budget-exhausted)
+    // providers. latencyMs is wall-clock measured around the callProvider call.
+    onProviderAttempt?: (
+      provider: AiProviderName,
+      success: boolean,
+      latencyMs: number,
+      failureCategory?: string,
+    ) => void;
+    deadlineAt?: number;
+  },
 ): Promise<string> {
   const useCase = opts?.useCase ?? "default";
   const chain = providerChainForUseCase(useCase);
@@ -729,9 +746,13 @@ export async function generateWithFallback(
 
     tried.push(provider);
     actualAttempts++;
+    const attemptStartedAt = Date.now();
     const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase });
+    const attemptLatencyMs = Date.now() - attemptStartedAt;
     if (result) {
       opts?.onProviderUsed?.(provider);
+      // OBS-004 — record successful usage (fire-and-forget).
+      opts?.onProviderAttempt?.(provider, true, attemptLatencyMs);
       return result;
     }
     // callProvider returned null — capture the real reason recorded in the
@@ -749,6 +770,9 @@ export async function generateWithFallback(
       provider, configured: true, tried: true,
       lastErrorCategory: post.lastErrorCategory, coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
     });
+    // OBS-004 — record failed usage (fire-and-forget). Use the redacted
+    // lastErrorCategory from the post-attempt snapshot — never the raw error.
+    opts?.onProviderAttempt?.(provider, false, attemptLatencyMs, post.lastErrorCategory ?? undefined);
   }
 
   // No provider produced a usable result. Throw a structured
@@ -1750,7 +1774,13 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
   };
 }
 
-async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalChunks: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
+async function analyzeOneChunk(
+  tenderContent: string,
+  chunkIndex: number,
+  totalChunks: number,
+  onProviderUsed?: (provider: AiProviderName) => void,
+  onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
+): Promise<AIAnalysisResult> {
   const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
   const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.${chunkLabel ? `\n\nNOTE${chunkLabel}: This is one chunk of a larger tender document. Extract everything visible IN THIS CHUNK. Do not invent content from missing chunks; downstream merge will combine chunk results.` : ""}
 
@@ -1888,6 +1918,7 @@ ${tenderContent}`;
     geminiModel: process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL,
     useCase: "extraction",
     onProviderUsed,
+    onProviderAttempt,
   });
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -2029,9 +2060,15 @@ export function isProviderExhaustedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return PROVIDER_EXHAUSTED_PATTERN.test(msg);
 }
-export async function analyzeOneChunkWithRetry(content: string, index: number, total: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
+export async function analyzeOneChunkWithRetry(
+  content: string,
+  index: number,
+  total: number,
+  onProviderUsed?: (provider: AiProviderName) => void,
+  onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
+): Promise<AIAnalysisResult> {
   try {
-    return await analyzeOneChunk(content, index, total, onProviderUsed);
+    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt);
   } catch (err) {
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
@@ -2042,7 +2079,7 @@ export async function analyzeOneChunkWithRetry(content: string, index: number, t
     }
     logger.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
-    return await analyzeOneChunk(content, index, total, onProviderUsed);
+    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt);
   }
 }
 
@@ -2074,6 +2111,10 @@ export async function analyzeWithAI(
     onChunkStart?: (snapshot: { chunkIndex: number; totalChunks: number }) => void | Promise<void>;
     onChunkComplete?: (snapshot: { completed: AnalysisChunkCacheEntry[]; totalChunks: number; chunkIndex?: number; result?: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
     onChunkFailure?: (snapshot: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
+    // OBS-004 — propagated verbatim into generateWithFallback so callers
+    // (which know userId/tenderId) can persist a usage record per actual
+    // outbound provider attempt. Fire-and-forget at the route layer.
+    onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void;
   },
 ): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
@@ -2091,7 +2132,7 @@ export async function analyzeWithAI(
     let chunkProvider: string | null = null;
     try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
     try {
-      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
+      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt);
       const chunkResults = [{ index: 0, result, provider: chunkProvider }];
       try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
       return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };
@@ -2155,7 +2196,7 @@ export async function analyzeWithAI(
         const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
           chunkProviders[item.index] = p;
           chunkProvider = p;
-        });
+        }, opts?.onProviderAttempt);
         successesWithIdx.push({ index: item.index, result: res, provider: chunkProvider });
         completedChunks++;
         if (opts?.onChunkComplete) {
