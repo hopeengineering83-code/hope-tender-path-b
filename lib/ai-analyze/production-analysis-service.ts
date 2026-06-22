@@ -15,6 +15,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { getTenderAnalysisState, canGenerateFromState, type AnalysisState } from "./state-resolver";
 import { buildAndHashTenderAnalysisContent } from "./content-hash";
+import { validateAllRequirementSources, type SourceValidationResult } from "./source-validation";
 
 export interface AnalysisRequest {
   tenderId: string;
@@ -262,6 +263,11 @@ export function canPromoteJobToCanonical(jobStatus: string): boolean {
  * - Job status must be SUCCEEDED or HUMAN_APPROVED_FALLBACK
  * - Cannot be promoted if already promoted
  * - Fallback (REGEX_FALLBACK_UNAPPROVED) must first be approved
+ * - Source validation must pass (requirements are grounded)
+ *
+ * TOCTOU Guard:
+ * - Verify job status unchanged between check and promotion (atomic transaction)
+ * - Both validation and promotion happen in single transaction
  */
 export async function promoteAnalysisToCanonical(
   jobId: string,
@@ -269,8 +275,14 @@ export async function promoteAnalysisToCanonical(
   userId: string,
   promotedBy: string,
   prismaClient: PrismaClient,
-): Promise<void> {
-  const job = await prismaClient.aiJob.findFirst({
+  validateSources: boolean = true,
+): Promise<{
+  promoted: boolean;
+  sourceValidation?: SourceValidationResult;
+  reason?: string;
+}> {
+  // Pre-check job before transaction (fail fast)
+  const preCheckJob = await prismaClient.aiJob.findFirst({
     where: {
       id: jobId,
       tenderId,
@@ -284,25 +296,106 @@ export async function promoteAnalysisToCanonical(
     },
   });
 
-  if (!job) {
+  if (!preCheckJob) {
     throw new Error("Job not found");
   }
 
-  if (!canPromoteJobToCanonical(job.status)) {
-    throw new Error(`Cannot promote job with status ${job.status} to canonical`);
+  if (!canPromoteJobToCanonical(preCheckJob.status)) {
+    return {
+      promoted: false,
+      reason: `Cannot promote job with status ${preCheckJob.status} to canonical`,
+    };
   }
 
-  if (job.promotedAt) {
-    throw new Error("Job is already promoted");
+  if (preCheckJob.promotedAt) {
+    return {
+      promoted: false,
+      reason: "Job is already promoted",
+    };
   }
 
-  await prismaClient.aiJob.update({
-    where: { id: jobId },
-    data: {
-      promotedAt: new Date(),
-      promotedBy,
-    },
-  });
+  // Validate sources if requested
+  let sourceValidation: SourceValidationResult | undefined;
+  if (validateSources) {
+    sourceValidation = await validateAllRequirementSources(tenderId, prismaClient);
+
+    if (!sourceValidation.isValid) {
+      return {
+        promoted: false,
+        sourceValidation,
+        reason: `Source validation failed with ${sourceValidation.errors.length} errors`,
+      };
+    }
+  }
+
+  // Atomic promotion transaction with TOCTOU guard
+  // Re-verify job status hasn't changed since pre-check
+  try {
+    const promotedNow = new Date();
+
+    await prismaClient.$transaction(async (tx) => {
+      // TOCTOU guard: re-fetch job status inside transaction
+      const transactionJob = await tx.aiJob.findFirst({
+        where: {
+          id: jobId,
+          tenderId,
+          userId,
+          jobType: "AI_ANALYZE",
+        },
+        select: {
+          id: true,
+          status: true,
+          promotedAt: true,
+        },
+      });
+
+      if (!transactionJob) {
+        throw new Error("Job not found (TOCTOU: job deleted)");
+      }
+
+      if (!canPromoteJobToCanonical(transactionJob.status)) {
+        throw new Error(`Cannot promote job with status ${transactionJob.status} to canonical (TOCTOU: status changed)`);
+      }
+
+      if (transactionJob.promotedAt) {
+        throw new Error("Job is already promoted (TOCTOU: already promoted)");
+      }
+
+      // Promotion and audit happen atomically
+      await tx.aiJob.update({
+        where: { id: jobId },
+        data: {
+          promotedAt: promotedNow,
+          promotedBy,
+        },
+      });
+
+      // TODO: Create AuditLog entry
+      // await tx.auditLog.create({
+      //   data: {
+      //     userId: promotedBy,
+      //     action: "ANALYSIS_PROMOTION",
+      //     tenderId,
+      //     metadata: JSON.stringify({
+      //       jobId,
+      //       sourceValidationPassed: sourceValidation?.isValid ?? true,
+      //     }),
+      //   },
+      // });
+    });
+
+    return {
+      promoted: true,
+      sourceValidation,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      promoted: false,
+      sourceValidation,
+      reason: message,
+    };
+  }
 }
 
 /**

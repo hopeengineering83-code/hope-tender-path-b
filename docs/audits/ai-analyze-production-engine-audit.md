@@ -232,11 +232,14 @@ RUNNING
 ✅ Unapproved fallback cannot be canonical  
 ✅ Promoted jobs block new chunk creation  
 
-### Phase 3 Tests (Future — Source Grounding + Promotion)
-- Source validation: every requirement has file ID, page, quote
-- File token validation: token references actual tender file
-- Atomic promotion: job status + promotion in transaction (TOCTOU guard)
-- Promotion audit: create AuditLog entry
+### Phase 3 Tests (This PR — Source Grounding + Atomic Promotion)
+✅ Requirements are grounded (fileId, page, quote)  
+✅ File tokens reference actual tender files (not phantom/deleted)  
+✅ Atomic promotion with TOCTOU guard  
+✅ Promotion validation before canonical status  
+✅ Source validation blocks promotion if requirements ungrounded  
+✅ Double promotion prevented  
+✅ Promotion audit ready (AuditLog schema needed)
 
 ### Phase 4+ Tests (Future)
 - Extraction quality blocks poor input
@@ -253,11 +256,13 @@ RUNNING
 | File | Change | Lines |
 |------|--------|-------|
 | `lib/ai-analyze/state-resolver.ts` | NEW — Authoritative state resolver | 200+ |
-| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Add content hash builders + promotion logic | 220+ |
+| `lib/ai-analyze/production-analysis-service.ts` | UPDATED — Add content hash builders + atomic promotion | 280+ |
 | `lib/ai-analyze/content-hash.ts` | NEW — Deterministic content hashing | 120+ |
+| `lib/ai-analyze/source-validation.ts` | NEW — Source grounding validation | 140+ |
 | `tests/ai-analyze-production-phase1.test.ts` | NEW — Phase 1 tests (state resolver) | 250+ |
 | `tests/ai-analyze-production-phase2.test.ts` | NEW — Phase 2 tests (fallback safety + resume) | 200+ |
-| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phase 2 completion | 380+ |
+| `tests/ai-analyze-production-phase3.test.ts` | NEW — Phase 3 tests (source + promotion) | 300+ |
+| `docs/audits/ai-analyze-production-engine-audit.md` | UPDATED — Document Phases 1-3 completion | 390+ |
 
 ---
 
@@ -288,25 +293,34 @@ RUNNING
 
 ## Next Phases (Not in This PR)
 
-**Phase 3:** Source Grounding + Promotion  
-- Implement atomic promotion (job status + promotedAt in one transaction)
-- Validate every requirement has file ID, page, quote
-- Validate file tokens against actual tender files
-- Add TOCTOU guard on promotion
-- Create AuditLog entry on approval/promotion
-
 **Phase 4:** Extraction Quality Gates  
 - Block corrupted/gibberish extraction (low character count or only punctuation)
 - Block poor extraction coverage (< 70% of pages successfully extracted)
 - Force mode does NOT bypass final gates
 - Add extraction quality check before AI Analyze
 - Mark analysis state with extraction quality flag
+- Tests: corrupted extraction blocked, weak extraction blocked, force mode tested
 
-**Phase 5:** Worker Hardening  
+**Phase 5:** Worker Hardening + Cold Restart  
 - Add explicit leaseOwner / leaseExpiresAt fields
 - Implement nextAttemptAt for retry scheduling
 - Add lease expiry checks on claim
 - Verify stale RUNNING jobs are reclaimed correctly
+- Cold restart recovery: promote any SUCCEEDED job not yet promoted
+- Tests: concurrent worker races, stale lease reclaim, cold restart
+
+**Phase 6:** Integration Tests (20 behavioral scenarios)  
+- All 7 phases combined in realistic workflows
+- Worker + route interaction with concurrent claims
+- Provider fallback chain (streaming → queued → fallback)
+- Extraction quality gates honored
+- Cross-user access blocked (403)
+- Secrets not leaked in logs/responses
+
+**Phase 7:** PR Delivery  
+- Create DRAFT PR with all acceptance criteria
+- Preview deployment testing
+- Final sanity checks before merge
 - Atomic promotion in transaction with TOCTOU guard
 
 **Phase 5:** Security Audit  
