@@ -26,10 +26,9 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import {
   ANALYSIS_APPROVAL_GAP_TITLE,
-  approveRegexFallbackAnalysis,
   detectAnalysisSourceWithApproval,
-  revokeRegexFallbackApproval,
 } from "../../../../../lib/engine/analysis-source";
+import { approveFallbackAnalysis, revokeFallbackApproval } from "../../../../../lib/ai-analyze/production-analysis-service";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
@@ -57,17 +56,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     const body = await req.json().catch(() => ({}));
-    const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : null;
+    const reason = typeof body.note === "string" ? body.note.trim().slice(0, 500) : null;
 
-    await approveRegexFallbackAnalysis(prisma, id, note);
+    // Require meaningful reason (min 5 chars)
+    if (!reason || reason.length < 5) {
+      return err("Approval reason must be at least 5 characters", 400, { code: "APPROVAL_REASON_TOO_SHORT" });
+    }
+
+    // Use safe approval function with immutable audit trail
+    const approvalResult = await approveFallbackAnalysis(
+      {
+        tenderId: id,
+        userId: actor.id,
+        approverId: actor.id,
+        reason,
+      },
+      prisma,
+    );
+
+    if (!approvalResult.ok) {
+      return err(approvalResult.reason || "Approval failed", 400, { code: "APPROVAL_FAILED" });
+    }
+
     const source = await detectAnalysisSourceWithApproval(prisma, id, tender);
-    await logAction({
-      userId: actor.id,
-      action: "ANALYSIS_REGEX_FALLBACK_APPROVED",
-      entityType: "Tender",
-      entityId: id,
-      description: `Human approved current regex-fallback analysis${note ? ` — ${note}` : ""}.`,
-    });
 
     return NextResponse.json({ success: true, approved: true, analysisSource: source });
   } catch (error) {
@@ -86,14 +97,12 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    await revokeRegexFallbackApproval(prisma, id);
-    await logAction({
-      userId: actor.id,
-      action: "ANALYSIS_REGEX_FALLBACK_REVOKED",
-      entityType: "Tender",
-      entityId: id,
-      description: "Human revoked prior approval of regex-fallback analysis.",
-    });
+    // Use safe revocation function with immutable audit trail
+    const revokeResult = await revokeFallbackApproval(id, actor.id, prisma);
+    if (!revokeResult.ok) {
+      return err(revokeResult.reason || "Revocation failed", 500, { code: "REVOCATION_FAILED" });
+    }
+
     return NextResponse.json({ success: true, approved: false, gapTitle: ANALYSIS_APPROVAL_GAP_TITLE });
   } catch (error) {
     console.error("approve-analysis DELETE failed", error);

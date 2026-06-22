@@ -37,6 +37,18 @@ export interface AnalysisStateCheckResult {
   nextAction?: string;
 }
 
+/**
+ * Gate result for use in route handlers.
+ * Provides HTTP-friendly error responses.
+ */
+export interface AnalysisGateResult {
+  ok: boolean;
+  code?: string;
+  message?: string;
+  nextAction?: string;
+  statusCode?: 409 | 422 | 503;
+}
+
 export interface SafePromotionInput {
   jobId: string;
   tenderId: string;
@@ -58,6 +70,35 @@ export interface FallbackApprovalInput {
   approverId: string;
   reason: string;
   jobId?: string;
+}
+
+/**
+ * Convert analysis state check to HTTP-friendly gate result.
+ * Used by generation, export, and download routes.
+ */
+export function stateCheckToGate(state: AnalysisStateCheckResult): AnalysisGateResult {
+  if (state.ok) {
+    return { ok: true };
+  }
+
+  const statusMap: Record<string, 409 | 422 | 503> = {
+    QUEUED: 409,
+    RUNNING: 409,
+    PARTIAL_SUCCESS: 422,
+    REGEX_FALLBACK_FAILED: 422,
+    REGEX_FALLBACK_UNAPPROVED: 409,
+    SUPERSEDED: 422,
+    RESOLVER_ERROR: 503,
+    ANALYSIS_STATE_UNAVAILABLE: 503,
+  };
+
+  return {
+    ok: false,
+    code: `ANALYSIS_${state.state}`,
+    message: state.reason || "Analysis state prevents generation",
+    nextAction: state.nextAction,
+    statusCode: statusMap[state.state] || 409,
+  };
 }
 
 /**
@@ -648,6 +689,60 @@ export async function approveFallbackAnalysis(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[production-analysis-service] approveFallbackAnalysis error:", message);
+    return { ok: false, reason: `Internal error: ${message.slice(0, 100)}` };
+  }
+}
+
+/**
+ * Revoke fallback approval with immutable audit trail.
+ *
+ * Sets isResolved to false (approval is withdrawn) and records action.
+ */
+export async function revokeFallbackApproval(
+  tenderId: string,
+  userId: string,
+  prisma: PrismaClient,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Find existing approval
+      const existing = await tx.complianceGap.findFirst({
+        where: {
+          tenderId,
+          title: "ANALYSIS_APPROVAL:REGEX_FALLBACK",
+        },
+      });
+
+      if (existing) {
+        // Mark as revoked
+        await tx.complianceGap.update({
+          where: { id: existing.id },
+          data: {
+            isResolved: false,
+            updatedAt: new Date(),
+          },
+        });
+      }
+
+      // Write immutable audit record
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: "FALLBACK_ANALYSIS_APPROVAL_REVOKED",
+          entityType: "Tender",
+          entityId: tenderId,
+          description: "Regex fallback analysis approval revoked",
+          metadata: JSON.stringify({
+            approvalRevoked: true,
+          }),
+        },
+      });
+    });
+
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[production-analysis-service] revokeFallbackApproval error:", message);
     return { ok: false, reason: `Internal error: ${message.slice(0, 100)}` };
   }
 }
