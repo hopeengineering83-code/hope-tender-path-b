@@ -210,7 +210,10 @@ type SavedJobOutput = {
   isPartial?: boolean;
   totalChunks?: number;
   completedChunks?: number;
+  failedChunks?: number;
+  skippedChunks?: number;
   contentHash?: string;
+  chunkProviders?: Array<string | null>;
   chunkResults?: Array<{ index: number; result: unknown; provider?: string | null }>;
 };
 
@@ -317,6 +320,9 @@ async function executeAnalysisViaOrchestrator(
       if (parsed) {
         const aiResult = (parsed as any).result ?? { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" };
         const totalChunks = parsed.totalChunks ?? result.totalChunks ?? 1;
+        const chunkResults = Array.isArray(parsed.chunkResults)
+          ? (parsed.chunkResults as Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>)
+          : [];
         meta = {
           result: aiResult,
           isPartial: parsed.isPartial ?? false,
@@ -325,7 +331,7 @@ async function executeAnalysisViaOrchestrator(
           failedChunks: (parsed.failedChunks ?? result.failedChunks) ?? 0,
           skippedChunks: parsed.skippedChunks ?? 0,
           chunkProviders: Array.isArray(parsed.chunkProviders) ? parsed.chunkProviders : Array(totalChunks).fill(null),
-          chunkResults: Array.isArray(parsed.chunkResults) ? parsed.chunkResults : [],
+          chunkResults,
         };
       }
     }
