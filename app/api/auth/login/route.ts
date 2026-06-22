@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -127,7 +128,7 @@ export async function POST(req: Request) {
       try {
         passwordOk = await bcrypt.compare(password, user.passwordHash);
       } catch (error) {
-        console.error("Password verification failed:", safeMessage(error));
+        logger.error("Password verification failed:", { detail: safeMessage(error) });
         return NextResponse.json(
           { error: "Password verification failed", detail: "The stored password hash is invalid for this user. Reset or recreate the user password." },
           { status: 500 },
@@ -157,7 +158,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     const msg = safeMessage(error);
-    console.error("Login error:", msg);
+    logger.error("Login error:", { detail: msg });
     return NextResponse.json(
       { error: "Login failed", detail: msg },
       { status: 500 },

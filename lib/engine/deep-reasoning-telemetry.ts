@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 /**
  * Deep-reasoning telemetry collector.
  *
@@ -121,7 +122,7 @@ export class DeepReasoningTelemetry {
         succeeded: false,
         metadata: { ...metadata, costGuard: "skipped", used, cap },
       });
-      console.warn(`[deep-reasoning-telemetry] Cost guard: skipping ${step} — ${used}/${cap} call cap already reached. Raise TENDER_DEEP_REASONING_MAX_CALLS to allow more.`);
+      logger.warn(`[deep-reasoning-telemetry] Cost guard: skipping ${step} — ${used}/${cap} call cap already reached. Raise TENDER_DEEP_REASONING_MAX_CALLS to allow more.`);
       throw new DeepReasoningBudgetExceededError(step, used, cap);
     }
     const startedAt = Date.now();

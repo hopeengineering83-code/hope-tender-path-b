@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Submission Plan Completeness endpoint.
 //
 // Returns the full per-row plan view answering the screenshot question
@@ -106,7 +107,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       warnings: report.warnings,
     });
   } catch (error) {
-    console.error("submission-plan route failed", error);
+    logger.error("submission-plan route failed", { detail: error });
     return err("Submission-plan route failed.", 500, { code: "SUBMISSION_PLAN_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

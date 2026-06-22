@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 // Provider health store — DB-backed persistence for cold-start recovery.
 //
 // This module provides a higher-level API over the ProviderHealthSnapshot table.
@@ -118,7 +119,7 @@ export async function markProviderFailed(
       },
     });
   } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderFailed:", err instanceof Error ? err.message : String(err));
+    logger.warn("[provider-health-store] Failed to persist markProviderFailed:", { detail: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -147,7 +148,7 @@ export async function markProviderAnalysisOK(provider: string): Promise<void> {
       },
     });
   } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderAnalysisOK:", err instanceof Error ? err.message : String(err));
+    logger.warn("[provider-health-store] Failed to persist markProviderAnalysisOK:", { detail: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -172,7 +173,7 @@ export async function markProviderOK(provider: string): Promise<void> {
       },
     });
   } catch (err) {
-    console.warn("[provider-health-store] Failed to persist markProviderOK:", err instanceof Error ? err.message : String(err));
+    logger.warn("[provider-health-store] Failed to persist markProviderOK:", { detail: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -219,7 +220,7 @@ export async function getProviderHealthSummary(): Promise<Array<{
       lastTestedAt: r.lastFailureAt ?? r.lastSuccessAt ?? r.updatedAt,
     }));
   } catch (err) {
-    console.warn("[provider-health-store] Failed to fetch health summary:", err instanceof Error ? err.message : String(err));
+    logger.warn("[provider-health-store] Failed to fetch health summary:", { detail: err instanceof Error ? err.message : String(err) });
     return [];
   }
 }
@@ -271,7 +272,7 @@ export async function loadProviderHealthIntoMemory(
       }
     }
   } catch (err) {
-    console.warn("[provider-health-store] loadProviderHealthIntoMemory failed:", err instanceof Error ? err.message : String(err));
+    logger.warn("[provider-health-store] loadProviderHealthIntoMemory failed:", { detail: err instanceof Error ? err.message : String(err) });
   }
 }
 

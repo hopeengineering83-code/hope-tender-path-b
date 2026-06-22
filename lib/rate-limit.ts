@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { createHash } from "crypto";
 import { prisma, prismaReady } from "./prisma";
 
@@ -60,7 +61,7 @@ export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Pr
     const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
     const emergencyFailOpen = process.env.RATE_LIMIT_ALLOW_DEGRADED === "true";
     if (production && !emergencyFailOpen) {
-      console.error("[rate-limit] Persistent limiter unavailable; request denied:", message.slice(0, 120));
+      logger.error("[rate-limit] Persistent limiter unavailable; request denied:", { detail: message.slice(0, 120) });
       return {
         allowed: false,
         remaining: 0,
@@ -69,7 +70,7 @@ export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Pr
     }
 
     if (production) {
-      console.warn("[rate-limit] Emergency degraded in-memory limiter enabled:", message.slice(0, 120));
+      logger.warn("[rate-limit] Emergency degraded in-memory limiter enabled:", { detail: message.slice(0, 120) });
     }
     return rateLimit(key, cfg);
   }

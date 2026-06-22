@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { logger } from "../../../../lib/observability";
 
 export default function TenderDetailError({
   error,
@@ -12,7 +13,7 @@ export default function TenderDetailError({
 }) {
   useEffect(() => {
     // Log to console in all environments for debugging
-    console.error("[TenderDetailError]", error);
+    logger.error("[TenderDetailError]", { detail: error });
   }, [error]);
 
   return (

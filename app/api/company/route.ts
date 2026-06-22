@@ -1,3 +1,4 @@
+import { logger } from "../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
@@ -236,12 +237,12 @@ export async function PUT(req: Request) {
         const update = mergeFactsIntoCompany(company, extracted);
         if (Object.keys(update).length > 0) {
           await prisma.company.update({ where: { id: company.id }, data: update });
-          console.info(`[company-fact-extractor] Auto-filled ${Object.keys(update).length} field(s):`, Object.keys(update).join(", "));
+          logger.info(`[company-fact-extractor] Auto-filled ${Object.keys(update).length} field(s):`, { detail: Object.keys(update).join(", ") });
         }
       }
     } catch (eErr) {
       // Non-critical: the company is already saved. Log and continue.
-      console.warn("[company-fact-extractor] auto-extraction failed:", eErr instanceof Error ? eErr.message : eErr);
+      logger.warn("[company-fact-extractor] auto-extraction failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
     }
 
     const refreshed = await prisma.company.findUnique({
@@ -255,7 +256,7 @@ export async function PUT(req: Request) {
     const fallback = deriveCompanyProfileFallback(docs);
     return NextResponse.json(serializeCompany(refreshed, fallback));
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to save company" }, { status: 500 });
   }
 }

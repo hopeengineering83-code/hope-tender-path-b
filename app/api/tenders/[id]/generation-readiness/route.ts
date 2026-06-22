@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -116,7 +117,7 @@ export async function GET(
     });
   } catch (error) {
     const diagnosticId = randomUUID();
-    console.error("[generation-readiness]", {
+    logger.error("[generation-readiness]", {
       route: "/api/tenders/[id]/generation-readiness",
       tenderId,
       diagnosticId,

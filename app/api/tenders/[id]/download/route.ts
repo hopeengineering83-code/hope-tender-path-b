@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -557,7 +558,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (type === "pdf") return await proposalPdf(actor.id, tender, searchParams.get("docId") ?? null);
     return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409, { code: "DIRECT_PROPOSAL_EXPORT_DISABLED" });
   } catch (error) {
-    console.error("Tender download route failed", error);
+    logger.error("Tender download route failed", { detail: error });
     return err("Download route failed.", 500, { code: "DOWNLOAD_ROUTE_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }

@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
@@ -27,7 +28,7 @@ export async function GET(
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
-    console.error("[lifecycle]", error);
+    logger.error("[lifecycle]", { detail: error });
     const message = error instanceof Error ? error.message : "Failed to compute lifecycle";
     return NextResponse.json(
       { ok: false, error: message },

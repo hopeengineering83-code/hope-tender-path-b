@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 /**
  * Semantic match-to-criteria aligner.
  *
@@ -380,13 +381,13 @@ export async function alignMatchesToEvaluatorCriteria(input: {
   try {
     raw = await generateWithFallback(prompt, { systemPrompt: ALIGNER_SYSTEM_PROMPT });
   } catch (err) {
-    console.warn(`[semantic-match-aligner] AI call failed: ${err instanceof Error ? err.message : String(err)} — alignment skipped.`);
+    logger.warn(`[semantic-match-aligner] AI call failed: ${err instanceof Error ? err.message : String(err)} — alignment skipped.`);
     return null;
   }
 
   const report = parseAlignmentReport(raw, input.comprehension);
   if (!report) {
-    console.warn("[semantic-match-aligner] AI returned malformed JSON — alignment skipped.");
+    logger.warn("[semantic-match-aligner] AI returned malformed JSON — alignment skipped.");
     return null;
   }
   return report;

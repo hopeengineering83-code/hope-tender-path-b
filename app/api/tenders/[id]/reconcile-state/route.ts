@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
@@ -44,7 +45,7 @@ export async function POST(
       analysisInfo
     });
   } catch (error) {
-    console.error("[reconcile-state]", error);
+    logger.error("[reconcile-state]", { detail: error });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

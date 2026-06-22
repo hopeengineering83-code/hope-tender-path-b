@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -72,7 +73,7 @@ export async function PUT(
     });
     return NextResponse.json(normalizeProject(updated as unknown as Record<string, unknown>));
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to update project" }, { status: 500 });
   }
 }

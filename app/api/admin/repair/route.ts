@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -282,11 +283,11 @@ export async function POST(req: Request) {
       requirementsCleaned: results.requirements?.cleared ?? 0,
       documentsDeleted: results.pruneSuperseded?.deleted ?? 0,
     },
-  }).catch((err) => console.warn("Failed to log repair action:", err));
+  }).catch((err) => logger.warn("Failed to log repair action:", { detail: err }));
 
   return NextResponse.json(results);
   } catch (error) {
-    console.error("Admin repair route error:", error);
+    logger.error("Admin repair route error:", { detail: error });
     const raw = error instanceof Error ? error.message : "Repair failed";
     const safe = raw
       .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")

@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Bulk Generated Proposal quality reassessment.
 //
 // Screenshot regression:
@@ -293,7 +294,7 @@ export async function POST(req: Request) {
       rows,
     });
   } catch (error) {
-    console.error("reassess route failed", error);
+    logger.error("reassess route failed", { detail: error });
     return err("Bulk reassessment failed.", 500, { code: "REASSESS_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }

@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
@@ -139,7 +140,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const payload = await withDashboardPayload(tender as any);
     return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo, aiAnalyzeCheckpointProgress });
   } catch (error) {
-    console.error("[GET /api/tenders/[id]] failed:", error);
+    logger.error("[GET /api/tenders/[id]] failed:", { detail: error });
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
   }
 }
@@ -252,7 +253,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
     return NextResponse.json(await withDashboardPayload(tender as any));
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to update tender" }, { status: 500 });
   }
 }
@@ -279,7 +280,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to delete tender" }, { status: 500 });
   }
 }

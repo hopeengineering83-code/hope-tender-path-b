@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -89,7 +90,7 @@ export async function DELETE(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Company document DELETE failed", error);
+    logger.error("Company document DELETE failed", { detail: error });
     return NextResponse.json({ error: "Failed to delete document" }, { status: 500 });
   }
 }

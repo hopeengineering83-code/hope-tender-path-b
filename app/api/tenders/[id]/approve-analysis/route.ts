@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Human approval for a regex-fallback analysis.
 //
 // When all AI providers fail and the engine falls back to the regex
@@ -71,7 +72,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({ success: true, approved: true, analysisSource: source });
   } catch (error) {
-    console.error("approve-analysis POST failed", error);
+    logger.error("approve-analysis POST failed", { detail: error });
     return err("Approve-analysis failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }
@@ -96,7 +97,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true, approved: false, gapTitle: ANALYSIS_APPROVAL_GAP_TITLE });
   } catch (error) {
-    console.error("approve-analysis DELETE failed", error);
+    logger.error("approve-analysis DELETE failed", { detail: error });
     return err("Revoke-approval failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

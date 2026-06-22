@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Section-level proposal regeneration API.
 //
 // POST /api/tenders/[id]/regenerate-section
@@ -153,19 +154,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (experts.length === 0) {
     if (vaultExperts.length > 0) {
       experts = vaultExperts;
-      console.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
+      logger.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
     } else {
       experts = tender.expertMatches.map((m) => m.expert);
-      if (experts.length > 0) console.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
+      if (experts.length > 0) logger.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
     }
   }
   if (projects.length === 0) {
     if (vaultProjects.length > 0) {
       projects = vaultProjects as typeof projects;
-      console.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
+      logger.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
     } else {
       projects = tender.projectMatches.map((m) => m.project);
-      if (projects.length > 0) console.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
+      if (projects.length > 0) logger.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
     }
   }
 
@@ -296,7 +297,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const { generateWithFallback } = await import("../../../../../lib/ai");
       sectionMarkdown = await generateWithFallback(spec.userPrompt, { systemPrompt: spec.systemPrompt });
     } catch (err) {
-      console.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
+      logger.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
     }
 
     if (!sectionMarkdown || sectionMarkdown.trim().length < 50) {
@@ -317,7 +318,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fallback: false,
     });
   } catch (error) {
-    console.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
+    logger.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
     return NextResponse.json({ error: "Section regeneration failed. Retry or review server logs." }, { status: 500 });
   }
 }

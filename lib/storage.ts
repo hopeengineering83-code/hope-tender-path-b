@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { mkdir, writeFile, readFile, unlink } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -187,7 +188,7 @@ class DbBase64Storage implements StorageAdapter {
     }
     if (isProduction() && !warnedAboutDatabaseFallback) {
       warnedAboutDatabaseFallback = true;
-      console.warn("[storage] BLOB_READ_WRITE_TOKEN is not configured; using bounded database file storage fallback");
+      logger.warn("[storage] BLOB_READ_WRITE_TOKEN is not configured; using bounded database file storage fallback");
     }
     return { storagePath: "", fileContent: buffer.toString("base64"), provider: "db-base64" as const };
   }

@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { getSession, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getStorageAdapter } from "../../../../../lib/storage";
@@ -51,7 +52,7 @@ export async function GET(
       fileName: asset.originalFileName,
     });
   } catch (error) {
-    console.error("[company-assets] storage read failed", {
+    logger.error("[company-assets] storage read failed", {
       assetId: id,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
@@ -68,7 +69,7 @@ export async function GET(
     buffer,
   );
   if (!validation.ok) {
-    console.warn("[company-assets] blocked invalid stored asset", { assetId: id, assetType: asset.assetType });
+    logger.warn("[company-assets] blocked invalid stored asset", { assetId: id, assetType: asset.assetType });
     return privateText("Stored asset failed security validation and must be replaced", 422);
   }
 

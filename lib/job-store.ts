@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { randomUUID } from "crypto";
 import { prisma, prismaReady } from "./prisma";
 
@@ -39,7 +40,7 @@ function queueDurableWrite(jobId: string, operation: () => Promise<void>): void 
   const next = prior
     .then(operation)
     .catch((error) => {
-      console.error(`[job-store] Durable job write failed for ${jobId}:`, error instanceof Error ? error.message : String(error));
+      logger.error(`[job-store] Durable job write failed for ${jobId}:`, { detail: error instanceof Error ? error.message : String(error) });
     })
     .finally(() => {
       if (durableWrites.get(jobId) === next) durableWrites.delete(jobId);

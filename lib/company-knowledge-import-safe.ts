@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 /**
  * Company knowledge importer — three-tier trust model:
  *
@@ -308,7 +309,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
 
         if (!sourceDoc || !isExpertDoc(sourceDoc)) {
           droppedExperts.push(e.fullName);
-          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped expert "${e.fullName}" — no EXPERT_CV source found.`);
+          logger.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped expert "${e.fullName}" — no EXPERT_CV source found.`);
           continue;
         }
 
@@ -333,7 +334,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
 
         if (!sourceDoc || !isProjectDoc(sourceDoc)) {
           droppedProjects.push(p.name);
-          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped project "${p.name}" — no project-reference source found.`);
+          logger.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped project "${p.name}" — no project-reference source found.`);
           continue;
         }
 
@@ -353,7 +354,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       }
 
       if (droppedExperts.length > 0 || droppedProjects.length > 0) {
-        console.warn(`[company-knowledge-import] Category enforcement dropped ${droppedExperts.length} expert(s) and ${droppedProjects.length} project(s).`);
+        logger.warn(`[company-knowledge-import] Category enforcement dropped ${droppedExperts.length} expert(s) and ${droppedProjects.length} project(s).`);
       }
 
       for (const doc of [...expertDocs, ...projectDocs]) {
@@ -364,12 +365,12 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       }
 
       if (aiResult.warnings.length > 0) {
-        console.warn("[company-knowledge-import] AI extraction warnings:", aiResult.warnings);
+        logger.warn("[company-knowledge-import] AI extraction warnings:", { detail: aiResult.warnings });
       }
     } catch (err) {
       aiFailures++;
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error("[company-knowledge-import] AI extraction failed, falling back to regex:", errMsg);
+      logger.error("[company-knowledge-import] AI extraction failed, falling back to regex:", { detail: errMsg });
 
       for (const doc of docs) {
         const text = doc.extractedText ?? "";

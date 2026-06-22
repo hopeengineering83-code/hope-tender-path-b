@@ -1,3 +1,4 @@
+import { logger } from "../../../../../../lib/observability";
 // POST /api/tenders/[id]/submission-plan/build
 //
 // Builds and persists a submission plan for the given tender.
@@ -387,7 +388,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       files: fileStatuses,
     });
   } catch (error) {
-    console.error("[submission-plan/build] error:", error);
+    logger.error("[submission-plan/build] error:", { detail: error });
     return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
   }
 }

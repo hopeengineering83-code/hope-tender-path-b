@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -63,7 +64,7 @@ export async function POST() {
       });
       reextracted += 1;
     } catch (err) {
-      console.error(`[reimport] re-extract failed for ${doc.originalFileName}:`, err);
+      logger.error(`[reimport] re-extract failed for ${doc.originalFileName}:`, { detail: err });
     }
   }
 
