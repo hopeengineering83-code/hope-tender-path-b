@@ -122,6 +122,13 @@ async function singleDocument(userId: string, tender: any, docId: string) {
   if (!isFinalExportCandidateDocument(raw)) return err("This workspace draft is not a final export file.", 409, { code: "INTERNAL_DRAFT_NOT_EXPORTABLE" });
   if (!generatedDocumentHasContent(raw)) return err("Document content is unavailable.", 409, { code: "MISSING_CONTENT" });
 
+  // Central authoritative readiness gate (condition K). Downloading a single
+  // final document is an export; without this it would bypass the gate that
+  // zipPackage enforces, letting a stale-hash / revoked-fallback / ungrounded
+  // analysis leak final content one file at a time.
+  const singleGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
+  if (!singleGate.ok) return err(`Single-document export blocked: ${singleGate.blockerDetail}`, 409, { code: singleGate.blockerCode });
+
   const doc = asReadyDoc(raw);
   const readiness = checkExportReadiness([doc], { requireFileContent: false });
   if (!readiness.ok) return err(exportReadinessError(readiness.failures), 409, { code: "DOCUMENT_NOT_READY", failures: readiness.failures });
@@ -525,6 +532,13 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     (d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d) && generatedDocumentHasContent(d),
   );
   if (!docs.length) return err("No generated documents available for PDF export. Generate documents first.", 400, { code: "NO_DOCS_FOR_PDF" });
+
+  // Central authoritative readiness gate (condition K). A proposal PDF is a
+  // final export (it logs EXPORT_PACKAGE_DOWNLOAD below), so it must pass the
+  // same fail-closed gate zipPackage enforces — otherwise a stale-hash /
+  // revoked-fallback analysis could still be exported as a PDF.
+  const pdfGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
+  if (!pdfGate.ok) return err(`PDF export blocked: ${pdfGate.blockerDetail}`, 409, { code: pdfGate.blockerCode });
 
   // Pick the target document
   const target = docId
