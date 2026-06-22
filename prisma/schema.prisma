@@ -1120,3 +1120,26 @@ model AiUsageRecord {
   @@index([provider, createdAt])
 >>>>>>> 15890a51 (feat: add per-tenant AI cost monitoring (OBS-004))
 }
+
+// Per-provider AI usage tracking for cost monitoring (OBS-004).
+// Never stores API keys, prompts, or raw responses — only safe metadata.
+model AiUsageRecord {
+  id              String   @id @default(uuid())
+  userId          String
+  tenderId        String?
+  tender          Tender?  @relation(fields: [tenderId], references: [id], onDelete: SetNull)
+  jobId           String?
+  provider        String
+  useCase         String
+  model           String?
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  latencyMs       Int      @default(0)
+  success         Boolean  @default(false)
+  failureCategory String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([tenderId, createdAt])
+  @@index([provider, createdAt])
+}
