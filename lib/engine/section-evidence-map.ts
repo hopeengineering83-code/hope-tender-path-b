@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 // Section evidence map (G5 fix)
 //
 // Records each generated proposal section and the tender requirements / vault
@@ -166,7 +167,7 @@ export async function writeSectionEvidence(input: SectionEvidenceInput): Promise
       },
     });
   } catch (err) {
-    console.warn(`[section-evidence-map] write failed for ${input.sectionId}:`, err instanceof Error ? err.message : err);
+    logger.warn(`[section-evidence-map] write failed for ${input.sectionId}:`, { detail: err instanceof Error ? err.message : err });
   }
 }
 

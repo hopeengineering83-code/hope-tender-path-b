@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 type EmailPayload = {
   to: string;
   subject: string;
@@ -19,7 +20,7 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryRes
 
   if (!host || !user || !pass) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[email] SMTP is not configured; message was not delivered");
+      logger.warn("[email] SMTP is not configured; message was not delivered");
     }
     return { delivered: false, reason: "NOT_CONFIGURED" };
   }
@@ -36,7 +37,7 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryRes
     await transporter.sendMail({ from, to, subject, html });
     return { delivered: true };
   } catch (error) {
-    console.error("[email] Delivery failed", {
+    logger.error("[email] Delivery failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return { delivered: false, reason: "DELIVERY_FAILED" };

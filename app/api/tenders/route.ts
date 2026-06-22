@@ -1,3 +1,4 @@
+import { logger } from "../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(tender, { status: 201 });
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to create tender" }, { status: 500 });
   }
 }

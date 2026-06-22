@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 // Admin endpoint for AI provider health.
 //
 // Returns the current in-memory provider health table (configured,
@@ -44,7 +45,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("ai-provider-health GET failed", error);
+    logger.error("ai-provider-health GET failed", { detail: error });
     return err("Provider-health lookup failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
     }
     return err("Unsupported POST body — pass { reset: true } to clear cooldowns.", 400, { code: "UNSUPPORTED_BODY" });
   } catch (error) {
-    console.error("ai-provider-health POST failed", error);
+    logger.error("ai-provider-health POST failed", { detail: error });
     return err("Provider-health reset failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }

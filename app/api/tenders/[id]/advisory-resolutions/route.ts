@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // Persistent donor advisory resolution endpoint.
 //
 // Why this exists:
@@ -74,7 +75,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     });
   } catch (error) {
-    console.error("advisory-resolutions GET failed", error);
+    logger.error("advisory-resolutions GET failed", { detail: error });
     return jsonError("Advisory resolution lookup failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }
@@ -152,7 +153,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       resolved: resolution !== "REOPEN",
     });
   } catch (error) {
-    console.error("advisory-resolutions POST failed", error);
+    logger.error("advisory-resolutions POST failed", { detail: error });
     return jsonError("Advisory resolution failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

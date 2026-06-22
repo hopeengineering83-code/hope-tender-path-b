@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession, requireRole } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -124,7 +125,7 @@ export async function POST(
       knowledgeImport = { ...primary, safetyImport };
     } catch (error) {
       knowledgeImportError = error instanceof Error ? error.constructor.name : "UnknownError";
-      console.error("[document reextract] knowledge import failed", { errorClass: knowledgeImportError });
+      logger.error("[document reextract] knowledge import failed", { errorClass: knowledgeImportError });
     }
   }
 

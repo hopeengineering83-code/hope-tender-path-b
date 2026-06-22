@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // ─── Admin generated-proposal audit endpoint ─────────────────────────────
 //
 // Why this exists:
@@ -450,7 +451,7 @@ export async function GET(req: Request) {
       documents: visibleRows,
     });
   } catch (error) {
-    console.error("admin generated-proposals audit failed", error);
+    logger.error("admin generated-proposals audit failed", { detail: error });
     return jsonError("Admin audit failed.", 500, { code: "ADMIN_AUDIT_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

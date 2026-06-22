@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -107,7 +108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    console.error(`[copilot] AI request failed for tender ${id}: ${sanitizeError(error)}`);
+    logger.error(`[copilot] AI request failed for tender ${id}: ${sanitizeError(error)}`);
     return NextResponse.json({ error: "Copilot AI request failed. Retry or review provider configuration." }, { status: 502 });
   }
 
@@ -136,7 +137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ],
     });
   } catch (error) {
-    console.warn("[copilot] Failed to persist chat history — answer still returned:", sanitizeError(error));
+    logger.warn("[copilot] Failed to persist chat history — answer still returned:", { detail: sanitizeError(error) });
   }
 
   return NextResponse.json({ success: true, response });

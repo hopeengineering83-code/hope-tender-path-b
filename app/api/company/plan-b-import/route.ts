@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 import { getSession } from "../../../../lib/auth";
@@ -645,7 +646,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("[plan-b-import] failed:", error);
+    logger.error("[plan-b-import] failed:", { detail: error });
     if (error instanceof ZodError) {
       return NextResponse.json({
         error: "Invalid Plan-B payload. Please correct the JSON schema and retry.",

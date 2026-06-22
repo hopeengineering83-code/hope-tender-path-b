@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from "../../../../lib/auth";
@@ -111,7 +112,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(normalizeExpert(expert as unknown as Record<string, unknown>), { status: 201 });
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to create expert" }, { status: 500 });
   }
 }

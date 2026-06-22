@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
@@ -982,11 +983,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // submission" placeholder text (the exact gap the user flagged).
   if (experts.length === 0 && (company.experts ?? []).length > 0) {
     experts = company.experts as typeof experts;
-    console.warn(`[generate-elite] No experts selected for tender — falling back to ${experts.length} reviewed vault expert(s).`);
+    logger.warn(`[generate-elite] No experts selected for tender — falling back to ${experts.length} reviewed vault expert(s).`);
   }
   if (projects.length === 0 && (company.projects ?? []).length > 0) {
     projects = company.projects as typeof projects;
-    console.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
+    logger.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
   }
 
   // Zero-evidence guard: when both the selected records AND the vault are empty,
@@ -994,7 +995,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // run but its output will be generic — the user should add and review experts
   // and projects before generating a submission-ready proposal.
   if (experts.length === 0 && projects.length === 0) {
-    console.warn(`[generate-elite] ZERO-EVIDENCE: No reviewed experts or projects available for tender "${tender.title ?? tender.id}". Proposal will lack specific evidence citations — add and review experts/projects before generating.`);
+    logger.warn(`[generate-elite] ZERO-EVIDENCE: No reviewed experts or projects available for tender "${tender.title ?? tender.id}". Proposal will lack specific evidence citations — add and review experts/projects before generating.`);
   }
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
@@ -1002,10 +1003,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const excludedDraftExperts = allSelectedExperts.filter((e) => e.trustLevel !== "REVIEWED");
   const excludedDraftProjects = allSelectedProjects.filter((p) => p.trustLevel !== "REVIEWED");
   if (excludedDraftExperts.length > 0) {
-    console.warn(`[generate-elite] Excluded ${excludedDraftExperts.length} unreviewed expert(s) from generation: ${excludedDraftExperts.map((e) => e.fullName).join(", ")}`);
+    logger.warn(`[generate-elite] Excluded ${excludedDraftExperts.length} unreviewed expert(s) from generation: ${excludedDraftExperts.map((e) => e.fullName).join(", ")}`);
   }
   if (excludedDraftProjects.length > 0) {
-    console.warn(`[generate-elite] Excluded ${excludedDraftProjects.length} unreviewed project(s) from generation: ${excludedDraftProjects.map((p) => p.name).join(", ")}`);
+    logger.warn(`[generate-elite] Excluded ${excludedDraftProjects.length} unreviewed project(s) from generation: ${excludedDraftProjects.map((p) => p.name).join(", ")}`);
   }
   const companyEvidenceLines = buildCompanyEvidenceLines(company);
   const projectEvidenceLines = buildProjectEvidenceLines(projects);
@@ -1037,13 +1038,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       if (picked.source === "EXTRACTED" && picked.title !== cleanedTenderTitle) {
         // Prefix the RFP ID when one was found alongside the title.
         const final = picked.rfpId ? `${picked.rfpId} — ${picked.title}` : picked.title;
-        console.info(`[generate-elite] Tender title overridden: "${cleanedTenderTitle}" → "${final}" (extracted from tender body)`);
+        logger.info(`[generate-elite] Tender title overridden: "${cleanedTenderTitle}" → "${final}" (extracted from tender body)`);
         cleanedTenderTitle = final;
       }
     }
   } catch (tErr) {
     // Non-critical: stored title is still usable. Log and continue.
-    console.warn("[generate-elite] tender-title-extractor failed:", tErr instanceof Error ? tErr.message : tErr);
+    logger.warn("[generate-elite] tender-title-extractor failed:", { detail: tErr instanceof Error ? tErr.message : tErr });
   }
 
   // ─── Deep tender comprehension (TENDER_DEEP_REASONING) ───────────────────
@@ -1082,7 +1083,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     totalPages: deepReasoningTotalPages > 0 ? deepReasoningTotalPages : null,
   });
   if (useDeepReasoning && !isDeepReasoningEnabled()) {
-    console.info(
+    logger.info(
       `[generate-elite] Deep reasoning auto-triggered for tender ${tenderId}: ` +
         `${tender.requirements.length} requirement(s), ${mandatoryRequirementCount} mandatory/critical, ` +
         `budget=${tender.budget ?? "n/a"}, textLen=${tenderText.length}, pages=${deepReasoningTotalPages || "unknown"}.`,
@@ -1094,12 +1095,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     try {
       deepComprehension = await deepTelemetry.track("comprehension", () => extractDeepTenderComprehension(tenderText));
       if (deepComprehension) {
-        console.info(`[generate-elite] Deep comprehension: ${deepComprehension.criteria.length} criteria, ${deepComprehension.disqualifiers.length} disqualifier(s), ${deepComprehension.prohibitions.length} prohibition(s). Total weight accounted for: ${deepComprehension.totalWeightAccountedFor ?? "n/a"}.`);
+        logger.info(`[generate-elite] Deep comprehension: ${deepComprehension.criteria.length} criteria, ${deepComprehension.disqualifiers.length} disqualifier(s), ${deepComprehension.prohibitions.length} prohibition(s). Total weight accounted for: ${deepComprehension.totalWeightAccountedFor ?? "n/a"}.`);
       } else {
-        console.info("[generate-elite] Deep comprehension: extractor returned null — falling through to regex analyser.");
+        logger.info("[generate-elite] Deep comprehension: extractor returned null — falling through to regex analyser.");
       }
     } catch (compErr) {
-      console.warn("[generate-elite] Deep comprehension threw (non-critical):", compErr instanceof Error ? compErr.message : compErr);
+      logger.warn("[generate-elite] Deep comprehension threw (non-critical):", { detail: compErr instanceof Error ? compErr.message : compErr });
     }
   }
 
@@ -1210,7 +1211,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // already resolved via the .then() side effects above.
       await Promise.race([Promise.all([expertRematch, projectRematch]), budgetGuard]);
       if (batchHolder.expert === null && batchHolder.project === null) {
-        console.warn(`[generate-elite] AI multi-perspective re-rank skipped — exceeded ${AUTO_REMATCH_BUDGET_MS}ms auto-budget. Lexical order kept.`);
+        logger.warn(`[generate-elite] AI multi-perspective re-rank skipped — exceeded ${AUTO_REMATCH_BUDGET_MS}ms auto-budget. Lexical order kept.`);
       }
 
       // Re-sort experts/projects by AI overall score. Candidates without
@@ -1225,7 +1226,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           const sb = scoreMap.get(b.id) ?? -1;
           return sb - sa;
         });
-        console.info(`[generate-elite] AI multi-perspective expert re-rank: ${expertBatch.assessments.length} candidate(s) scored over ${Math.round(expertBatch.durationMs / 1000)}s.`);
+        logger.info(`[generate-elite] AI multi-perspective expert re-rank: ${expertBatch.assessments.length} candidate(s) scored over ${Math.round(expertBatch.durationMs / 1000)}s.`);
       }
       if (projectBatch?.assessments?.length) {
         const scoreMap = new Map<string, number>();
@@ -1235,10 +1236,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           const sb = scoreMap.get(b.id) ?? -1;
           return sb - sa;
         });
-        console.info(`[generate-elite] AI multi-perspective project re-rank: ${projectBatch.assessments.length} candidate(s) scored over ${Math.round(projectBatch.durationMs / 1000)}s.`);
+        logger.info(`[generate-elite] AI multi-perspective project re-rank: ${projectBatch.assessments.length} candidate(s) scored over ${Math.round(projectBatch.durationMs / 1000)}s.`);
       }
     } catch (err) {
-      console.warn(`[generate-elite] AI multi-perspective match failed (falling back to lexical): ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`[generate-elite] AI multi-perspective match failed (falling back to lexical): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   // Requirement lines for AI prompt context AND for downstream rendering.
@@ -1296,7 +1297,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
   const tenderSpecificsTable = buildTenderSpecificsBlock(tenderFacts);
   if (tenderFacts.rawCount > 0) {
-    console.info(`[generate-elite] Tender facts extracted: ${tenderFacts.rfpIds.length} RFP ID(s), ${tenderFacts.deadlines.length} deadline(s), ${tenderFacts.deliverableCodes.length} deliverable code(s), ${tenderFacts.quantities.length} quantity(s).`);
+    logger.info(`[generate-elite] Tender facts extracted: ${tenderFacts.rfpIds.length} RFP ID(s), ${tenderFacts.deadlines.length} deadline(s), ${tenderFacts.deliverableCodes.length} deliverable code(s), ${tenderFacts.quantities.length} quantity(s).`);
   }
 
   const submissionNotes = [
@@ -1437,12 +1438,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             projects: projectCandidates,
           }));
           if (alignmentReport) {
-            console.info(`[generate-elite] Semantic alignment: ${alignmentReport.alignments.length} alignment(s), ${alignmentReport.coverageByCriterion.length} criterion coverage record(s).`);
+            logger.info(`[generate-elite] Semantic alignment: ${alignmentReport.alignments.length} alignment(s), ${alignmentReport.coverageByCriterion.length} criterion coverage record(s).`);
           } else {
-            console.info("[generate-elite] Semantic alignment: aligner returned null — falling through to legacy lexical match only.");
+            logger.info("[generate-elite] Semantic alignment: aligner returned null — falling through to legacy lexical match only.");
           }
         } catch (alignErr) {
-          console.warn("[generate-elite] Semantic alignment threw (non-critical):", alignErr instanceof Error ? alignErr.message : alignErr);
+          logger.warn("[generate-elite] Semantic alignment threw (non-critical):", { detail: alignErr instanceof Error ? alignErr.message : alignErr });
         }
       }
       const alignmentBlock = alignmentReport ? formatAlignmentForPrompt(alignmentReport) : "";
@@ -1545,7 +1546,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           }
         : undefined;
       if (enableToolUseGeneration) {
-        console.info("[generate-elite] Tool-use generation enabled — Claude can call evidence-search tools mid-write.");
+        logger.info("[generate-elite] Tool-use generation enabled — Claude can call evidence-search tools mid-write.");
       }
 
       const aiInputBase = {
@@ -1724,7 +1725,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // budget across four independent section calls, so a retry per-section would
       // risk hitting the Vercel timeout wall.
       if (!useParallel && (!sourceMarkdown || sourceMarkdown.trim().length < 500)) {
-        console.warn(`[generate-elite] AI returned near-empty output (${sourceMarkdown?.trim().length ?? 0} chars) — retrying once.`);
+        logger.warn(`[generate-elite] AI returned near-empty output (${sourceMarkdown?.trim().length ?? 0} chars) — retrying once.`);
         const retryTimeout = Math.min(PROPOSAL_AI_TIMEOUT_MS, 40_000);
         sourceMarkdown = await withProposalAiTimeout(generateBenchmarkProposalWithAI(aiInput), retryTimeout);
       }
@@ -1763,7 +1764,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       ];
       const missingSections = mandatoryCheck.filter(([, re]) => !re.test(sourceMarkdown)).map(([name]) => name);
       if (missingSections.length > 0) {
-        console.warn(`[generate-elite] AI output missing mandatory sections (deterministic builders will inject): ${missingSections.join(", ")}`);
+        logger.warn(`[generate-elite] AI output missing mandatory sections (deterministic builders will inject): ${missingSections.join(", ")}`);
       }
 
       const provider = getLastProposalProvider() ?? "ai";
@@ -2072,9 +2073,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // token budget keeps wall time under 15s even on Hobby tier.
   try {
     humanizedMarkdown = await humanizeOpeningSections(humanizedMarkdown);
-    console.info("[generate-elite] Targeted Cover Letter + Executive Summary humanization applied.");
+    logger.info("[generate-elite] Targeted Cover Letter + Executive Summary humanization applied.");
   } catch (err) {
-    console.warn(`[generate-elite] Opening-sections humanize failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic output.`);
+    logger.warn(`[generate-elite] Opening-sections humanize failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic output.`);
   }
 
   // Full-proposal AI humanization pass (opt-in via PROPOSAL_HUMANIZE_AI=true).
@@ -2084,7 +2085,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     try {
       humanizedMarkdown = await humanize(humanizedMarkdown);
     } catch (err) {
-      console.warn(`[generate-elite] Full-proposal humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping output from opening-sections pass.`);
+      logger.warn(`[generate-elite] Full-proposal humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping output from opening-sections pass.`);
     }
   }
 
@@ -2116,7 +2117,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   ];
   const evidenceInjection = injectEvidenceMarkers(humanizedMarkdown, evidenceLibrary);
   if (evidenceInjection.injected > 0) {
-    console.info(`[generate-elite] Evidence-marker injector added ${evidenceInjection.injected} anchor sentence(s) to lift evidenceDensity score.`);
+    logger.info(`[generate-elite] Evidence-marker injector added ${evidenceInjection.injected} anchor sentence(s) to lift evidenceDensity score.`);
   }
   humanizedMarkdown = evidenceInjection.markdown;
 
@@ -2155,7 +2156,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         "",
         ...lines.slice(insertAt),
       ].join("\n");
-      console.info(`[generate-elite] Tender Specifics (C.0) block injected.`);
+      logger.info(`[generate-elite] Tender Specifics (C.0) block injected.`);
     }
   }
 
@@ -2176,7 +2177,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (sectionCAmp.injected.length > 0) {
     const addedCount = sectionCAmp.injected.filter((i) => i.mode === "ADDED").length;
     const deepenedCount = sectionCAmp.injected.filter((i) => i.mode === "DEEPENED").length;
-    console.info(`[generate-elite] Section C depth amplifier: added ${addedCount} sub-section(s), deepened ${deepenedCount} thin sub-section(s).`);
+    logger.info(`[generate-elite] Section C depth amplifier: added ${addedCount} sub-section(s), deepened ${deepenedCount} thin sub-section(s).`);
   }
   humanizedMarkdown = sectionCAmp.markdown;
 
@@ -2201,7 +2202,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const totalDaysMatch = tenderText.match(/\b(\d{1,3})\s*(?:calendar\s+|working\s+|business\s+)?days?\b(?!\s*(?:after|before|prior|notice|advance))/i);
   const totalDays = totalDaysMatch ? Number(totalDaysMatch[1]) : undefined;
   if (totalDays && totalDays >= 7 && totalDays <= 1000) {
-    console.info(`[generate-elite] Detected total project duration: ${totalDays} days — phasing table will use day-numbered rows.`);
+    logger.info(`[generate-elite] Detected total project duration: ${totalDays} days — phasing table will use day-numbered rows.`);
   }
 
   const methodologyTables = injectMethodologyTables(humanizedMarkdown, {
@@ -2226,15 +2227,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       experts: allSelectedExperts as unknown as Parameters<typeof injectDeliverableQaChecklist>[1]["experts"],
     });
     if (qaChecklist.injected) {
-      console.info(`[generate-elite] Deliverable QA Checklist injected with ${qaChecklist.rowsRendered} row(s).`);
+      logger.info(`[generate-elite] Deliverable QA Checklist injected with ${qaChecklist.rowsRendered} row(s).`);
       humanizedMarkdown = qaChecklist.markdown;
     }
   } catch (qaErr) {
-    console.warn("[generate-elite] Deliverable QA Checklist injection failed:", qaErr instanceof Error ? qaErr.message : qaErr);
+    logger.warn("[generate-elite] Deliverable QA Checklist injection failed:", { detail: qaErr instanceof Error ? qaErr.message : qaErr });
   }
   const newlyInjected = methodologyTables.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
   if (newlyInjected.length > 0) {
-    console.info(`[generate-elite] Methodology tables injected: ${newlyInjected.join(", ")}`);
+    logger.info(`[generate-elite] Methodology tables injected: ${newlyInjected.join(", ")}`);
   }
   // NOTE: humanizedMarkdown was already updated above by methodologyTables
   // and again by the QA-checklist injection — do NOT re-assign from
@@ -2256,7 +2257,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   const beyondSpecAdded = beyondSpec.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
   if (beyondSpecAdded.length > 0) {
-    console.info(`[generate-elite] Beyond-spec tables injected: ${beyondSpecAdded.join(", ")}`);
+    logger.info(`[generate-elite] Beyond-spec tables injected: ${beyondSpecAdded.join(", ")}`);
   }
   humanizedMarkdown = beyondSpec.markdown;
 
@@ -2278,7 +2279,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     companyName: company.name,
   });
   if (winThemes.injected) {
-    console.info(`[generate-elite] Win Themes table injected (Section G).`);
+    logger.info(`[generate-elite] Win Themes table injected (Section G).`);
   }
   humanizedMarkdown = winThemes.markdown;
 
@@ -2297,10 +2298,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     experts: allSelectedExperts as unknown as Parameters<typeof injectMobilizationAndChecklist>[1]["experts"],
   });
   if (mobAndChecklist.injected.mobilization) {
-    console.info(`[generate-elite] Mobilization & Resourcing Plan injected.`);
+    logger.info(`[generate-elite] Mobilization & Resourcing Plan injected.`);
   }
   if (mobAndChecklist.injected.checklist) {
-    console.info(`[generate-elite] Submission Readiness Checklist injected.`);
+    logger.info(`[generate-elite] Submission Readiness Checklist injected.`);
   }
   humanizedMarkdown = mobAndChecklist.markdown;
 
@@ -2323,7 +2324,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   const personnelInjected = Object.entries(personnelDeep.injected).filter(([, v]) => v).map(([k]) => k);
   if (personnelInjected.length > 0) {
-    console.info(`[generate-elite] Personnel deep treatment injected: ${personnelInjected.join(", ")}.`);
+    logger.info(`[generate-elite] Personnel deep treatment injected: ${personnelInjected.join(", ")}.`);
   }
   humanizedMarkdown = personnelDeep.markdown;
 
@@ -2348,7 +2349,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   const dpInjected = Object.entries(deliverablePhases.injected).filter(([, v]) => v).map(([k]) => k);
   if (dpInjected.length > 0) {
-    console.info(`[generate-elite] Deliverable + phase + branded innovation injected: ${dpInjected.join(", ")}.`);
+    logger.info(`[generate-elite] Deliverable + phase + branded innovation injected: ${dpInjected.join(", ")}.`);
   }
   humanizedMarkdown = deliverablePhases.markdown;
 
@@ -2384,7 +2385,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   const closersInjected = Object.entries(closers.injected).filter(([, v]) => v).map(([k]) => k);
   if (closersInjected.length > 0) {
-    console.info(`[generate-elite] Tender closers injected: ${closersInjected.join(", ")}.`);
+    logger.info(`[generate-elite] Tender closers injected: ${closersInjected.join(", ")}.`);
   }
   humanizedMarkdown = closers.markdown;
 
@@ -2401,7 +2402,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Does nothing when intelligence.evaluationWeights is empty.
   const rubricResult = ensureRubricHeadings(humanizedMarkdown, intelligence.evaluationWeights, intelligence.primarySector);
   if (rubricResult.missingCriteria.length > 0) {
-    console.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
+    logger.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
   }
   humanizedMarkdown = rubricResult.markdown;
 
@@ -2417,7 +2418,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       companyName: company.name,
     });
     if (jvResult.injected) {
-      console.info("[generate-elite] JV/Consortia Partnership Disclosure table injected (PR GG).");
+      logger.info("[generate-elite] JV/Consortia Partnership Disclosure table injected (PR GG).");
     }
     humanizedMarkdown = jvResult.markdown;
   }
@@ -2434,7 +2435,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // which evaluators read as a rendering bug. NEVER deletes content.
   const dedupeResult = suppressDuplicateSectionHeadings(humanizedMarkdown);
   if (dedupeResult.renumbered > 0) {
-    console.info(`[generate-elite] Duplicate section suppressor: renumbered ${dedupeResult.renumbered} duplicate-prefix heading(s).`);
+    logger.info(`[generate-elite] Duplicate section suppressor: renumbered ${dedupeResult.renumbered} duplicate-prefix heading(s).`);
   }
   humanizedMarkdown = dedupeResult.markdown;
 
@@ -2461,7 +2462,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     knownFirmClients,
   });
   if (enforced.substitutionsMade > 0) {
-    console.warn(`[generate-elite] Client name enforcer scrubbed ${enforced.substitutionsMade} hallucinated client substitution(s) in Cover Letter / Executive Summary zone.`);
+    logger.warn(`[generate-elite] Client name enforcer scrubbed ${enforced.substitutionsMade} hallucinated client substitution(s) in Cover Letter / Executive Summary zone.`);
   }
   humanizedMarkdown = enforced.markdown;
 
@@ -2478,7 +2479,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // unfinished. Real output had ~12 such sections in the TOC.
   const internalStrip = stripInternalReviewSections(humanizedMarkdown);
   if (internalStrip.removedSections.length > 0) {
-    console.info(`[generate-elite] Internal-review stripper removed ${internalStrip.removedSections.length} bid-team section(s) from client-facing proposal: ${internalStrip.removedSections.slice(0, 5).join("; ")}${internalStrip.removedSections.length > 5 ? " …" : ""}`);
+    logger.info(`[generate-elite] Internal-review stripper removed ${internalStrip.removedSections.length} bid-team section(s) from client-facing proposal: ${internalStrip.removedSections.slice(0, 5).join("; ")}${internalStrip.removedSections.length > 5 ? " …" : ""}`);
   }
   humanizedMarkdown = internalStrip.markdown;
 
@@ -2494,7 +2495,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // from the actual final headings.
   const sectionOrderResult = reorderSectionsAndRebuildToc(humanizedMarkdown);
   if (sectionOrderResult.reorderedSectionCount > 0) {
-    console.info(`[generate-elite] Section orderer: reordered ${sectionOrderResult.reorderedSectionCount} section(s); rebuilt TOC with ${sectionOrderResult.tocEntries} entries.`);
+    logger.info(`[generate-elite] Section orderer: reordered ${sectionOrderResult.reorderedSectionCount} section(s); rebuilt TOC with ${sectionOrderResult.tocEntries} entries.`);
   }
   humanizedMarkdown = sectionOrderResult.markdown;
 
@@ -2506,7 +2507,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // is silently removed.
   const stripped = stripPlaceholders(humanizedMarkdown);
   if (stripped.removedLines > 0 || stripped.blankedCells > 0 || stripped.removedParagraphs > 0) {
-    console.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
+    logger.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
   }
   humanizedMarkdown = stripped.markdown;
 
@@ -2538,10 +2539,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     gmTitle: company.gmTitle,
   });
   if (coverAndMeta.coverPageInjected) {
-    console.info("[generate-elite] Markdown cover page injected (PR EE).");
+    logger.info("[generate-elite] Markdown cover page injected (PR EE).");
   }
   if (coverAndMeta.rfpMetaInjected) {
-    console.info("[generate-elite] RFP reference metadata bar injected under cover letter subject line (PR II).");
+    logger.info("[generate-elite] RFP reference metadata bar injected under cover letter subject line (PR II).");
   }
   humanizedMarkdown = coverAndMeta.markdown;
 
@@ -2553,7 +2554,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // (deterministic builders run last, so the structured version survives).
   const dedupedTables = deduplicateTables(humanizedMarkdown);
   if (dedupedTables.removed > 0) {
-    console.info(`[generate-elite] Duplicate table deduplicator removed ${dedupedTables.removed} line(s) from ${Math.floor(dedupedTables.removed / 3)} duplicate table block(s) (PR HH).`);
+    logger.info(`[generate-elite] Duplicate table deduplicator removed ${dedupedTables.removed} line(s) from ${Math.floor(dedupedTables.removed / 3)} duplicate table block(s) (PR HH).`);
   }
   humanizedMarkdown = dedupedTables.markdown;
 
@@ -2564,7 +2565,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Elevates the QA section from generic to tender-responsive.
   const qaThresholds = injectQaThresholds(humanizedMarkdown, intelligence.tenderText);
   if (qaThresholds.injected) {
-    console.info("[generate-elite] QA tender-specific numeric thresholds injected below C.3 (PR LL).");
+    logger.info("[generate-elite] QA tender-specific numeric thresholds injected below C.3 (PR LL).");
   }
   humanizedMarkdown = qaThresholds.markdown;
 
@@ -2582,7 +2583,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   ].filter(Boolean);
   const appendixReg = injectAppendixReadinessRegister(humanizedMarkdown, vaultDocNames);
   if (appendixReg.injected) {
-    console.info("[generate-elite] Appendix Readiness Register cross-check injected (PR MM).");
+    logger.info("[generate-elite] Appendix Readiness Register cross-check injected (PR MM).");
   }
   humanizedMarkdown = appendixReg.markdown;
 
@@ -2623,7 +2624,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       ...sigLines.slice(sigInsertAt),
     ];
     humanizedMarkdown = sigOut.join("\n");
-    console.info("[generate-elite] Three-column signature block injected (PR JJ).");
+    logger.info("[generate-elite] Three-column signature block injected (PR JJ).");
   }
 
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
@@ -2644,9 +2645,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const tenderForbidsCoverPage = forbidsCoverPage(tender.requirements);
   const tenderForbidsBranding = forbidsBranding(tender.requirements);
   const tenderRequiresSignature = requiresSignatureOrStamp(tender.requirements);
-  if (tenderForbidsCoverPage) console.info("[generate-elite] Tender forbids cover page — suppressing cover block in main proposal DOCX.");
-  if (tenderForbidsBranding) console.info("[generate-elite] Tender forbids branding — suppressing branded header and skipping letterhead application.");
-  if (!tenderRequiresSignature) console.info("[generate-elite] Tender does not explicitly require signature/stamp — declaration will use printed-name-only sign-off.");
+  if (tenderForbidsCoverPage) logger.info("[generate-elite] Tender forbids cover page — suppressing cover block in main proposal DOCX.");
+  if (tenderForbidsBranding) logger.info("[generate-elite] Tender forbids branding — suppressing branded header and skipping letterhead application.");
+  if (!tenderRequiresSignature) logger.info("[generate-elite] Tender does not explicitly require signature/stamp — declaration will use printed-name-only sign-off.");
 
   // PR #259 — vault-aware cover page. Surfaces TIN, VAT, license
   // grade, GM with PPE license, service-line tagline, submission date,
@@ -2817,12 +2818,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         deepRefinementApplied = true;
         deepRefinementIterations = refinementAttempts;
         deepRefinementLift = deepResult.finalScore.total - (deepResult.attempts[0]?.scoreBefore ?? deepResult.finalScore.total);
-        console.info(`[generate-elite] Deep-reasoning refinement applied: ${refinementAttempts} critique→rewrite iteration(s), score lift +${deepRefinementLift}, final ${qualityScore.total}.`);
+        logger.info(`[generate-elite] Deep-reasoning refinement applied: ${refinementAttempts} critique→rewrite iteration(s), score lift +${deepRefinementLift}, final ${qualityScore.total}.`);
       } else {
-        console.info("[generate-elite] Deep-reasoning refinement: no iteration improved the score — keeping original output.");
+        logger.info("[generate-elite] Deep-reasoning refinement: no iteration improved the score — keeping original output.");
       }
     } catch (deepErr) {
-      console.warn(`[generate-elite] Deep-reasoning refinement threw (non-critical): ${deepErr instanceof Error ? deepErr.message : String(deepErr)}`);
+      logger.warn(`[generate-elite] Deep-reasoning refinement threw (non-critical): ${deepErr instanceof Error ? deepErr.message : String(deepErr)}`);
     }
   }
 
@@ -2863,28 +2864,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           workingMarkdown = refinedClean;
           qualityScore = refinedScore;
           refinementApplied = true;
-          console.info(`[generate-elite] Refinement attempt ${refinementAttempts}/${MAX_REFINEMENT_ATTEMPTS}: ${qualityScore.total - lift} → ${qualityScore.total} (+${lift}). Weak axes remaining: ${qualityScore.weakAxes.length}.`);
+          logger.info(`[generate-elite] Refinement attempt ${refinementAttempts}/${MAX_REFINEMENT_ATTEMPTS}: ${qualityScore.total - lift} → ${qualityScore.total} (+${lift}). Weak axes remaining: ${qualityScore.weakAxes.length}.`);
           // If the lift was meaningful AND the score is still below
           // threshold AND we have attempts left, the loop will try
           // another pass with the refined output as input.
           // Stop early when the lift is < 2 points (diminishing returns).
           if (lift < 2) {
-            console.info(`[generate-elite] Refinement lift ${lift} < 2 — stopping early to avoid AI budget burn.`);
+            logger.info(`[generate-elite] Refinement lift ${lift} < 2 — stopping early to avoid AI budget burn.`);
             break;
           }
         } else {
           // Refinement made score WORSE or equal — keep the previous
           // version and stop attempting.
-          console.info(`[generate-elite] Refinement attempt ${refinementAttempts} did not improve score (${qualityScore.total} unchanged). Stopping.`);
+          logger.info(`[generate-elite] Refinement attempt ${refinementAttempts} did not improve score (${qualityScore.total} unchanged). Stopping.`);
           break;
         }
       } else {
         // Refined output too short — keep the previous version.
-        console.warn(`[generate-elite] Refinement attempt ${refinementAttempts} returned thin output (${refined?.length ?? 0} chars vs ${workingMarkdown.length}). Stopping.`);
+        logger.warn(`[generate-elite] Refinement attempt ${refinementAttempts} returned thin output (${refined?.length ?? 0} chars vs ${workingMarkdown.length}). Stopping.`);
         break;
       }
     } catch (err) {
-      console.warn(`[generate-elite] Refinement pass ${refinementAttempts} failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`[generate-elite] Refinement pass ${refinementAttempts} failed: ${err instanceof Error ? err.message : String(err)}`);
       break;
     }
   }
@@ -2913,7 +2914,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (refinementApplied) {
     const reDedup = suppressDuplicateSectionHeadings(workingMarkdown);
     if (reDedup.renumbered > 0) {
-      console.info(`[generate-elite] Post-refinement re-dedupe: renumbered ${reDedup.renumbered} duplicate-prefix heading(s) introduced by refinement.`);
+      logger.info(`[generate-elite] Post-refinement re-dedupe: renumbered ${reDedup.renumbered} duplicate-prefix heading(s) introduced by refinement.`);
     }
     workingMarkdown = reDedup.markdown;
 
@@ -2922,25 +2923,25 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       knownFirmClients,
     });
     if (reEnforced.substitutionsMade > 0) {
-      console.warn(`[generate-elite] Post-refinement client-name enforcer scrubbed ${reEnforced.substitutionsMade} hallucinated substitution(s) introduced by refinement.`);
+      logger.warn(`[generate-elite] Post-refinement client-name enforcer scrubbed ${reEnforced.substitutionsMade} hallucinated substitution(s) introduced by refinement.`);
     }
     workingMarkdown = reEnforced.markdown;
 
     const reStrip = stripInternalReviewSections(workingMarkdown);
     if (reStrip.removedSections.length > 0) {
-      console.info(`[generate-elite] Post-refinement internal-review stripper removed ${reStrip.removedSections.length} bid-team section(s) re-introduced by refinement.`);
+      logger.info(`[generate-elite] Post-refinement internal-review stripper removed ${reStrip.removedSections.length} bid-team section(s) re-introduced by refinement.`);
     }
     workingMarkdown = reStrip.markdown;
 
     const reOrder = reorderSectionsAndRebuildToc(workingMarkdown);
     if (reOrder.reorderedSectionCount > 0) {
-      console.info(`[generate-elite] Post-refinement reorder: re-sequenced ${reOrder.reorderedSectionCount} section(s); TOC rebuilt.`);
+      logger.info(`[generate-elite] Post-refinement reorder: re-sequenced ${reOrder.reorderedSectionCount} section(s); TOC rebuilt.`);
     }
     workingMarkdown = reOrder.markdown;
 
     const reStripPlaceholders = stripPlaceholders(workingMarkdown);
     if (reStripPlaceholders.removedLines + reStripPlaceholders.blankedCells + reStripPlaceholders.removedParagraphs > 0) {
-      console.info(`[generate-elite] Post-refinement placeholder stripper: removed ${reStripPlaceholders.removedLines} line(s), ${reStripPlaceholders.removedParagraphs} paragraph(s); blanked ${reStripPlaceholders.blankedCells} table cell(s).`);
+      logger.info(`[generate-elite] Post-refinement placeholder stripper: removed ${reStripPlaceholders.removedLines} line(s), ${reStripPlaceholders.removedParagraphs} paragraph(s); blanked ${reStripPlaceholders.blankedCells} table cell(s).`);
     }
     workingMarkdown = reStripPlaceholders.markdown;
   }
@@ -2950,7 +2951,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const repairedMarkdown = applyProposalQualityRepairAddenda(workingMarkdown, evaluatorMatrixInput);
   const repairAddendaApplied = repairedMarkdown !== workingMarkdown;
   if (repairAddendaApplied) {
-    console.info("[generate-elite] Quality repair addenda applied — one or more critical sections were missing.");
+    logger.info("[generate-elite] Quality repair addenda applied — one or more critical sections were missing.");
     workingMarkdown = repairedMarkdown;
     // Re-score after repair so contentSummary reflects the improved proposal.
     const repairedScore = scoreProposalQuality({
@@ -2959,7 +2960,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       topProjects: (projects as ProjectRecord[]).slice(0, 2),
     });
     if (repairedScore.total > qualityScore.total) {
-      console.info(`[generate-elite] Post-repair quality lift: ${qualityScore.total} → ${repairedScore.total} (+${repairedScore.total - qualityScore.total}).`);
+      logger.info(`[generate-elite] Post-repair quality lift: ${qualityScore.total} → ${repairedScore.total} (+${repairedScore.total - qualityScore.total}).`);
       qualityScore = repairedScore;
     }
   }
@@ -2969,7 +2970,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (refinementApplied || repairAddendaApplied) {
     const finalStrip = stripPlaceholders(workingMarkdown);
     if (finalStrip.removedLines + finalStrip.blankedCells + finalStrip.removedParagraphs > 0) {
-      console.info(`[generate-elite] Final placeholder sweep: removed ${finalStrip.removedLines} line(s), ${finalStrip.removedParagraphs} paragraph(s); blanked ${finalStrip.blankedCells} table cell(s).`);
+      logger.info(`[generate-elite] Final placeholder sweep: removed ${finalStrip.removedLines} line(s), ${finalStrip.removedParagraphs} paragraph(s); blanked ${finalStrip.blankedCells} table cell(s).`);
     }
     workingMarkdown = finalStrip.markdown;
   }
@@ -3041,7 +3042,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // string when nothing was tracked (flag off + no deep-reasoning
   // AI calls). Console-only; not persisted.
   const telemetryLine = deepTelemetry.format();
-  if (telemetryLine) console.info(telemetryLine);
+  if (telemetryLine) logger.info(telemetryLine);
 
   // Round 6 — persist a structured TENDER_DEEP_REASONING_RUN audit
   // entry so operators can query historical deep-reasoning usage.
@@ -3094,7 +3095,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       });
     } catch (auditErr) {
       // Best-effort audit; never block the proposal save.
-      console.warn(`[generate-elite] TENDER_DEEP_REASONING_RUN audit emission failed: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+      logger.warn(`[generate-elite] TENDER_DEEP_REASONING_RUN audit emission failed: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
     }
   }
 
@@ -3223,19 +3224,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         summary: summary.slice(0, 500),
       },
     });
-    console.info(`[generate-elite] Proposal version ${nextVersion} saved.`);
+    logger.info(`[generate-elite] Proposal version ${nextVersion} saved.`);
 
     // Prune versions beyond the last 5.
     if (existingVersions.length >= 5) {
       const idsToDelete = existingVersions.slice(4).map((v) => v.id);
       if (idsToDelete.length > 0) {
         await prisma.proposalVersion.deleteMany({ where: { id: { in: idsToDelete } } });
-        console.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
+        logger.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
       }
     }
   } catch (vErr) {
     // Version saving is non-critical — never block the main proposal.
-    console.warn("[generate-elite] Proposal version snapshot failed:", vErr instanceof Error ? vErr.message : vErr);
+    logger.warn("[generate-elite] Proposal version snapshot failed:", { detail: vErr instanceof Error ? vErr.message : vErr });
   }
 
   // ─── Section evidence map (G5 follow-up) ───────────────────────────────────
@@ -3258,9 +3259,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       expertIds,
       projectIds,
     });
-    console.info(`[generate-elite] Section evidence map: ${result.sectionsWritten} section(s) recorded for v${savedProposalVersion}.`);
+    logger.info(`[generate-elite] Section evidence map: ${result.sectionsWritten} section(s) recorded for v${savedProposalVersion}.`);
   } catch (sErr) {
-    console.warn("[generate-elite] Section evidence map write failed:", sErr instanceof Error ? sErr.message : sErr);
+    logger.warn("[generate-elite] Section evidence map write failed:", { detail: sErr instanceof Error ? sErr.message : sErr });
   }
 
   // ─── Expert CV DOCX generation ──────────────────────────────────────────────
@@ -3313,7 +3314,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     );
     const cvGenerated = cvResults.filter((r) => r.status === "fulfilled").length;
     const cvFailed = cvResults.filter((r) => r.status === "rejected").length;
-    if (cvGenerated > 0) console.info(`[generate-elite] Expert CV DOCX: generated ${cvGenerated} CV(s).`);
-    if (cvFailed > 0) console.warn(`[generate-elite] Expert CV DOCX: ${cvFailed} CV(s) failed to generate.`);
+    if (cvGenerated > 0) logger.info(`[generate-elite] Expert CV DOCX: generated ${cvGenerated} CV(s).`);
+    if (cvFailed > 0) logger.warn(`[generate-elite] Expert CV DOCX: ${cvFailed} CV(s) failed to generate.`);
   }
 }

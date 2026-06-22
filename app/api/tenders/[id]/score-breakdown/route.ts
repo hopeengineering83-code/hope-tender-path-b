@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // GET /api/tenders/[id]/score-breakdown
 //
 // Returns the 12-perspective match dimension scores for every expert and
@@ -280,7 +281,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       correctiveActionSummary,
     });
   } catch (error) {
-    console.error("score-breakdown GET failed", error);
+    logger.error("score-breakdown GET failed", { detail: error });
     return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
   }
 }

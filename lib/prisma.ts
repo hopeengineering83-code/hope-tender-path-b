@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 import { PrismaClient } from "@prisma/client";
 import { checkEnv } from "./env-check";
 import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
@@ -72,7 +73,7 @@ async function verifyConnectivity(client: PrismaClient): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       const isTransient = /can't reach|connection refused|ECONNREFUSED|ETIMEDOUT|connect timeout|unable to connect|network socket/i.test(msg);
       if (isTransient && attempt < MAX_ATTEMPTS) {
-        console.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in ${BACKOFF_MS / 1000}s…`);
+        logger.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in ${BACKOFF_MS / 1000}s…`);
         await new Promise((r) => setTimeout(r, BACKOFF_MS));
         continue;
       }
@@ -1013,7 +1014,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
-      console.warn("[bootstrap] index skipped:", e instanceof Error ? e.message : e);
+      logger.warn("[bootstrap] index skipped:", { detail: e instanceof Error ? e.message : e });
     }
   }
 
@@ -1058,7 +1059,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   ];
   for (const sql of fkStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
-      console.warn("[bootstrap] FK constraint skipped:", e instanceof Error ? e.message : e);
+      logger.warn("[bootstrap] FK constraint skipped:", { detail: e instanceof Error ? e.message : e });
     }
   }
 
@@ -1085,7 +1086,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   const policy = resolveBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {
-      console.warn(
+      logger.warn(
         "[bootstrap] Skipping bootstrap admin seed in production. Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable.",
       );
     }
@@ -1112,7 +1113,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     });
     // Never echo the actual password — only confirm an admin was created.
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[bootstrap] Seeded ${BOOTSTRAP_ADMIN_EMAIL} (development).`);
+      logger.info(`[bootstrap] Seeded ${BOOTSTRAP_ADMIN_EMAIL} (development).`);
     }
   }
 }
@@ -1120,7 +1121,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 function ensureBootstrapped(): Promise<void> {
   if (!g.prismaReady) {
     g.prismaReady = bootstrap(prisma).catch((err: unknown) => {
-      console.error("[bootstrap] failed:", err);
+      logger.error("[bootstrap] failed:", { detail: err });
       g.prismaReady = undefined; // allow retry on next request
       throw err;
     });

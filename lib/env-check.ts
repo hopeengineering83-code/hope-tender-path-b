@@ -1,3 +1,4 @@
+import { logger } from "./observability";
 /**
  * Startup environment validation.
  * Imported at the top of lib/prisma.ts so it runs on every cold start.
@@ -175,9 +176,9 @@ export function checkEnv(): void {
   const { errors, warnings } = evaluateEnv();
 
   if (warnings.length > 0) {
-    console.warn("\n⚠  ENVIRONMENT WARNINGS:");
-    for (const w of warnings) console.warn(`  ⚠ ${w}`);
-    console.warn("");
+    logger.warn("\n⚠  ENVIRONMENT WARNINGS:");
+    for (const w of warnings) logger.warn(`  ⚠ ${w}`);
+    logger.warn("");
   }
 
   if (errors.length > 0) {
@@ -196,7 +197,7 @@ export function checkEnv(): void {
       "═══════════════════════════════════════════════════════════",
       "",
     ];
-    console.error(lines.join("\n"));
+    logger.error(lines.join("\n"));
     throw new Error(`Environment validation failed: ${errors.join("; ")}`);
   }
 }

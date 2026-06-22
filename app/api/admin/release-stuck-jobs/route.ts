@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { failStuckJobs, findStuckJobs } from "../../../../lib/ai-jobs";
@@ -67,7 +68,7 @@ export async function POST() {
       jobIds: result.ids.slice(0, 10), // Log first 10 IDs
       totalIds: result.ids.length,
     },
-  }).catch((err) => console.warn("Failed to log stuck-job recovery action:", err));
+  }).catch((err) => logger.warn("Failed to log stuck-job recovery action:", { detail: err }));
 
   return NextResponse.json({
     recovered: result.recovered,

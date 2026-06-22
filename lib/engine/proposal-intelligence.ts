@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
@@ -56,7 +57,7 @@ export function safeParseArr(value: string | null | undefined): string[] {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
-    console.warn("[safeParseArr] Non-JSON value split as CSV:", value.slice(0, 80));
+    logger.warn("[safeParseArr] Non-JSON value split as CSV:", { detail: value.slice(0, 80) });
     return value.split(/[,;|]/).map((item) => item.trim()).filter(Boolean);
   }
 }
@@ -1110,7 +1111,7 @@ export function buildProposalIntelligence(params: {
   const cleanIntake = looksLikeGeneratedProposal(tender.intakeSummary) ? null : tender.intakeSummary;
   const cleanAnalysis = looksLikeGeneratedProposal(tender.analysisSummary) ? null : tender.analysisSummary;
   if (cleanIntake !== tender.intakeSummary || cleanAnalysis !== tender.analysisSummary) {
-    console.warn("[proposal-intelligence] Stripped stale proposal-text from intakeSummary/analysisSummary (feedback-loop guard).");
+    logger.warn("[proposal-intelligence] Stripped stale proposal-text from intakeSummary/analysisSummary (feedback-loop guard).");
   }
 
   const tenderText = textOf(
@@ -1254,7 +1255,7 @@ export function buildProposalIntelligence(params: {
   const topExperts = expertPool.slice(0, 14);
 
   if (detectedSector !== "General Consultancy / Engineering") {
-    console.info(`[proposal-intelligence] Sector filter (${detectedSector}): kept ${projectPool.length}/${projects.length} projects, ${expertPool.length}/${experts.length} experts.`);
+    logger.info(`[proposal-intelligence] Sector filter (${detectedSector}): kept ${projectPool.length}/${projects.length} projects, ${expertPool.length}/${experts.length} experts.`);
   }
 
   const exactEmails = detectExactEmails(tenderText);
@@ -1355,7 +1356,7 @@ export function buildCriterionEvidenceMap(
     // Infer criteria names from the evaluation methodology text and assign
     // equal word-count targets (~500 words each, up to 5 criteria).
     if (!evaluationCriteriaText || evaluationCriteriaText.trim().length < 10) {
-      console.warn("[buildCriterionEvidenceMap] No numeric weights and no evaluation text — Section C will use unweighted methodology.");
+      logger.warn("[buildCriterionEvidenceMap] No numeric weights and no evaluation text — Section C will use unweighted methodology.");
       return "";
     }
     const inferredCriteria = evaluationCriteriaText
@@ -1448,7 +1449,7 @@ export function buildCriterionEvidenceMap(
       .filter((k) => k.length > 3 && !/^(the|and|for|with|that|this|from|into|have|been|will|shall|must|only|also|when|where|which|their|each|both)$/.test(k));
 
     if (keywords.length === 0) {
-      console.warn(`[criterion-evidence] Skipped criterion with no extractable keywords: "${w.criterion}"`);
+      logger.warn(`[criterion-evidence] Skipped criterion with no extractable keywords: "${w.criterion}"`);
       continue;
     }
 

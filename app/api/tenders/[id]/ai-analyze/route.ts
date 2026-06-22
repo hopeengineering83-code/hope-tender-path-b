@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSession } from "../../../../../lib/auth";
@@ -340,7 +341,7 @@ async function handleStreamingAnalyze(
             where: { id },
             data: { status: "EXTRACTION_CORRUPTED_AI_SKIPPED", analysisExtractionStatus: "OCR_REQUIRED" },
           }).catch((e: unknown) => {
-            console.error("[ai-analyze/stream] failed to persist EXTRACTION_CORRUPTED_AI_SKIPPED status:", e instanceof Error ? e.message : String(e));
+            logger.error("[ai-analyze/stream] failed to persist EXTRACTION_CORRUPTED_AI_SKIPPED status:", { detail: e instanceof Error ? e.message : String(e) });
           });
           emit({ phase: "error", message: "AI analysis skipped: extracted tender text is corrupted/gibberish and requires OCR or re-upload before reliable analysis.", code: "EXTRACTION_CORRUPTED_AI_SKIPPED" });
           controller.close();
@@ -432,7 +433,7 @@ async function handleStreamingAnalyze(
 
             // If a RUNNING job was started in the last 60s, return it instead of creating a duplicate
             if (existingRunning) {
-              console.warn(`[ai-analyze/stream] Concurrent AI job detected (${existingRunning.id}), reusing existing job instead of creating duplicate`);
+              logger.warn(`[ai-analyze/stream] Concurrent AI job detected (${existingRunning.id}), reusing existing job instead of creating duplicate`);
               return existingRunning;
             }
 
@@ -447,9 +448,9 @@ async function handleStreamingAnalyze(
           }, { isolationLevel: "Serializable", timeout: 5_000 });
         } catch (jobCreateErr) {
           if (jobCreateErr instanceof Error && jobCreateErr.message.includes("timeout")) {
-            console.warn("[ai-analyze/stream] Transaction timeout creating AI job — another request may be running analysis concurrently. Continuing with analysis...");
+            logger.warn("[ai-analyze/stream] Transaction timeout creating AI job — another request may be running analysis concurrently. Continuing with analysis...");
           } else {
-            console.warn("[ai-analyze/stream] Failed to create AiJob record:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
+            logger.warn("[ai-analyze/stream] Failed to create AiJob record:", { detail: jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr) });
           }
         }
 
@@ -490,7 +491,7 @@ async function handleStreamingAnalyze(
               message: `Starting analysis of chunk ${chunkIndex + 1} of ${totalChunks}…`,
             });
             await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
-              console.error("[ai-analyze/stream] checkpoint start write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/stream] checkpoint start write failed — chunk resume may retry this chunk:", { detail: e instanceof Error ? e.message : String(e) });
             });
           };
           const onChunkComplete = async ({
@@ -514,7 +515,7 @@ async function handleStreamingAnalyze(
                 message: `Completed chunk ${chunkIndex + 1} of ${totalChunks}${provider ? ` using ${provider}` : ""}.`,
               });
               await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch((e: unknown) => {
-                console.error("[ai-analyze/stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+                logger.error("[ai-analyze/stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", { detail: e instanceof Error ? e.message : String(e) });
               });
             }
             if (analysisJob) {
@@ -524,7 +525,7 @@ async function handleStreamingAnalyze(
                   output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
                 },
               }).catch((e: unknown) => {
-                console.error("[ai-analyze/stream] AiJob partial output update failed (non-critical):", e instanceof Error ? e.message : String(e));
+                logger.error("[ai-analyze/stream] AiJob partial output update failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
               });
             }
           };
@@ -541,7 +542,7 @@ async function handleStreamingAnalyze(
               message: `Chunk ${chunkIndex + 1} failed: ${errorMessage.slice(0, 100)}`,
             });
             await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch((e: unknown) => {
-              console.error("[ai-analyze/stream] checkpoint failed write failed — chunk may be retried on resume:", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/stream] checkpoint failed write failed — chunk may be retried on resume:", { detail: e instanceof Error ? e.message : String(e) });
             });
           };
           try {
@@ -711,7 +712,7 @@ async function handleStreamingAnalyze(
             }
             analysisMeta = aiMeta;
             void persistAllHealthToDb().catch((e: unknown) => {
-              console.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
             });
 
             const fileQualitySnapshots = tenderRecord.files.map((f) => ({
@@ -733,7 +734,7 @@ async function handleStreamingAnalyze(
                 ? "PARTIAL_EXTRACTION_AI_ANALYZED"
                 : rawExtractionStatus;
             await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
-              console.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", { detail: e instanceof Error ? e.message : String(e) });
             });
 
             analysisResult = {
@@ -746,9 +747,9 @@ async function handleStreamingAnalyze(
             if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
             const msg = aiError instanceof Error ? aiError.message : String(aiError);
             const diagnostics = buildAnalysisFallbackDiagnostics(msg);
-            console.error("[ai-analyze/stream] AI failed; regex fallback:", { category: diagnostics.category });
+            logger.error("[ai-analyze/stream] AI failed; regex fallback:", { category: diagnostics.category });
             void persistAllHealthToDb().catch((e: unknown) => {
-              console.error("[ai-analyze/stream] persistAllHealthToDb (fallback) failed (non-critical):", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/stream] persistAllHealthToDb (fallback) failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
             });
             // Non-destructive: stage fallback result without touching canonical tender data.
             const result = analyzeTender(tenderRecord);
@@ -1107,7 +1108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
           nsJobIdForFallback = analysisJob?.id ?? null;
         } catch (jobCreateErr) {
-          console.warn("[ai-analyze] Failed to create AiJob record — continuing without job tracking:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
+          logger.warn("[ai-analyze] Failed to create AiJob record — continuing without job tracking:", { detail: jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr) });
         }
 
         // Restore provider cooldown state from DB before analysis.
@@ -1121,7 +1122,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
         const onChunkStartNonStream = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
           await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
-            console.error("[ai-analyze/non-stream] checkpoint start write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+            logger.error("[ai-analyze/non-stream] checkpoint start write failed — chunk resume may retry this chunk:", { detail: e instanceof Error ? e.message : String(e) });
           });
         };
         const onChunkCompleteNonStream = async ({
@@ -1139,7 +1140,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }) => {
           if (typeof chunkIndex === "number" && result) {
             await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch((e: unknown) => {
-              console.error("[ai-analyze/non-stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/non-stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", { detail: e instanceof Error ? e.message : String(e) });
             });
           }
           if (analysisJob) {
@@ -1149,7 +1150,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
               },
             }).catch((e: unknown) => {
-              console.error("[ai-analyze/non-stream] AiJob partial output update failed (non-critical):", e instanceof Error ? e.message : String(e));
+              logger.error("[ai-analyze/non-stream] AiJob partial output update failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
             });
           }
         };
@@ -1160,7 +1161,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           provider,
         }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
           await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch((e: unknown) => {
-            console.error("[ai-analyze/non-stream] checkpoint failed write failed — chunk may be retried on resume:", e instanceof Error ? e.message : String(e));
+            logger.error("[ai-analyze/non-stream] checkpoint failed write failed — chunk may be retried on resume:", { detail: e instanceof Error ? e.message : String(e) });
           });
         };
         let aiMeta: AnalysisWithMeta;
@@ -1356,7 +1357,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Persist updated provider health to DB after analysis completes.
         // Fire-and-forget — never blocks the response.
         void persistAllHealthToDb().catch((e: unknown) => {
-          console.error("[ai-analyze/non-stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
+          logger.error("[ai-analyze/non-stream] persistAllHealthToDb failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
         });
 
         // Compute and persist the extraction status synchronously so downstream
@@ -1382,7 +1383,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           where: { id },
           data: { analysisExtractionStatus: extractionStatus },
         }).catch((e: unknown) => {
-          console.error("[ai-analyze/non-stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
+          logger.error("[ai-analyze/non-stream] analysisExtractionStatus persist failed — generation gates may use stale status:", { detail: e instanceof Error ? e.message : String(e) });
         });
 
         analysisResult = {
@@ -1396,10 +1397,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       } catch (aiError) {
         const msg = aiError instanceof Error ? aiError.message : String(aiError);
         const diagnostics = buildAnalysisFallbackDiagnostics(msg);
-        console.error("AI analysis failed; deterministic fallback used:", { category: diagnostics.category, message: diagnostics.message });
+        logger.error("AI analysis failed; deterministic fallback used:", { category: diagnostics.category, message: diagnostics.message });
         // Persist failure state so the next cold start knows which providers are cooling down.
         void persistAllHealthToDb().catch((e: unknown) => {
-          console.error("[ai-analyze/non-stream] persistAllHealthToDb (fallback) failed (non-critical):", e instanceof Error ? e.message : String(e));
+          logger.error("[ai-analyze/non-stream] persistAllHealthToDb (fallback) failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
         });
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
@@ -1618,7 +1619,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   } catch (error) {
     if (error instanceof AiAnalyzeCheckpointPersistenceError) {
-      console.error("Analysis route error (checkpoint persistence):", { code: error.code, diagnosticId: error.diagnosticId, operation: error.operation });
+      logger.error("Analysis route error (checkpoint persistence):", { code: error.code, diagnosticId: error.diagnosticId, operation: error.operation });
       return NextResponse.json(
         {
           error: "Analysis progress could not be saved. Please retry after the database issue is resolved.",
@@ -1628,7 +1629,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         { status: 503 },
       );
     }
-    console.error("Analysis route error:", error);
+    logger.error("Analysis route error:", { detail: error });
     const raw = error instanceof Error ? error.message : "Analysis failed";
     // Sanitize before returning — strip API keys and truncate stack detail
     const safe = raw

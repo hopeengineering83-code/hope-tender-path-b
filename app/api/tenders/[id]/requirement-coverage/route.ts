@@ -1,3 +1,4 @@
+import { logger } from "../../../../../lib/observability";
 // GET /api/tenders/[id]/requirement-coverage
 //
 // Returns per-requirement mandatory coverage: title, type, source reference,
@@ -274,7 +275,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       rows,
     });
   } catch (error) {
-    console.error("requirement-coverage GET failed", error);
+    logger.error("requirement-coverage GET failed", { detail: error });
     return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
   }
 }

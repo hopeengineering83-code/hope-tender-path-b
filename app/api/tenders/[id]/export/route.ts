@@ -9,7 +9,7 @@ import { logAction } from "../../../../../lib/audit";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
-import { reportError } from "../../../../../lib/observability";
+import { reportError, logger } from "../../../../../lib/observability";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -233,7 +233,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       { status: 201 },
     );
   } catch (error) {
-    console.error("Export preparation failed:", error);
+    logger.error("Export preparation failed:", { detail: error });
     void reportError(error, { route: "/api/tenders/[id]/export", userId });
     return NextResponse.json({ error: "Export preparation failed" }, { status: 500 });
   }

@@ -1,3 +1,4 @@
+import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from "../../../../lib/auth";
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
           await prisma.project.update({ where: { id: project.id }, data: update });
         }
       } catch (eErr) {
-        console.warn("[project-fact-extractor] auto-extraction failed:", eErr instanceof Error ? eErr.message : eErr);
+        logger.warn("[project-fact-extractor] auto-extraction failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
       }
     }
 
@@ -127,7 +128,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(normalizeProject((refreshed ?? project) as unknown as Record<string, unknown>), { status: 201 });
   } catch (error) {
-    console.error(error);
+    logger.error("Request failed", { detail: error });
     return NextResponse.json({ error: "Failed to create project" }, { status: 500 });
   }
 }

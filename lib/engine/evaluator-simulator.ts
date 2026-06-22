@@ -1,3 +1,4 @@
+import { logger } from "../observability";
 import { safeParseJsonObject } from "../safe-json";
 /**
  * Evaluator Persona Simulator.
@@ -303,7 +304,7 @@ async function runPersona(persona: EvaluatorPersona, systemPrompt: string, userP
     const raw = await generateWithFallback(userPrompt, { systemPrompt, useCase: "reasoning" });
     const parsed = safeParseJson(raw);
     if (!parsed) {
-      console.warn(`[evaluator-simulator] Persona ${persona} returned malformed JSON.`);
+      logger.warn(`[evaluator-simulator] Persona ${persona} returned malformed JSON.`);
       return null;
     }
 
@@ -339,7 +340,7 @@ async function runPersona(persona: EvaluatorPersona, systemPrompt: string, userP
 
     return { persona, personaSummary, criterionScores, objections, commendations, actions, durationMs: Date.now() - t0 };
   } catch (err) {
-    console.warn(`[evaluator-simulator] Persona ${persona} call failed:`, err instanceof Error ? err.message : err);
+    logger.warn(`[evaluator-simulator] Persona ${persona} call failed:`, { detail: err instanceof Error ? err.message : err });
     return null;
   }
 }
@@ -453,7 +454,7 @@ export async function simulateEvaluatorPanel(input: {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<null>((resolve) => {
     timeoutHandle = setTimeout(() => {
-      console.warn(`[evaluator-simulator] Simulation timed out after ${Math.round(SIMULATION_TIMEOUT_MS / 1000)}s — returning null.`);
+      logger.warn(`[evaluator-simulator] Simulation timed out after ${Math.round(SIMULATION_TIMEOUT_MS / 1000)}s — returning null.`);
       resolve(null);
     }, SIMULATION_TIMEOUT_MS);
   });
@@ -477,7 +478,7 @@ export async function simulateEvaluatorPanel(input: {
 
   const assessments = settled.flatMap((s) => (s.status === "fulfilled" && s.value ? [s.value] : []));
   if (assessments.length === 0) {
-    console.warn("[evaluator-simulator] All personas failed — simulation returning null.");
+    logger.warn("[evaluator-simulator] All personas failed — simulation returning null.");
     return null;
   }
 
@@ -491,7 +492,7 @@ export async function simulateEvaluatorPanel(input: {
   const rationale = synthesizeRationale(predictedOverallScore, verdict, topObjections.length, actionPlan.length);
 
   const totalMs = assessments.reduce((s, a) => Math.max(s, a.durationMs), 0);
-  console.info(`[evaluator-simulator] Evidence-aware panel of ${assessments.length}/4 personas completed in ${Math.round(totalMs / 100) / 10}s — verdict ${verdict} (${predictedOverallScore}/100), ${topObjections.length} objection(s), ${actionPlan.length} action(s), ${calibrationNotes.length} calibration alarm(s).`);
+  logger.info(`[evaluator-simulator] Evidence-aware panel of ${assessments.length}/4 personas completed in ${Math.round(totalMs / 100) / 10}s — verdict ${verdict} (${predictedOverallScore}/100), ${topObjections.length} objection(s), ${actionPlan.length} action(s), ${calibrationNotes.length} calibration alarm(s).`);
 
   return {
     predictedOverallScore,
