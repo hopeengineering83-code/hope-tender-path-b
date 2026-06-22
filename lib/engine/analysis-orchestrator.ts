@@ -21,6 +21,7 @@ import {
 } from "../ai";
 import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
 import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 
 export type AnalysisOrchestrationOptions = {
   force?: boolean;
@@ -111,7 +112,7 @@ export async function executeAnalysis(
           previousChunkResults = parsed.chunkResults.filter(
             (r: any) => r.index !== undefined && r.result !== undefined
           );
-          startFromChunk = previousChunkResults.length > 0 ? 0 : (parsed.completedChunks ?? 0);
+          startFromChunk = previousChunkResults.length > 0 ? previousChunkResults.length : (parsed.completedChunks ?? 0);
         }
       } catch {
         // If output can't be parsed, start fresh
@@ -176,24 +177,68 @@ export async function executeAnalysis(
     });
   };
 
-  // Fetch tender content
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: { files: true },
+  // Fetch tender for access check and to load companyId
+  const tenderForAccess = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      id: true,
+      userId: true,
+      companyId: true,
+    },
   });
 
-  if (!tender) {
+  if (!tenderForAccess || tenderForAccess.userId !== userId) {
     throw new Error("Tender not found or access denied");
   }
 
-  const tenderContent = tender.files
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((f) => {
-      if (!f.extractedText) return "";
-      return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
-    })
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+  // Fetch tender with fields needed for content builder
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      title: true,
+      description: true,
+      intakeSummary: true,
+      files: {
+        select: {
+          id: true,
+          originalFileName: true,
+          extractedText: true,
+          classification: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  if (!tender) {
+    throw new Error("Tender not found");
+  }
+
+  // Load company if exists for shared builder input
+  let company: Parameters<typeof buildTenderAnalysisContent>[1] | undefined;
+  if (tenderForAccess.companyId) {
+    const companyRecord = await prisma.company.findUnique({
+      where: { id: tenderForAccess.companyId },
+      select: {
+        documents: {
+          select: {
+            category: true,
+            originalFileName: true,
+            extractedText: true,
+          },
+          take: 5,
+          orderBy: { createdAt: "desc" as const },
+        },
+      },
+    });
+    if (companyRecord) {
+      company = companyRecord;
+    }
+  }
+
+  // Use Stage 1 shared builder for deterministic content
+  const tenderContent = buildTenderAnalysisContent(tender, company);
+  const contentHash = computeAnalysisContentHash(tenderContent);
 
   if (!tenderContent || tenderContent.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
@@ -264,11 +309,14 @@ export async function executeAnalysis(
           skippedChunks: analysisMeta.skippedChunks,
           chunkProviders: analysisMeta.chunkProviders,
           chunkResults: analysisMeta.chunkResults,
+          contentHash,
           analysisSource,
         }),
         errorMessage,
       },
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error(`[orchestrator] Failed to update job ${jobId} status:`, err instanceof Error ? err.message : String(err));
+    });
   }
 
   // Phase: Complete
