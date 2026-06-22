@@ -15,6 +15,7 @@ import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../..
 import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
+import { getTenderAnalysisState, stateCheckToGate } from "../../../../../lib/ai-analyze/production-analysis-service";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -168,6 +169,21 @@ function parseEnvelopeQuery(value: string | null): EnvelopeFilter | "INVALID" {
 async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeFilter) {
   const gate = await finalPackageGate(userId, tender);
   if (!gate.ok) return gate.response;
+
+  // Comprehensive AI analysis readiness gate — same gate used by export route
+  const analysisState = await getTenderAnalysisState(tender.id, prisma);
+  const analysisGate = stateCheckToGate(analysisState);
+  if (!analysisGate.ok) {
+    return err(
+      `ZIP package blocked: ${analysisGate.message}`,
+      analysisGate.statusCode || 409,
+      {
+        code: analysisGate.code,
+        nextAction: analysisGate.nextAction,
+        details: "Re-run AI Analyze, or for fallback: POST /api/tenders/[id]/approve-analysis to approve and proceed.",
+      },
+    );
+  }
 
   // Canonical readiness gate — same helper used by Export Readiness API,
   // Bid Control, and Final Submission Control Center. Backend MUST reject

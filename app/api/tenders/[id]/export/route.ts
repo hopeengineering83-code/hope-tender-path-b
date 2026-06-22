@@ -10,6 +10,7 @@ import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingesti
 import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
 import { reportError } from "../../../../../lib/observability";
+import { getTenderAnalysisState, stateCheckToGate } from "../../../../../lib/ai-analyze/production-analysis-service";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -63,35 +64,22 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Block export when AI Analyze ran on weak/corrupted extraction, was skipped,
-    // or used regex fallback — the generated documents may be based on incomplete
-    // requirement extraction. Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is the tender
-    // job status; the analysisExtractionStatus field is set to "OCR_REQUIRED" in
-    // that case (see ai-analyze/route.ts).
-    const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
-    const weakAnalysisStatuses = [
-      "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
-      "OCR_REQUIRED",                   // AI was skipped — no reliable analysis at all
-      "EXTRACTION_WEAK_REVIEW_REQUIRED", // AI ran on weak extraction
-      "PARTIAL_EXTRACTION_AI_ANALYZED",  // AI ran on incomplete pages
-    ] as const;
-    if (weakAnalysisStatuses.some((s) => s === analysisExtractionStatus)) {
-      const detail =
-        analysisExtractionStatus === "OCR_REQUIRED"
-          ? "AI Analyze was skipped because the extracted text is corrupted"
-          : analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
-          ? "tender analysis used regex/deterministic fallback"
-          : analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED"
-          ? "AI Analyze ran on weak extraction"
-          : "AI Analyze ran on a partially-extracted tender";
-      return NextResponse.json(
-        {
-          error: `Export blocked: ${detail}. Re-run AI Analyze after OCR extraction before exporting.`,
-          code: "ANALYSIS_FROM_WEAK_EXTRACTION",
-          analysisExtractionStatus,
-        },
-        { status: 422 },
-      );
+    // Comprehensive AI analysis readiness gate
+    const analysisState = await getTenderAnalysisState(id, prisma);
+    const analysisGate = stateCheckToGate(analysisState);
+    if (!analysisGate.ok) {
+      await logAction({
+        userId,
+        action: "EXPORT_BLOCKED_ANALYSIS_INVALID",
+        entityType: "Tender",
+        entityId: id,
+        description: `Export blocked: ${analysisGate.message}`,
+      });
+      return NextResponse.json({
+        error: analysisGate.message,
+        code: analysisGate.code,
+        nextAction: analysisGate.nextAction,
+      }, { status: analysisGate.statusCode || 409 });
     }
 
     const blockingGaps = tender.complianceGaps.filter(

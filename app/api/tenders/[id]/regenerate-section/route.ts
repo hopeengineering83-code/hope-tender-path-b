@@ -23,6 +23,8 @@ import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { getTenderAnalysisState, stateCheckToGate } from "../../../../../lib/ai-analyze/production-analysis-service";
+import { logAction } from "../../../../../lib/audit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -141,6 +143,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+
+  // Comprehensive AI analysis readiness gate — same gate used by generate and export routes
+  const analysisState = await getTenderAnalysisState(id, prisma);
+  const analysisGate = stateCheckToGate(analysisState);
+  if (!analysisGate.ok) {
+    await logAction({
+      userId,
+      action: "GENERATION_BLOCKED_ANALYSIS_INVALID",
+      entityType: "Tender",
+      entityId: id,
+      description: `Section regeneration blocked: ${analysisGate.message}`,
+    });
+    return NextResponse.json({
+      error: analysisGate.message,
+      code: analysisGate.code,
+      nextAction: analysisGate.nextAction,
+      details: "Re-run AI Analyze, or for fallback: POST /api/tenders/[id]/approve-analysis to approve and proceed.",
+    }, { status: analysisGate.statusCode || 409 });
+  }
 
   let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
   let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");

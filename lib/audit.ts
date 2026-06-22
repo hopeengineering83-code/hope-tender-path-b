@@ -87,6 +87,11 @@ export type AuditAction =
   // analysis source was an unapproved regex fallback (see
   // lib/engine/analysis-source.ts).
   | "GENERATION_BLOCKED_REGEX_FALLBACK"
+  // Export and generation routes refused because the analysis state
+  // is invalid (job queued/running, failed, superseded, or fallback
+  // unapproved). Uses getTenderAnalysisState comprehensive validation.
+  | "GENERATION_BLOCKED_ANALYSIS_INVALID"
+  | "EXPORT_BLOCKED_ANALYSIS_INVALID"
   // Bulk reassessment of generated documents against the quality gate.
   // POST /api/admin/generated-proposals/reassess records this with the
   // demoted-count + inspected-count in description.

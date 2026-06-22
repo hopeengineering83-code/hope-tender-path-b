@@ -23,6 +23,7 @@ import { isValidClientName, containsMetadataPlaceholder, isClientNameContaminate
 import { validateTenderBeforeGeneration, validateTenderBeforeExport } from "../../../../../lib/engine/pre-generation-validation";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { getTenderAnalysisState, stateCheckToGate } from "../../../../../lib/ai-analyze/production-analysis-service";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
@@ -773,21 +774,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });
   }
 
-  // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
-  // If the last engine run fell back to regex analysis because AI providers
-  // failed, do not produce a final proposal unless a senior engineer has
-  // explicitly approved the fallback analysis via
-  // POST /api/tenders/[id]/approve-analysis. This is what prevents the
-  // screenshot regression where regex-fallback analysis quietly produced
-  // PASSED/APPROVED final proposal documents.
-  const analysisGate = await assertAnalysisReadyForFinalGeneration(prisma, id, tender);
+  // ── Comprehensive AI analysis readiness gate ────────────────────────────
+  // Comprehensive validation: check job status, completion, promotion, hash,
+  // source validation, file validity, and fallback approval.
+  // Uses getTenderAnalysisState which validates all 7 conditions before allowing generation.
+  const analysisState = await getTenderAnalysisState(id, prisma);
+  const analysisGate = stateCheckToGate(analysisState);
   if (!analysisGate.ok) {
     await logAction({
       userId,
-      action: "GENERATION_BLOCKED_REGEX_FALLBACK",
+      action: "GENERATION_BLOCKED_ANALYSIS_INVALID",
       entityType: "Tender",
       entityId: id,
-      description: "Final generation blocked: analysis source is regex fallback and has not been human-approved.",
+      description: `Final generation blocked: ${analysisGate.message}`,
       requestId,
     });
     return NextResponse.json({
@@ -796,9 +795,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       code: analysisGate.code,
       blockers: [analysisGate.message],
       nextAction: analysisGate.nextAction,
-      diagnosticId: `analysis-source-${id}`,
-      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
-    }, { status: 409 });
+      diagnosticId: `analysis-state-${id}`,
+      details: "Re-run AI Analyze, or for fallback: POST /api/tenders/[id]/approve-analysis to approve and proceed.",
+    }, { status: analysisGate.statusCode || 409 });
   }
   // ── Source traceability gate ──────────────────────────────────────────────
   // Block when ALL mandatory requirements completely lack source traceability
