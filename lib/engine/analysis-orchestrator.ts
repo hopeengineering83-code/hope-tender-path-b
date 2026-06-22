@@ -177,23 +177,67 @@ export async function executeAnalysis(
     });
   };
 
-  // Fetch tender content
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: { files: true },
+  // Fetch tender for access check and to load companyId
+  const tenderForAccess = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      id: true,
+      userId: true,
+      companyId: true,
+    },
   });
 
-  if (!tender) {
+  if (!tenderForAccess || tenderForAccess.userId !== userId) {
     throw new Error("Tender not found or access denied");
   }
 
-  // Load company if exists
-  const company = tender.companyId
-    ? await prisma.company.findUnique({ where: { id: tender.companyId } })
-    : null;
+  // Fetch tender with fields needed for content builder
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      title: true,
+      description: true,
+      intakeSummary: true,
+      files: {
+        select: {
+          id: true,
+          originalFileName: true,
+          extractedText: true,
+          classification: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  if (!tender) {
+    throw new Error("Tender not found");
+  }
+
+  // Load company if exists for shared builder input
+  let company: Parameters<typeof buildTenderAnalysisContent>[1] | undefined;
+  if (tenderForAccess.companyId) {
+    const companyRecord = await prisma.company.findUnique({
+      where: { id: tenderForAccess.companyId },
+      select: {
+        documents: {
+          select: {
+            category: true,
+            originalFileName: true,
+            extractedText: true,
+          },
+          take: 5,
+          orderBy: { createdAt: "desc" as const },
+        },
+      },
+    });
+    if (companyRecord) {
+      company = companyRecord;
+    }
+  }
 
   // Use Stage 1 shared builder for deterministic content
-  const tenderContent = buildTenderAnalysisContent(tender, company ?? undefined);
+  const tenderContent = buildTenderAnalysisContent(tender, company);
   const contentHash = computeAnalysisContentHash(tenderContent);
 
   if (!tenderContent || tenderContent.length < 100) {
