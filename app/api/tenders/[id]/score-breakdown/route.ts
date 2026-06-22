@@ -13,6 +13,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { reportError } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -280,7 +281,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       correctiveActionSummary,
     });
   } catch (error) {
-    console.error("score-breakdown GET failed", error);
+    void reportError(error, { route: "/api/tenders/[id]/score-breakdown" });
     return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
   }
 }

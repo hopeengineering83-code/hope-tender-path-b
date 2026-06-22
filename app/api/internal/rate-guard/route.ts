@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { AI_RATE_LIMIT, rateLimitPersistent } from "../../../../lib/rate-limit";
-import { sanitizeError } from "../../../../lib/sanitize-error";
+import { logger, reportError } from "../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
 
   const token = deriveInternalGuardToken();
   if (!token) {
-    console.error("[rate-guard] SESSION_SECRET is unavailable; guarded AI route denied");
+    logger.error("[rate-guard] SESSION_SECRET is unavailable; guarded AI route denied", { route: "/api/internal/rate-guard" });
     return NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 });
   }
 
@@ -119,7 +119,7 @@ export async function POST(req: Request) {
       headers: responseHeaders(upstream),
     });
   } catch (error) {
-    console.error(`[rate-guard] guarded upstream request failed: ${sanitizeError(error)}`);
+    void reportError(error, { route: "/api/internal/rate-guard", target: rawTarget });
     return NextResponse.json({ error: "Guarded AI request failed" }, { status: 502 });
   }
 }

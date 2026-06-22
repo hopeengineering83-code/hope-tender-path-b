@@ -65,7 +65,11 @@ describe("panel routes — structured error response fields", () => {
 
     it(`${panel} route emits structured log with route, tenderId, diagnosticId`, () => {
       const src = readFileSync(resolve(process.cwd(), file), "utf8");
-      assert.ok(src.includes("console.error"), `${panel} must log errors`);
+      // Routes may use either `console.error` directly or the structured
+      // logger from lib/observability (which itself routes through the
+      // matching console method). Either satisfies the "must log errors"
+      // contract; the structured fields below enforce the shape.
+      assert.ok(src.includes("console.error") || src.includes("logger.error") || src.includes("reportError"), `${panel} must log errors`);
       assert.ok(src.includes("route:"), `${panel} structured log must include route:`);
       assert.ok(src.includes("tenderId"), `${panel} structured log must include tenderId`);
       assert.ok(src.includes("errorClass"), `${panel} structured log must include errorClass`);

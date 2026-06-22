@@ -22,7 +22,7 @@ import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-dri
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { logger, reportError } from "../../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -153,19 +153,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (experts.length === 0) {
     if (vaultExperts.length > 0) {
       experts = vaultExperts;
-      console.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
+      logger.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`, { route: "/api/tenders/[id]/regenerate-section", tenderId: id, sectionId, expertSource: "vault" });
     } else {
       experts = tender.expertMatches.map((m) => m.expert);
-      if (experts.length > 0) console.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
+      if (experts.length > 0) logger.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`, { route: "/api/tenders/[id]/regenerate-section", tenderId: id, sectionId, expertSource: "unreviewed-selected" });
     }
   }
   if (projects.length === 0) {
     if (vaultProjects.length > 0) {
       projects = vaultProjects as typeof projects;
-      console.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
+      logger.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`, { route: "/api/tenders/[id]/regenerate-section", tenderId: id, sectionId, projectSource: "vault" });
     } else {
       projects = tender.projectMatches.map((m) => m.project);
-      if (projects.length > 0) console.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
+      if (projects.length > 0) logger.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`, { route: "/api/tenders/[id]/regenerate-section", tenderId: id, sectionId, projectSource: "unreviewed-selected" });
     }
   }
 
@@ -296,7 +296,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const { generateWithFallback } = await import("../../../../../lib/ai");
       sectionMarkdown = await generateWithFallback(spec.userPrompt, { systemPrompt: spec.systemPrompt });
     } catch (err) {
-      console.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
+      void reportError(err, { route: "/api/tenders/[id]/regenerate-section", tenderId: id, sectionId, operation: "ai-generate", stage: "section" });
     }
 
     if (!sectionMarkdown || sectionMarkdown.trim().length < 50) {
@@ -317,7 +317,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fallback: false,
     });
   } catch (error) {
-    console.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
+    void reportError(error, { route: "/api/tenders/[id]/regenerate-section", tenderId: id, sectionId, operation: "POST" });
     return NextResponse.json({ error: "Section regeneration failed. Retry or review server logs." }, { status: 500 });
   }
 }

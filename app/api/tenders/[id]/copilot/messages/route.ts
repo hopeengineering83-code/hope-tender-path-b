@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
+import { reportError } from "../../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
     return NextResponse.json({ success: true, messages });
   } catch (err) {
-    console.error("[copilot/messages GET]", err);
+    void reportError(err, { route: "/api/tenders/[id]/copilot/messages", tenderId: id, operation: "GET" });
     return NextResponse.json({ error: "Failed to load messages" }, { status: 500 });
   }
 }
@@ -59,7 +60,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true, deleted: result.count });
   } catch (err) {
-    console.error("[copilot/messages DELETE]", err);
+    void reportError(err, { route: "/api/tenders/[id]/copilot/messages", tenderId: id, operation: "DELETE" });
     return NextResponse.json({ error: "Failed to delete messages" }, { status: 500 });
   }
 }

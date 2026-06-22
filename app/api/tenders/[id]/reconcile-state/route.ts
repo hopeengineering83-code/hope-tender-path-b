@@ -3,6 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma } from "../../../../../lib/prisma";
 import { resolveTenderAnalysisState } from "../../../../../lib/engine/analysis-state-resolver";
 import { logAction } from "../../../../../lib/audit";
+import { reportError } from "../../../../../lib/observability";
 
 export async function POST(
   req: NextRequest,
@@ -44,7 +45,7 @@ export async function POST(
       analysisInfo
     });
   } catch (error) {
-    console.error("[reconcile-state]", error);
+    void reportError(error, { route: "/api/tenders/[id]/reconcile-state" });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

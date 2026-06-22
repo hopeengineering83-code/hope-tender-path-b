@@ -15,6 +15,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
+import { reportError } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -274,7 +275,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       rows,
     });
   } catch (error) {
-    console.error("requirement-coverage GET failed", error);
+    void reportError(error, { route: "/api/tenders/[id]/requirement-coverage" });
     return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
   }
 }

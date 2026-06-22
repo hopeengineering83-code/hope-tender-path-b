@@ -6,6 +6,7 @@ import { logAction } from "../../../../lib/audit";
 import { repairLoginSchema } from "../../../../lib/login-schema-repair";
 import { rateLimit, AUTH_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "../../../../lib/bootstrap-admin-policy";
+import { logger } from "../../../../lib/observability";
 
 function safeMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
@@ -127,7 +128,7 @@ export async function POST(req: Request) {
       try {
         passwordOk = await bcrypt.compare(password, user.passwordHash);
       } catch (error) {
-        console.error("Password verification failed:", safeMessage(error));
+        logger.error("Login password verification failed", { route: "/api/auth/login", error: safeMessage(error) });
         return NextResponse.json(
           { error: "Password verification failed", detail: "The stored password hash is invalid for this user. Reset or recreate the user password." },
           { status: 500 },
@@ -157,7 +158,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     const msg = safeMessage(error);
-    console.error("Login error:", msg);
+    logger.error("Login error", { route: "/api/auth/login", error: msg });
     return NextResponse.json(
       { error: "Login failed", detail: msg },
       { status: 500 },

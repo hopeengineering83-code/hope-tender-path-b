@@ -7,6 +7,7 @@ import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/propos
 import { getStorageAdapter } from "../../../../lib/storage";
 import { logAction } from "../../../../lib/audit";
 import { rateLimit } from "../../../../lib/rate-limit";
+import { logger, reportError } from "../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -282,11 +283,11 @@ export async function POST(req: Request) {
       requirementsCleaned: results.requirements?.cleared ?? 0,
       documentsDeleted: results.pruneSuperseded?.deleted ?? 0,
     },
-  }).catch((err) => console.warn("Failed to log repair action:", err));
+  }).catch((err) => logger.warn("Failed to log repair action", { route: "/api/admin/repair", error: err instanceof Error ? err.message : String(err) }));
 
   return NextResponse.json(results);
   } catch (error) {
-    console.error("Admin repair route error:", error);
+    void reportError(error, { route: "/api/admin/repair", step });
     const raw = error instanceof Error ? error.message : "Repair failed";
     const safe = raw
       .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")

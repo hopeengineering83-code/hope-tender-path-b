@@ -5,6 +5,7 @@ import { logAction } from "../../../lib/audit";
 import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
+import { reportError } from "../../../lib/observability";
 
 export async function GET(req: Request) {
   const userId = await getSession();
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(tender, { status: 201 });
   } catch (error) {
-    console.error(error);
+    void reportError(error, { route: "/api/tenders" });
     return NextResponse.json({ error: "Failed to create tender" }, { status: 500 });
   }
 }

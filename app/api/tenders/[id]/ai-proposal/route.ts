@@ -13,6 +13,7 @@ import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { logger, reportError } from "../../../../../lib/observability";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -277,10 +278,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   experts = expertSelection.evidence;
   projects = projectSelection.evidence;
-  if (expertSelection.usedReviewedVaultFallback) console.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`);
-  if (projectSelection.usedReviewedVaultFallback) console.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`);
-  if (experts.length === 0 && tender.expertMatches.length > 0) console.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.");
-  if (projects.length === 0 && tender.projectMatches.length > 0) console.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");
+  if (expertSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`, { route: "/api/tenders/[id]/ai-proposal", tenderId: id, expertSource: "vault" });
+  if (projectSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`, { route: "/api/tenders/[id]/ai-proposal", tenderId: id, projectSource: "vault" });
+  if (experts.length === 0 && tender.expertMatches.length > 0) logger.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.", { route: "/api/tenders/[id]/ai-proposal", tenderId: id });
+  if (projects.length === 0 && tender.projectMatches.length > 0) logger.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.", { route: "/api/tenders/[id]/ai-proposal", tenderId: id });
 
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
   // Skip cache for chunked requests — each chunk returns a partial proposal
@@ -463,7 +464,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {
       const msg = sanitizeError(aiError);
-      console.error("Benchmark AI proposal failed in /ai-proposal route:", msg);
+      void reportError(aiError, { route: "/api/tenders/[id]/ai-proposal", tenderId: id, stage: "ai-generate" });
+      // Keep a sanitized inline log so operators can grep without parsing
+      // the structured reportError JSON envelope (OBS-001).
+      logger.error("Benchmark AI proposal failed in /ai-proposal route", { route: "/api/tenders/[id]/ai-proposal", tenderId: id, error: msg });
 
       // Rate limit: don't overwrite any existing proposal — ask user to retry
       if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
@@ -560,7 +564,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { id: proposalJobId },
       data: { status: "FAILED", errorMessage: safeError, finishedAt: new Date(), updatedAt: new Date() },
     }).catch(() => {});
-    console.error("Proposal generation route error:", safeError);
+    void reportError(error, { route: "/api/tenders/[id]/ai-proposal", tenderId: id, proposalJobId });
     return NextResponse.json({ error: "Proposal generation failed. Retry or review server logs.", proposalJobId }, { status: 500 });
   }
 }

@@ -5,6 +5,7 @@ import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { cleanupSupportDocImportedRecords } from "../../../lib/company-support-doc-cleanup";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
 import { logAction } from "../../../lib/audit";
+import { logger, reportError } from "../../../lib/observability";
 
 const DEFAULT_COMPANY_NAME = "Hope Urban Planning Architectural and Engineering Consultancy";
 const DEFAULT_COMPANY_DESCRIPTION = "AI-powered tender proposal generation workspace";
@@ -236,12 +237,12 @@ export async function PUT(req: Request) {
         const update = mergeFactsIntoCompany(company, extracted);
         if (Object.keys(update).length > 0) {
           await prisma.company.update({ where: { id: company.id }, data: update });
-          console.info(`[company-fact-extractor] Auto-filled ${Object.keys(update).length} field(s):`, Object.keys(update).join(", "));
+          logger.info("[company-fact-extractor] auto-filled metadata fields", { route: "/api/company", fieldCount: Object.keys(update).length, fields: Object.keys(update) });
         }
       }
     } catch (eErr) {
       // Non-critical: the company is already saved. Log and continue.
-      console.warn("[company-fact-extractor] auto-extraction failed:", eErr instanceof Error ? eErr.message : eErr);
+      logger.warn("[company-fact-extractor] auto-extraction failed", { route: "/api/company", error: eErr instanceof Error ? eErr.message : String(eErr) });
     }
 
     const refreshed = await prisma.company.findUnique({
@@ -255,7 +256,7 @@ export async function PUT(req: Request) {
     const fallback = deriveCompanyProfileFallback(docs);
     return NextResponse.json(serializeCompany(refreshed, fallback));
   } catch (error) {
-    console.error(error);
+    void reportError(error, { route: "/api/company" });
     return NextResponse.json({ error: "Failed to save company" }, { status: 500 });
   }
 }

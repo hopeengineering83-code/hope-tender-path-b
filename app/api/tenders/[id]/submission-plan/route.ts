@@ -14,6 +14,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { reportError } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -106,7 +107,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       warnings: report.warnings,
     });
   } catch (error) {
-    console.error("submission-plan route failed", error);
+    void reportError(error, { route: "/api/tenders/[id]/submission-plan" });
     return err("Submission-plan route failed.", 500, { code: "SUBMISSION_PLAN_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

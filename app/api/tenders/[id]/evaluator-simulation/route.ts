@@ -8,6 +8,7 @@ import { logAction } from "../../../../../lib/audit";
 import { isDeepReasoningEnabled } from "../../../../../lib/engine/feature-flags";
 import { extractDeepTenderComprehension } from "../../../../../lib/engine/evaluation-criteria-extractor";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { logger, reportError } from "../../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -99,7 +100,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         sharedCriteria = comprehension.criteria.map((criterion) => ({ id: criterion.id, criterion: criterion.criterion, weight: criterion.weight }));
       }
     } catch (error) {
-      console.warn(`[evaluator-simulation] Deep comprehension unavailable: ${sanitizeError(error)}`);
+      logger.warn("[evaluator-simulation] deep comprehension unavailable", { route: "/api/tenders/[id]/evaluator-simulation", tenderId: id, error: sanitizeError(error) });
     }
   }
 
@@ -132,7 +133,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     result = await simulateEvaluatorPanel({ tenderTitle: tender.title, proposalMarkdown: proposalContext, evaluationCriteria: tender.evaluationMethodology ?? "", context });
   } catch (error) {
-    console.error(`[evaluator-simulation] Provider failure for tender ${id}: ${sanitizeError(error)}`);
+    void reportError(error, { route: "/api/tenders/[id]/evaluator-simulation", tenderId: id });
     return NextResponse.json({ error: "Evaluator simulation failed. Retry or review provider configuration.", code: "EVALUATOR_PROVIDER_FAILED" }, { status: 502 });
   }
 

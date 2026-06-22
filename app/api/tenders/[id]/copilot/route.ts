@@ -7,6 +7,7 @@ import { buildEvidenceGraph } from "../../../../../lib/evidence-graph";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { logger, reportError } from "../../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -107,7 +108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    console.error(`[copilot] AI request failed for tender ${id}: ${sanitizeError(error)}`);
+    void reportError(error, { route: "/api/tenders/[id]/copilot", tenderId: id, operation: "POST" });
     return NextResponse.json({ error: "Copilot AI request failed. Retry or review provider configuration." }, { status: 502 });
   }
 
@@ -136,7 +137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ],
     });
   } catch (error) {
-    console.warn("[copilot] Failed to persist chat history — answer still returned:", sanitizeError(error));
+    logger.warn("[copilot] failed to persist chat history — answer still returned", { route: "/api/tenders/[id]/copilot", tenderId: id, error: sanitizeError(error) });
   }
 
   return NextResponse.json({ success: true, response });

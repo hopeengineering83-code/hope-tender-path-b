@@ -10,7 +10,7 @@ import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { autoFillTenderMetadata } from "../../../../../lib/engine/auto-fill-tender-metadata";
 import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { logger, reportError } from "../../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -67,12 +67,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (invalidFields.length > 0) {
       const patch = computeStoredMetadataPatch(tender);
       await prisma.tender.update({ where: { id: tender.id }, data: patch });
-      console.warn(`[engine] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before run: ${invalidFields.join(", ")}`);
+      logger.warn(`[engine] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before run: ${invalidFields.join(", ")}`, { route: "/api/tenders/[id]/engine", tenderId: tender.id, invalidFields });
       for (const field of invalidFields) (tender as Record<string, unknown>)[field] = null;
     }
 
     const metadataAutoFill = await autoFillTenderMetadata(tender, prisma);
-    if (metadataAutoFill.filled.length > 0) console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
+    if (metadataAutoFill.filled.length > 0) logger.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`, { route: "/api/tenders/[id]/engine", tenderId: tender.id, fields: metadataAutoFill.filled });
 
     const effectiveExtractionFiles = tender.files.map((file) => {
       const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
@@ -108,7 +108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ]);
       if (reviewedExpertsCount + reviewedProjectsCount > LARGE_VAULT_SYNC_THRESHOLD) {
         effectiveSkipAiRematch = true;
-        console.info(`[engine] tender=${id} large vault (${reviewedExpertsCount} experts + ${reviewedProjectsCount} projects) — auto-applying skipAiRematch to prevent 60s timeout`);
+        logger.info(`[engine] tender=${id} large vault (${reviewedExpertsCount} experts + ${reviewedProjectsCount} projects) — auto-applying skipAiRematch to prevent 60s timeout`, { route: "/api/tenders/[id]/engine", tenderId: id, reviewedExpertsCount, reviewedProjectsCount });
       }
     }
 
@@ -142,7 +142,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), inputStats, metadataAutoFill, diagnosticId });
   } catch (error) {
-    console.error("Engine run failed:", { diagnosticId, error: sanitizeError(error) });
+    void reportError(error, { route: "/api/tenders/[id]/engine", diagnosticId });
     const mapped = actionableEngineError(error);
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }

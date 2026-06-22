@@ -8,6 +8,7 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { getLatestAnalyzeCheckpointProgress } from "../../../../lib/ai-analyze-checkpoints";
 import { detectMetadataContamination } from "../../../../lib/engine/tender-metadata-completeness";
 import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
+import { reportError } from "../../../../lib/observability";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -139,7 +140,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const payload = await withDashboardPayload(tender as any);
     return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo, aiAnalyzeCheckpointProgress });
   } catch (error) {
-    console.error("[GET /api/tenders/[id]] failed:", error);
+    void reportError(error, { route: "/api/tenders/[id]", tenderId: id });
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
   }
 }
@@ -252,7 +253,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
     return NextResponse.json(await withDashboardPayload(tender as any));
   } catch (error) {
-    console.error(error);
+    void reportError(error, { route: "/api/tenders/[id]", tenderId: id, operation: "PUT" });
     return NextResponse.json({ error: "Failed to update tender" }, { status: 500 });
   }
 }
@@ -279,7 +280,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error(error);
+    void reportError(error, { route: "/api/tenders/[id]", tenderId: id, operation: "DELETE" });
     return NextResponse.json({ error: "Failed to delete tender" }, { status: 500 });
   }
 }

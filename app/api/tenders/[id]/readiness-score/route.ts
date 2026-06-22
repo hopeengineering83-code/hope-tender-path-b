@@ -22,6 +22,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { reportError } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -79,7 +80,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    console.error("readiness-score route failed", error);
+    void reportError(error, { route: "/api/tenders/[id]/readiness-score" });
     return err("Readiness-score route failed.", 500, { code: "READINESS_SCORE_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }

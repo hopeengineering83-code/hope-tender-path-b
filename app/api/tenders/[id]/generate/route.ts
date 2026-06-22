@@ -16,7 +16,7 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { createNotification } from "../../../../../lib/notifications";
-import { childLogger, reportError, time } from "../../../../../lib/observability";
+import { childLogger, logger, reportError, time } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isValidClientName, containsMetadataPlaceholder, isClientNameContaminated, clientNameContaminationReason } from "../../../../../lib/engine/metadata-validators";
@@ -261,7 +261,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (invalidFields.length > 0) {
     const patch = computeStoredMetadataPatch(tender);
     await prisma.tender.update({ where: { id: tender.id }, data: patch });
-    console.warn(`[generate] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before generation: ${invalidFields.join(", ")}`);
+    logger.warn(`[generate] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before generation`, { route: "/api/tenders/[id]/generate", tenderId: tender.id, invalidFields });
     for (const field of invalidFields) {
       (tender as Record<string, unknown>)[field] = null;
     }
@@ -352,7 +352,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
   if (preGenValidation.warnings.length > 0) {
-    console.warn(`[generate] tender=${id} has metadata warnings: ${preGenValidation.warnings.join("; ")}`);
+    logger.warn(`[generate] tender=${id} has metadata warnings`, { route: "/api/tenders/[id]/generate", tenderId: id, warnings: preGenValidation.warnings });
   }
 
   // ── Partial AI analysis gate ─────────────────────────────────────────────
@@ -654,7 +654,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (overrideErr) {
     const code = (overrideErr as { code?: string })?.code;
     if (code === "P2021" || code === "P2010") {
-      console.warn(`[generate] TenderMetadataOverride table not available (${code}) — proceeding with empty overrides. Run database migration to resolve.`);
+      logger.warn("[generate] TenderMetadataOverride table not available — proceeding with empty overrides", { route: "/api/tenders/[id]/generate", tenderId: id, code, hint: "Run database migration to resolve." });
       metadataOverrides = [];
       metadataOverrideLookupFailed = true;
     } else {
@@ -831,7 +831,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (untracedInitial.length > 0) {
     // Attempt one automatic repair pass using uploaded tender file text before hard-blocking.
     const repairResult = await repairSourceGrounding(id).catch((err) => {
-      console.warn(`[generate] source-grounding repair attempt failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn("[generate] source-grounding repair attempt failed", { route: "/api/tenders/[id]/generate", tenderId: id, error: err instanceof Error ? err.message : String(err) });
       return null;
     });
     // Reload requirements to see the updated confidence values after repair.

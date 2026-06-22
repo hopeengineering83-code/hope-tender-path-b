@@ -15,6 +15,7 @@ import { isExtractionCorrupted } from "../../../../../lib/engine/extraction-qual
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { safeParseJsonArray } from "../../../../../lib/safe-json";
+import { reportError } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -269,7 +270,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
 
   } catch (err) {
-    console.error("[pipeline-diagnostic] unexpected error:", err);
+    void reportError(err, { route: "/api/tenders/[id]/pipeline-diagnostic" });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

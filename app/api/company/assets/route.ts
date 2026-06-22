@@ -10,6 +10,7 @@ import {
   COMPANY_ASSET_TYPES,
   validateCompanyAsset,
 } from "../../../../lib/company-asset-security";
+import { logger, reportError } from "../../../../lib/observability";
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -106,9 +107,7 @@ export async function POST(req: Request) {
       companyId: company.id,
     });
   } catch (error) {
-    console.error("[company-assets] storage write failed", {
-      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-    });
+    void reportError(error, { route: "/api/company/assets", operation: "POST", stage: "storage-write", assetType });
     return privateJson({ error: "Company asset storage is unavailable" }, { status: 503 });
   }
 
@@ -153,9 +152,7 @@ export async function POST(req: Request) {
       fileContent: stored.fileContent ?? null,
       fileName: validation.safeFileName,
     }).catch(() => undefined);
-    console.error("[company-assets] database write failed", {
-      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-    });
+    void reportError(error, { route: "/api/company/assets", operation: "POST", stage: "database-write", assetType });
     return privateJson({ error: "Company asset could not be saved" }, { status: 500 });
   }
 
@@ -173,10 +170,7 @@ export async function POST(req: Request) {
         data: { storagePath: "", fileContent: null },
       });
     } catch (error) {
-      console.warn("[company-assets] superseded asset cleanup deferred", {
-        assetId: old.id,
-        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      });
+      logger.warn("[company-assets] superseded asset cleanup deferred", { route: "/api/company/assets", operation: "POST", stage: "cleanup", assetId: old.id, errorClass: error instanceof Error ? error.constructor.name : "UnknownError" });
     }
   }
 
@@ -222,10 +216,7 @@ export async function DELETE(req: Request) {
     });
     await prisma.companyAsset.delete({ where: { id } });
   } catch (error) {
-    console.error("[company-assets] delete failed", {
-      assetId: id,
-      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-    });
+    void reportError(error, { route: "/api/company/assets", operation: "DELETE", assetId: id });
     return privateJson({ error: "Company asset could not be deleted safely" }, { status: 502 });
   }
 

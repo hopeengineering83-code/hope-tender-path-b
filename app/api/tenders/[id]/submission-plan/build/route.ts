@@ -18,6 +18,7 @@ import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engin
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
 import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
+import { reportError } from "../../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -387,7 +388,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       files: fileStatuses,
     });
   } catch (error) {
-    console.error("[submission-plan/build] error:", error);
+    void reportError(error, { route: "/api/tenders/[id]/submission-plan/build", tenderId: id });
     return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
   }
 }

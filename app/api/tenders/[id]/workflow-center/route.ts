@@ -6,6 +6,7 @@ import { resolveMetadataTruth } from "../../../../../lib/engine/analysis/metadat
 import { resolvePlanTruth } from "../../../../../lib/engine/analysis/plan-truth";
 import { resolveAuthorityTruth } from "../../../../../lib/engine/analysis/authority-truth";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
+import { reportError } from "../../../../../lib/observability";
 
 export async function GET(
   req: NextRequest,
@@ -109,7 +110,7 @@ export async function GET(
       stages
     });
   } catch (error) {
-    console.error("[workflow-center]", error);
+    void reportError(error, { route: "/api/tenders/[id]/workflow-center" });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from
 import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import { logger, reportError } from "../../../../lib/observability";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
           await prisma.project.update({ where: { id: project.id }, data: update });
         }
       } catch (eErr) {
-        console.warn("[project-fact-extractor] auto-extraction failed:", eErr instanceof Error ? eErr.message : eErr);
+        logger.warn("[project-fact-extractor] auto-extraction failed", { route: "/api/company/projects", projectId: project.id, error: eErr instanceof Error ? eErr.message : String(eErr) });
       }
     }
 
@@ -127,7 +128,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(normalizeProject((refreshed ?? project) as unknown as Record<string, unknown>), { status: 201 });
   } catch (error) {
-    console.error(error);
+    void reportError(error, { route: "/api/company/projects" });
     return NextResponse.json({ error: "Failed to create project" }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import {
   sanitizeCompanyAssetFileName,
   validateCompanyAsset,
 } from "../../../../../lib/company-asset-security";
+import { logger, reportError } from "../../../../../lib/observability";
 
 function privateText(message: string, status: number) {
   return new Response(message, {
@@ -51,10 +52,7 @@ export async function GET(
       fileName: asset.originalFileName,
     });
   } catch (error) {
-    console.error("[company-assets] storage read failed", {
-      assetId: id,
-      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-    });
+    void reportError(error, { route: "/api/company/assets/[id]", assetId: id, operation: "GET" });
     return privateText("File content could not be retrieved from storage", 502);
   }
 
@@ -68,7 +66,7 @@ export async function GET(
     buffer,
   );
   if (!validation.ok) {
-    console.warn("[company-assets] blocked invalid stored asset", { assetId: id, assetType: asset.assetType });
+    logger.warn("[company-assets] blocked invalid stored asset", { route: "/api/company/assets/[id]", assetId: id, assetType: asset.assetType });
     return privateText("Stored asset failed security validation and must be replaced", 422);
   }
 

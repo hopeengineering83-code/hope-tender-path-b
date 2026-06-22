@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { getAllProviderHealth, resetProviderHealth, type AiProviderName } from "../../../../lib/ai-provider-health";
+import { reportError } from "../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -44,7 +45,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("ai-provider-health GET failed", error);
+    void reportError(error, { route: "/api/admin/ai-provider-health", operation: "GET" });
     return err("Provider-health lookup failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
     }
     return err("Unsupported POST body — pass { reset: true } to clear cooldowns.", 400, { code: "UNSUPPORTED_BODY" });
   } catch (error) {
-    console.error("ai-provider-health POST failed", error);
+    void reportError(error, { route: "/api/admin/ai-provider-health", operation: "POST" });
     return err("Provider-health reset failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
   }
 }

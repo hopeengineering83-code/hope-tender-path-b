@@ -27,6 +27,7 @@ import { logAction } from "../../../../../lib/audit";
 import { ADVISORY_GAP_PREFIX, buildAdvisoryGapTitle, parseAdvisoryGapTitle } from "../../../../../lib/engine/final-submission-readiness";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { reportError } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -74,7 +75,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     });
   } catch (error) {
-    console.error("advisory-resolutions GET failed", error);
+    void reportError(error, { route: "/api/tenders/[id]/advisory-resolutions", operation: "GET" });
     return jsonError("Advisory resolution lookup failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }
@@ -152,7 +153,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       resolved: resolution !== "REOPEN",
     });
   } catch (error) {
-    console.error("advisory-resolutions POST failed", error);
+    void reportError(error, { route: "/api/tenders/[id]/advisory-resolutions", operation: "POST" });
     return jsonError("Advisory resolution failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

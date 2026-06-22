@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
 import { randomUUID } from "node:crypto";
+import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -29,12 +30,12 @@ export async function GET(
     return NextResponse.json({ readiness });
   } catch (error) {
     const diagnosticId = randomUUID();
-    console.error("[readiness]", {
+    logger.error("[readiness] panel failed", {
       route: "/api/tenders/[id]/readiness",
       tenderId,
       diagnosticId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
+      error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({
       error: "Readiness panel failed to load.",
