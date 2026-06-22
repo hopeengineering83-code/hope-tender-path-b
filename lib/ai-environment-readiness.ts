@@ -24,7 +24,7 @@ function status(name: string, scope: AIEnvironmentVariableStatus["scope"], sever
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
-    status("MISTRAL_API_KEY", "ai", "critical", "First-tier provider in the canonical chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Verified working; used for analysis, extraction, proposal, validation."),
+    status("MISTRAL_API_KEY", "ai", "critical", "First-tier provider in the canonical chain (Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude). Verified working; used for analysis, extraction, proposal, validation."),
     status("MISTRAL_PROPOSAL_MODEL", "ai", "optional", "Mistral proposal model (default: mistral-large-latest)."),
     status("MISTRAL_ANALYSIS_MODEL", "ai", "optional", "Mistral analysis model override."),
     status("MISTRAL_FAST_MODEL", "ai", "optional", "Mistral fast/cheap model override."),
@@ -60,7 +60,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
-  // Reflect the required canonical provider order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+  // Reflect the required canonical provider order: Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude
   const providerChain: string[] = [];
   if (present("MISTRAL_API_KEY")) providerChain.push(`Mistral (${process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest"})`);
   if (present("GROQ_API_KEY")) providerChain.push(`Groq (${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})`);

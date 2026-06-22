@@ -27,7 +27,7 @@
 | 7 | DeepSeek | `DEEPSEEK_API_KEY` | HTTP 402 (billing) |
 | 8 | Claude/Anthropic | `ANTHROPIC_API_KEY` | Timeout ~3000ms |
 
-**Display string:** `Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude`
+**Display string:** `Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude`
 
 ---
 

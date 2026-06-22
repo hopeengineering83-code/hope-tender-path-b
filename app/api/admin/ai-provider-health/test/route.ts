@@ -1,68 +1,51 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
+// import { forbiddenResponse, unauthorizedResponse } from "@/lib/ui-tokens";
 import { logAction } from "@/lib/audit";
 import {
+  type AiProviderName,
+  isProviderCooledDown,
   recordProviderPingSuccess,
   recordProviderAnalysisSuccess,
   recordProviderSuccess,
   recordProviderFailure,
-  isProviderCooledDown,
-  isMistralConfigured,
-  getMistralApiKey,
-  getMistralBaseUrl,
-  getMistralProposalModel,
-  isGroqConfigured,
-  getGroqApiKey,
-  getGroqBaseUrl,
-  getGroqModel,
-  isOpenRouterConfigured,
-  getOpenRouterApiKey,
-  getOpenRouterBaseUrl,
-  getOpenRouterModel,
-  getOpenRouterSiteUrl,
-  getOpenRouterAppName,
-  isGeminiConfigured,
   getGeminiApiKey,
-  isOpenAIConfigured,
-  getOpenAIApiKey,
-  isTogetherConfigured,
-  getTogetherApiKey,
-  getTogetherBaseUrl,
-  getTogetherProposalModel,
-  isDeepSeekConfigured,
-  getDeepSeekApiKey,
-  getDeepSeekModel,
-  isAnthropicConfigured,
   getAnthropicApiKey,
-  type AiProviderName
 } from "@/lib/ai-provider-health";
-import { PER_PROVIDER_TIMEOUT_MS, ANTHROPIC_TIMEOUT_MS, GEMINI_TIMEOUT_MS } from "@/lib/timeout-config";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  isProviderConfigured,
+  getProviderConfig,
+  AI_PROVIDER_REGISTRY,
+} from "@/lib/ai-provider-policy";
+import { GEMINI_TIMEOUT_MS } from "@/lib/timeout-config";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+const ANTHROPIC_TIMEOUT_MS = 30000;
+const PER_PROVIDER_TIMEOUT_MS = 30000;
 
 export type ProviderTestResult = {
-  provider: string;
-  status: "ok" | "failed" | "skipped_cooldown" | "not_configured";
+  provider: AiProviderName;
   capability: "ping" | "analysis" | "generation";
+  status: "ok" | "failed" | "not_configured" | "skipped_cooldown";
   model: string;
   durationMs: number;
+  structuredOutput?: any;
   errorCategory?: string;
   safeError?: string;
-  structuredOutput?: any;
 };
 
 const SYNTHETIC_TENDER_TEXT = `
-[FILE_ID:doc-1|FILE_NAME:tender.pdf]
-# PROJECT: Alpha Bridge Construction
-Sector: Infrastructure
-Tender Type: RFP
-The Alpha Bridge Project requires a qualified engineering firm to provide design and supervision services.
-Submission Deadline: 2026-12-31
+Alpha Bridge Construction Project
+Donor: World Bank
+Implementing Agency: Ministry of Infrastructure
+Submission Deadline: 2025-12-01
+Scope: Construction of a 500m bridge over the Nile.
 Requirements:
-1. Valid Professional Indemnity Insurance of at least $10M.
-2. At least 10 years of experience in bridge design.
-Submission instructions: Submit technical and financial proposals via email to procurement@alpha.gov.
+- Must have 10 years of experience in bridge building. (Priority: Critical)
+- ISO 9001 certification required. (Priority: High)
 `;
 
 const ANALYSIS_PROMPT = `
@@ -128,18 +111,7 @@ async function testProvider(
   provider: AiProviderName,
   capability: "ping" | "analysis" | "generation"
 ): Promise<ProviderTestResult> {
-  const isConfigured = {
-    mistral: isMistralConfigured(),
-    groq: isGroqConfigured(),
-    openrouter: isOpenRouterConfigured(),
-    gemini: isGeminiConfigured(),
-    openai: isOpenAIConfigured(),
-    together: isTogetherConfigured(),
-    deepseek: isDeepSeekConfigured(),
-    anthropic: isAnthropicConfigured(),
-  }[provider];
-
-  if (!isConfigured) return { provider, capability, status: "not_configured", model: "", durationMs: 0 };
+  if (!isProviderConfigured(provider)) return { provider, capability, status: "not_configured", model: "", durationMs: 0 };
   if (isProviderCooledDown(provider)) return { provider, capability, status: "skipped_cooldown", model: "", durationMs: 0 };
 
   const start = Date.now();
@@ -147,21 +119,26 @@ async function testProvider(
   let prompt = "";
   let maxTokens = 10;
 
+  const config = getProviderConfig(provider);
+  const meta = AI_PROVIDER_REGISTRY[provider];
+
   if (capability === "ping") {
     prompt = "Reply with the single word: PING";
     maxTokens = 10;
+    model = config.models.fast;
   } else if (capability === "analysis") {
     prompt = ANALYSIS_PROMPT;
-    maxTokens = 1000;
+    maxTokens = meta.outputCaps.analysis || 3000;
+    model = config.models.analysis;
   } else {
     prompt = GENERATION_PROMPT;
-    maxTokens = 2000;
+    maxTokens = meta.outputCaps.proposal || 4000;
+    model = config.models.proposal;
   }
 
   try {
     let resultText = "";
     if (provider === "gemini") {
-      model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
       const { GoogleGenerativeAI } = require("@google/generative-ai");
       const client = new GoogleGenerativeAI(getGeminiApiKey()!);
       const m = client.getGenerativeModel({ model });
@@ -174,7 +151,6 @@ async function testProvider(
       );
       resultText = res.response.text();
     } else if (provider === "anthropic") {
-      model = process.env.ANTHROPIC_PROPOSAL_MODELS?.split(",")[0]?.trim() || "claude-3-5-haiku-latest";
       const res: any = await withTimeout(
         fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
@@ -196,35 +172,33 @@ async function testProvider(
       resultText = data.content[0].text;
     } else {
       // OpenAI Compatible
-      const config: any = {
-        mistral: { key: getMistralApiKey()!, url: getMistralBaseUrl(), model: getMistralProposalModel() },
-        groq: { key: getGroqApiKey()!, url: getGroqBaseUrl(), model: getGroqModel() },
-        openrouter: {
-          key: getOpenRouterApiKey()!,
-          url: getOpenRouterBaseUrl(),
-          model: getOpenRouterModel(),
-          headers: { "HTTP-Referer": getOpenRouterSiteUrl(), "X-Title": getOpenRouterAppName() }
-        },
-        openai: { key: getOpenAIApiKey()!, url: "https://api.openai.com/v1", model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o-mini" },
-        together: { key: getTogetherApiKey()!, url: getTogetherBaseUrl(), model: getTogetherProposalModel() },
-        deepseek: { key: getDeepSeekApiKey()!, url: "https://api.deepseek.com/v1", model: getDeepSeekModel() },
-      }[provider];
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      };
 
-      model = config.model;
+      if (provider === "openrouter") {
+        headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL || "";
+        headers["X-Title"] = process.env.OPENROUTER_APP_NAME || "Hope Tender Path";
+      }
+
+      const body: any = {
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+      };
+
+      if (provider === "cerebras") {
+        body.max_completion_tokens = maxTokens;
+      } else {
+        body.max_tokens = maxTokens;
+      }
+
       const res: any = await withTimeout(
-        fetch(`${config.url}/chat/completions`, {
+        fetch(`${config.baseUrl}/chat/completions`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.key}`,
-            ...config.headers
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: maxTokens,
-            temperature: 0,
-          }),
+          headers,
+          body: JSON.stringify(body),
         }),
         PER_PROVIDER_TIMEOUT_MS
       );
@@ -286,14 +260,13 @@ async function testProvider(
 export async function GET(req: Request) {
   let actor;
   try { actor = await requireRole("ADMIN"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (e) { return NextResponse.json({ success: false, message: "Forbidden or Unauthorized" }, { status: 403 }); }
 
   const url = new URL(req.url);
   const onlyProvider = url.searchParams.get("provider") as AiProviderName | null;
   const capability = (url.searchParams.get("capability") || "ping") as "ping" | "analysis" | "generation";
 
-  const PROVIDERS: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-  const testers = PROVIDERS.map(p => new ProviderTester(p, capability));
+  const testers = CANONICAL_AI_PROVIDER_ORDER.map(p => new ProviderTester(p, capability));
   const results: ProviderTestResult[] = [];
 
   for (const tester of testers) {
@@ -319,7 +292,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   let actor;
   try { actor = await requireRole("ADMIN"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (e) { return NextResponse.json({ success: false, message: "Forbidden or Unauthorized" }, { status: 403 }); }
 
   const body = await req.json().catch(() => ({}));
   const provider = typeof body.provider === "string" ? (body.provider as AiProviderName) : null;

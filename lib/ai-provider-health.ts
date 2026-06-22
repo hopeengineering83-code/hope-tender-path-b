@@ -2,7 +2,9 @@
 //
 // Make provider truth accurate, secure, and based on real capability.
 
-export type AiProviderName = "mistral" | "groq" | "openrouter" | "gemini" | "openai" | "together" | "deepseek" | "anthropic";
+import { AI_PROVIDER_REGISTRY, CANONICAL_AI_PROVIDER_ORDER, isProviderConfigured, getProviderConfig } from "./ai-provider-policy";
+
+export type AiProviderName = "zai" | "cerebras" | "mistral" | "groq" | "openrouter" | "gemini" | "openai" | "together" | "deepseek" | "anthropic";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -26,7 +28,9 @@ export type AiProviderStatus =
   | "MODEL_UNAVAILABLE"
   | "TIMEOUT"
   | "NETWORK_ERROR"
+  | "MALFORMED_RESPONSE"
   | "COOLING_DOWN"
+  | "CONFIGURATION_INVALID"
   | "UNKNOWN";
 
 export type AiProviderHealth = {
@@ -57,155 +61,15 @@ export type InternalState = {
 
 const state = new Map<AiProviderName, InternalState>();
 
-// ─── Dynamic Key Reads ──────────────────────────────────────────────────────
-
-export function getAnthropicApiKey(): string | undefined {
-  const v = process.env.ANTHROPIC_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isAnthropicConfigured(): boolean {
-  return Boolean(getAnthropicApiKey());
-}
-
-export function getGeminiApiKey(): string | undefined {
-  const v = process.env.GEMINI_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isGeminiConfigured(): boolean {
-  return Boolean(getGeminiApiKey());
-}
-
-export function getOpenAIApiKey(): string | undefined {
-  const v = process.env.OPENAI_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isOpenAIConfigured(): boolean {
-  return Boolean(getOpenAIApiKey());
-}
-
-export const DEEPSEEK_OFFICIAL_ENV = "DEEPSEEK_API_KEY";
-const DEEPSEEK_ENV_CANDIDATES = ["DEEPSEEK_API_KEY", "DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"] as const;
-export function getDeepSeekApiKey(): string | undefined {
-  for (const name of DEEPSEEK_ENV_CANDIDATES) {
-    const value = process.env[name];
-    if (value && value.trim().length > 0) return value.trim();
-  }
-  return undefined;
-}
-export function isDeepSeekConfigured(): boolean {
-  return Boolean(getDeepSeekApiKey());
-}
-export function deepSeekOfficialEnvPresent(): boolean {
-  const value = process.env.DEEPSEEK_API_KEY;
-  return Boolean(value && value.trim().length > 0);
-}
-export function getDeepSeekModel(): string {
-  return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
-}
-
-export function getMistralApiKey(): string | undefined {
-  const v = process.env.MISTRAL_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isMistralConfigured(): boolean {
-  return Boolean(getMistralApiKey());
-}
-export function getMistralProposalModel(): string {
-  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest";
-}
-export function getMistralAnalysisModel(): string {
-  return process.env.MISTRAL_ANALYSIS_MODEL || getMistralProposalModel();
-}
-export function getMistralFastModel(): string {
-  return process.env.MISTRAL_FAST_MODEL || "ministral-8b-latest";
-}
-export function getMistralBaseUrl(): string {
-  const v = process.env.MISTRAL_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://api.mistral.ai/v1").replace(/\/+$/, "");
-}
-
-export function getGroqApiKey(): string | undefined {
-  const v = process.env.GROQ_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isGroqConfigured(): boolean {
-  return Boolean(getGroqApiKey());
-}
-export function getGroqModel(): string {
-  return process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile";
-}
-export function getGroqBaseUrl(): string {
-  const v = process.env.GROQ_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-}
-
-export function getTogetherApiKey(): string | undefined {
-  const v = process.env.TOGETHER_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isTogetherConfigured(): boolean {
-  return Boolean(getTogetherApiKey());
-}
-export function getTogetherProposalModel(): string {
-  return process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo";
-}
-export function getTogetherAnalysisModel(): string {
-  return process.env.TOGETHER_ANALYSIS_MODEL || getTogetherProposalModel();
-}
-export function getTogetherFastModel(): string {
-  return process.env.TOGETHER_FAST_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
-}
-export function getTogetherBaseUrl(): string {
-  const v = process.env.TOGETHER_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://api.together.xyz/v1").replace(/\/+$/, "");
-}
-
-export function getOpenRouterApiKey(): string | undefined {
-  const v = process.env.OPENROUTER_API_KEY;
-  return v && v.trim().length > 0 ? v.trim() : undefined;
-}
-export function isOpenRouterConfigured(): boolean {
-  return Boolean(getOpenRouterApiKey());
-}
-export function getOpenRouterModel(): string {
-  return process.env.OPENROUTER_PROPOSAL_MODEL || "openrouter/auto";
-}
-export function getOpenRouterBaseUrl(): string {
-  const v = process.env.OPENROUTER_BASE_URL;
-  return (v && v.trim().length > 0 ? v.trim() : "https://openrouter.ai/api/v1").replace(/\/+$/, "");
-}
-export function getOpenRouterSiteUrl(): string {
-  const v = process.env.OPENROUTER_SITE_URL;
-  return v && v.trim().length > 0 ? v.trim() : "https://hope-tender-path-b.vercel.app";
-}
-export function getOpenRouterAppName(): string {
-  const v = process.env.OPENROUTER_APP_NAME || process.env.OPENROUTER_SITE_NAME;
-  return v && v.trim().length > 0 ? v.trim() : "Hope Tender Proposal Generator";
-}
-
-export function isProviderConfigured(provider: AiProviderName): boolean {
-  switch (provider) {
-    case "anthropic": return isAnthropicConfigured();
-    case "gemini": return isGeminiConfigured();
-    case "openai": return isOpenAIConfigured();
-    case "mistral": return isMistralConfigured();
-    case "deepseek": return isDeepSeekConfigured();
-    case "groq": return isGroqConfigured();
-    case "together": return isTogetherConfigured();
-    case "openrouter": return isOpenRouterConfigured();
-    default: return false;
-  }
-}
-
-export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
+const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
   RATE_LIMIT: 60_000,
-  AUTH: 5 * 60_000,
-  BILLING: 10 * 60_000,
+  AUTH: 300_000,
+  BILLING: 3600_000,
   TIMEOUT: 30_000,
-  MODEL_UNAVAILABLE: 2 * 60_000,
-  NETWORK: 30_000,
+  MODEL_UNAVAILABLE: 600_000,
+  NETWORK: 20_000,
   MALFORMED_RESPONSE: 60_000,
-  UNKNOWN: 60_000,
+  UNKNOWN: 30_000,
 };
 
 function ensureState(provider: AiProviderName): InternalState {
@@ -352,13 +216,20 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
 }
 
 export function getAllProviderHealth(): AiProviderHealth[] {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-  return providers.map(getProviderHealth);
+  return CANONICAL_AI_PROVIDER_ORDER.map(getProviderHealth);
 }
 
 export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
   const h = getProviderHealth(provider);
-  if (!h.configured) return "NOT_CONFIGURED";
+  if (!h.configured) {
+    if (provider === "openrouter") {
+      const config = getProviderConfig("openrouter");
+      if (config.apiKey && (config.models.proposal === "openrouter/auto" || !config.models.proposal.endsWith(":free"))) {
+        return "CONFIGURATION_INVALID";
+      }
+    }
+    return "NOT_CONFIGURED";
+  }
 
   const cooling = isProviderCooledDown(provider);
   if (cooling) {
@@ -367,9 +238,10 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
       case "RATE_LIMIT": return "RATE_LIMITED";
       case "AUTH": return "UNAUTHORIZED";
       case "BILLING": return "BILLING_BLOCKED";
-      case "MODEL_UNAVAILABLE": return "BILLING_BLOCKED";
+      case "MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
       case "TIMEOUT": return "TIMEOUT";
-      case "NETWORK": return "BILLING_BLOCKED";
+      case "NETWORK": return "NETWORK_ERROR";
+      case "MALFORMED_RESPONSE": return "MALFORMED_RESPONSE";
       case "UNKNOWN": return "UNKNOWN";
       default: return "COOLING_DOWN";
     }
@@ -430,8 +302,7 @@ export function buildProviderDiagnosticsSnapshot(): {
   providersCoolingDown: AiProviderName[];
   perProvider: ProviderAttemptDiagnostic[];
 } {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-  const perProvider: ProviderAttemptDiagnostic[] = providers.map((provider) => {
+  const perProvider: ProviderAttemptDiagnostic[] = CANONICAL_AI_PROVIDER_ORDER.map((provider) => {
     const h = getProviderHealth(provider);
     return {
       provider,
@@ -449,8 +320,7 @@ export function buildProviderDiagnosticsSnapshot(): {
 }
 
 export function getMinCooldownExpiryMs(): number | null {
-  const providers: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-  const configured = providers.filter((p) => isProviderConfigured(p));
+  const configured = CANONICAL_AI_PROVIDER_ORDER.filter((p) => isProviderConfigured(p));
   if (configured.length === 0) return null;
   const now = Date.now();
   let minMs = Infinity;
@@ -475,18 +345,57 @@ export function resetProviderHealth(provider?: AiProviderName): void {
   state.clear();
 }
 
-/** Back-compat alias for the Mistral model getter. */
-export function getMistralModel(): string {
-  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-small-latest";
-}
-
-/** Back-compat alias: returns the proposal model. */
-export function getTogetherModel(): string {
-  return getTogetherProposalModel();
-}
-
 export function resetHealthLoadedFlag() {
   // dummy for store tests
+}
+
+// Key reading functions for backward compatibility
+export function getMistralApiKey(): string | undefined { return getProviderConfig("mistral").apiKey; }
+export function isMistralConfigured(): boolean { return isProviderConfigured("mistral"); }
+export function getMistralProposalModel(): string { return getProviderConfig("mistral").models.proposal; }
+export function getMistralAnalysisModel(): string { return getProviderConfig("mistral").models.analysis; }
+export function getMistralFastModel(): string { return getProviderConfig("mistral").models.fast; }
+export function getMistralBaseUrl(): string { return getProviderConfig("mistral").baseUrl!; }
+
+export function getGroqApiKey(): string | undefined { return getProviderConfig("groq").apiKey; }
+export function isGroqConfigured(): boolean { return isProviderConfigured("groq"); }
+export function getGroqModel(): string { return getProviderConfig("groq").models.proposal; }
+export function getGroqBaseUrl(): string { return getProviderConfig("groq").baseUrl!; }
+
+export function getOpenRouterApiKey(): string | undefined { return getProviderConfig("openrouter").apiKey; }
+export function isOpenRouterConfigured(): boolean { return isProviderConfigured("openrouter"); }
+export function getOpenRouterModel(): string { return getProviderConfig("openrouter").models.proposal; }
+export function getOpenRouterBaseUrl(): string { return getProviderConfig("openrouter").baseUrl!; }
+export function getOpenRouterSiteUrl(): string { return process.env.OPENROUTER_SITE_URL || ""; }
+export function getOpenRouterAppName(): string { return process.env.OPENROUTER_APP_NAME || "Hope Tender Path"; }
+
+export function getTogetherApiKey(): string | undefined { return getProviderConfig("together").apiKey; }
+export function isTogetherConfigured(): boolean { return isProviderConfigured("together"); }
+export function getTogetherProposalModel(): string { return getProviderConfig("together").models.proposal; }
+export function getTogetherAnalysisModel(): string { return getProviderConfig("together").models.analysis; }
+export function getTogetherFastModel(): string { return getProviderConfig("together").models.fast; }
+export function getTogetherBaseUrl(): string { return getProviderConfig("together").baseUrl!; }
+
+export function getDeepSeekApiKey(): string | undefined { return getProviderConfig("deepseek").apiKey; }
+export function isDeepSeekConfigured(): boolean { return isProviderConfigured("deepseek"); }
+export function getDeepSeekModel(): string { return getProviderConfig("deepseek").models.proposal; }
+export function deepSeekOfficialEnvPresent(): boolean { return Boolean(process.env.DEEPSEEK_API_KEY); }
+
+export function getGeminiApiKey(): string | undefined { return getProviderConfig("gemini").apiKey; }
+export function isGeminiConfigured(): boolean { return isProviderConfigured("gemini"); }
+
+export function getOpenAIApiKey(): string | undefined { return getProviderConfig("openai").apiKey; }
+export function isOpenAIConfigured(): boolean { return isProviderConfigured("openai"); }
+
+export function getAnthropicApiKey(): string | undefined { return getProviderConfig("anthropic").apiKey; }
+export function isAnthropicConfigured(): boolean { return isProviderConfigured("anthropic"); }
+
+export function getMistralModel(): string {
+  return getMistralProposalModel();
+}
+
+export function getTogetherModel(): string {
+  return getTogetherProposalModel();
 }
 
 export const __testing__ = { COOLDOWN_PER_CATEGORY_MS };

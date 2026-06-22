@@ -1,11 +1,13 @@
+import { generateWithZai, generateWithCerebras, generateWithMistral, generateWithGroq, generateWithOpenRouter, generateWithOpenAI, generateWithTogether, generateWithDeepSeek, generateWithGemini, generateWithClaude } from "./ai-adapters";
+import { CANONICAL_AI_PROVIDER_ORDER, AI_PROVIDER_REGISTRY, getProviderConfig, isProviderConfigured, type AiUseCase as PolicyUseCase } from "./ai-provider-policy";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
 import { protectPrompt } from "./ai-trust-boundary";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
-const apiKey = process.env.GEMINI_API_KEY;
-const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+
+
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
@@ -71,8 +73,8 @@ const CLAUDE_MAX_OUTPUT_TOKENS = (() => {
 })();
 
 function getClient() {
-  if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
-  return new GoogleGenerativeAI(apiKey);
+  if (!getProviderConfig("gemini").apiKey) throw new Error("GEMINI_API_KEY not configured");
+  return new GoogleGenerativeAI(getProviderConfig("gemini").apiKey!);
 }
 
 function getModel(modelName = DEFAULT_GEMINI_MODEL) {
@@ -80,11 +82,11 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return isGeminiEnabled() || isOpenAIEnabled() || isMistralEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isClaudeEnabled();
+  return CANONICAL_AI_PROVIDER_ORDER.some(p => isProviderConfigured(p));
 }
 
 export function isClaudeEnabled() {
-  return Boolean(anthropicApiKey);
+  return isProviderConfigured("anthropic");
 }
 
 export function isGeminiEnabled() {
@@ -188,109 +190,7 @@ Operating principles, in priority order:
 
 You are not the original author. You are a senior pair of eyes adding the discipline that makes the proposal evaluator-ready.`;
 
-async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokensOverride?: number, modelOverride?: string): Promise<string | null> {
-  if (!anthropicApiKey) return null;
 
-  let Anthropic: { new (config: { apiKey: string }): unknown };
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
-  } catch {
-    console.warn("[ai] ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — falling back to Gemini.");
-    return null;
-  }
-
-  const client = new (Anthropic as new (config: { apiKey: string }) => {
-    messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
-  })({ apiKey: anthropicApiKey });
-
-  // Per-call max_tokens. When the section-parallel generator passes a tight
-  // per-section budget (e.g., 1800 for cover+exec, 2800 for technical
-  // approach), Claude returns faster — generation time scales roughly with
-  // output token count. The single-call path leaves the override unset and
-  // continues to use CLAUDE_MAX_OUTPUT_TOKENS so behaviour is unchanged.
-  const effectiveMaxTokens = (typeof maxTokensOverride === "number" && Number.isFinite(maxTokensOverride) && maxTokensOverride > 0)
-    ? Math.min(maxTokensOverride, 64000)
-    : CLAUDE_MAX_OUTPUT_TOKENS;
-
-  const errors: string[] = [];
-  for (const modelName of (modelOverride ? [modelOverride] : CLAUDE_PROPOSAL_MODELS)) {
-    // Per-model rate-limit retry: Free Tier accounts hit 429 frequently. Try
-    // each model up to 3 times with exponential backoff (2s, 4s, 8s) before
-    // moving on to the next model in the chain.
-    let attemptError: string | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const response = await client.messages.create({
-          model: modelName,
-          max_tokens: effectiveMaxTokens,
-          system: systemPrompt,
-          messages: [{ role: "user", content: prompt }],
-        });
-        const text = response.content
-          .filter((c) => c.type === "text")
-          .map((c) => c.text ?? "")
-          .join("\n")
-          .trim();
-        const stopReason = (response as { stop_reason?: string }).stop_reason;
-        if (stopReason === "max_tokens") {
-          console.warn(`[ai:claude] Output truncated at max_tokens (${effectiveMaxTokens}). Consider increasing token budget for this call.`);
-        }
-        if (text.length === 0) {
-          attemptError = `${modelName}: empty response`;
-          break; // empty response is not retryable
-        }
-        return text;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        attemptError = `${modelName}: ${msg}`;
-        // 401 / 403 — credentials are wrong, no point retrying or trying other models.
-        // In strict mode (AI_PROVIDER_STRICT_AUTH=true), hard-fail immediately.
-        // In default resilient mode, log and fall through to the next provider.
-        if (/401|403|invalid api key|authentication/i.test(msg)) {
-          const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
-          if (strictAuth) {
-            throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
-          }
-          console.warn(`[ai] Claude auth error on ${modelName} — continuing to next provider (set AI_PROVIDER_STRICT_AUTH=true to hard-fail): ${msg.slice(0, 100)}`);
-          return null;
-        }
-        // 429 — rate limit. Retry this model with backoff before falling
-        // through to the next model. Free Tier hits this often.
-        if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg)) {
-          if (attempt < 2) {
-            const delayMs = 2000 * Math.pow(2, attempt); // 2s, 4s
-            console.warn(`[ai] Claude rate-limit on ${modelName} (attempt ${attempt + 1}/3) — backing off ${delayMs}ms.`);
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-            continue;
-          }
-          // 3rd attempt also rate-limited — move to next model
-          break;
-        }
-        // 404 / model not found / invalid request — don't retry, move on
-        if (/404|not.?found|model_not_found|invalid_request/i.test(msg)) break;
-        // Other errors — log and move on
-        console.warn(`[ai] Claude generation failed (${modelName}): ${msg} — moving to next model.`);
-        break;
-      }
-    }
-    if (attemptError) errors.push(attemptError);
-  }
-
-  if (errors.length > 0) {
-    console.warn(`[ai] All Claude models exhausted. Errors: ${errors.join(" | ")} — falling back to Gemini.`);
-    // When every model failed due to rate-limiting, throw a rate-limit error so
-    // generateWithFallback's catch handler records RATE_LIMIT (60s cooldown)
-    // instead of treating a null return as "empty response" (UNKNOWN, 30s).
-    // This prevents subsequent chunks in the same multi-chunk analysis job
-    // from re-attempting Claude before the rate-limit window has cleared.
-    const hadRateLimit = errors.some((e) => /429|rate.?limit|over.?capacity|tokens?\s+per\s+minute/i.test(e));
-    if (hadRateLimit && errors.every((e) => /429|rate.?limit|over.?capacity|tokens?\s+per\s+minute|404|not.?found|model_not_found|empty\s+response/i.test(e))) {
-      throw new Error(`Claude rate-limited (all models in chain returned 429 or were unavailable): ${errors.join(" | ")}`);
-    }
-  }
-  return null;
-}
 
 function isModelUnavailableError(message: string): boolean {
   return /404|not found|not supported for generateContent|models\//i.test(message);
@@ -360,20 +260,21 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL, maxTok
 // Claude is placed LAST so that Anthropic rate limits do not block the app
 // while other providers are available. Providers are tried in sequence;
 // cooled-down or unconfigured providers are skipped automatically.
-export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
+export type AiUseCase = any;
 
-// Order: verified-working providers first (Mistral → Groq → OpenRouter),
+// Order: verified-working providers first (Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter),
 // then high-quality providers that may be rate-limited (Gemini → OpenAI),
 // then providers that need key/balance fixes (Together → DeepSeek → Anthropic).
-export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"] as const;
+export const CANONICAL_PROVIDER_CHAIN = CANONICAL_AI_PROVIDER_ORDER;
 
 const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
-  default:    ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  extraction: ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  proposal:   ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  validation: ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  fast:       ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
-  reasoning:  ["mistral","groq","openrouter","gemini","openai","together","deepseek","anthropic"],
+  default:    [...CANONICAL_AI_PROVIDER_ORDER],
+  extraction: [...CANONICAL_AI_PROVIDER_ORDER],
+  proposal:   [...CANONICAL_AI_PROVIDER_ORDER],
+  validation: [...CANONICAL_AI_PROVIDER_ORDER],
+  fast:       [...CANONICAL_AI_PROVIDER_ORDER],
+  reasoning:  [...CANONICAL_AI_PROVIDER_ORDER],
+  analysis:   [...CANONICAL_AI_PROVIDER_ORDER],
 };
 
 // ─── Structured "no AI provider ready" error ─────────────────────────────────
@@ -423,7 +324,7 @@ export type AiProviderAttempt = {
 export type NoAiProviderReadyErrorKind =
   | "NO_PROVIDER_CONFIGURED"
   | "ALL_PROVIDERS_COOLING"
-  | "ALL_PROVIDERS_EXHAUSTED";
+  | "ALL_PROVIDERS_EXHAUSTED" | "ATTEMPT_BUDGET_EXHAUSTED";
 
 export class NoAiProviderReadyError extends Error {
   readonly code = "NO_AI_PROVIDER_READY" as const;
@@ -469,16 +370,7 @@ export class NoAiProviderReadyError extends Error {
 }
 
 function isProviderEnabled(name: AiProviderName): boolean {
-  switch (name) {
-    case "anthropic":  return isClaudeEnabled();
-    case "gemini":     return isGeminiEnabled();
-    case "openai":     return isOpenAIEnabled();
-    case "mistral":    return isMistralEnabled();
-    case "deepseek":   return isDeepSeekEnabled();
-    case "groq":       return isGroqEnabled();
-    case "together":   return isTogetherEnabled();
-    case "openrouter": return isOpenRouterEnabled();
-  }
+  return isProviderConfigured(name);
 }
 
 /**
@@ -494,149 +386,71 @@ function isProviderEnabled(name: AiProviderName): boolean {
  * (max_tokens: 10) passed — which is exactly the "providers OK but regex
  * fallback" symptom. A 4K budget comfortably fits one chunk's analysis JSON.
  */
-function maxOutputTokensForUseCase(useCase: AiUseCase = "default"): number {
-  if (useCase === "extraction" || useCase === "fast") return 4096;
+function maxOutputTokensForUseCase(useCase: any): number {
+  if (useCase === 'analysis') return 3000;
+  if (useCase === 'proposal') return 4000;
+  if (useCase === 'fast') return 1200;
+  if (useCase === 'extraction') return 4096;
   return 16000;
 }
 
 async function callProvider(
   name: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: PolicyUseCase },
 ): Promise<string | null> {
-  const maxTokens = maxOutputTokensForUseCase(opts?.useCase);
-  switch (name) {
-    case "anthropic": {
-      if (opts?.useCase === "reasoning") {
-        for (const m of CLAUDE_REASONING_MODELS) {
-          const r = await generateWithClaude(prompt, opts?.systemPrompt, undefined, m).catch(() => null);
-          if (r) { recordProviderSuccess("anthropic"); return r; }
-        }
-        return null;
-      }
+  const useCase = (opts?.useCase || "proposal") as AiUseCase;
+  const meta = AI_PROVIDER_REGISTRY[name];
+  const maxTokens = meta.outputCaps[useCase as keyof typeof meta.outputCaps] || meta.outputCaps.proposal || 4000;
 
-      const r = await generateWithClaude(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
-        recordProviderFailure("anthropic", err);
-        return null;
-      });
-      if (r) { recordProviderSuccess("anthropic"); return r; }
-      recordProviderFailure("anthropic", new Error("empty response"));
-      return null;
+  try {
+    let result: string | null = null;
+    switch (name) {
+      case "zai": result = await generateWithZai(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "cerebras": result = await generateWithCerebras(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "mistral": result = await generateWithMistral(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "groq": result = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "openrouter": result = await generateWithOpenRouter(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "gemini": result = await generateWithGemini(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "openai": result = await generateWithOpenAI(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "together": result = await generateWithTogether(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "deepseek": result = await generateWithDeepSeek(prompt, opts?.systemPrompt, maxTokens, useCase); break;
+      case "anthropic": result = await generateWithClaude(prompt, opts?.systemPrompt, maxTokens, useCase); break;
     }
-    case "gemini": {
-      if (opts?.useCase === "reasoning") {
-        try {
-          const r = await generate(prompt, "gemini-2.0-flash-thinking-exp");
-          recordProviderSuccess("gemini");
-          return r;
-        } catch { return null; }
-      }
 
-      try {
-        const r = await generate(prompt, opts?.geminiModel, maxTokens);
-        recordProviderSuccess("gemini");
-        return r;
-      } catch (err) {
-        recordProviderFailure("gemini", err);
-        console.warn(`[ai] Gemini failed: ${err instanceof Error ? err.message : String(err)}`);
-        return null;
+    if (result) {
+      if (useCase === "analysis") {
+         try {
+           JSON.parse(result.match(/\{.*\}/s)?.[0] || result);
+         } catch {
+           recordProviderFailure(name, new Error("MALFORMED_RESPONSE: Invalid JSON for analysis"));
+           return null;
+         }
       }
+      recordProviderSuccess(name); return result;
     }
-    case "openai": {
-      if (opts?.useCase === "reasoning") {
-        for (const m of REASONING_MODELS) {
-          const r = await generateWithOpenAI(prompt, opts?.systemPrompt, 16000, m).catch(() => null);
-          if (r) { recordProviderSuccess("openai"); return r; }
-        }
-        return null;
-      }
-
-      const r = await generateWithOpenAI(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
-        recordProviderFailure("openai", err);
-        return null; // never re-throw — always continue the fallback chain
-      });
-      if (r) { recordProviderSuccess("openai"); return r; }
-      return null;
-    }
-    case "mistral": {
-      const r = await generateWithMistral(prompt, opts?.systemPrompt, maxTokens, opts?.useCase).catch((err) => {
-        recordProviderFailure("mistral", err);
-        return null;
-      });
-      if (r) { recordProviderSuccess("mistral"); return r; }
-      return null;
-    }
-    case "deepseek": {
-      if (opts?.useCase === "reasoning") {
-        const r = await generateWithDeepSeek(prompt, opts?.systemPrompt, 16000, "deepseek-reasoner").catch(() => null);
-        if (r) { recordProviderSuccess("deepseek"); return r; }
-        return null;
-      }
-
-      const r = await generateWithDeepSeek(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
-        console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
-        recordProviderFailure("deepseek", err);
-        return null;
-      });
-      if (r) { recordProviderSuccess("deepseek"); return r; }
-      return null;
-    }
-    case "groq": {
-      const r = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
-        recordProviderFailure("groq", err);
-        return null;
-      });
-      if (r) { recordProviderSuccess("groq"); return r; }
-      return null;
-    }
-    case "together": {
-      const r = await generateWithTogether(prompt, opts?.systemPrompt, maxTokens, opts?.useCase).catch((err) => {
-        recordProviderFailure("together", err);
-        return null;
-      });
-      if (r) { recordProviderSuccess("together"); return r; }
-      return null;
-    }
-    case "openrouter": {
-      const r = await generateWithOpenRouter(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
-        recordProviderFailure("openrouter", err);
-        return null;
-      });
-      if (r) { recordProviderSuccess("openrouter"); return r; }
-      return null;
-    }
+    return null;
+  } catch (err) {
+    recordProviderFailure(name, err); return null;
   }
 }
 
 export async function generateWithFallback(
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase; onProviderUsed?: (provider: AiProviderName) => void },
+  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: PolicyUseCase; onProviderUsed?: (provider: AiProviderName) => void },
 ): Promise<string> {
-  const useCase = opts?.useCase ?? "default";
-  const chain = PROVIDER_CHAINS[useCase];
+  const useCase = (opts?.useCase || "proposal") as AiUseCase;
   const trustBoundary = protectPrompt(prompt);
-  if (trustBoundary.suspicious) {
-    console.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
-  }
-  const tried: string[] = [];
-  // Per-provider attempt log. Built as we iterate so the NoAiProviderReadyError
-  // payload reflects EXACTLY what the chain did, not just a guess from env.
   const providerAttempts: AiProviderAttempt[] = [];
-  // Human-readable per-provider failure strings (PR #775/#778 compatibility).
-  // Each entry is "<provider>: <safe reason>". The safe reason comes from the
-  // same redacted snapshot used by providerAttempts.
   const failureDetails: string[] = [];
+  let actualAttempts = 0;
 
-  for (const provider of chain) {
-    const configured = isProviderEnabled(provider);
+  for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
+    if (actualAttempts >= 3) break;
+    const configured = isProviderConfigured(provider);
     const coolingDown = isProviderCooledDown(provider);
-    // Read the safe runtime snapshot for lastErrorCategory + cooldownUntil.
-    // We re-read it AFTER the attempt as well, because a fresh failure will
-    // have updated the in-memory state via recordProviderFailure inside
-    // callProvider. We capture the pre-attempt snapshot here, and the
-    // post-attempt snapshot below — the post-attempt one wins for the error
-    // payload so callers see the most recent failure category.
     const pre = getProviderRuntimeSnapshot(provider);
+
     if (!configured) {
       providerAttempts.push({
         provider, configured: false, tried: false,
@@ -649,56 +463,35 @@ export async function generateWithFallback(
         provider, configured: true, tried: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: true, cooldownUntil: pre.cooldownUntil,
       });
-      failureDetails.push(`${provider}: in cooldown`);
-      continue;
+      failureDetails.push(`${provider}: in cooldown`); continue;
     }
-    tried.push(provider);
-    const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase });
-    if (result) {
-      opts?.onProviderUsed?.(provider);
-      return result;
-    }
-    // callProvider returned null — capture the real reason recorded in the
-    // health store (HTTP 400 max_tokens, 429 rate limit, timeout, etc.) so the
-    // thrown error and downstream diagnostics are actionable rather than a bare
-    // "all providers exhausted". (Mirrors PR #775/#778 intent.)
-    const stateSnap = getProviderStateSnapshot(provider);
-    const safeReason = stateSnap?.lastFailureMessage ?? stateSnap?.lastFailureCategory ?? "no response";
-    failureDetails.push(`${provider}: ${safeReason}`);
-    // callProvider already recorded the failure via recordProviderFailure
-    // (which redacts messages). Capture the post-attempt snapshot for the
-    // error payload, in case this is the last attempt.
+
+    actualAttempts++;
+    const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase: useCase as any });
     const post = getProviderRuntimeSnapshot(provider);
     providerAttempts.push({
       provider, configured: true, tried: true,
       lastErrorCategory: post.lastErrorCategory, coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
     });
+
+    if (result) {
+      opts?.onProviderUsed?.(provider);
+      // @ts-ignore
+      lastProposalProvider = provider;
+      return result;
+    }
+    const stateSnap = getProviderStateSnapshot(provider);
+    failureDetails.push(`${provider}: ${stateSnap?.lastFailureMessage || stateSnap?.lastFailureCategory || "no response"}`);
   }
 
-  // All configured providers either unconfigured, cooling down, or returned
-  // no usable result. Throw a structured NoAiProviderReadyError so callers
-  // can branch on `err.code` / `err.errorKind` / `err.nextAction` instead of
-  // parsing strings.
   const configuredCount = providerAttempts.filter((a) => a.configured).length;
   const allConfiguredCooling = configuredCount > 0 && providerAttempts.filter((a) => a.configured).every((a) => a.coolingDown);
-  const errorKind: NoAiProviderReadyErrorKind =
-    configuredCount === 0
-      ? "NO_PROVIDER_CONFIGURED"
-      : allConfiguredCooling
-        ? "ALL_PROVIDERS_COOLING"
-        : "ALL_PROVIDERS_EXHAUSTED";
-  const nextAction: NoAiProviderReadyError["nextAction"] =
-    configuredCount === 0
-      ? "CONFIGURE_AI_KEYS"
-      : allConfiguredCooling
-        ? "ALL_PROVIDERS_COOLING"
-        : "RETRY_AFTER_PROVIDER_FIX";
+  const errorKind: NoAiProviderReadyErrorKind = actualAttempts >= 3 ? "ATTEMPT_BUDGET_EXHAUSTED" : configuredCount === 0 ? "NO_PROVIDER_CONFIGURED" : allConfiguredCooling ? "ALL_PROVIDERS_COOLING" : "ALL_PROVIDERS_EXHAUSTED";
+  const nextAction: NoAiProviderReadyError["nextAction"] = configuredCount === 0 ? "CONFIGURE_AI_KEYS" : allConfiguredCooling ? "ALL_PROVIDERS_COOLING" : "RETRY_AFTER_PROVIDER_FIX";
+
   throw new NoAiProviderReadyError({
-    useCase,
-    providerAttempts,
-    failureDetails,
-    errorKind,
-    nextAction,
+    message: errorKind === "ATTEMPT_BUDGET_EXHAUSTED" ? "AI provider attempt budget exhausted (3 attempts made)." : "No AI provider available.",
+    useCase: String(useCase), providerAttempts, failureDetails, errorKind, nextAction,
   });
 }
 
@@ -707,80 +500,7 @@ export async function generateWithFallback(
 // Uses fetch() directly (no SDK dependency) so it works in any serverless runtime.
 // Returns null when OPENAI_API_KEY is not configured, so callers can proceed to
 // the next tier without throwing.
-async function generateWithOpenAI(
-  prompt: string,
-  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 16000,
-  modelOverride?: string,
-): Promise<string | null> {
-  const openAiKey = process.env.OPENAI_API_KEY;
-  if (!openAiKey) return null;
 
-  const model = modelOverride || process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), (model.includes("o1") || model.includes("o3")) ? O1_O3_TIMEOUT_MS : OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openAiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      if (res.status === 401 || res.status === 403) {
-        // Auth errors: record failure but return null so fallback chain continues.
-        console.warn(`[ai] OpenAI auth error (${res.status}) — skipping to next provider.`);
-        return null;
-      }
-      if (res.status === 429) {
-        console.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to next provider.`);
-        return null;
-      }
-      console.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
-      return null;
-    }
-
-    const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-      error?: { message?: string };
-    };
-
-    if (data.error?.message) {
-      console.warn(`[ai] OpenAI API error: ${data.error.message}`);
-      return null;
-    }
-
-    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-    if (text.length === 0) {
-      console.warn(`[ai] OpenAI ${model} returned empty content.`);
-      return null;
-    }
-    return text;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("aborted") || msg.includes("timeout")) {
-      console.warn(`[ai] OpenAI fetch timed out after 20000ms — falling through.`);
-      return null;
-    }
-    console.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to next provider.`);
-    return null;
-  }
-}
 
 export function isOpenAIEnabled() {
   return Boolean(process.env.OPENAI_API_KEY);
@@ -799,97 +519,13 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the default chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude).
+// DeepSeek provider in the default chain (Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each
 // provider must time out well before the function is killed, leaving room
 // to try the next provider in the fallback chain.
-async function generateWithDeepSeek(
-  prompt: string,
-  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 16000,
-  modelOverride?: string,
-): Promise<string | null> {
-  const deepSeekKey = getDeepSeekApiKey();
-  if (!deepSeekKey) return null;
 
-  const model = modelOverride || getDeepSeekModel();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_DEFAULT_TIMEOUT_MS);
-
-  try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${deepSeekKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      const sanitized = body.replace(/["']sk-[^"'\s]{8,}[^"'\s]*["']/g, '"[REDACTED]"').slice(0, 200);
-      if (res.status === 401 || res.status === 403) {
-        const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
-        if (strictAuth) {
-          throw new Error(`DeepSeek API key invalid (${res.status}): ${sanitized}`);
-        }
-        console.warn(`[ai] DeepSeek auth error (${res.status}) — continuing to deterministic fallback: ${sanitized}`);
-        return null;
-      }
-      if (res.status === 429) {
-        console.warn(`[ai] DeepSeek rate limit (429) on ${model} — skipping to deterministic fallback.`);
-        return null;
-      }
-      console.warn(`[ai] DeepSeek error ${res.status} on ${model}: ${sanitized} — skipping.`);
-      return null;
-    }
-
-    const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-      error?: { message?: string };
-    };
-
-    if (data.error?.message) {
-      const sanitized = data.error.message.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
-      console.warn(`[ai] DeepSeek API error: ${sanitized}`);
-      return null;
-    }
-
-    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-    if (text.length === 0) {
-      console.warn(`[ai] DeepSeek ${model} returned empty content.`);
-      return null;
-    }
-    return text;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("aborted") || msg.includes("timeout")) {
-      console.warn(`[ai] DeepSeek fetch timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms — falling through.`);
-      return null;
-    }
-    const sanitized = msg.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
-    if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
-      const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
-      if (strictAuth) throw err;
-    }
-    console.warn(`[ai] DeepSeek fetch failed: ${sanitized} — falling through to deterministic.`);
-    return null;
-  }
-}
 
 export function isGroqEnabled() {
   return isGroqConfigured();
@@ -1017,82 +653,15 @@ async function generateOpenAICompatible(params: {
   }
 }
 
-async function generateWithMistral(
-  prompt: string,
-  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 16000,
-  useCase: AiUseCase = "proposal",
-): Promise<string | null> {
-  const key = getMistralApiKey();
-  if (!key) return null;
-  return generateOpenAICompatible({
-    providerLabel: "Mistral",
-    providerName: "mistral",
-    endpoint: `${getMistralBaseUrl()}/chat/completions`,
-    apiKey: key,
-    model: getMistralModelForUseCase(useCase),
-    prompt,
-    systemPrompt,
-    maxTokens,
-  });
-}
+
 
 // Fast fallback provider. Also first in the "fast" use-case chain. Null when GROQ_API_KEY unset.
-async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
-  const key = getGroqApiKey();
-  if (!key) return null;
-  return generateOpenAICompatible({
-    providerLabel: "Groq",
-    providerName: "groq",
-    endpoint: `${getGroqBaseUrl()}/chat/completions`,
-    apiKey: key,
-    model: getGroqModel(),
-    prompt,
-    systemPrompt,
-    maxTokens,
-  });
-}
 
-async function generateWithTogether(
-  prompt: string,
-  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 16000,
-  useCase: AiUseCase = "proposal",
-): Promise<string | null> {
-  const key = getTogetherApiKey();
-  if (!key) return null;
-  return generateOpenAICompatible({
-    providerLabel: "Together",
-    providerName: "together",
-    endpoint: `${getTogetherBaseUrl()}/chat/completions`,
-    apiKey: key,
-    model: getTogetherModelForUseCase(useCase),
-    prompt,
-    systemPrompt,
-    maxTokens,
-  });
-}
+
+
 
 // Aggregator fallback. Aggregates many models; useful when direct providers are exhausted. Null when OPENROUTER_API_KEY unset.
-async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
-  const key = getOpenRouterApiKey();
-  if (!key) return null;
-  return generateOpenAICompatible({
-    providerLabel: "OpenRouter",
-    providerName: "openrouter",
-    endpoint: `${getOpenRouterBaseUrl()}/chat/completions`,
-    apiKey: key,
-    model: getOpenRouterModel(),
-    prompt,
-    systemPrompt,
-    maxTokens,
-    // OpenRouter recommends (optional) attribution headers.
-    extraHeaders: {
-      "HTTP-Referer": getOpenRouterSiteUrl(),
-      "X-Title": getOpenRouterAppName(),
-    },
-  });
-}
+
 
 // Shared tail of the proposal/section fallback chain: Together → Groq →
 // OpenRouter. Honours per-provider
@@ -1115,32 +684,7 @@ async function tryTailFallbackProviders(prompt: string, systemPrompt?: string, o
 }
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
-async function generateWithBestModel(prompt: string): Promise<string> {
-  let lastError: unknown;
-  for (const modelName of PROPOSAL_MODELS) {
-    try {
-      return await withRateLimitRetry(async () => {
-        const model = getModel(modelName);
-        const result = await model.generateContent(prompt, { timeout: GEMINI_TIMEOUT_MS });
-        const text = result.response.text();
-        if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
-        return text;
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (isRateLimitError(msg)) throw new Error("Gemini API rate limit reached after retries — try again in a moment");
-      if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
-        throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
-      // Model unavailable — try the next one in the chain
-      if (isModelUnavailableError(msg) || msg.includes("deprecated") || msg.includes("invalid")) {
-        lastError = err;
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastError ?? new Error("No Gemini model available for proposal generation");
-}
+async function generateWithBestModel(prompt: string) { return generateWithFallback(prompt, { useCase: "proposal" }); }
 
 // ─── Tender analysis types ────────────────────────────────────────────────────
 
@@ -2235,7 +1779,7 @@ export async function generateWithClaudeTools(
   executor: (toolName: string, input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
   maxTokensOverride?: number, modelOverride?: string,
 ): Promise<string | null> {
-  if (!anthropicApiKey) return null;
+  if (!isProviderConfigured("anthropic")) return null;
 
   let Anthropic: { new (config: { apiKey: string }): unknown };
   try {
@@ -2248,7 +1792,7 @@ export async function generateWithClaudeTools(
 
   const client = new (Anthropic as new (config: { apiKey: string }) => {
     messages: { create: (input: unknown) => Promise<{ content: AnthropicContentBlock[]; stop_reason?: string }> };
-  })({ apiKey: anthropicApiKey });
+  })({ apiKey: getProviderConfig("anthropic").apiKey! });
 
   const effectiveMaxTokens = (typeof maxTokensOverride === "number" && Number.isFinite(maxTokensOverride) && maxTokensOverride > 0)
     ? Math.min(maxTokensOverride, 64000)
@@ -2569,7 +2113,7 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: 
       ).catch(() => null);
       if (r) return r;
     }
-    if (apiKey && !isProviderCooledDown("gemini")) {
+    if (isProviderConfigured("gemini") && !isProviderCooledDown("gemini")) {
       try { return await withRefinementTimeout(generateWithBestModel(prompt)); }
       catch (e) { console.warn(`[ai] critiqueProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
@@ -2621,7 +2165,7 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCa
       ).catch(() => null);
       if (r) { lastProposalProvider = "openai"; return r; }
     }
-    if (apiKey && !isProviderCooledDown("gemini")) {
+    if (isProviderConfigured("gemini") && !isProviderCooledDown("gemini")) {
       try {
         const r = await withRefinementTimeout(generateWithBestModel(prompt));
         lastProposalProvider = "gemini";
@@ -2728,7 +2272,7 @@ ${input.currentMarkdown}
         console.warn(`[ai] refineProposalWithAI OpenAI failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    if (apiKey && !isProviderCooledDown("gemini")) {
+    if (isProviderConfigured("gemini") && !isProviderCooledDown("gemini")) {
       try {
         const r = await withRefinementTimeout(generateWithBestModel(prompt));
         lastProposalProvider = "gemini";
@@ -3545,7 +3089,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // lastProposalProvider is set so callers can surface which provider was used.
 
     // Gemini — first tier
-  if (apiKey && !isProviderCooledDown("gemini")) {
+  if (isProviderConfigured("gemini") && !isProviderCooledDown("gemini")) {
     try {
       const geminiResult = await generateWithBestModel(prompt);
       recordProviderSuccess("gemini");
@@ -3727,7 +3271,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   // Claude is tried last so Anthropic rate limits don't block parallel section generation.
 
     // Gemini — first tier
-  if (apiKey && !isProviderCooledDown("gemini")) {
+  if (isProviderConfigured("gemini") && !isProviderCooledDown("gemini")) {
     try {
       // Prepend the section's system-prompt persona to the user prompt so
       // Gemini approximates the per-section role.

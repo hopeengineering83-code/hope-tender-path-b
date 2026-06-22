@@ -82,12 +82,9 @@ describe("/api/ai/health DB restore contract", () => {
 });
 
 describe("provider health DB persistence order", () => {
-  it("uses the canonical runtime order (Mistral first, Anthropic last) for persistence iteration", async () => {
+  it("uses the canonical runtime order for persistence iteration", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("lib/ai-provider-health-db.ts", "utf8");
-    const match = source.match(/ALL_PROVIDERS:\s*AiProviderName\[\]\s*=\s*\[([^\]]+)\]/);
-    assert.ok(match, "ALL_PROVIDERS list must remain visible for source-level policy checks");
-    const providers = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((m) => m[1]);
-    assert.deepEqual(providers, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.match(source, /ALL_PROVIDERS = CANONICAL_AI_PROVIDER_ORDER/);
   });
 });

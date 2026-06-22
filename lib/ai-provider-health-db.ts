@@ -1,18 +1,6 @@
 // DB-backed persistence layer for provider health state.
-//
-// The in-memory tracker in lib/ai-provider-health.ts resets on every
-// Vercel cold start. This module persists cooldown state to the
-// ProviderHealthSnapshot table so the next cold start can restore active
-// cooldowns before the first provider call.
-//
-// Design rules:
-//   - Never throws: all DB errors are caught and logged, never propagated.
-//   - Never stores API keys, raw prompts, or full provider responses.
-//   - restoreHealthFromDb() is idempotent and safe to call on every request;
-//     module-level de-duplication prevents redundant DB reads.
-//   - persistAllHealthToDb() writes the current in-memory state for all providers.
-
 import { prisma } from "./prisma";
+import { CANONICAL_AI_PROVIDER_ORDER } from "./ai-provider-policy";
 import {
   type AiProviderName,
   type AiProviderFailureCategory,
@@ -20,19 +8,10 @@ import {
   getProviderStateSnapshot,
 } from "./ai-provider-health";
 
-// Persistence iteration is in the canonical runtime chain order
-// (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude)
-// so that operator-facing artifacts (DB rows, logs, snapshots) read in the
-// same order as lib/ai.ts CANONICAL_PROVIDER_CHAIN. This list is NOT a
-// fallback chain by itself — it only governs the order in which we read/write
-// ProviderHealthSnapshot rows. Anthropic stays last to avoid operator/status
-// confusion.
-const ALL_PROVIDERS: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const ALL_PROVIDERS = CANONICAL_AI_PROVIDER_ORDER;
 
-// Module-level guard: only restore from DB once per instance lifetime.
-// Subsequent calls are no-ops so per-request overhead is zero after the first call.
 let restoredAt: number | null = null;
-const RESTORE_ONCE_MS = 5 * 60_000; // re-allow restore after 5 min (handles long-lived instances)
+const RESTORE_ONCE_MS = 5 * 60_000;
 
 export type ProviderHealthRestoreResult = {
   restored: boolean;
@@ -48,13 +27,10 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
     const snapshots = await prisma.providerHealthSnapshot.findMany();
     for (const snap of snapshots) {
       const cooldownUntilMs = snap.cooldownUntil ? snap.cooldownUntil.getTime() : null;
-      // Skip expired cooldowns — nothing to restore
       if (cooldownUntilMs && cooldownUntilMs <= now) continue;
-      // Skip very stale records (> 10 min since last failure) to avoid
-      // carrying forward state from a much earlier run
       if (snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 10 * 60_000 && !cooldownUntilMs) continue;
 
-      if (!ALL_PROVIDERS.includes(snap.provider as AiProviderName)) continue;
+      if (!(ALL_PROVIDERS as readonly string[]).includes(snap.provider)) continue;
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
@@ -83,7 +59,6 @@ export async function persistAllHealthToDb(): Promise<void> {
   try {
     for (const provider of ALL_PROVIDERS) {
       const s = getProviderStateSnapshot(provider); if (!s) continue;
-      // Skip providers with no recorded state (avoids unnecessary writes)
       if (!s.lastSuccessAt && !s.lastFailureAt) continue;
 
       await prisma.providerHealthSnapshot.upsert({
