@@ -134,6 +134,42 @@ describe("14. API keys and raw provider bodies are redacted", () => {
   });
 });
 
+describe("16. shared deadline is propagated into the analysis provider chain", () => {
+  it("generateWithFallback skips a provider when deadlineAt leaves no room and reports the deadline kind", async () => {
+    // Two providers configured. The deadline is already (almost) reached, so the
+    // chain must NOT start any outbound call and must surface a structured error
+    // instead of being hard-killed by an outer timeout race.
+    process.env.ZAI_API_KEY = "k";
+    process.env.CEREBRAS_API_KEY = "k";
+    const m = mockFetch(() => ({ status: 200, body: { choices: [{ message: { content: "{}" } }] } }));
+
+    await assert.rejects(
+      () => generateWithFallback("hi", { useCase: "extraction", deadlineAt: Date.now() + 100 }),
+      (err: unknown) => err instanceof NoAiProviderReadyError,
+    );
+    // No outbound call should have been made — the reserve guard fires first.
+    assert.equal(m.calls(), 0, `expected 0 outbound attempts when deadline reached, got ${m.calls()}`);
+  });
+
+  it("analyzeOneChunkWithRetry threads the deadline through to the provider chain (no outbound call, no backoff sleep)", async () => {
+    process.env.ZAI_API_KEY = "k";
+    // The deadline is already within the error-handling reserve window, so the
+    // guard inside generateWithFallback (reached via analyzeOneChunk) must fire
+    // before any outbound call. This proves the deadline is propagated all the
+    // way down — previously it was dropped and the chain ran blind until the
+    // outer withTimeout hard-killed it.
+    const m = mockFetch(() => ({ status: 200, body: { choices: [{ message: { content: "no json here" } }] } }));
+    const start = Date.now();
+    await assert.rejects(
+      () => analyzeOneChunkWithRetry("Tender content ".repeat(50), 0, 1, undefined, undefined, Date.now() + 100),
+      (err: unknown) => err instanceof Error,
+    );
+    assert.equal(m.calls(), 0, `expected 0 outbound attempts once deadline is reached, got ${m.calls()}`);
+    // Returns promptly — never sleeps the retry backoff when the deadline is hit.
+    assert.ok(Date.now() - start < 1_000, "must not sleep the retry backoff when the deadline is reached");
+  });
+});
+
 describe("15. invalid JSON from Z.ai or Cerebras cannot promote requirements", () => {
   it("analyzeOneChunkWithRetry throws on malformed JSON (no requirements returned)", async () => {
     process.env.ZAI_API_KEY = "k";
