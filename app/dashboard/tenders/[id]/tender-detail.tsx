@@ -925,7 +925,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
         try {
           const pollRes = await fetch(`/api/ai-jobs/${jobId}`);
           if (!pollRes.ok) return;
-          const pollData = await pollRes.json() as { job?: { status: string; steps?: Array<{ message: string }>; errorMessage?: string } };
+          const pollData = await pollRes.json() as { job?: { status: string; steps?: Array<{ message: string }>; errorMessage?: string; output?: { providerRetryAfterMs?: number | null; resumableJobId?: string | null } | null } };
           const job = pollData.job;
           if (!job) return;
           const steps = job.steps ?? [];
@@ -937,17 +937,33 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           const terminal = ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"].includes(job.status);
           if (terminal || attempts >= maxAttempts) {
             clearInterval(interval);
+            // Provider-cooldown signal recorded by the worker — present only when
+            // the run stopped short and a provider is cooling down (i.e. AI is
+            // expected to recover). Drives the auto-retry-when-available banner.
+            const providerRetryAfterMs = typeof job.output?.providerRetryAfterMs === "number" ? job.output.providerRetryAfterMs : null;
             if (job.status === "SUCCEEDED") {
               setAnalyzeProgress(100);
               setContinueJobId(null);
               setTender((t) => ({ ...t, latestPartialAnalysisJob: null }));
               router.refresh();
-            } else if (job.status === "PARTIAL_SUCCESS") {
-              setError("Analysis is only partial — generation and export stay blocked until a full analysis succeeds. You can resume.");
+            } else if (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED") {
+              setError(job.status === "PARTIAL_SUCCESS"
+                ? "Analysis is only partial — generation and export stay blocked until a full analysis succeeds."
+                : (job.errorMessage || "AI analysis failed."));
               setContinueJobId(jobId);
-              router.refresh();
-            } else if (job.status === "FAILED") {
-              setError(job.errorMessage || "AI analysis failed. You can retry.");
+              if (job.status === "PARTIAL_SUCCESS") router.refresh();
+              // Auto-retry ONLY when providers are cooling down (recovery
+              // expected). Resumes from the last completed chunk — the durable
+              // job is re-armed + checkpoints replayed server-side. The banner
+              // exposes Retry-now + Cancel via analyzeResult + autoRetrySecondsLeft.
+              if (providerRetryAfterMs !== null) {
+                setAnalyzeResult({
+                  ai: false, fallback: true, jobId, chunks: null, code: null, nextAction: null,
+                  extractionWarnings: null, providerDiagnostics: null,
+                  providerRetryAfterMs, resumableJobId: jobId,
+                });
+                scheduleAutoRetry(Math.max(providerRetryAfterMs, 5_000), jobId);
+              }
             } else if (attempts >= maxAttempts) {
               setError("Analysis is taking longer than expected — check the Recovery Command Center.");
             }
@@ -1290,7 +1306,9 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       autoRetryTimerRef.current = null;
       setAutoRetryAt(null);
       setAutoRetrySecondsLeft(null);
-      void handleAnalyzeStreaming();
+      // Auto-retry uses the durable path so it resumes from the last completed
+      // chunk (the job is re-armed + checkpoints replayed server-side).
+      void handleDurableAnalyze();
     }, delayMs);
   }
 
@@ -2100,8 +2118,16 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                         {analyzeResult.resumableJobId ? " (will resume from last checkpoint)" : ""}
                       </span>
                       <button
+                        onClick={() => { cancelAutoRetry(); void handleDurableAnalyze(); }}
+                        disabled={analyzing}
+                        className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        title="Retry now and resume from the last completed chunk"
+                      >
+                        Retry now
+                      </button>
+                      <button
                         onClick={cancelAutoRetry}
-                        className="ml-auto text-xs text-blue-600 underline hover:text-blue-800"
+                        className="text-xs text-blue-600 underline hover:text-blue-800"
                         title="Cancel auto-retry"
                       >
                         Cancel

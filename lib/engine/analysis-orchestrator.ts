@@ -22,7 +22,8 @@ import {
 import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
 import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
-import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed } from "../ai-analyze-checkpoints";
+import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
+import { getMinCooldownExpiryMs } from "../ai-provider-health";
 import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
@@ -282,6 +283,20 @@ export async function executeAnalysis(
     throw new Error("Tender extraction not ready or content too short");
   }
 
+  // RESUME from the durable checkpoints — the source of truth for "where it
+  // left off". A re-armed job (or even a fresh job row with the same content
+  // hash) continues from the last SUCCEEDED chunk, so when providers recover
+  // only the remaining chunks are analyzed. analyzeWithAI skips any chunk
+  // present in previousChunkResults (indexed), so we pass them and reset
+  // startFromChunk to 0.
+  if (!force) {
+    const durableCompleted = await getCompletedChunkResults(tenderId, userId, contentHash).catch(() => []);
+    if (durableCompleted.length > previousChunkResults.length) {
+      previousChunkResults = durableCompleted;
+      startFromChunk = 0;
+    }
+  }
+
   // Execute analysis through AI system
   let analysisMeta: AnalysisWithMeta | null = null;
   let analysisProvider: string | null = null;
@@ -357,6 +372,11 @@ export async function executeAnalysis(
       : completed > 0
         ? "PARTIAL_SUCCESS"
         : "FAILED";
+    // When the run stopped short, surface the min provider-cooldown expiry so
+    // the UI can auto-retry exactly when providers become available again. Null
+    // on full success (nothing to retry) and when no provider is cooling down
+    // (e.g. no provider configured — a non-recoverable config issue).
+    const providerRetryAfterMs = fullAiSuccess ? null : getMinCooldownExpiryMs();
     await prisma.aiJob.update({
       where: { id: jobId },
       data: {
@@ -375,6 +395,8 @@ export async function executeAnalysis(
           contentHash,
           analysisSource,
           result: analysisMeta.result,
+          providerRetryAfterMs,
+          resumableJobId: completed > 0 ? jobId : null,
         }),
         errorMessage,
       },

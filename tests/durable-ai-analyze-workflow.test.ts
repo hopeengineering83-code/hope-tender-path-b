@@ -197,6 +197,55 @@ describe("background endpoint lifecycle: queued → running → succeeded", () =
   });
 });
 
+// ── Resume + auto-retry-when-available (permanent fix) ───────────────────────
+describe("durable resume — a stopped run continues where it left off", () => {
+  const svc = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
+  const orch = readFileSync("lib/engine/analysis-orchestrator.ts", "utf8");
+
+  it("createAnalysisJob re-arms a PARTIAL_SUCCESS/FAILED job to QUEUED so run-next can re-claim it", () => {
+    // claimJobForCaller only claims QUEUED rows; without re-arming, a partial
+    // job is un-runnable and Resume does nothing.
+    assert.match(svc, /status: \{ in: \["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"\] \}/);
+    assert.match(svc, /job\.status === "PARTIAL_SUCCESS" \|\| job\.status === "FAILED"/);
+    assert.match(svc, /data: \{ status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null \}/);
+  });
+
+  it("executeAnalysis resumes from the durable checkpoints (last SUCCEEDED chunk)", () => {
+    assert.match(orch, /getCompletedChunkResults\(tenderId, userId, contentHash\)/);
+    assert.match(orch, /durableCompleted\.length > previousChunkResults\.length/);
+  });
+
+  it("executeAnalysis records the provider-cooldown expiry for auto-retry timing", () => {
+    assert.match(orch, /getMinCooldownExpiryMs\(\)/);
+    assert.match(orch, /providerRetryAfterMs/);
+  });
+});
+
+describe("auto-retry-when-available resumes via the durable path", () => {
+  it("panel schedules auto-retry from the cooldown signal and offers Retry now", () => {
+    const panel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
+    assert.match(panel, /function scheduleAutoRetry/);
+    assert.match(panel, /function cancelAutoRetry/);
+    assert.match(panel, /job\.output\?\.providerRetryAfterMs/);
+    assert.match(panel, /scheduleAutoRetry\(Math\.max\(providerRetryAfterMs, 5_000\)/);
+    // the auto-retry calls the durable handler (so it resumes), not SSE
+    assert.match(panel, /void handleBackgroundAnalyze\(\)/);
+    assert.match(panel, /Retry now/);
+    assert.match(panel, /resumes from the last completed chunk/);
+  });
+
+  it("tender-detail auto-retry fires the durable handler and reads the cooldown from the job", () => {
+    const ui = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
+    // scheduleAutoRetry's timeout now drives the durable resume path.
+    assert.match(ui, /setTimeout\([\s\S]*?void handleDurableAnalyze\(\);[\s\S]*?\}, delayMs\)/);
+    // the durable poll reads providerRetryAfterMs from the job output and schedules.
+    assert.match(ui, /job\.output\?\.providerRetryAfterMs/);
+    assert.match(ui, /scheduleAutoRetry\(Math\.max\(providerRetryAfterMs, 5_000\), jobId\)/);
+    // explicit Retry-now control that resumes immediately.
+    assert.match(ui, /cancelAutoRetry\(\); void handleDurableAnalyze\(\);/);
+  });
+});
+
 // ── Test 7: provider failure keeps generation/export/Final ZIP blocked ───────
 describe("provider failure → partial/failed → downstream stays blocked", () => {
   it("finalizeJob caps extraction status to PARTIAL / REGEX_FALLBACK on incomplete analysis", () => {

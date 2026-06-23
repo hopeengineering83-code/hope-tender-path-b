@@ -55,14 +55,16 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
 
   const contentHash = computeAnalysisContentHash(tenderText);
 
-  // Create or reuse resumable job
+  // Create or reuse resumable job. FAILED is included so a provider-exhausted
+  // or partially-completed run can be retried/resumed against the SAME job and
+  // its durable checkpoints, rather than spawning a duplicate.
   let job = await prisma.aiJob.findFirst({
     where: {
       tenderId,
       userId,
       jobType: "AI_ANALYZE",
       analysisInputHash: contentHash,
-      status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
+      status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -78,6 +80,19 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         input: JSON.stringify({ tenderId, contentHash }),
         runId: require("crypto").randomUUID()
       },
+    });
+  } else if (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED") {
+    // RE-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
+    // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
+    // un-runnable and "Run/Resume AI Analyze" would do nothing. We reset it to
+    // QUEUED and clear the terminal stamps; the completed AiAnalyzeChunk rows
+    // (SUCCEEDED) and AiJob.output are preserved, so the next run continues
+    // from the last successful chunk instead of restarting. A RUNNING/QUEUED
+    // job is left untouched (this branch never resets the actively-claimed job
+    // that executeAnalysis re-resolves mid-run).
+    job = await prisma.aiJob.update({
+      where: { id: job.id },
+      data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
     });
   }
 

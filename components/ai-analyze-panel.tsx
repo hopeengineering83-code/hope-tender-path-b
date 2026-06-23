@@ -30,11 +30,45 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
   // and never silently swallowed — the job is still queued, so we keep polling.
   const [workerError, setWorkerError] = useState("");
 
+  // Auto-retry-when-available: when a run stops short because providers are
+  // cooling down, we schedule a retry for when they recover. The durable path
+  // resumes from the last completed chunk, so retries never restart from zero.
+  const [autoRetrySecondsLeft, setAutoRetrySecondsLeft] = useState<number | null>(null);
+  const [willResume, setWillResume] = useState(false);
+  const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoRetryCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Set to true on unmount / new run so an in-flight poll loop stops cleanly.
   const cancelledRef = useRef(false);
   useEffect(() => {
-    return () => { cancelledRef.current = true; };
+    return () => {
+      cancelledRef.current = true;
+      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
+      if (autoRetryCountdownRef.current) clearInterval(autoRetryCountdownRef.current);
+    };
   }, []);
+
+  function cancelAutoRetry() {
+    if (autoRetryTimerRef.current) { clearTimeout(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+    if (autoRetryCountdownRef.current) { clearInterval(autoRetryCountdownRef.current); autoRetryCountdownRef.current = null; }
+    setAutoRetrySecondsLeft(null);
+  }
+
+  function scheduleAutoRetry(delayMs: number, resume: boolean) {
+    cancelAutoRetry();
+    setWillResume(resume);
+    const fireAt = Date.now() + delayMs;
+    setAutoRetrySecondsLeft(Math.ceil(delayMs / 1000));
+    autoRetryCountdownRef.current = setInterval(() => {
+      const left = Math.ceil((fireAt - Date.now()) / 1000);
+      if (left <= 0) { cancelAutoRetry(); } else { setAutoRetrySecondsLeft(left); }
+    }, 1000);
+    autoRetryTimerRef.current = setTimeout(() => {
+      autoRetryTimerRef.current = null;
+      setAutoRetrySecondsLeft(null);
+      void handleBackgroundAnalyze();
+    }, delayMs);
+  }
 
   // Durable background analysis: enqueue ONE AI_ANALYZE job, kick the worker,
   // and poll the job until it reaches a terminal state. This deliberately does
@@ -42,6 +76,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
   // limit and is not the durable worker.
   async function handleBackgroundAnalyze() {
     cancelledRef.current = false;
+    cancelAutoRetry();
     setAnalyzing(true);
     setError("");
     setWorkerError("");
@@ -95,7 +130,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
     while (!cancelledRef.current) {
       await sleep(POLL_INTERVAL_MS);
       if (cancelledRef.current) return;
-      let job: { status: JobStatus; errorMessage: string | null; steps?: Array<{ message: string | null }> } | null = null;
+      let job: { status: JobStatus; errorMessage: string | null; steps?: Array<{ message: string | null }>; output?: { providerRetryAfterMs?: number | null; resumableJobId?: string | null } | null } | null = null;
       try {
         const res = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
         if (!res.ok) continue; // transient — keep polling
@@ -115,11 +150,16 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
         if (job.status === "SUCCEEDED") {
           setPhase("Analysis complete — requirements and client details promoted.");
           startTransition(() => router.refresh());
-        } else if (job.status === "PARTIAL_SUCCESS") {
-          setError("Analysis is only partial — some tender content could not be analyzed. Generation and export stay blocked until a full analysis succeeds.");
-          startTransition(() => router.refresh());
-        } else {
-          setError(job.errorMessage || "AI analysis failed. You can retry.");
+        } else if (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED") {
+          setError(job.status === "PARTIAL_SUCCESS"
+            ? "Analysis is only partial — some tender content could not be analyzed. Generation and export stay blocked until a full analysis succeeds."
+            : (job.errorMessage || "AI analysis failed. You can retry."));
+          // Auto-retry when providers recover, resuming from the last completed
+          // chunk (the durable job is re-armed + checkpoints replayed).
+          const providerRetryAfterMs = typeof job.output?.providerRetryAfterMs === "number" ? job.output.providerRetryAfterMs : null;
+          if (providerRetryAfterMs !== null) {
+            scheduleAutoRetry(Math.max(providerRetryAfterMs, 5_000), Boolean(job.output?.resumableJobId));
+          }
         }
         return;
       }
@@ -173,6 +213,27 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-semibold">Worker start warning</p>
           <p className="mt-1 text-amber-800">{workerError}</p>
+        </div>
+      )}
+
+      {autoRetrySecondsLeft !== null && autoRetrySecondsLeft > 0 && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+          <span className="text-xs font-medium text-blue-800">
+            Providers cooling down — auto-retrying in {autoRetrySecondsLeft}s
+            {willResume ? " (resumes from the last completed chunk)" : ""}
+          </span>
+          <button
+            onClick={() => { cancelAutoRetry(); handleBackgroundAnalyze(); }}
+            disabled={analyzing}
+            className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            title="Retry now and resume from the last completed chunk"
+          >
+            Retry now
+          </button>
+          <button onClick={cancelAutoRetry} className="text-xs text-blue-600 underline hover:text-blue-800">
+            Cancel
+          </button>
         </div>
       )}
 
