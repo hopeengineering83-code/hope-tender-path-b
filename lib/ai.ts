@@ -2,7 +2,7 @@ import { logger } from "./observability";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
 import { protectPrompt } from "./ai-trust-boundary";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
@@ -1242,6 +1242,9 @@ async function generateWithZai(
     systemPrompt,
     maxTokens,
     responseFormatJson: wantJson,
+    // FIX: Use registry timeout (45s) instead of the 20s default.
+    // The AI Analyze prompt is very large and glm-4.7-flash needs more time.
+    timeoutMs: getProviderTimeoutMs("zai"),
   });
 }
 
@@ -1270,6 +1273,8 @@ async function generateWithCerebras(
     maxTokens,
     maxTokensParam: "max_completion_tokens",
     responseFormatJson: wantJson,
+    // FIX: Use registry timeout (45s) — same rationale as Z.ai.
+    timeoutMs: getProviderTimeoutMs("cerebras"),
   });
 }
 

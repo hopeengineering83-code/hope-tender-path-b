@@ -105,9 +105,19 @@ export type ProviderRegistryEntry = {
 const STANDARD_CAPS: ProviderOutputCaps = { analysis: 4000, proposal: 16000, fast: 1200 };
 
 // Conservative caps mandated for the free-tier OpenAI-compatible newcomers.
-const CONSERVATIVE_CAPS: ProviderOutputCaps = { analysis: 3000, proposal: 4000, fast: 1200 };
+// FIX: Analysis cap raised from 3000 to 8000 — the AI Analyze prompt asks for
+// a complex JSON object with 20+ fields and nested arrays. 3000 tokens
+// truncates the response → MALFORMED_RESPONSE → provider marked as failed.
+// 8000 tokens is sufficient for a complete analysis JSON while still being
+// within free-tier limits for Z.ai GLM and Cerebras.
+const CONSERVATIVE_CAPS: ProviderOutputCaps = { analysis: 8000, proposal: 4000, fast: 1200 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+// FIX: Z.ai and Cerebras need longer timeouts for AI Analyze. The analysis
+// prompt is very large (thousands of tokens) and glm-4.7-flash / gpt-oss-120b
+// can take 15-40s to generate a complete JSON response. 20s causes TIMEOUT
+// on the first provider, consuming an attempt budget slot for nothing.
+const ANALYSIS_TIMEOUT_MS = 45_000;
 
 const FALLBACK_RETRY: ProviderRetryPolicy = { maxRetries: 0, retryOnAuth: false, retryOnBilling: false };
 
@@ -134,7 +144,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
       fastModel: "glm-4.7-flash",
     },
     outputCaps: CONSERVATIVE_CAPS,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    // FIX: 45s timeout for analysis — the large AI Analyze prompt needs
+    // more than the 20s default. Z.ai glm-4.7-flash can take 15-40s on
+    // a full tender analysis JSON response.
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
     emergencyOnly: false,
@@ -159,7 +172,8 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
       fastModel: "gpt-oss-120b",
     },
     outputCaps: CONSERVATIVE_CAPS,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    // FIX: 45s timeout — same rationale as Z.ai.
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
     emergencyOnly: false,
@@ -482,6 +496,15 @@ export function getProviderOutputCap(
   if (useCase === "extraction") return caps.analysis;
   if (useCase === "fast") return caps.fast;
   return caps.proposal;
+}
+
+/**
+ * Returns the per-provider timeout from the registry. This is the timeout
+ * for a SINGLE provider call (not the overall route deadline). Used by
+ * generateWithZai/generateWithCerebras/etc. to pass to generateOpenAICompatible.
+ */
+export function getProviderTimeoutMs(provider: AiProviderName): number {
+  return REGISTRY[provider].timeoutMs;
 }
 
 // ─── OpenRouter free-model policy ─────────────────────────────────────────────
