@@ -83,11 +83,19 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return isGeminiEnabled() || isOpenAIEnabled() || isMistralEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isClaudeEnabled();
+  return isCerebrasEnabled() || isZaiEnabled() || isGeminiEnabled() || isOpenAIEnabled() || isMistralEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isClaudeEnabled();
 }
 
 export function isClaudeEnabled() {
   return Boolean(getAnthropicApiKey());
+}
+
+export function isCerebrasEnabled() {
+  return Boolean(process.env.CEREBRAS_API_KEY);
+}
+
+export function isZaiEnabled() {
+  return Boolean(process.env.ZAI_API_KEY);
 }
 
 export function isGeminiEnabled() {
