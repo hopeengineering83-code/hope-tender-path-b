@@ -11,7 +11,7 @@
  */
 
 import { prisma } from "../prisma";
-import { executeAnalysis, type AnalysisOrchestrationOptions } from "../engine/analysis-orchestrator";
+import { executeAnalysis, finalizeAnalysisJob, type AnalysisOrchestrationOptions } from "../engine/analysis-orchestrator";
 import type { AnalysisJobCreateInput } from "./analysis-job-service";
 import { logger } from "../observability";
 
@@ -90,18 +90,25 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
         },
       });
 
-      // Mark job as SUCCEEDED or PARTIAL_SUCCESS
-      const finalStatus = result.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED";
-      await prisma.aiJob.update({
-        where: { id: job.id },
-        data: {
-          status: finalStatus,
-          finishedAt: new Date(),
-          retries: job.retries, // Keep retry count for metrics
-        },
-      });
+      // Determine terminal state. SUCCEEDED is reserved for a full AI success
+      // that the finalizer actually promoted to canonical — the recovery
+      // worker must use the SAME promotion path as the interactive worker so
+      // a partial/failed run can never be silently completed as SUCCEEDED.
+      let finalStatus: string;
+      if (result.success && !result.isPartial && !result.errorMessage) {
+        const finalize = await finalizeAnalysisJob(result.jobId, job.userId);
+        finalStatus = finalize.status;
+      } else {
+        // executeAnalysis already wrote PARTIAL_SUCCESS/FAILED; record metrics
+        // without overriding its terminal state.
+        finalStatus = result.completedChunks > 0 || result.isPartial ? "PARTIAL_SUCCESS" : "FAILED";
+        await prisma.aiJob.update({
+          where: { id: job.id },
+          data: { status: finalStatus, finishedAt: new Date(), retries: job.retries },
+        });
+      }
 
-      succeeded++;
+      if (finalStatus === "SUCCEEDED") succeeded++;
       logger.info(`[worker] job ${job.id} ${finalStatus}`);
     } catch (err) {
       failed++;

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
-import { getHandler } from "../../../../lib/ai-job-handlers";
+import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prismaReady } from "../../../../lib/prisma";
 
@@ -64,21 +64,30 @@ export async function POST(req: Request) {
     }
 
     try {
-      const output = await handler({
+      const result = await handler({
         jobId: claimed.id,
         userId: claimed.userId,
         tenderId: claimed.tenderId,
         input: claimed.input,
       });
-      await completeJob(claimed.id, output);
-      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+      if (isTerminalHandlerResult(result)) {
+        // The handler already drove the job to its terminal state (e.g.
+        // AI_ANALYZE: SUCCEEDED only after canonical promotion, otherwise
+        // PARTIAL_SUCCESS/FAILED). Respect it — calling completeJob() here
+        // would corrupt a partial/failed analysis into SUCCEEDED and falsely
+        // unlock generation/export. The handler owns output persistence.
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: result.terminalStatus });
+      } else {
+        await completeJob(claimed.id, result);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await failJob(claimed.id, message);
       processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "Job execution failed" });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "AI_ANALYZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {

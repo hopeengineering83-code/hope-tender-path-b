@@ -22,6 +22,7 @@ import {
 import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
 import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
+import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed } from "../ai-analyze-checkpoints";
 import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
@@ -83,6 +84,14 @@ export async function executeAnalysis(
     onChunkComplete,
     onChunkFailure,
   } = options;
+
+  // Content hash that keys the durable AiAnalyzeChunk rows. Assigned once the
+  // shared content is built below; the wrapped chunk callbacks persist each
+  // chunk under this hash so finalizeJob() can read SUCCEEDED chunk rows and
+  // promote canonical data. It is identical to the hash createAnalysisJob used
+  // (both call buildTenderAnalysisContent + computeAnalysisContentHash on the
+  // same tender/company), so the upserts UPDATE the existing rows in place.
+  let checkpointHash: string | null = null;
 
   // Phase: Preparing
   await onProgress?.({
@@ -154,6 +163,21 @@ export async function executeAnalysis(
       result: snapshot.result,
       provider: snapshot.provider,
     };
+    // Persist the completed chunk to the durable AiAnalyzeChunk row so
+    // finalizeJob() sees it as SUCCEEDED and can promote canonical data.
+    if (checkpointHash && typeof snapshot.chunkIndex === "number" && snapshot.result) {
+      await upsertAnalyzeChunkSucceeded({
+        tenderId,
+        userId,
+        contentHash: checkpointHash,
+        chunkIndex: snapshot.chunkIndex,
+        totalChunks: snapshot.totalChunks,
+        result: snapshot.result,
+        provider: snapshot.provider ?? null,
+      }).catch((e) => {
+        logger.error("[orchestrator] chunk SUCCEEDED checkpoint persist failed", { error: e instanceof Error ? e.message : String(e) });
+      });
+    }
     await onChunkComplete?.(info);
     await onProgress?.({
       phase: "analyzing",
@@ -169,6 +193,19 @@ export async function executeAnalysis(
     errorMessage: string;
     provider?: string | null;
   }) => {
+    if (checkpointHash && typeof info.chunkIndex === "number") {
+      await upsertAnalyzeChunkFailed({
+        tenderId,
+        userId,
+        contentHash: checkpointHash,
+        chunkIndex: info.chunkIndex,
+        totalChunks: info.totalChunks,
+        errorMessage: info.errorMessage,
+        provider: info.provider ?? null,
+      }).catch((e) => {
+        logger.error("[orchestrator] chunk FAILED checkpoint persist failed", { error: e instanceof Error ? e.message : String(e) });
+      });
+    }
     await onChunkFailure?.(info);
     await onProgress?.({
       phase: "analyzing",
@@ -238,6 +275,8 @@ export async function executeAnalysis(
   // Use Stage 1 shared builder for deterministic content
   const tenderContent = buildTenderAnalysisContent(tender, company);
   const contentHash = computeAnalysisContentHash(tenderContent);
+  // Enable durable per-chunk checkpoint persistence now that the hash exists.
+  checkpointHash = contentHash;
 
   if (!tenderContent || tenderContent.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
@@ -300,13 +339,31 @@ export async function executeAnalysis(
     message: "Promoting requirements to canonical…",
   });
 
-  // Update job with analysis results
+  // Update job with analysis results.
+  //
+  // CRITICAL: executeAnalysis must NEVER write SUCCEEDED. SUCCEEDED means
+  // "canonical requirements + canonical tender metadata have been promoted",
+  // and promotion happens ONLY in finalizeJob(). On a full AI success we
+  // therefore leave the job RUNNING (output persisted for resume) so the
+  // caller's finalizer can promote and then set SUCCEEDED. A partial run, an
+  // error, or a fallback gets a terminal PARTIAL_SUCCESS (any progress) or
+  // FAILED (no progress) here so downstream gates keep blocking generation,
+  // export, and the final ZIP.
   if (analysisMeta) {
+    const completed = analysisMeta.completedChunks ?? 0;
+    const fullAiSuccess = !errorMessage && !analysisMeta.isPartial;
+    const interimStatus: "RUNNING" | "PARTIAL_SUCCESS" | "FAILED" = fullAiSuccess
+      ? "RUNNING"
+      : completed > 0
+        ? "PARTIAL_SUCCESS"
+        : "FAILED";
     await prisma.aiJob.update({
       where: { id: jobId },
       data: {
-        status: analysisMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
-        finishedAt: new Date(),
+        status: interimStatus,
+        // Only stamp finishedAt on a terminal interim status; a full success is
+        // not finished until the finalizer promotes.
+        ...(interimStatus === "RUNNING" ? {} : { finishedAt: new Date() }),
         output: JSON.stringify({
           isPartial: analysisMeta.isPartial,
           totalChunks: analysisMeta.totalChunks,
