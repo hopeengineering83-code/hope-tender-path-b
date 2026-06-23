@@ -156,8 +156,26 @@ function recoverFailedInit() {
   }
 }
 
+// ── Failed-init recovery — operator-only, never automatic in production ──
+// The recovery path (prisma migrate resolve) is DANGEROUS in production
+// deployments. It must ONLY run when an operator explicitly sets
+// ALLOW_PRISMA_INIT_RECOVERY=true. In Vercel production builds, the flag
+// is never set, so a failed-init state fails closed with a clear error.
+const allowInitRecovery = ["1", "true", "yes"].includes(
+  String(process.env.ALLOW_PRISMA_INIT_RECOVERY ?? "").trim().toLowerCase(),
+);
+
 const initialResult = deploy();
 if (initialResult === "failed-init") {
+  if (!allowInitRecovery) {
+    throw new Error(
+      `Migration deployment detected a failed-init state for ${INIT_MIGRATION}, but automatic recovery is disabled. ` +
+        `Set ALLOW_PRISMA_INIT_RECOVERY=true to run the operator-only recovery procedure (requires exact migration identity, ` +
+        `checksum validation, migration-history validation, critical-schema validation, and zero-drift validation).`,
+    );
+  }
+  console.log("ALLOW_PRISMA_INIT_RECOVERY=true — running operator-only failed-init recovery.");
+  console.log("This will verify: exact migration identity, checksum, history, schema, and zero-drift before resolving.");
   recoverFailedInit();
   const retryResult = deploy();
   if (retryResult !== "ok") {

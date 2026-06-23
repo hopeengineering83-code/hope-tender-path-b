@@ -86,6 +86,9 @@ export async function POST(req: Request) {
       }
 
       // ── Record retry state for AI_ANALYZE PARTIAL_SUCCESS/FAILED ────
+      // Do NOT silently swallow persistence failures. Log a safe error,
+      // retain the job as PARTIAL_SUCCESS/FAILED, keep generation blocked,
+      // and expose a retry-status problem.
       if (claimed.jobType === "AI_ANALYZE" && (terminalStatus === "PARTIAL_SUCCESS" || terminalStatus === "FAILED")) {
         try {
           const { recordRetryState } = await import("../../../../lib/ai-analyze/retry-service");
@@ -93,7 +96,11 @@ export async function POST(req: Request) {
           if (job?.tenderId && job?.analysisInputHash) {
             await recordRetryState(claimed.id, job.tenderId, claimed.userId, job.analysisInputHash, output?.errorMessage as string | undefined, output?.finalizationCode as string | undefined, terminalStatus);
           }
-        } catch { /* best-effort */ }
+        } catch (retryErr) {
+          // Log a safe error — do NOT expose raw DB errors. The job stays
+          // PARTIAL_SUCCESS/FAILED, generation remains blocked.
+          console.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${retryErr instanceof Error ? retryErr.message : "unknown error"}. Job remains ${terminalStatus}; generation blocked.`);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -107,7 +114,9 @@ export async function POST(req: Request) {
           if (job?.tenderId && job?.analysisInputHash) {
             await recordRetryState(claimed.id, job.tenderId, claimed.userId, job.analysisInputHash, message, undefined, "FAILED");
           }
-        } catch { /* best-effort */ }
+        } catch (retryErr) {
+          console.error(`[run-next] Retry-state persistence failed for failed job ${claimed.id}: ${retryErr instanceof Error ? retryErr.message : "unknown error"}. Job remains FAILED; generation blocked.`);
+        }
       }
     }
 
