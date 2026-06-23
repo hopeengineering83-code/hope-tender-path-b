@@ -1793,6 +1793,11 @@ async function analyzeOneChunk(
   totalChunks: number,
   onProviderUsed?: (provider: AiProviderName) => void,
   onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
+  // Shared wall-clock deadline (epoch ms). Threaded into generateWithFallback so
+  // its deadline guard is live: the provider chain will not START an attempt it
+  // cannot finish within budget, returning a clean structured error instead of
+  // being hard-killed mid-flight by the route's outer withTimeout race.
+  deadlineAt?: number,
 ): Promise<AIAnalysisResult> {
   const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
   const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.${chunkLabel ? `\n\nNOTE${chunkLabel}: This is one chunk of a larger tender document. Extract everything visible IN THIS CHUNK. Do not invent content from missing chunks; downstream merge will combine chunk results.` : ""}
@@ -1932,6 +1937,7 @@ ${tenderContent}`;
     useCase: "extraction",
     onProviderUsed,
     onProviderAttempt,
+    deadlineAt,
   });
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -2079,9 +2085,10 @@ export async function analyzeOneChunkWithRetry(
   total: number,
   onProviderUsed?: (provider: AiProviderName) => void,
   onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
+  deadlineAt?: number,
 ): Promise<AIAnalysisResult> {
   try {
-    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt);
+    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt);
   } catch (err) {
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
@@ -2090,9 +2097,16 @@ export async function analyzeOneChunkWithRetry(
       logger.warn(`[ai] chunk ${index + 1}/${total} hit provider exhaustion error (all in cooldown) — not retrying. Error: ${msg.slice(0, 200)}`);
       throw err;
     }
+    // Don't burn the retry backoff + a fresh attempt if the shared deadline
+    // leaves no room to finish it — surface the original error so the caller can
+    // persist progress and fall back cleanly instead of being hard-killed.
+    if (typeof deadlineAt === "number" && Date.now() + CHUNK_RETRY_BACKOFF_MS + ERROR_HANDLING_RESERVE_MS >= deadlineAt) {
+      logger.warn(`[ai] chunk ${index + 1}/${total} transient error but shared deadline reached — not retrying. Error: ${msg.slice(0, 200)}`);
+      throw err;
+    }
     logger.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
-    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt);
+    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt);
   }
 }
 
@@ -2145,7 +2159,7 @@ export async function analyzeWithAI(
     let chunkProvider: string | null = null;
     try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
     try {
-      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt);
+      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt, opts?.deadlineAt);
       const chunkResults = [{ index: 0, result, provider: chunkProvider }];
       try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
       return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };
@@ -2209,7 +2223,7 @@ export async function analyzeWithAI(
         const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
           chunkProviders[item.index] = p;
           chunkProvider = p;
-        }, opts?.onProviderAttempt);
+        }, opts?.onProviderAttempt, opts?.deadlineAt);
         successesWithIdx.push({ index: item.index, result: res, provider: chunkProvider });
         completedChunks++;
         if (opts?.onChunkComplete) {
