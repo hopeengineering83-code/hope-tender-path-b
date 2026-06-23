@@ -59,6 +59,20 @@ describe("AI Analyze source traceability — persistence route", () => {
     assert.match(routeSource, /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)\s*\?\s*\{\s*title:\s*aiResult\.tenderTitle\s*\}/);
   });
 
+  it("persists tenderTitle in BOTH the streaming and non-streaming paths (parity)", () => {
+    // Regression: the non-streaming AI Analyze path used to silently drop
+    // aiResult.tenderTitle, so a tender analyzed without streaming never had
+    // its title corrected from the document. Both persistence blocks must
+    // write the title, so the count of title-writes is at least 2.
+    const titleWrites = routeSource.match(
+      /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)\s*\?\s*\{\s*title:\s*aiResult\.tenderTitle\s*\}/g,
+    );
+    assert.ok(
+      titleWrites && titleWrites.length >= 2,
+      `expected tenderTitle to be persisted in both AI Analyze paths, found ${titleWrites?.length ?? 0}`,
+    );
+  });
+
   it("persists sourceSectionHeading preferring AI heading over section reference", () => {
     assert.match(routeSource, /sourceSectionHeading:\s*req\.sourceSectionHeading\s*\|\|\s*req\.sectionReference\s*\|\|\s*null/);
   });

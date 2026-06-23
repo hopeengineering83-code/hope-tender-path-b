@@ -33,6 +33,8 @@ import {
 } from "../../../../../lib/engine/analysis-source";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { resolveCurrentAnalysisBinding } from "../../../../../lib/engine/generation-readiness-gate";
+import { recordFallbackApproval, revokeFallbackApprovals } from "../../../../../lib/engine/readiness-overrides";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -61,6 +63,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : null;
 
     await approveRegexFallbackAnalysis(prisma, id, note);
+
+    // Durable, auditable approval bound to the EXACT current analysis job +
+    // content hash (central readiness gate, condition I). The legacy
+    // ComplianceGap above stays for backward compatibility, but the gate trusts
+    // only this bound record — which self-invalidates if the job or tender
+    // content changes (the hash moves).
+    const binding = await resolveCurrentAnalysisBinding(prisma, id, actor.id);
+    if (binding.jobId && binding.contentHash) {
+      await recordFallbackApproval(prisma, {
+        tenderId: id,
+        jobId: binding.jobId,
+        contentHash: binding.contentHash,
+        approverId: actor.id,
+        reason: note ?? "Human-approved regex fallback",
+        approvalRoute: "approve-analysis",
+      });
+    }
+
     const source = await detectAnalysisSourceWithApproval(prisma, id, tender);
     await logAction({
       userId: actor.id,
@@ -88,6 +108,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     await revokeRegexFallbackApproval(prisma, id);
+    await revokeFallbackApprovals(prisma, id);
     await logAction({
       userId: actor.id,
       action: "ANALYSIS_REGEX_FALLBACK_REVOKED",

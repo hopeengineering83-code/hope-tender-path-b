@@ -973,6 +973,35 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE SET NULL
   )`);
 
+  // ── Central readiness-gate durable records (migration 20260622193000) ────
+  // FallbackApprovalRecord: regex-fallback approval bound to the EXACT
+  // (tenderId, jobId, contentHash). The unique key self-invalidates the
+  // approval when a new job runs or tender content changes.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "FallbackApprovalRecord" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "jobId" TEXT NOT NULL,
+    "contentHash" TEXT NOT NULL,
+    "approverId" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "approvalRoute" TEXT NOT NULL DEFAULT 'manual',
+    "approvedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
+  // ExtractionQualityOverride: human override allowing final generation/export
+  // on a WEAK (not corrupted) extraction for one tender file.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ExtractionQualityOverride" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "tenderFileId" TEXT NOT NULL,
+    "qualityScore" DOUBLE PRECISION NOT NULL,
+    "overrideReason" TEXT NOT NULL,
+    "overriddenBy" TEXT NOT NULL,
+    "overriddenAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -1036,6 +1065,12 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "AiUsageRecord_userId_createdAt_idx" ON "AiUsageRecord"("userId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "AiUsageRecord_tenderId_createdAt_idx" ON "AiUsageRecord"("tenderId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "AiUsageRecord_provider_createdAt_idx" ON "AiUsageRecord"("provider", "createdAt")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "FallbackApprovalRecord_tenderId_jobId_contentHash_key" ON "FallbackApprovalRecord"("tenderId", "jobId", "contentHash")`,
+    `CREATE INDEX IF NOT EXISTS "FallbackApprovalRecord_tenderId_contentHash_idx" ON "FallbackApprovalRecord"("tenderId", "contentHash")`,
+    `CREATE INDEX IF NOT EXISTS "FallbackApprovalRecord_jobId_contentHash_idx" ON "FallbackApprovalRecord"("jobId", "contentHash")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_tenderFileId_key" ON "ExtractionQualityOverride"("tenderId", "tenderFileId")`,
+    `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_idx" ON "ExtractionQualityOverride"("tenderId")`,
+    `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderFileId_idx" ON "ExtractionQualityOverride"("tenderFileId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {

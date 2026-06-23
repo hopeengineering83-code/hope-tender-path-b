@@ -37,6 +37,24 @@ export type ProviderTestResult = {
   structuredOutput?: any;
 };
 
+export type ProviderTestSummary = {
+  tested: number;
+  ok: number;
+  failed: number;
+  skipped: number;
+  notConfigured: number;
+};
+
+function summarizeResults(results: ProviderTestResult[]): ProviderTestSummary {
+  return {
+    tested: results.length,
+    ok: results.filter((r) => r.status === "ok").length,
+    failed: results.filter((r) => r.status === "failed").length,
+    skipped: results.filter((r) => r.status === "skipped_cooldown").length,
+    notConfigured: results.filter((r) => r.status === "not_configured").length,
+  };
+}
+
 const SYNTHETIC_TENDER_TEXT = `
 [FILE_ID:doc-1|FILE_NAME:tender.pdf]
 # PROJECT: Alpha Bridge Construction
@@ -292,22 +310,28 @@ export async function POST(req: Request) {
   const provider = typeof body.provider === "string" ? (body.provider as AiProviderName) : null;
   const capability = typeof body.capability === "string" ? (body.capability as "ping" | "analysis" | "generation") : "ping";
 
-  if (!provider) {
-    return NextResponse.json({ success: false, message: "Provider is required" }, { status: 400 });
+  // "Test provider chain": with no specific provider, ping the full canonical
+  // chain (the AIHealthTestButton action). With a provider, test just that one.
+  // Both shapes return { results, summary } so the operator UI renders the grid
+  // and the per-instance "recorded a successful response" state is updated.
+  const providers: readonly AiProviderName[] = provider ? [provider] : CANONICAL_AI_PROVIDER_ORDER;
+  const results: ProviderTestResult[] = [];
+  for (const p of providers) {
+    results.push(await testProvider(p, capability));
   }
-
-  const result = await testProvider(provider, capability);
+  const summary = summarizeResults(results);
 
   await logAction({
     userId: actor.id,
-    action: "AI_PROVIDER_FAILOVER",
+    action: provider ? "AI_PROVIDER_FAILOVER" : "CREATE",
     entityType: "AiProviderHealth",
-    entityId: provider,
-    description: `Operator ran ${capability} test for ${provider}: ${result.status}`,
+    entityId: provider ?? "chain",
+    description: `Operator ran ${capability} test for ${provider ?? "full chain"}: ${summary.ok}/${summary.tested} ok`,
   });
 
   return NextResponse.json({
     success: true,
-    result,
+    results,
+    summary,
   });
 }

@@ -342,6 +342,28 @@ describe("authority review gate blocks download route", () => {
   it("does not remove METADATA_CONTAMINATED check", () => { assert.match(source, /METADATA_CONTAMINATED/); });
 });
 
+describe("central readiness gate covers EVERY download export path", () => {
+  const source = readFileSync("app/api/tenders/[id]/download/route.ts", "utf8");
+  // Regression: the ZIP path (zipPackage) called the central gate, but the
+  // single-document (?docId) and proposal-PDF (?type=pdf) export paths did
+  // not — so a stale-hash / revoked-fallback analysis could still leak final
+  // content one file at a time or as a PDF. All three export paths must pass
+  // assertTenderReadyForGenerationAndExport, so the call count is at least 3.
+  it("calls assertTenderReadyForGenerationAndExport in zip, single-doc, and pdf paths", () => {
+    const calls = source.match(/assertTenderReadyForGenerationAndExport\(/g);
+    assert.ok(
+      calls && calls.length >= 3,
+      `expected the central gate in all 3 export paths (zip, single-doc, pdf), found ${calls?.length ?? 0}`,
+    );
+  });
+  it("single-document path blocks with a structured 409 on a failed gate", () => {
+    assert.match(source, /Single-document export blocked/);
+  });
+  it("proposal-PDF path blocks with a structured 409 on a failed gate", () => {
+    assert.match(source, /PDF export blocked/);
+  });
+});
+
 describe("deferred gap fixes — post-618 hardening", () => {
   it("final-submission-readiness blocks on empty clientName", () => {
     const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");

@@ -1125,3 +1125,48 @@ model AiUsageRecord {
   @@index([tenderId, createdAt])
   @@index([provider, createdAt])
 }
+
+// Durable, auditable approval of a regex-fallback analysis, bound to the EXACT
+// analysis job + content hash it was approved against (central readiness gate,
+// condition I). A tender-wide ComplianceGap can never authorize fallback
+// generation/export on its own; only a record here whose (tenderId, jobId,
+// contentHash) match the CURRENT eligible job + recomputed content hash counts.
+// The unique key means the approval automatically becomes invalid the moment a
+// new job runs or the tender content changes (the hash moves), with no cleanup.
+// Scalar-only (no Prisma relation fields) to mirror AiUsageRecord and avoid
+// back-relation churn on Tender/AiJob/User.
+model FallbackApprovalRecord {
+  id            String   @id @default(uuid())
+  tenderId      String
+  jobId         String
+  contentHash   String
+  approverId    String
+  reason        String
+  approvalRoute String   @default("manual")
+  approvedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@unique([tenderId, jobId, contentHash])
+  @@index([tenderId, contentHash])
+  @@index([jobId, contentHash])
+}
+
+// Durable, auditable human override permitting final generation/export on a WEAK
+// (but not corrupted) extraction for a specific tender file (central readiness
+// gate, condition B). One active override per (tenderId, tenderFileId). Corrupted
+// extraction can never be overridden — only weak extraction. Scalar-only to
+// mirror AiUsageRecord.
+model ExtractionQualityOverride {
+  id             String   @id @default(uuid())
+  tenderId       String
+  tenderFileId   String
+  qualityScore   Float
+  overrideReason String
+  overriddenBy   String
+  overriddenAt   DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@unique([tenderId, tenderFileId])
+  @@index([tenderId])
+  @@index([tenderFileId])
+}
