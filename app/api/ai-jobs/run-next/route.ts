@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
-import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { completeJob, completeJobWithStatus, failJob, type JobStatus } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -70,8 +70,31 @@ export async function POST(req: Request) {
         tenderId: claimed.tenderId,
         input: claimed.input,
       });
-      await completeJob(claimed.id, output);
-      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+
+      // ── Respect the handler's declared terminal status ──────────────
+      // Historically this loop called completeJob() after every handler,
+      // which ALWAYS writes status="SUCCEEDED". That corrupted the
+      // AI_ANALYZE state machine: partial/failed analysis was overwritten
+      // to SUCCEEDED, unblocking generation/export on a tender that was
+      // NOT ready.
+      //
+      // Handlers may now return { terminalStatus, ... } to declare their
+      // authoritative terminal. run-next honours it:
+      //   • "SUCCEEDED" (or absent) → completeJob() writes SUCCEEDED.
+      //   • "PARTIAL_SUCCESS"       → completeJobWithStatus() preserves it.
+      //   • "FAILED"                → failJob() writes FAILED.
+      const terminalStatus = (output?.terminalStatus as string | undefined) ?? "SUCCEEDED";
+      if (terminalStatus === "SUCCEEDED") {
+        await completeJob(claimed.id, output);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+      } else if (terminalStatus === "FAILED") {
+        const errMsg = (output?.errorMessage as string | undefined) ?? "Handler reported FAILED";
+        await failJob(claimed.id, errMsg);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: errMsg });
+      } else {
+        await completeJobWithStatus(claimed.id, terminalStatus as JobStatus, output);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: terminalStatus });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await failJob(claimed.id, message);

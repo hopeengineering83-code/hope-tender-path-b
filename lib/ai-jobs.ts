@@ -133,6 +133,43 @@ export async function completeJob(jobId: string, output?: Record<string, unknown
   });
 }
 
+/**
+ * Write a handler-declared terminal status WITHOUT forcing SUCCEEDED.
+ *
+ * `completeJob()` always writes status="SUCCEEDED". That corrupts the
+ * AI_ANALYZE state machine when the handler declares PARTIAL_SUCCESS
+ * (some chunks failed) or FAILED — the worker would overwrite the
+ * correct terminal with SUCCEEDED, unblocking generation/export on a
+ * tender that is NOT ready.
+ *
+ * This function writes the handler-declared terminal atomically,
+ * guarded on status='RUNNING' so a job the finalizer already promoted
+ * to SUCCEEDED cannot be downgraded by a stale worker retry.
+ */
+export async function completeJobWithStatus(
+  jobId: string,
+  status: JobStatus,
+  output?: Record<string, unknown>,
+): Promise<void> {
+  await prismaReady;
+  if (status === "SUCCEEDED") {
+    await completeJob(jobId, output);
+    return;
+  }
+  if (status === "FAILED") {
+    return;
+    // FAILED is the responsibility of failJob(); callers should use that.
+  }
+  await prisma.aiJob.updateMany({
+    where: { id: jobId, status: "RUNNING" },
+    data: {
+      status,
+      output: output ? JSON.stringify(output) : null,
+      finishedAt: new Date(),
+    },
+  });
+}
+
 export async function failJob(jobId: string, errorMessage: string): Promise<void> {
   await prismaReady;
   await prisma.aiJob.update({

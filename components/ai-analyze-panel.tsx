@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AiAnalyzeStatusBanner } from "./ai-analyze-status-banner";
 import { SparklesIcon, ClockIcon, BoltIcon, RefreshIcon } from "./icons";
 
 type ChunkProgress = {
@@ -20,10 +19,16 @@ type AnalyzeResult = {
   chunks: ChunkProgress | null;
   code: string | null;
   nextAction: string | null;
-  extractionWarnings: any[] | null;
   providerDiagnostics: any | null;
   providerRetryAfterMs: number | null;
   resumableJobId: string | null;
+};
+
+type ProviderAvailability = {
+  anyAvailable: boolean;
+  minCooldownMs: number | null;
+  configuredCount: number;
+  availableCount: number;
 };
 
 type Props = {
@@ -32,175 +37,339 @@ type Props = {
   aiEnabled: boolean;
 };
 
+/**
+ * AIAnalyzePanel — the user-facing "Run AI Analyze" control.
+ *
+ * UNIFIED DURABLE WORKFLOW
+ * ────────────────────────
+ * The normal "Run AI Analyze" button enqueues a durable AI_ANALYZE job
+ * via POST /api/tenders/[id]/ai-analyze?mode=background (HTTP 202), then
+ * triggers /api/ai-jobs/run-next?jobType=AI_ANALYZE with the authenticated
+ * session to start the worker immediately. The UI then polls
+ * /api/ai-jobs/[jobId] for status until a terminal is reached.
+ *
+ * The direct SSE route is NOT used for normal production analysis.
+ *
+ * AUTOMATIC PROVIDER-AVAILABILITY RETRY
+ * ─────────────────────────────────────
+ * A "Retry AI Analyze" button becomes enabled automatically when at least
+ * one configured provider is currently eligible (not in cooldown).
+ * Availability is computed server-side via /api/ai-providers/availability
+ * — not NEXT_PUBLIC_AI_ENABLED. Polling happens only while the panel is
+ * visible AND the latest job is failed/partial/stuck/waiting-for-cooldown.
+ * Stops after success, unmount, or a new active job.
+ *
+ * Worker-start errors (401/403/429/500 from run-next) are surfaced
+ * clearly in the UI rather than silently swallowed.
+ */
 export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [analyzePhase, setAnalyzePhase] = useState("");
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
   const [continueJobId, setContinueJobId] = useState<string | null>(initialContinueJobId ?? null);
   const [error, setError] = useState("");
+  const [providerAvail, setProviderAvail] = useState<ProviderAvailability | null>(null);
 
-  const [autoRetryAt, setAutoRetryAt] = useState<number | null>(null);
-  const [autoRetrySecondsLeft, setAutoRetrySecondsLeft] = useState<number | null>(null);
-  const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoRetryCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const availPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     return () => {
-      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
-      if (autoRetryCountdownRef.current) clearInterval(autoRetryCountdownRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (availPollIntervalRef.current) clearInterval(availPollIntervalRef.current);
     };
   }, []);
 
-  function cancelAutoRetry() {
-    if (autoRetryTimerRef.current) { clearTimeout(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
-    if (autoRetryCountdownRef.current) { clearInterval(autoRetryCountdownRef.current); autoRetryCountdownRef.current = null; }
-    setAutoRetryAt(null);
-    setAutoRetrySecondsLeft(null);
+  function cancelPolling() {
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
   }
 
-  function scheduleAutoRetry(delayMs: number, resumeJobId: string | null) {
-    cancelAutoRetry();
-    if (resumeJobId) setContinueJobId(resumeJobId);
-    const fireAt = Date.now() + delayMs;
-    setAutoRetryAt(fireAt);
-    setAutoRetrySecondsLeft(Math.ceil(delayMs / 1000));
-    autoRetryCountdownRef.current = setInterval(() => {
-      const left = Math.ceil((fireAt - Date.now()) / 1000);
-      if (left <= 0) {
-        if (autoRetryCountdownRef.current) { clearInterval(autoRetryCountdownRef.current); autoRetryCountdownRef.current = null; }
-        setAutoRetrySecondsLeft(null);
-      } else {
-        setAutoRetrySecondsLeft(left);
-      }
-    }, 1000);
-    autoRetryTimerRef.current = setTimeout(() => {
-      autoRetryTimerRef.current = null;
-      setAutoRetryAt(null);
-      setAutoRetrySecondsLeft(null);
-      void handleAnalyzeStreaming();
-    }, delayMs);
+  function cancelAvailPolling() {
+    if (availPollIntervalRef.current) { clearInterval(availPollIntervalRef.current); availPollIntervalRef.current = null; }
   }
 
-  async function handleAnalyzeStreaming() {
-    cancelAutoRetry();
+  // ── Provider-availability polling ─────────────────────────────────────
+  // Polls /api/ai-providers/availability only while the panel is visible
+  // AND the latest job is failed/partial/stuck/waiting-for-cooldown.
+  // Stops after success, unmount, or a new active job.
+  async function fetchProviderAvailability() {
+    try {
+      const res = await fetch("/api/ai-providers/availability");
+      if (res.status === 401 || res.status === 403) return;
+      if (!res.ok) return;
+      const data = await res.json();
+      setProviderAvail({
+        anyAvailable: Boolean(data.anyAvailable),
+        minCooldownMs: typeof data.minCooldownMs === "number" ? data.minCooldownMs : null,
+        configuredCount: typeof data.configuredCount === "number" ? data.configuredCount : 0,
+        availableCount: typeof data.availableCount === "number" ? data.availableCount : 0,
+      });
+    } catch {
+      // Silent — availability is best-effort
+    }
+  }
+
+  function startAvailPolling() {
+    cancelAvailPolling();
+    void fetchProviderAvailability();
+    availPollIntervalRef.current = setInterval(() => {
+      void fetchProviderAvailability();
+    }, 10_000); // poll every 10s
+  }
+
+  function stopAvailPolling() {
+    cancelAvailPolling();
+  }
+
+  // Start polling availability when there's an error or partial result
+  // (i.e. the user might want to retry). Stop when analyzing or on success.
+  useEffect(() => {
+    if (error || (analyzeResult && !analyzeResult.ai)) {
+      startAvailPolling();
+    } else {
+      stopAvailPolling();
+    }
+    return () => stopAvailPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [error, analyzeResult, analyzing]);
+
+  // ── Durable background entry point ────────────────────────────────────
+  async function handleAnalyzeBackground() {
+    cancelPolling();
     setAnalyzing(true);
     setError("");
-    setAnalyzePhase("Connecting…");
+    setAnalyzeResult(null);
+    setAnalyzePhase("Enqueuing analysis…");
     setAnalyzeProgress(5);
+
+    let jobId: string | null = null;
     try {
-      const analyzeUrl = continueJobId
-        ? `/api/tenders/${tenderId}/ai-analyze?continue=${encodeURIComponent(continueJobId)}`
-        : `/api/tenders/${tenderId}/ai-analyze`;
-      const res = await fetch(analyzeUrl, {
-        method: "POST",
-        headers: { "Accept": "text/event-stream" },
-      });
+      // 1. Enqueue the durable AI_ANALYZE job (HTTP 202)
+      const enqueueUrl = `/api/tenders/${tenderId}/ai-analyze?mode=background`;
+      const enqueueRes = await fetch(enqueueUrl, { method: "POST" });
 
-      if (!res.ok || !res.body) {
-        // Fall back to non-streaming path or show error
-        const data = await res.json().catch(() => ({}));
-        const errorMsg = data.error || "Analysis failed to start";
-        setError(errorMsg);
+      if (enqueueRes.status === 401 || enqueueRes.status === 403) {
+        setError("You are not authorized to run AI analysis. Please sign in again and retry.");
         setAnalyzing(false);
-
-        // If providers are cooling down, schedule auto-retry
-        if (data.providerRetryAfterMs && typeof data.providerRetryAfterMs === "number") {
-          scheduleAutoRetry(Math.max(data.providerRetryAfterMs, 5000), data.resumableJobId ?? null);
-        }
+        setAnalyzeProgress(0);
+        return;
+      }
+      if (enqueueRes.status === 429) {
+        const data = await enqueueRes.json().catch(() => ({}));
+        setError(data.error || "Rate limit exceeded — too many analysis requests. Please wait a minute and retry.");
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+        return;
+      }
+      if (enqueueRes.status === 422) {
+        const data = await enqueueRes.json().catch(() => ({}));
+        setError(data.error || "Extraction is not ready for AI analysis. Run OCR or re-upload a clearer document.");
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+        return;
+      }
+      if (!enqueueRes.ok || enqueueRes.status !== 202) {
+        const data = await enqueueRes.json().catch(() => ({}));
+        setError(data.error || `Failed to start analysis (HTTP ${enqueueRes.status}).`);
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let done = false;
-      let streamedFallback = false;
+      const enqueued = await enqueueRes.json();
+      jobId = enqueued.jobId;
+      if (!jobId) {
+        setError("Analysis was accepted but no job ID was returned. Refresh the page and check the analysis status.");
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+        return;
+      }
+      setContinueJobId(jobId);
+      setAnalyzePhase("Starting worker…");
+      setAnalyzeProgress(10);
 
-      while (!done) {
-        const { done: streamDone, value } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) {
-          if (!part.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(part.slice(6));
-            if (event.phase === "analyzing" && event.chunk !== undefined) {
-              const total = event.totalChunks ?? "?";
-              setAnalyzePhase(`Analyzing chunk ${event.chunk}/${total}`);
-              const pct = event.totalChunks ? Math.round(20 + (event.chunk / event.totalChunks) * 55) : 50;
-              setAnalyzeProgress(pct);
-            } else if (event.phase === "extracting") {
-              setAnalyzePhase(event.message?.slice(0, 50) ?? "Extracting…");
-              setAnalyzeProgress(15);
-            } else if (event.phase === "saving") {
-              setAnalyzePhase("Saving analysis results…");
-              setAnalyzeProgress(90);
-            } else if (event.phase === "starting") {
-              setAnalyzePhase("Preparing tender content…");
-              setAnalyzeProgress(8);
-            } else if (event.phase === "complete") {
-              setAnalyzePhase(
-                event.fallback
-                  ? "Analysis complete — AI unavailable, regex fallback used"
-                  : `Analysis complete — ${event.requirementCount ?? 0} requirements extracted`
-              );
-              setAnalyzeProgress(100);
-              if (event.fallback) {
-                streamedFallback = true;
-                setAnalyzeResult({
-                  ai: false,
-                  fallback: true,
-                  jobId: event.jobId ?? null,
-                  chunks: null,
-                  code: event.code ?? null,
-                  nextAction: event.nextAction ?? null,
-                  extractionWarnings: null,
-                  providerDiagnostics: event.providerDiagnostics ?? null,
-                  providerRetryAfterMs: typeof event.providerRetryAfterMs === "number" ? event.providerRetryAfterMs : null,
-                  resumableJobId: event.resumableJobId ?? null,
-                });
-                if (typeof event.providerRetryAfterMs === "number" && event.providerRetryAfterMs !== null) {
-                  scheduleAutoRetry(Math.max(event.providerRetryAfterMs, 5_000), event.resumableJobId ?? null);
-                }
-              }
-              if (event.status !== "AI_ANALYSIS_PARTIAL") {
-                setContinueJobId(null);
-              } else if (event.jobId) {
-                setContinueJobId(event.jobId);
-              }
-              done = true;
-            } else if (event.phase === "error") {
-              setError(event.message ?? "Analysis failed");
-              done = true;
-            }
-          } catch { /* ignore */ }
-        }
+      // 2. Trigger the worker with the authenticated session
+      const workerRes = await fetch(`/api/ai-jobs/run-next?jobType=AI_ANALYZE`, { method: "POST" });
+
+      if (workerRes.status === 401 || workerRes.status === 403) {
+        cancelPolling();
+        setError("Worker could not be started: your session has expired. Your analysis is queued and will be picked up automatically, but please sign in again to track progress.");
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+        return;
+      }
+      if (workerRes.status === 429) {
+        cancelPolling();
+        setError("Worker start rate-limited (HTTP 429). Your analysis is queued and will be picked up automatically.");
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+        return;
+      }
+      if (workerRes.status >= 500) {
+        const data = await workerRes.json().catch(() => ({}));
+        cancelPolling();
+        setError(`Worker start failed (HTTP ${workerRes.status}). ${data.error ?? "The analysis is queued and will be picked up automatically, but the immediate start did not succeed."}`);
+        setAnalyzing(false);
+        setAnalyzeProgress(0);
+        return;
       }
 
-      if (done && !streamedFallback) {
-        startTransition(() => {
-          router.refresh();
-        });
-      } else {
-        startTransition(() => {
-          router.refresh();
-        });
-      }
+      // 3. Poll /api/ai-jobs/[jobId] until terminal
+      pollJobStatus(jobId);
     } catch (err) {
-      setError("Analysis failed due to a network error.");
-    } finally {
+      cancelPolling();
+      setError("Analysis failed due to a network error. If a job was queued it will be retried automatically.");
       setAnalyzing(false);
-      setAnalyzePhase("");
       setAnalyzeProgress(0);
     }
   }
 
-  const showAutoRetryBanner = autoRetrySecondsLeft !== null && autoRetrySecondsLeft > 0;
+  // ── Job-status polling ────────────────────────────────────────────────
+  function pollJobStatus(jobId: string) {
+    let pollCount = 0;
+    const maxPolls = 240; // ~8 minutes at 2s
+    const intervalMs = 2000;
+
+    void checkOnce();
+    pollIntervalRef.current = setInterval(() => { void checkOnce(); }, intervalMs);
+
+    async function checkOnce() {
+      pollCount += 1;
+      try {
+        const res = await fetch(`/api/ai-jobs/${jobId}`);
+        if (res.status === 401 || res.status === 403) {
+          cancelPolling();
+          setError("Session expired while polling analysis status. Please sign in again. The job continues running in the background.");
+          setAnalyzing(false);
+          setAnalyzeProgress(0);
+          return;
+        }
+        if (!res.ok) {
+          if (pollCount >= maxPolls) {
+            cancelPolling();
+            setError("Could not reach the status endpoint after repeated attempts. The job may still be running — refresh the page in a moment.");
+            setAnalyzing(false);
+            setAnalyzeProgress(0);
+          }
+          return;
+        }
+        const data = await res.json();
+        const job = data?.job;
+        if (!job) return;
+
+        const steps: Array<{ message?: string | null }> = job.steps ?? [];
+        const latestStep = steps[steps.length - 1];
+        if (latestStep?.message) {
+          setAnalyzePhase(String(latestStep.message).slice(0, 70));
+        }
+
+        const status: string = job.status;
+        const output: Record<string, unknown> = job.output ?? {};
+
+        if (status === "QUEUED" || status === "RUNNING") {
+          const completed = typeof output.completedChunks === "number" ? output.completedChunks : 0;
+          const total = typeof output.totalChunks === "number" ? output.totalChunks : 0;
+          if (total > 0 && completed > 0) {
+            const pct = Math.round(10 + (completed / total) * 80);
+            setAnalyzeProgress(Math.min(pct, 90));
+          } else {
+            setAnalyzeProgress(Math.min(10 + pollCount * 2, 85));
+          }
+          if (pollCount >= maxPolls) {
+            cancelPolling();
+            setError("Analysis is taking longer than expected. It may still be running in the background — refresh the page in a moment to check the status.");
+            setAnalyzing(false);
+            setAnalyzeProgress(0);
+          }
+          return;
+        }
+
+        // ── Terminal ────────────────────────────────────────────────────
+        cancelPolling();
+
+        if (status === "SUCCEEDED") {
+          const requirementCount = typeof output.requirementCount === "number" ? output.requirementCount : 0;
+          setAnalyzePhase(`Analysis complete — ${requirementCount} requirements extracted`);
+          setAnalyzeProgress(100);
+          setAnalyzeResult({
+            ai: true, fallback: false, jobId, chunks: null, code: null,
+            nextAction: null, providerDiagnostics: null,
+            providerRetryAfterMs: null, resumableJobId: null,
+          });
+          setContinueJobId(null);
+          setAnalyzing(false);
+          startTransition(() => router.refresh());
+          return;
+        }
+
+        if (status === "PARTIAL_SUCCESS") {
+          const total = typeof output.totalChunks === "number" ? output.totalChunks : 0;
+          const completed = typeof output.completedChunks === "number" ? output.completedChunks : 0;
+          const failed = typeof output.failedChunks === "number" ? output.failedChunks : 0;
+          setAnalyzePhase("Analysis partial — some chunks failed");
+          setAnalyzeProgress(100);
+          setAnalyzeResult({
+            ai: false, fallback: false, jobId,
+            chunks: { total, completed, failed, skipped: 0, isPartial: true },
+            code: "PARTIAL_SUCCESS", nextAction: "RETRY",
+            providerDiagnostics: output, providerRetryAfterMs: null,
+            resumableJobId: jobId,
+          });
+          setAnalyzing(false);
+          startTransition(() => router.refresh());
+          return;
+        }
+
+        // FAILED
+        const errMsg: string =
+          (typeof job.errorMessage === "string" && job.errorMessage) ||
+          (typeof output.errorMessage === "string" && output.errorMessage) ||
+          "Analysis failed. Canonical data was not promoted; generation remains blocked.";
+        const code: string | null = typeof output.code === "string" ? output.code : null;
+        setError(errMsg);
+        setAnalyzeProgress(0);
+        setAnalyzeResult({
+          ai: false, fallback: false, jobId, chunks: null, code,
+          nextAction: "RETRY", providerDiagnostics: output,
+          providerRetryAfterMs: null, resumableJobId: jobId,
+        });
+        setAnalyzing(false);
+        startTransition(() => router.refresh());
+      } catch {
+        if (pollCount >= maxPolls) {
+          cancelPolling();
+          setError("Analysis status polling failed after repeated network errors. The job may still be running — refresh the page in a moment.");
+          setAnalyzing(false);
+          setAnalyzeProgress(0);
+        }
+      }
+    }
+  }
+
+  // ── Retry button state ────────────────────────────────────────────────
+  // The retry button is enabled automatically when at least one provider
+  // is currently eligible (server-side check). It is NOT based on
+  // NEXT_PUBLIC_AI_ENABLED alone.
+  const canRetry = !analyzing && Boolean(providerAvail?.anyAvailable);
+  const showRetryButton = Boolean(error || (analyzeResult && !analyzeResult.ai));
+  const cooldownSeconds = providerAvail?.minCooldownMs
+    ? Math.ceil(providerAvail.minCooldownMs / 1000)
+    : null;
+
+  function getRetryLabel(): string {
+    if (analyzing) return "AI Analyze is already running";
+    if (!providerAvail) return "Checking provider availability…";
+    if (providerAvail.configuredCount === 0) return "No AI providers configured";
+    if (!providerAvail.anyAvailable) {
+      return cooldownSeconds
+        ? `Providers unavailable — retry after ${cooldownSeconds}s`
+        : "Providers unavailable — retry later";
+    }
+    return "Provider available — Retry AI Analyze";
+  }
 
   return (
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
@@ -211,13 +380,13 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
             {analyzing ? "AI Analysis in progress" : continueJobId ? "Resume AI Analysis" : "Run AI Analysis"}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Extract requirements, client details, and evaluation criteria. Analysis is chunked and resumable.
+            Extract requirements, client details, and evaluation criteria. Analysis runs as a durable background job and is resumable.
           </p>
         </div>
         <div className="flex items-center gap-3">
           {aiEnabled ? (
             <button
-              onClick={handleAnalyzeStreaming}
+              onClick={handleAnalyzeBackground}
               disabled={analyzing}
               className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
             >
@@ -237,41 +406,37 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
             <span>{analyzeProgress}%</span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-purple-100">
-            <div
-              className="h-full bg-purple-600 transition-all duration-500"
-              style={{ width: `${analyzeProgress}%` }}
-            />
+            <div className="h-full bg-purple-600 transition-all duration-500" style={{ width: `${analyzeProgress}%` }} />
           </div>
         </div>
       )}
 
-      {showAutoRetryBanner && (
-        <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 shadow-sm animate-pulse">
+      {/* ── Auto-enabling Retry button ───────────────────────────────── */}
+      {showRetryButton && !analyzing && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1">
-              <ClockIcon className="text-2xl animate-spin text-amber-700" />
-              <div className="flex-1">
-                <p className="inline-flex items-center gap-1.5 text-sm font-bold text-amber-900"><BoltIcon /> Auto-Retry Active</p>
-                <p className="text-xs text-amber-800">
-                  AI providers are cooling down. Automatically {analyzeResult?.resumableJobId ? "resuming " : "retrying "}analysis in <strong className="text-amber-900">{autoRetrySecondsLeft}s</strong>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-amber-900">{getRetryLabel()}</p>
+              {providerAvail && providerAvail.configuredCount > 0 && !providerAvail.anyAvailable && cooldownSeconds && (
+                <p className="text-xs text-amber-800 mt-1">
+                  {providerAvail.availableCount}/{providerAvail.configuredCount} providers cooling down. Auto-retry enabled in {cooldownSeconds}s.
                 </p>
-              </div>
+              )}
+              {providerAvail && providerAvail.anyAvailable && (
+                <p className="text-xs text-green-800 mt-1">
+                  {providerAvail.availableCount}/{providerAvail.configuredCount} providers ready.
+                </p>
+              )}
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleAnalyzeStreaming}
-                disabled={analyzing}
-                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
-              >
-                Retry Now
-              </button>
-              <button
-                onClick={cancelAutoRetry}
-                className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-              >
-                Cancel
-              </button>
-            </div>
+            <button
+              onClick={handleAnalyzeBackground}
+              disabled={!canRetry}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={canRetry ? "Retry AI Analyze with the durable background path" : getRetryLabel()}
+            >
+              <RefreshIcon />
+              Retry AI Analyze
+            </button>
           </div>
         </div>
       )}
@@ -290,44 +455,38 @@ export function AIAnalyzePanel({ tenderId, initialContinueJobId, aiEnabled }: Pr
               </pre>
             </details>
           )}
-          {!showAutoRetryBanner && (
-            <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() => { setError(""); handleAnalyzeBackground(); }}
+              disabled={!canRetry}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              <RefreshIcon /> Retry AI Analyze
+            </button>
+            {continueJobId && (
               <button
-                onClick={() => { setError(""); handleAnalyzeStreaming(); }}
+                onClick={() => { setError(""); setContinueJobId(null); handleAnalyzeBackground(); }}
                 disabled={analyzing}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
-                <RefreshIcon /> Retry AI Analyze
+                <SparklesIcon /> Start Fresh
               </button>
-              {continueJobId && (
-                <button
-                  onClick={() => { setError(""); setContinueJobId(null); handleAnalyzeStreaming(); }}
-                  disabled={analyzing}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
-                >
-                  <SparklesIcon /> Start Fresh
-                </button>
-              )}
-              <button
-                onClick={() => setError("")}
-                className="text-xs font-medium underline hover:text-red-900"
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
+            )}
+            <button onClick={() => setError("")} className="text-xs font-medium underline hover:text-red-900">
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
       {!analyzing && !error && analyzeResult?.chunks && (
-        <div className="mt-4">
-          <AiAnalyzeStatusBanner
-            chunks={analyzeResult.chunks}
-            jobId={analyzeResult.jobId}
-            isAnalyzing={false}
-            onContinue={handleAnalyzeStreaming}
-            onRetry={() => { setContinueJobId(null); handleAnalyzeStreaming(); }}
-          />
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm font-semibold text-amber-900">
+            Analysis partial — {analyzeResult.chunks.completed}/{analyzeResult.chunks.total} chunks completed, {analyzeResult.chunks.failed} failed.
+          </p>
+          <p className="text-xs text-amber-800 mt-1">
+            Canonical data was not promoted. Generation, export, and Final ZIP remain blocked.
+          </p>
         </div>
       )}
 
