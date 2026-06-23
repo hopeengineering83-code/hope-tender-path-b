@@ -12,6 +12,7 @@ import {
   ANALYSIS_CHUNK_OVERLAP
 } from "../ai";
 import { upsertRequirements } from "../engine/stable-requirements";
+import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
@@ -377,9 +378,29 @@ export async function finalizeJob(jobId: string, userId: string) {
         const drafts = merged.requirements.map(mapToDraft);
         await upsertRequirements(tx, job.tenderId!, drafts);
 
+        // Persist the FULL canonical metadata set via the shared builder so the
+        // durable worker writes identical client/procuring-entity details,
+        // submission fields, source-traceability columns, and the
+        // metadataContaminated flag as the streaming/non-streaming routes.
+        // Previously this path persisted NO client metadata and skipped
+        // contamination detection — a tender analyzed via the async worker lost
+        // every client detail (CLAUDE.md #3) and bypassed contamination
+        // blocking (CLAUDE.md #6).
+        const existingTender = await tx.tender.findUnique({
+            where: { id: job.tenderId! },
+            select: { clientName: true, submissionMethod: true, submissionEmails: true, notes: true },
+        });
+        const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
+            clientName: existingTender?.clientName,
+            submissionMethod: existingTender?.submissionMethod,
+            submissionEmails: existingTender?.submissionEmails,
+            notes: existingTender?.notes,
+        });
+
         await tx.tender.update({
             where: { id: job.tenderId! },
             data: {
+                ...canonicalData,
                 analysisSource: "AI",
                 // Use the canonical ExtractionStatus vocabulary the downstream
                 // gates understand (export-readiness, final-submission-readiness,
@@ -389,8 +410,8 @@ export async function finalizeJob(jobId: string, userId: string) {
                 // worker escaped the partial-extraction cap/export-block and was
                 // treated as a fully trusted analysis.
                 analysisExtractionStatus: failed.length > 0 ? "PARTIAL_EXTRACTION_AI_ANALYZED" : "FULL_EXTRACTION_AI_ANALYZED",
-                title: merged.tenderTitle || undefined,
-                category: merged.tenderCategory || undefined,
+                // Classification fields are not part of the shared client-metadata
+                // builder; set them here from the merged analysis result.
                 envelopeMode: merged.envelopeMode || undefined,
                 clientType: merged.clientType || undefined,
                 submissionFormat: merged.submissionFormat || undefined,

@@ -16,115 +16,69 @@ const aiAnalyzeSource = readFileSync(
   "utf-8",
 );
 
+// The ~30-field client-metadata mapping + its placeholder/validator guards now
+// live in ONE shared builder used by every analysis path. The route applies
+// them by calling buildCanonicalAnalysisTenderUpdate in both promotion paths.
+const builderSource = readFileSync(
+  path.join(process.cwd(), "lib/engine/canonical-analysis-update.ts"),
+  "utf-8",
+);
+
 const aiLibSource = readFileSync(
   path.join(process.cwd(), "lib/ai.ts"),
   "utf-8",
 );
 
-// ── Import guards ─────────────────────────────────────────────────────────────
+// ── Import guards (shared builder) ───────────────────────────────────────────
 
-describe("ai-analyze/route — validator imports", () => {
+describe("canonical-analysis-update — validator imports", () => {
   it("imports isValidCountry from metadata-validators", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("isValidCountry"),
-      "ai-analyze route must import isValidCountry",
-    );
+    assert.ok(builderSource.includes("isValidCountry"), "shared builder must import isValidCountry");
   });
 
   it("imports isValidReferenceNumber from metadata-validators", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("isValidReferenceNumber"),
-      "ai-analyze route must import isValidReferenceNumber",
-    );
+    assert.ok(builderSource.includes("isValidReferenceNumber"), "shared builder must import isValidReferenceNumber");
   });
 
   it("imports containsMetadataPlaceholder from metadata-validators", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("containsMetadataPlaceholder"),
-      "ai-analyze route must import containsMetadataPlaceholder",
-    );
+    assert.ok(builderSource.includes("containsMetadataPlaceholder"), "shared builder must import containsMetadataPlaceholder");
   });
 });
 
-// ── Field guards (streaming path) ────────────────────────────────────────────
+// ── Field guards (shared builder) ────────────────────────────────────────────
 
-describe("ai-analyze/route — streaming path field guards", () => {
+describe("canonical-analysis-update — field guards", () => {
   it("guards country write with isValidCountry", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("isValidCountry(aiResult.country)"),
-      "streaming path must guard country write with isValidCountry()",
-    );
+    assert.ok(builderSource.includes("isValidCountry(aiResult.country)"));
   });
-
   it("guards clientAddress write with containsMetadataPlaceholder", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("containsMetadataPlaceholder(aiResult.clientAddress)"),
-      "streaming path must guard clientAddress write with containsMetadataPlaceholder()",
-    );
+    assert.ok(builderSource.includes("containsMetadataPlaceholder(aiResult.clientAddress)"));
   });
-
   it("guards clientContactEmail write with containsMetadataPlaceholder", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("containsMetadataPlaceholder(aiResult.clientContactEmail)"),
-      "streaming path must guard clientContactEmail write with containsMetadataPlaceholder()",
-    );
+    assert.ok(builderSource.includes("containsMetadataPlaceholder(aiResult.clientContactEmail)"));
   });
-
   it("guards clientContactPhone write with containsMetadataPlaceholder", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("containsMetadataPlaceholder(aiResult.clientContactPhone)"),
-      "streaming path must guard clientContactPhone write with containsMetadataPlaceholder()",
-    );
+    assert.ok(builderSource.includes("containsMetadataPlaceholder(aiResult.clientContactPhone)"));
   });
-
   it("guards clientRepresentative write with containsMetadataPlaceholder", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("containsMetadataPlaceholder(aiResult.clientRepresentative)"),
-      "streaming path must guard clientRepresentative write with containsMetadataPlaceholder()",
-    );
+    assert.ok(builderSource.includes("containsMetadataPlaceholder(aiResult.clientRepresentative)"));
   });
-
   it("guards procurementReferenceNumber write with isValidReferenceNumber", () => {
-    assert.ok(
-      aiAnalyzeSource.includes("isValidReferenceNumber(aiResult.procurementReferenceNumber)"),
-      "streaming path must guard procurementReferenceNumber write with isValidReferenceNumber()",
-    );
+    assert.ok(builderSource.includes("isValidReferenceNumber(aiResult.procurementReferenceNumber)"));
+  });
+  it("guards clientContactName with isValidClientContact", () => {
+    assert.ok(builderSource.includes("isValidClientContact(aiResult.clientContactName)"));
   });
 });
 
-// ── Field guards (non-streaming path) ────────────────────────────────────────
+// ── Both route paths apply the guards via the shared builder ─────────────────
 
-describe("ai-analyze/route — non-streaming path field guards", () => {
-  it("non-streaming path also guards clientContactName with isValidClientContact", () => {
-    // Count occurrences — must appear in BOTH paths
-    const occurrences = (aiAnalyzeSource.match(/isValidClientContact\(aiResult\.clientContactName\)/g) ?? []).length;
+describe("ai-analyze/route — both paths promote via the shared builder", () => {
+  it("calls buildCanonicalAnalysisTenderUpdate in both the streaming and non-streaming paths", () => {
+    const occurrences = (aiAnalyzeSource.match(/buildCanonicalAnalysisTenderUpdate\(/g) ?? []).length;
     assert.ok(
       occurrences >= 2,
-      `isValidClientContact guard must appear in both streaming and non-streaming paths (found ${occurrences} occurrence(s))`,
-    );
-  });
-
-  it("non-streaming path guards country with isValidCountry", () => {
-    const occurrences = (aiAnalyzeSource.match(/isValidCountry\(aiResult\.country\)/g) ?? []).length;
-    assert.ok(
-      occurrences >= 2,
-      `isValidCountry guard must appear in both streaming and non-streaming paths (found ${occurrences} occurrence(s))`,
-    );
-  });
-
-  it("non-streaming path guards clientAddress with containsMetadataPlaceholder", () => {
-    const occurrences = (aiAnalyzeSource.match(/containsMetadataPlaceholder\(aiResult\.clientAddress\)/g) ?? []).length;
-    assert.ok(
-      occurrences >= 2,
-      `containsMetadataPlaceholder(clientAddress) guard must appear in both paths (found ${occurrences} occurrence(s))`,
-    );
-  });
-
-  it("non-streaming path guards procurementReferenceNumber with isValidReferenceNumber", () => {
-    const occurrences = (aiAnalyzeSource.match(/isValidReferenceNumber\(aiResult\.procurementReferenceNumber\)/g) ?? []).length;
-    assert.ok(
-      occurrences >= 2,
-      `isValidReferenceNumber guard must appear in both streaming and non-streaming paths (found ${occurrences} occurrence(s))`,
+      `both AI Analyze paths must promote via the shared guard-applying builder (found ${occurrences} call(s))`,
     );
   });
 });

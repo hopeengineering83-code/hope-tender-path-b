@@ -54,22 +54,28 @@ describe("AI Analyze source traceability — merge logic (lib/ai.ts)", () => {
 
 describe("AI Analyze source traceability — persistence route", () => {
   const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+  const builderSource = readFileSync("lib/engine/canonical-analysis-update.ts", "utf8");
 
-  it("persists verbatim tenderTitle to the tender (placeholder-guarded)", () => {
-    assert.match(routeSource, /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)\s*\?\s*\{\s*title:\s*aiResult\.tenderTitle\s*\}/);
+  it("persists verbatim tenderTitle to the tender (placeholder-guarded, in the shared builder)", () => {
+    // The tenderTitle persistence now lives in the shared canonical builder used
+    // by all analysis paths, not inline per-route.
+    assert.match(builderSource, /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)\s*\?\s*\{\s*title:\s*aiResult\.tenderTitle\s*\}/);
   });
 
-  it("persists tenderTitle in BOTH the streaming and non-streaming paths (parity)", () => {
+  it("persists tenderTitle in BOTH the streaming and non-streaming paths (parity via shared builder)", () => {
     // Regression: the non-streaming AI Analyze path used to silently drop
-    // aiResult.tenderTitle, so a tender analyzed without streaming never had
-    // its title corrected from the document. Both persistence blocks must
-    // write the title, so the count of title-writes is at least 2.
-    const titleWrites = routeSource.match(
+    // aiResult.tenderTitle. Both promotion paths now route through the single
+    // shared builder (which always writes the title), so the invariant holds
+    // as long as both paths call buildCanonicalAnalysisTenderUpdate. The builder
+    // writes the title exactly once; both route paths must invoke it.
+    const builderTitleWrites = builderSource.match(
       /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)\s*\?\s*\{\s*title:\s*aiResult\.tenderTitle\s*\}/g,
     );
+    assert.ok(builderTitleWrites && builderTitleWrites.length >= 1, "shared builder must persist tenderTitle");
+    const builderCalls = routeSource.match(/buildCanonicalAnalysisTenderUpdate\(/g) ?? [];
     assert.ok(
-      titleWrites && titleWrites.length >= 2,
-      `expected tenderTitle to be persisted in both AI Analyze paths, found ${titleWrites?.length ?? 0}`,
+      builderCalls.length >= 2,
+      `both AI Analyze paths must promote via the shared builder (which persists tenderTitle), found ${builderCalls.length} call(s)`,
     );
   });
 

@@ -30,8 +30,10 @@ describe("REGRESSION: analysis source marker format is stable", () => {
     assert.match(src, /analysis\s+source:\s*regex\s+fallback/i);
   });
 
-  it("the route writes the exact string 'Analysis source: AI (re-run via AI Analyze button).'", () => {
-    const src = read("app/api/tenders/[id]/ai-analyze/route.ts");
+  it("the shared canonical builder writes the exact string 'Analysis source: AI (re-run via AI Analyze button).'", () => {
+    // The analysis-notes marker now lives in the shared canonical builder used
+    // by every analysis path (was previously inline in the route).
+    const src = read("lib/engine/canonical-analysis-update.ts");
     assert.match(src, /Analysis source: AI \(re-run via AI Analyze button\)\./);
   });
 
@@ -227,14 +229,16 @@ describe("REGRESSION: fallback diagnostics redacts secrets", () => {
 
 // ─── AI Analyze route strips old markers before writing new ones ─────────────
 
-describe("REGRESSION: AI Analyze route strips old markers before writing new ones", () => {
-  it("the route filters out old 'Analysis source:' lines", () => {
-    const src = read("app/api/tenders/[id]/ai-analyze/route.ts");
+describe("REGRESSION: AI Analyze strips old markers before writing new ones", () => {
+  // The notes-stripping logic now lives in buildAnalysisNotes() inside the
+  // shared canonical builder, used by every analysis path.
+  it("the shared builder filters out old 'Analysis source:' lines", () => {
+    const src = read("lib/engine/canonical-analysis-update.ts");
     assert.match(src, /\/\^Analysis source:\//i);
   });
 
-  it("the route filters out old 'Analysis fallback diagnostics:' lines", () => {
-    const src = read("app/api/tenders/[id]/ai-analyze/route.ts");
+  it("the shared builder filters out old 'Analysis fallback diagnostics:' lines", () => {
+    const src = read("lib/engine/canonical-analysis-update.ts");
     assert.match(src, /\/\^Analysis fallback diagnostics:\//i);
   });
 });

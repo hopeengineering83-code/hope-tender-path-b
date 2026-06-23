@@ -12,8 +12,7 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
-import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
-import { isValidClientContact, containsMetadataPlaceholder, isValidCountry, isValidReferenceNumber } from "../../../../../lib/engine/metadata-validators";
+import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -613,18 +612,16 @@ async function handleStreamingAnalyze(
                 });
               }
             } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
-              // Full success: promote atomically to canonical.
-              const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
-              const contamination = detectMetadataContamination(clientNameForContaminationCheck);
-              const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
-              const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
-              const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
-              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated || detectMetadataContamination(aiResult.clientAddress).contaminated || detectMetadataContamination(aiResult.submissionAddress).contaminated || detectMetadataContamination(aiResult.clientContactName).contaminated;
-
-              const existingNotes = (tenderRecord.notes ?? "").split("\n");
-              const updatedNotes = existingNotes
-                .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
-                .concat(["Analysis source: AI (re-run via AI Analyze button)."]).join("\n").trim() || null;
+              // Full success: promote atomically to canonical. The full
+              // client/submission/source-traceability mapping + contamination
+              // detection lives in the shared builder so all three analysis
+              // paths persist identical canonical metadata.
+              const { data: canonicalTenderData } = buildCanonicalAnalysisTenderUpdate(aiResult, {
+                clientName: tenderRecord.clientName,
+                submissionMethod: tenderRecord.submissionMethod,
+                submissionEmails: tenderRecord.submissionEmails,
+                notes: tenderRecord.notes,
+              });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
               // AiJob was created between the outer canPromoteToCanonical check above
@@ -665,46 +662,7 @@ async function handleStreamingAnalyze(
                 }
                 await tx.tender.update({
                   where: { id },
-                  data: {
-                    analysisSummary: aiResult.summary,
-                    ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
-                    evaluationMethodology: aiResult.evaluationMethodology || null,
-                    exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-                    exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
-                    ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
-                    notes: updatedNotes, status: "AI_ANALYZED", stage: "ANALYSIS",
-                    ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? { procuringEntityName: aiResult.procuringEntityName, ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}) } : {}),
-                    ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
-                    ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
-                    ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
-                    ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
-                    ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
-                    ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
-                    ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
-                    ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
-                    ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
-                    ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
-                    ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
-                    ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
-                    ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
-                    ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
-                    ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
-                    ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
-                    ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
-                    ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
-                    ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
-                    ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
-                    ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
-                    ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
-                    ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
-                    ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
-                    ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
-                    ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
-                    ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
-                    ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
-                    ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-                    metadataContaminated: anyEntityContaminated,
-                  },
+                  data: canonicalTenderData,
                 });
               });
               if (!streamPromoSuperseded && analysisJob) {
@@ -1246,18 +1204,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             });
           }
         } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
-          // Full success: promote atomically to canonical.
-          const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
-          const contamination = detectMetadataContamination(clientNameForContaminationCheck);
-          const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
-          const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
-          const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
-          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated || detectMetadataContamination(aiResult.clientAddress).contaminated || detectMetadataContamination(aiResult.submissionAddress).contaminated || detectMetadataContamination(aiResult.clientContactName).contaminated;
-
-          const existingNotes = (tenderRecord.notes ?? "").split("\n");
-          const updatedNotes = existingNotes
-            .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
-            .concat(["Analysis source: AI (re-run via AI Analyze button)."]).join("\n").trim() || null;
+          // Full success: promote atomically to canonical via the shared builder
+          // (identical canonical metadata + contamination detection across all paths).
+          const { data: canonicalTenderDataNonStream } = buildCanonicalAnalysisTenderUpdate(aiResult, {
+            clientName: tenderRecord.clientName,
+            submissionMethod: tenderRecord.submissionMethod,
+            submissionEmails: tenderRecord.submissionEmails,
+            notes: tenderRecord.notes,
+          });
 
           // Atomic TOCTOU guard: same pattern as streaming path.
           let nsPromoSuperseded = false;
@@ -1299,51 +1253,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             }
             await tx.tender.update({
               where: { id },
-              data: {
-                analysisSummary: aiResult.summary,
-                ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
-                evaluationMethodology: aiResult.evaluationMethodology || null,
-                exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-                exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
-                ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
-                notes: updatedNotes,
-                status: "AI_ANALYZED",
-                stage: "ANALYSIS",
-                ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? {
-                  procuringEntityName: aiResult.procuringEntityName,
-                  ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
-                } : {}),
-                ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
-                ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
-                ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
-                ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
-                ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
-                ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
-                ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
-                ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
-                ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
-                ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
-                ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
-                ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
-                ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
-                ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
-                ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
-                ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
-                ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
-                ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
-                ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
-                ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
-                ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
-                ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
-                ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
-                ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
-                ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
-                ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
-                ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
-                ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
-                ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-                metadataContaminated: anyEntityContaminated,
-              },
+              data: canonicalTenderDataNonStream,
             });
           });
           if (!nsPromoSuperseded && analysisJob) {

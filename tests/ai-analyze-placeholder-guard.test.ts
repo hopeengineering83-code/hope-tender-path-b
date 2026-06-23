@@ -19,70 +19,49 @@ const routeSrc = readFileSync(
   path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
   "utf-8",
 );
+const builderSrc = readFileSync(
+  path.join(process.cwd(), "lib/engine/canonical-analysis-update.ts"),
+  "utf-8",
+);
 
-// ─── Source-level gate coverage ──────────────────────────────────────────────
+// ─── Gate coverage (post-centralisation) ─────────────────────────────────────
+// The ~30-field client-metadata mapping (and its placeholder/validator guards)
+// now lives in ONE shared builder (lib/engine/canonical-analysis-update.ts) that
+// all three analysis paths use. These tests assert (a) the shared builder still
+// applies each guard, and (b) BOTH route promotion paths route through the
+// shared builder — so a guard can never be dropped from one path again (the
+// original parity-bug class).
 
-describe("ai-analyze route — placeholder guard source coverage", () => {
-  it("imports isValidCountry and isValidReferenceNumber", () => {
-    assert.ok(
-      routeSrc.includes("isValidCountry") && routeSrc.includes("isValidReferenceNumber"),
-      "ai-analyze must import isValidCountry and isValidReferenceNumber from metadata-validators",
-    );
+describe("ai-analyze — canonical metadata builder applies every placeholder guard", () => {
+  it("country uses isValidCountry", () => {
+    assert.ok(/isValidCountry\(aiResult\.country\)/.test(builderSrc), "country must be guarded by isValidCountry in the shared builder");
   });
+  it("clientAddress uses containsMetadataPlaceholder", () => {
+    assert.ok(/containsMetadataPlaceholder\(aiResult\.clientAddress\)/.test(builderSrc));
+  });
+  it("clientContactName uses isValidClientContact", () => {
+    assert.ok(/isValidClientContact\(aiResult\.clientContactName\)/.test(builderSrc));
+  });
+  it("clientContactEmail uses containsMetadataPlaceholder", () => {
+    assert.ok(/containsMetadataPlaceholder\(aiResult\.clientContactEmail\)/.test(builderSrc));
+  });
+  it("clientContactPhone uses containsMetadataPlaceholder", () => {
+    assert.ok(/containsMetadataPlaceholder\(aiResult\.clientContactPhone\)/.test(builderSrc));
+  });
+  it("procurementReferenceNumber uses isValidReferenceNumber", () => {
+    assert.ok(/isValidReferenceNumber\(aiResult\.procurementReferenceNumber\)/.test(builderSrc));
+  });
+  it("clientRepresentative uses containsMetadataPlaceholder", () => {
+    assert.ok(/containsMetadataPlaceholder\(aiResult\.clientRepresentative\)/.test(builderSrc));
+  });
+});
 
-  it("country field uses isValidCountry guard in both paths", () => {
-    const occurrences = routeSrc.match(/isValidCountry\(aiResult\.country\)/g) ?? [];
+describe("ai-analyze — both route promotion paths use the shared canonical builder", () => {
+  it("buildCanonicalAnalysisTenderUpdate is called in both the streaming and non-streaming paths", () => {
+    const occurrences = routeSrc.match(/buildCanonicalAnalysisTenderUpdate\(/g) ?? [];
     assert.ok(
       occurrences.length >= 2,
-      `country must be guarded by isValidCountry in both streaming and non-streaming paths, found ${occurrences.length} occurrence(s)`,
-    );
-  });
-
-  it("clientAddress field uses containsMetadataPlaceholder guard in both paths", () => {
-    const occurrences = routeSrc.match(/containsMetadataPlaceholder\(aiResult\.clientAddress\)/g) ?? [];
-    assert.ok(
-      occurrences.length >= 2,
-      `clientAddress must be guarded in both paths, found ${occurrences.length}`,
-    );
-  });
-
-  it("clientContactName uses isValidClientContact in both paths", () => {
-    const occurrences = routeSrc.match(/isValidClientContact\(aiResult\.clientContactName\)/g) ?? [];
-    assert.ok(
-      occurrences.length >= 2,
-      `clientContactName must be guarded by isValidClientContact in both paths, found ${occurrences.length}`,
-    );
-  });
-
-  it("clientContactEmail uses containsMetadataPlaceholder in both paths", () => {
-    const occurrences = routeSrc.match(/containsMetadataPlaceholder\(aiResult\.clientContactEmail\)/g) ?? [];
-    assert.ok(
-      occurrences.length >= 2,
-      `clientContactEmail must be guarded in both paths, found ${occurrences.length}`,
-    );
-  });
-
-  it("clientContactPhone uses containsMetadataPlaceholder in both paths", () => {
-    const occurrences = routeSrc.match(/containsMetadataPlaceholder\(aiResult\.clientContactPhone\)/g) ?? [];
-    assert.ok(
-      occurrences.length >= 2,
-      `clientContactPhone must be guarded in both paths, found ${occurrences.length}`,
-    );
-  });
-
-  it("procurementReferenceNumber uses isValidReferenceNumber in both paths", () => {
-    const occurrences = routeSrc.match(/isValidReferenceNumber\(aiResult\.procurementReferenceNumber\)/g) ?? [];
-    assert.ok(
-      occurrences.length >= 2,
-      `reference/procurementReferenceNumber must be guarded by isValidReferenceNumber in both paths, found ${occurrences.length}`,
-    );
-  });
-
-  it("clientRepresentative uses containsMetadataPlaceholder in both paths", () => {
-    const occurrences = routeSrc.match(/containsMetadataPlaceholder\(aiResult\.clientRepresentative\)/g) ?? [];
-    assert.ok(
-      occurrences.length >= 2,
-      `clientRepresentative must be guarded in both paths, found ${occurrences.length}`,
+      `both AI Analyze paths must promote via the shared builder, found ${occurrences.length} call(s)`,
     );
   });
 });
