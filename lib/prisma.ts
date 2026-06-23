@@ -786,14 +786,29 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "provider" TEXT,
     "resultJson" TEXT,
     "errorMessage" TEXT,
+    "failureCategory" TEXT,
+    "jobId" TEXT,
     "startedAt" TIMESTAMPTZ,
     "finishedAt" TIMESTAMPTZ,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  // Backfill columns onto pre-existing tables. The original migration
+  // (20260611000000) and the init migration created AiAnalyzeChunk WITHOUT
+  // "failureCategory" / "jobId", but schema.prisma later added both. Because no
+  // migration ever added them, EVERY database — runtime-bootstrapped AND
+  // `prisma migrate deploy` — was missing these columns. The generated Prisma
+  // client selects all model columns on findMany, so getAnalyzeCheckpoints threw
+  // P2022 (column does not exist), which surfaced as the Recovery Command Center
+  // "Checkpoint getAnalyzeCheckpoints failed: PrismaClientKnownRequestError" that
+  // hard-blocked AI Analyze. ensureColumn (ADD COLUMN IF NOT EXISTS) repairs them
+  // in place without dropping data.
+  await ensureColumn(client, "AiAnalyzeChunk", "failureCategory", "TEXT");
+  await ensureColumn(client, "AiAnalyzeChunk", "jobId", "TEXT");
   await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "AiAnalyzeChunk_tenderId_userId_contentHash_chunkIndex_key" ON "AiAnalyzeChunk"("tenderId", "userId", "contentHash", "chunkIndex")`);
   await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_tenderId_userId_contentHash_idx" ON "AiAnalyzeChunk"("tenderId", "userId", "contentHash")`);
   await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_status_idx" ON "AiAnalyzeChunk"("status")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_jobId_idx" ON "AiAnalyzeChunk"("jobId")`);
 
   // ─── Pricing engine (G8) ───────────────────────────────────────────────
   // PricingWorkbook (one per tender) + CostLine rows. Replaces ad-hoc
