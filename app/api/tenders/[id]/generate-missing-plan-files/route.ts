@@ -8,6 +8,7 @@ import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -260,6 +261,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       error: "Document generation requires extracted requirements or explicit submission file instructions. Run AI Analyze before generating documents.",
       nextAction: "RERUN_AI_ANALYZE",
     }, { status: 422 });
+  }
+
+  // ── Central generation readiness gate ──────────────────────────────────
+  // Exempts SUBMISSION_PLAN_MISSING (chicken-and-egg — this route builds
+  // the plan). All other analysis-side blockers fail closed.
+  const centralGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: id, userId: actor.id, purpose: "generate-missing-plan-files" });
+  if (!centralGate.ok && centralGate.blockerCode !== "SUBMISSION_PLAN_MISSING") {
+    return NextResponse.json({ success: false, ok: false, code: centralGate.blockerCode, error: centralGate.blockerDetail, nextAction: "Resolve the analysis readiness blocker before generating missing plan files." }, { status: 422 });
   }
 
   // Gates 4 & 5: Submission instructions and required documents pages.

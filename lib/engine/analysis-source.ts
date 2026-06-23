@@ -45,11 +45,11 @@ export type TenderAnalysisSourceLike = {
 };
 
 function notesIncludeRegexFallback(notes?: string | null): boolean {
-  return /analysis\s+source:\s*regex\s+fallback/i.test(notes ?? "");
+  return /^analysis\s+source:\s*regex\s+fallback\b/im.test(notes ?? "");
 }
 
 function notesIncludeAiAnalysis(notes?: string | null): boolean {
-  return /analysis\s+source:\s*ai/i.test(notes ?? "");
+  return /^analysis\s+source:\s*ai\b/im.test(notes ?? "");
 }
 
 /** Synchronous detection from the tender.notes line alone. Does NOT

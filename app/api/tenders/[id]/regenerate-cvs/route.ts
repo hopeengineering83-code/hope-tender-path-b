@@ -16,6 +16,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateExpertCvDocx, expertCvFileName } from "../../../../../lib/engine/expert-cv-docx";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -39,6 +40,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     select: { id: true, title: true },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // ── Central generation readiness gate ──────────────────────────────────
+  const centralGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId, userId: actor.id, purpose: "regenerate-cvs" });
+  if (!centralGate.ok) return NextResponse.json({ error: `CV regeneration blocked: ${centralGate.blockerDetail}`, code: centralGate.blockerCode }, { status: 409 });
 
   const matches = await prisma.tenderExpertMatch.findMany({
     where: { tenderId, isSelected: true },

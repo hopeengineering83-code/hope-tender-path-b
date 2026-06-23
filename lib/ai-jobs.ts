@@ -133,6 +133,21 @@ export async function completeJob(jobId: string, output?: Record<string, unknown
   });
 }
 
+/**
+ * Write a handler-declared terminal status WITHOUT forcing SUCCEEDED.
+ * Guarded on status='RUNNING' so a finalizer-promoted SUCCEEDED job
+ * cannot be downgraded by a stale worker retry.
+ */
+export async function completeJobWithStatus(jobId: string, status: JobStatus, output?: Record<string, unknown>): Promise<void> {
+  await prismaReady;
+  if (status === "SUCCEEDED") { await completeJob(jobId, output); return; }
+  if (status === "FAILED") return;
+  await prisma.aiJob.updateMany({
+    where: { id: jobId, status: "RUNNING" },
+    data: { status, output: output ? JSON.stringify(output) : null, finishedAt: new Date() },
+  });
+}
+
 export async function failJob(jobId: string, errorMessage: string): Promise<void> {
   await prismaReady;
   await prisma.aiJob.update({

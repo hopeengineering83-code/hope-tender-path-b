@@ -870,6 +870,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // ── Durable background path ──────────────────────────────────────────
+  const earlyUrl = new URL(req.url);
+  if (earlyUrl.searchParams.get("mode") === "background") {
+    const { enqueueBackgroundAnalysis } = await import("../../../../../lib/ai-analyze/background-enqueue");
+    const { id: tenderId } = await params;
+    return enqueueBackgroundAnalysis(tenderId, userId);
+  }
+
   const wantsStream = req.headers.get("accept") === "text/event-stream";
   if (wantsStream) {
     return handleStreamingAnalyze(req, userId, requestId, await params);

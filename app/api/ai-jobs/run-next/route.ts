@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
-import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { completeJob, completeJobWithStatus, failJob, type JobStatus } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
-import { prismaReady } from "../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../lib/prisma";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -70,12 +70,45 @@ export async function POST(req: Request) {
         tenderId: claimed.tenderId,
         input: claimed.input,
       });
-      await completeJob(claimed.id, output);
-      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+
+      // ── Respect the handler's declared terminal status ──────────────
+      const terminalStatus = (output?.terminalStatus as string | undefined) ?? "SUCCEEDED";
+      if (terminalStatus === "SUCCEEDED") {
+        await completeJob(claimed.id, output);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+      } else if (terminalStatus === "FAILED") {
+        const errMsg = (output?.errorMessage as string | undefined) ?? "Handler reported FAILED";
+        await failJob(claimed.id, errMsg);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: errMsg });
+      } else {
+        await completeJobWithStatus(claimed.id, terminalStatus as JobStatus, output);
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: terminalStatus });
+      }
+
+      // ── Record retry state for AI_ANALYZE PARTIAL_SUCCESS/FAILED ────
+      if (claimed.jobType === "AI_ANALYZE" && (terminalStatus === "PARTIAL_SUCCESS" || terminalStatus === "FAILED")) {
+        try {
+          const { recordRetryState } = await import("../../../../lib/ai-analyze/retry-service");
+          const job = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { tenderId: true, analysisInputHash: true } });
+          if (job?.tenderId && job?.analysisInputHash) {
+            await recordRetryState(claimed.id, job.tenderId, claimed.userId, job.analysisInputHash, output?.errorMessage as string | undefined, output?.finalizationCode as string | undefined, terminalStatus);
+          }
+        } catch { /* best-effort */ }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await failJob(claimed.id, message);
       processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "Job execution failed" });
+
+      if (claimed.jobType === "AI_ANALYZE") {
+        try {
+          const { recordRetryState } = await import("../../../../lib/ai-analyze/retry-service");
+          const job = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { tenderId: true, analysisInputHash: true } });
+          if (job?.tenderId && job?.analysisInputHash) {
+            await recordRetryState(claimed.id, job.tenderId, claimed.userId, job.analysisInputHash, message, undefined, "FAILED");
+          }
+        } catch { /* best-effort */ }
+      }
     }
 
     if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM"].includes(claimed.jobType)) break;
