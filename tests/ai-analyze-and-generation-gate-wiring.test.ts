@@ -65,20 +65,24 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
     assert.match(generateSource, /status:\s*422/);
   });
 
-  it("AI Analyze writes contamination flag when portal noise detected", () => {
+  it("AI Analyze writes contamination flag when portal noise detected (shared builder)", () => {
+    // Contamination detection + the metadataContaminated flag now live in the
+    // shared canonical builder used by every analysis path.
+    const builderSource = readFileSync("lib/engine/canonical-analysis-update.ts", "utf8");
+    assert.match(builderSource, /detectMetadataContamination/);
+    assert.match(builderSource, /metadataContaminated/);
+    // Both route promotion paths must apply it.
     const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-    assert.match(analyzeSource, /detectMetadataContamination/);
-    // Phase 21: contamination check covers all entity fields via anyEntityContaminated
-    assert.match(analyzeSource, /metadataContaminated.*anyEntityContaminated|anyEntityContaminated.*metadataContaminated/);
+    assert.ok((analyzeSource.match(/buildCanonicalAnalysisTenderUpdate\(/g) ?? []).length >= 2);
   });
 
-  it("AI Analyze extracts full contact fields (Phase 7) and writes them to DB", () => {
-    const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-    assert.match(analyzeSource, /clientContactName/);
-    assert.match(analyzeSource, /clientContactEmail/);
-    assert.match(analyzeSource, /clientContactPhone/);
-    assert.match(analyzeSource, /submissionAddress/);
-    assert.match(analyzeSource, /clientAddress/);
+  it("AI Analyze extracts full contact fields (Phase 7) and writes them to DB (shared builder)", () => {
+    const builderSource = readFileSync("lib/engine/canonical-analysis-update.ts", "utf8");
+    assert.match(builderSource, /clientContactName/);
+    assert.match(builderSource, /clientContactEmail/);
+    assert.match(builderSource, /clientContactPhone/);
+    assert.match(builderSource, /submissionAddress/);
+    assert.match(builderSource, /clientAddress/);
   });
 });
 
@@ -239,16 +243,20 @@ describe("SSE streaming wiring — AI Analyze endpoint and UI progress display",
 });
 
 describe("clientContactName validation in AI Analyze save path", () => {
+  // The clientContactName validation now lives in the shared canonical builder
+  // used by both AI Analyze promotion paths.
+  const builderSource = readFileSync("lib/engine/canonical-analysis-update.ts", "utf8");
   const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
 
-  it("imports isValidClientContact validator", () => {
-    assert.match(analyzeSource, /isValidClientContact/);
+  it("imports isValidClientContact validator (shared builder)", () => {
+    assert.match(builderSource, /isValidClientContact/);
   });
 
-  it("validates clientContactName before writing to DB (both streaming and non-streaming paths)", () => {
-    // The route must not write clientContactName unconditionally —
+  it("validates clientContactName before writing to DB (shared builder, applied by both paths)", () => {
+    // The builder must not write clientContactName unconditionally —
     // it must call isValidClientContact() to reject fragments like "s Contact Person".
-    assert.match(analyzeSource, /isValidClientContact\(aiResult\.clientContactName\)/);
+    assert.match(builderSource, /isValidClientContact\(aiResult\.clientContactName\)/);
+    assert.ok((analyzeSource.match(/buildCanonicalAnalysisTenderUpdate\(/g) ?? []).length >= 2);
   });
 });
 

@@ -60,27 +60,24 @@ describe("phase 21 — entity contamination detection extended to all entity fie
     assert.equal(detectMetadataContamination(undefined).contaminated, false);
   });
 
-  it("ai-analyze route checks legalClientName contamination (static audit)", () => {
-    const src = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+  it("the shared canonical builder checks contamination on all entity fields (static audit)", () => {
+    // Contamination detection across all entity fields now lives in the shared
+    // builder used by every analysis path (was previously duplicated inline per
+    // route promotion block).
+    const src = readFileSync("lib/engine/canonical-analysis-update.ts", "utf8");
+    assert.ok(src.includes("detectMetadataContamination(aiResult.legalClientName"), "builder must check legalClientName contamination");
+    assert.ok(src.includes("detectMetadataContamination(aiResult.donorAgency"), "builder must check donorAgency contamination");
+    assert.ok(src.includes("detectMetadataContamination(aiResult.implementingAgency"), "builder must check implementingAgency contamination");
+    assert.ok(src.includes("detectMetadataContamination(aiResult.clientAddress"), "builder must check clientAddress contamination");
+    assert.ok(src.includes("detectMetadataContamination(aiResult.submissionAddress"), "builder must check submissionAddress contamination");
+    assert.ok(src.includes("detectMetadataContamination(aiResult.clientContactName"), "builder must check clientContactName contamination");
+    assert.ok(src.includes("metadataContaminated"), "builder must compute and persist metadataContaminated");
+
+    // Both route promotion paths must apply the builder (so the flag is written on every path).
+    const routeSrc = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
     assert.ok(
-      src.includes("legalNameContamination") && src.includes("detectMetadataContamination(aiResult.legalClientName"),
-      "ai-analyze must call detectMetadataContamination on legalClientName",
-    );
-    assert.ok(
-      src.includes("donorAgencyContamination") && src.includes("detectMetadataContamination(aiResult.donorAgency"),
-      "ai-analyze must call detectMetadataContamination on donorAgency",
-    );
-    assert.ok(
-      src.includes("implementingAgencyContamination") && src.includes("detectMetadataContamination(aiResult.implementingAgency"),
-      "ai-analyze must call detectMetadataContamination on implementingAgency",
-    );
-    assert.ok(
-      src.includes("anyEntityContaminated"),
-      "ai-analyze must combine all entity contamination checks",
-    );
-    assert.ok(
-      (src.match(/metadataContaminated: anyEntityContaminated/g) ?? []).length >= 2,
-      "both ai-analyze transaction paths must use anyEntityContaminated",
+      (routeSrc.match(/buildCanonicalAnalysisTenderUpdate\(/g) ?? []).length >= 2,
+      "both ai-analyze transaction paths must promote via the shared builder",
     );
   });
 });
