@@ -109,8 +109,8 @@ describe("6. Z.ai general endpoint + configured model", () => {
   it("is NOT a Coding Plan endpoint", () => {
     assert.ok(!getProviderBaseUrl("zai")!.includes("coding"));
   });
-  it("uses conservative output caps (analysis 3000 / proposal 4000 / fast 1200)", () => {
-    assert.equal(getProviderOutputCap("zai", "extraction"), 3000);
+  it("uses conservative output caps (analysis 8000 / proposal 4000 / fast 1200)", () => {
+    assert.equal(getProviderOutputCap("zai", "extraction"), 8000);
     assert.equal(getProviderOutputCap("zai", "proposal"), 4000);
     assert.equal(getProviderOutputCap("zai", "fast"), 1200);
   });
@@ -126,7 +126,7 @@ describe("7. Cerebras endpoint + max_completion_tokens", () => {
   it("the adapter wires max_completion_tokens (never a generic 16K max_tokens)", () => {
     const src = readFileSync("lib/ai.ts", "utf8");
     assert.ok(src.includes('maxTokensParam: "max_completion_tokens"'), "Cerebras must send max_completion_tokens");
-    assert.equal(getProviderOutputCap("cerebras", "extraction"), 3000);
+    assert.equal(getProviderOutputCap("cerebras", "extraction"), 8000);
     assert.equal(getProviderOutputCap("cerebras", "proposal"), 4000);
     assert.equal(getProviderOutputCap("cerebras", "fast"), 1200);
   });
