@@ -133,6 +133,57 @@ export async function completeJob(jobId: string, output?: Record<string, unknown
   });
 }
 
+/**
+ * Write a handler-declared terminal status WITHOUT forcing SUCCEEDED.
+ *
+ * WHY THIS EXISTS
+ * ───────────────
+ * `completeJob()` always writes status="SUCCEEDED". That is correct for
+ * handlers that fully succeed, but the AI_ANALYZE handler can terminate
+ * with PARTIAL_SUCCESS (some chunks failed) or FAILED (all chunks failed
+ * / providers exhausted / weak source grounding). Calling `completeJob()`
+ * in those cases would overwrite the correct terminal status with
+ * SUCCEEDED — corrupting the state machine and unblocking generation /
+ * export / final ZIP on a tender that is NOT actually ready.
+ *
+ * This function writes the handler-declared terminal status and output
+ * atomically. It is the counterpart to `completeJob()` for non-success
+ * terminals. Callers (run-next) choose between:
+ *   - completeJob(id, output)               → SUCCEEDED
+ *   - completeJobWithStatus(id, status, output) → PARTIAL_SUCCESS / other
+ *   - failJob(id, errorMessage)             → FAILED
+ *
+ * The update is conditional on status="RUNNING" so that a job the
+ * finalizer already promoted to SUCCEEDED cannot be downgraded by a
+ * stale worker retry. If the row is no longer RUNNING the call is a
+ * no-op (the handler/finalizer already set the authoritative terminal).
+ */
+export async function completeJobWithStatus(
+  jobId: string,
+  status: JobStatus,
+  output?: Record<string, unknown>,
+): Promise<void> {
+  await prismaReady;
+  // Only non-success terminals should reach this function. SUCCEEDED is
+  // the responsibility of completeJob(); FAILED is the responsibility of
+  // failJob(). Guarding here makes misuse loud rather than silent.
+  if (status === "SUCCEEDED" || status === "FAILED") {
+    // Delegate to the canonical helpers to keep a single write path.
+    if (status === "SUCCEEDED") {
+      await completeJob(jobId, output);
+    }
+    return;
+  }
+  await prisma.aiJob.updateMany({
+    where: { id: jobId, status: "RUNNING" },
+    data: {
+      status,
+      output: output ? JSON.stringify(output) : null,
+      finishedAt: new Date(),
+    },
+  });
+}
+
 export async function failJob(jobId: string, errorMessage: string): Promise<void> {
   await prismaReady;
   await prisma.aiJob.update({

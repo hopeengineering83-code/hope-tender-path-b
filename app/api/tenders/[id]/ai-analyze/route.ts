@@ -912,6 +912,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // ── Durable background path ──────────────────────────────────────────
+  // ?mode=background is the unified durable workflow: it enqueues an
+  // AI_ANALYZE job and returns 202 immediately. The caller then triggers
+  // /api/ai-jobs/run-next?jobType=AI_ANALYZE to start the worker. This
+  // escapes the 60 s Vercel Hobby cap that bounds the SSE path below.
+  // The SSE path is retained only as a legacy/interactive fallback, not
+  // the normal production path for the user-facing button.
+  const earlyUrl = new URL(req.url);
+  if (earlyUrl.searchParams.get("mode") === "background") {
+    const { enqueueBackgroundAnalysis } = await import("../../../../../lib/ai-analyze/background-enqueue");
+    const { id: tenderId } = await params;
+    return enqueueBackgroundAnalysis(tenderId, userId);
+  }
+
   const wantsStream = req.headers.get("accept") === "text/event-stream";
   if (wantsStream) {
     return handleStreamingAnalyze(req, userId, requestId, await params);

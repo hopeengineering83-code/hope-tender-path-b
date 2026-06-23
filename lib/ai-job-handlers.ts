@@ -21,7 +21,7 @@
 import { recordStep, type JobType } from "./ai-jobs";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
-import { executeAnalysis } from "./engine/analysis-orchestrator";
+import { executeAnalysis, finalizeAnalysisJob } from "./engine/analysis-orchestrator";
 import { prisma } from "./prisma";
 import {
   aiRematchExperts,
@@ -52,6 +52,85 @@ function safeJsonArray(value: string | null | undefined): string[] {
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Sync AiAnalyzeChunk rows from the orchestrator's job output.
+ *
+ * WHY THIS EXISTS
+ * ───────────────
+ * createAnalysisJob() provisions AiAnalyzeChunk rows (one per chunk, all
+ * QUEUED). executeAnalysis() runs analyzeWithAI() which produces a merged
+ * result with per-chunk provenance and writes it to AiJob.output — but it
+ * does NOT update the AiAnalyzeChunk rows. finalizeJob() (called by
+ * finalizeAnalysisJob) reads those chunk rows to decide SUCCEEDED vs
+ * PARTIAL_SUCCESS and to re-merge requirements; if they are still QUEUED
+ * it refuses to finalize ("some chunks are still in progress").
+ *
+ * This helper reconciles the two: it reads the orchestrator's
+ * chunkResults from AiJob.output and marks each AiAnalyzeChunk row as
+ * SUCCEEDED (with resultJson + provider) or FAILED. After this sync,
+ * finalizeJob() sees a consistent state and can promote canonical data.
+ *
+ * Idempotent: safe to call multiple times. Chunks already SUCCEEDED are
+ * refreshed with the same result; chunks already FAILED are refreshed
+ * with the failure category.
+ */
+async function syncAnalysisChunksFromOrchestrator(jobId: string): Promise<void> {
+  const job = await prisma.aiJob.findUnique({
+    where: { id: jobId },
+    select: { output: true, analysisInputHash: true },
+  });
+  if (!job) return;
+
+  // Parse chunkResults from the orchestrator output.
+  let chunkResults: Array<{ index: number; result: unknown; provider?: string | null }> = [];
+  let errorMessage: string | undefined;
+  try {
+    if (job.output) {
+      const parsed = JSON.parse(job.output) as Record<string, unknown>;
+      if (Array.isArray(parsed.chunkResults)) {
+        chunkResults = parsed.chunkResults.filter(
+          (r): r is { index: number; result: unknown; provider?: string | null } =>
+            r !== null && typeof r === "object" && typeof (r as { index?: unknown }).index === "number",
+        );
+      }
+      if (typeof parsed.errorMessage === "string") errorMessage = parsed.errorMessage;
+    }
+  } catch {
+    // output not parseable — nothing to sync
+    return;
+  }
+
+  const chunks = await prisma.aiAnalyzeChunk.findMany({
+    where: { jobId },
+    select: { id: true, chunkIndex: true },
+  });
+
+  for (const chunk of chunks) {
+    const cr = chunkResults.find((r) => r.index === chunk.chunkIndex);
+    if (cr) {
+      await prisma.aiAnalyzeChunk.update({
+        where: { id: chunk.id },
+        data: {
+          status: "SUCCEEDED",
+          finishedAt: new Date(),
+          provider: typeof cr.provider === "string" ? cr.provider : null,
+          resultJson: JSON.stringify(cr.result),
+        },
+      });
+    } else {
+      await prisma.aiAnalyzeChunk.update({
+        where: { id: chunk.id },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          failureCategory: "PROVIDER_EXHAUSTED",
+          errorMessage: errorMessage ?? "Chunk not completed by orchestrator",
+        },
+      });
+    }
   }
 }
 
@@ -107,11 +186,28 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     }
   },
 
-  // ─── AI_ANALYZE — chunk-based tender analysis with provider fallback ──
-  // Async standalone version of /api/tenders/[id]/ai-analyze. Escapes the 60s
-  // cap for large tenders by running in the worker's budget. Uses the
-  // AnalysisOrchestrator for deterministic content hashing, checkpoint resume,
-  // and consistent analysisSource state machine (AI vs PARTIAL_AI).
+  // ─── AI_ANALYZE — unified durable tender analysis ─────────────────────
+  // This is the SINGLE production path for AI Analyze. The user-facing
+  // "Run AI Analyze" button enqueues an AI_ANALYZE job via
+  // POST /api/tenders/[id]/ai-analyze?mode=background (HTTP 202), then
+  // triggers /api/ai-jobs/run-next?jobType=AI_ANALYZE to start this
+  // handler. GitHub Actions / Vercel cron remain as recovery only.
+  //
+  // CONTRACT
+  //   • Calls executeAnalysis() for chunked AI analysis with provider
+  //     fallback (Anthropic always last).
+  //   • On FULL AI success (result.success && !result.isPartial &&
+  //     analysisSource === "AI"), calls finalizeAnalysisJob() to promote
+  //     canonical requirements + canonical tender metadata BEFORE
+  //     declaring success. Only then is the job SUCCEEDED.
+  //   • On partial / failed / regex-fallback / provider-exhausted /
+  //     weak-source-grounding outcomes: preserves PARTIAL_SUCCESS or
+  //     FAILED, does NOT call the finalizer, does NOT overwrite the
+  //     status with SUCCEEDED, and does NOT create or unlock any
+  //     GeneratedDocument rows. Generation / export / final ZIP remain
+  //     strictly blocked.
+  //   • Returns { terminalStatus, ... } so run-next can respect the
+  //     handler's terminal instead of blindly calling completeJob().
   AI_ANALYZE: async (ctx) => {
     if (!ctx.tenderId) throw new Error("AI_ANALYZE requires tenderId on the job");
     await recordStep(ctx.jobId, { stepName: "analyze.start", message: "Starting tender analysis", status: "RUNNING" });
@@ -131,14 +227,99 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       });
 
       clearInterval(heartbeat);
-      await recordStep(ctx.jobId, { stepName: "analyze.complete", message: `Analysis complete — ${result.requirementCount} requirements extracted`, status: "SUCCEEDED" });
+
+      // Sync the AiAnalyzeChunk rows so the finalizer sees a consistent
+      // state. executeAnalysis() runs analyzeWithAI() which produces a
+      // merged result + per-chunk provenance but does NOT update the
+      // AiAnalyzeChunk rows that createAnalysisJob() provisioned. Without
+      // this sync, finalizeJob() would see all chunks as QUEUED and
+      // refuse to finalize ("some chunks are still in progress").
+      await syncAnalysisChunksFromOrchestrator(result.jobId);
+
+      // ── Full AI success → promote canonical, then SUCCEEDED ──────────
+      // Regex fallback is NEVER AI success: executeAnalysis() only sets
+      // analysisSource to "AI" or "PARTIAL_AI" (never REGEX_FALLBACK),
+      // and the success flag requires no error and no partial. So this
+      // branch is reachable only on a clean, complete AI run.
+      if (result.success && !result.isPartial && result.analysisSource === "AI") {
+        let finalizationStatus: "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" = "SUCCEEDED";
+        let finalizationCode: string | undefined;
+        try {
+          const fin = await finalizeAnalysisJob(result.jobId, ctx.userId);
+          finalizationStatus = (fin.status as typeof finalizationStatus) ?? "SUCCEEDED";
+          finalizationCode = fin.code;
+        } catch (finErr) {
+          // Finalizer threw (e.g. version guard, grounding check). The
+          // finalizer itself will have written FAILED/PARTIAL_SUCCESS to
+          // the row. Treat as a non-success terminal — do NOT overwrite
+          // with SUCCEEDED.
+          finalizationStatus = "FAILED";
+          finalizationCode = "FINALIZER_THREW";
+          await recordStep(ctx.jobId, {
+            stepName: "analyze.finalize_failed",
+            message: `Finalization failed: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
+            status: "FAILED",
+          }).catch(() => {});
+        }
+
+        if (finalizationStatus === "SUCCEEDED") {
+          await recordStep(ctx.jobId, {
+            stepName: "analyze.complete",
+            message: `Analysis complete — ${result.requirementCount} requirements extracted and promoted to canonical`,
+            status: "SUCCEEDED",
+          });
+        } else {
+          await recordStep(ctx.jobId, {
+            stepName: "analyze.terminal",
+            message: `Analysis finished but finalizer reported ${finalizationStatus}${finalizationCode ? ` (${finalizationCode})` : ""}. Canonical data not promoted.`,
+            status: finalizationStatus === "FAILED" ? "FAILED" : "RUNNING",
+          });
+        }
+
+        return {
+          terminalStatus: finalizationStatus,
+          finalizationCode,
+          analysisSource: result.analysisSource,
+          requirementCount: result.requirementCount,
+          isPartial: finalizationStatus !== "SUCCEEDED",
+          success: finalizationStatus === "SUCCEEDED",
+          totalChunks: result.totalChunks,
+          completedChunks: result.completedChunks,
+          failedChunks: result.failedChunks,
+          jobId: result.jobId,
+          errorMessage: result.errorMessage,
+        };
+      }
+
+      // ── Partial / failed / fallback / exhausted / weak grounding ─────
+      // Preserve the terminal. Do NOT call the finalizer. Do NOT
+      // overwrite with SUCCEEDED. Do NOT create GeneratedDocument rows.
+      // Generation / export / final ZIP remain blocked because the
+      // canonical requirements were never promoted and
+      // tender.analysisSource was never set to "AI".
+      const terminalStatus: "PARTIAL_SUCCESS" | "FAILED" =
+        result.isPartial && result.completedChunks > 0 ? "PARTIAL_SUCCESS" : "FAILED";
+
+      await recordStep(ctx.jobId, {
+        stepName: "analyze.terminal",
+        message:
+          terminalStatus === "PARTIAL_SUCCESS"
+            ? `Analysis partial — ${result.completedChunks}/${result.totalChunks} chunks completed. Canonical data not promoted; generation remains blocked.`
+            : `Analysis failed — ${result.errorMessage ?? "no chunks completed"}. Canonical data not promoted; generation remains blocked.`,
+        status: terminalStatus === "FAILED" ? "FAILED" : "RUNNING",
+      });
+
       return {
+        terminalStatus,
         analysisSource: result.analysisSource,
         requirementCount: result.requirementCount,
         isPartial: result.isPartial,
-        success: result.success,
+        success: false,
         totalChunks: result.totalChunks,
         completedChunks: result.completedChunks,
+        failedChunks: result.failedChunks,
+        jobId: result.jobId,
+        errorMessage: result.errorMessage,
       };
     } catch (err) {
       clearInterval(heartbeat);

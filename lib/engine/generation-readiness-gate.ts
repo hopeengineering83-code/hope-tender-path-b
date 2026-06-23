@@ -40,9 +40,12 @@ export type GenerationPurpose =
   | "generate"
   | "regenerate-section"
   | "ai-proposal"
+  | "ai-proposal-persist"
   | "background-proposal-generation"
   | "export"
-  | "final-zip";
+  | "final-zip"
+  | "regenerate-cvs"
+  | "generate-missing-plan-files";
 
 export type GenerationBlockerCode =
   | "OWNERSHIP_TENDER_NOT_FOUND"

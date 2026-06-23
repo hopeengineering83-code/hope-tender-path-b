@@ -8,6 +8,7 @@ import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -259,6 +260,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       code: "NO_REQUIREMENTS",
       error: "Document generation requires extracted requirements or explicit submission file instructions. Run AI Analyze before generating documents.",
       nextAction: "RERUN_AI_ANALYZE",
+    }, { status: 422 });
+  }
+
+  // ── Central generation readiness gate ──────────────────────────────────
+  // Creating GENERATED GeneratedDocument rows (narrative drafts, replacement
+  // controls) is a generation act that must pass the SAME central gate as
+  // /generate and the PROPOSAL_GENERATION handler. Without this, the
+  // missing-plan-files path could create GENERATED documents on a tender
+  // whose analysis is partial/failed/regex-fallback, bypassing
+  // hash-binding, chunk-integrity, source-grounding, and submission-plan
+  // checks. Fail-closed: a blocked gate creates ZERO GeneratedDocument
+  // rows.
+  //
+  // NOTE: This route may legitimately run BEFORE the full submission plan
+  // exists (it builds the missing files). The central gate's
+  // SUBMISSION_PLAN_MISSING check could therefore be a chicken-and-egg
+  // blocker here. To handle that, we evaluate the gate but only block on
+  // the analysis-side blockers (ANALYSIS_NOT_READY, ANALYSIS_HASH_MISMATCH,
+  // CHUNKS_INCOMPLETE, REQUIREMENT_SOURCE_UNGROUNDED, EXTRACTION_*,
+  // FALLBACK_UNAPPROVED) — NOT on SUBMISSION_PLAN_MISSING, which this
+  // route is specifically trying to satisfy.
+  const centralGate = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId: id,
+    userId: actor.id,
+    purpose: "generate-missing-plan-files",
+  });
+  if (!centralGate.ok && centralGate.blockerCode !== "SUBMISSION_PLAN_MISSING") {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: centralGate.blockerCode,
+      error: centralGate.blockerDetail,
+      nextAction: "Resolve the analysis readiness blocker before generating missing plan files.",
     }, { status: 422 });
   }
 

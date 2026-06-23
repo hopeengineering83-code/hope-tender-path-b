@@ -1,7 +1,16 @@
 /**
- * AI Analyze State Resolver
+ * @deprecated Use the CANONICAL resolver `resolveTenderAnalysisState` from
+ * `lib/engine/analysis-state-resolver.ts` instead. This module is retained
+ * only for backward compatibility with `lib/ai-analyze/production-analysis-service.ts`,
+ * which itself has no live callers in the app routes. The canonical
+ * resolver is the single reader consumed by the workflow-center,
+ * reconcile-state, generation-readiness-gate, plan-truth, authority-truth,
+ * and analysis-source gate (Root Cause #2 / #4 fix). Do NOT add new
+ * callers of this module — route all new code through
+ * `resolveTenderAnalysisState`.
  *
- * Single authoritative source of truth for tender analysis state.
+ * AI Analyze State Resolver (legacy)
+ *
  * Queries durable AiJob + AiAnalyzeChunk tables.
  * Never consults Tender.notes as source of truth.
  * Fails closed when database is unreachable.
