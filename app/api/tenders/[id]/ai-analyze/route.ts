@@ -1288,7 +1288,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   pageLimit: req.pageLimit ?? null,
                   restrictions: req.restrictions ?? null,
                   sectionReference: req.sectionReference ?? null,
-                  sourceSectionHeading: req.sectionReference ?? null,
+                  sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
                   sourcePageNumber: req.sourcePage ?? null,
                   sourceExactQuote: req.sourceQuote ?? null,
                   sourceTenderFileId: (req.sourceFileToken && validTenderFileIds.has(req.sourceFileToken)) ? req.sourceFileToken : null,
@@ -1412,7 +1412,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
           extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
         }));
-        const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+        // Pass textSamples so a forced run over corrupted text still persists
+        // EXTRACTION_CORRUPTED_AI_SKIPPED (parity with the streaming path) —
+        // otherwise a ?force=true analysis could record a clean status and let
+        // downstream Generate Docs / Export gates trust corrupted extraction.
+        const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots, textSamples);
         // When AI analysis was only partial (some chunks failed or the deadline
         // was reached before all chunks completed), cap the persisted status to
         // PARTIAL so downstream gates (Generate Docs, Export) cannot treat an
