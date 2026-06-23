@@ -12,6 +12,7 @@ import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/eng
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
@@ -522,6 +523,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ? body.accumulatedProposal
         : null;
       const contentToSave = accumulated ? `${accumulated}\n\n${proposal}` : proposal;
+
+      // ── Central generation readiness gate ──────────────────────────────
+      // Persisting a GENERATED GeneratedDocument is a generation act and
+      // must pass the SAME central gate as /generate. Fail-closed.
+      const centralGate = await assertTenderReadyForGenerationAndExport({
+        prisma,
+        tenderId: id,
+        userId,
+        purpose: "ai-proposal-persist",
+      });
+      if (!centralGate.ok) {
+        await logAction({
+          userId,
+          action: "AI_PROPOSAL_PERSIST_BLOCKED",
+          entityType: "Tender",
+          entityId: id,
+          description: `Quick-draft persist blocked by central gate (${centralGate.blockerCode}): ${centralGate.blockerDetail}`,
+        }).catch(() => {});
+      } else {
       try {
         await prisma.generatedDocument.create({
           data: {
@@ -539,6 +559,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       } catch {
         // Non-blocking — draft already returned to UI
       }
+      } // end else (central gate passed)
     }
 
     // ── Update AiJob status ───────────────────────────────────────────────

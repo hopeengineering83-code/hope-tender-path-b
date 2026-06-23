@@ -9,12 +9,38 @@ const allowPreviewMigrations = ["1", "true", "yes"].includes(
 );
 
 const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
+
+// ── Preview safety policy ──────────────────────────────────────────────
+// A preview build that skips migrations is BUILD-ONLY — it is NOT
+// database-verified. This is the correct default.
+//
+// When ALLOW_PREVIEW_DB_MIGRATIONS=true is set, the caller asserts they
+// have configured an ISOLATED preview database. We enforce this by
+// requiring the preview DATABASE_URL to differ from PRODUCTION_DATABASE_URL.
 if (isVercelPreview && !allowPreviewMigrations) {
   console.warn("Skipping database migrations by preview safety policy.");
   console.warn(
     "This preview is build-only and is not database-verified. Configure an isolated preview database and set ALLOW_PREVIEW_DB_MIGRATIONS=true to enable preview migrations.",
   );
   process.exit(0);
+}
+
+if (isVercelPreview && allowPreviewMigrations) {
+  const previewDbUrl = process.env.DATABASE_URL ?? "";
+  const prodDbUrl = process.env.PRODUCTION_DATABASE_URL ?? "";
+  if (prodDbUrl && previewDbUrl && prodDbUrl === previewDbUrl) {
+    throw new Error(
+      "Preview migrations are enabled (ALLOW_PREVIEW_DB_MIGRATIONS=true) but DATABASE_URL matches PRODUCTION_DATABASE_URL. " +
+        "Preview migrations require an ISOLATED preview database — refusing to migrate a production database from a preview build.",
+    );
+  }
+  if (!prodDbUrl) {
+    console.warn(
+      "WARNING: ALLOW_PREVIEW_DB_MIGRATIONS=true but no PRODUCTION_DATABASE_URL is set for isolation comparison. " +
+        "Ensure DATABASE_URL points to an isolated preview database — not production.",
+    );
+  }
+  console.log("Preview migrations enabled — running migration deploy against the preview database.");
 }
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for migration deployment");
@@ -153,23 +179,65 @@ if (initialResult === "failed-init") {
   throw new Error(`Migration deployment did not complete safely: ${initialResult}`);
 }
 
-// Final verification of the applied state
+// ── Final verification — FAIL CLOSED ────────────────────────────────────
+// No console.warn swallows. If verification fails, the deploy fails.
+console.log("Running post-migration verification (fail-closed)...");
+
+// 1. Retroactive-init verification
 try {
   command(process.execPath, ["scripts/verify-retroactive-init.mjs"]);
 } catch (error) {
-  console.warn("Final retroactive init verification encountered an issue (may be transient)");
-  console.warn("Error:", errorText(error).slice(0, 500));
-  // Don't throw - migrations are deployed; verification warnings are non-fatal
+  const detail = errorText(error);
+  console.error("Post-migration retroactive-init verification FAILED.");
+  console.error("Output:", detail.slice(0, 2000));
+  throw new Error(
+    "Post-migration verification failed: retroactive-init check reported failures. " +
+      "The migration deploy cannot be trusted. See output above.",
+  );
 }
 
+// 2. Critical-schema verification
 try {
   command(process.execPath, ["scripts/check-critical-schema.mjs"], {
     env: { ...process.env, REQUIRE_MIGRATION_HISTORY: "true" },
   });
 } catch (error) {
-  console.warn("Critical schema check encountered an issue");
-  console.warn("Error:", errorText(error).slice(0, 500));
-  // Non-fatal for Vercel build - schema is already deployed
+  const detail = errorText(error);
+  console.error("Post-migration critical-schema verification FAILED.");
+  console.error("Output:", detail.slice(0, 2000));
+  throw new Error(
+    "Post-migration verification failed: critical-schema check reported failures. " +
+      "The migration deploy cannot be trusted. See output above.",
+  );
 }
 
-console.log("Database migration deployment completed.");
+// 3. Zero-drift schema comparison (credential-safe)
+console.log("Running credential-safe zero-drift schema comparison...");
+try {
+  prisma(
+    [
+      "migrate", "diff",
+      "--from-schema-datasource", "prisma/schema.prisma",
+      "--to-schema-datamodel", "prisma/schema.prisma",
+      "--exit-code",
+    ],
+    { capture: true },
+  );
+} catch (error) {
+  const detail = errorText(error);
+  if (/drift|differ|exit code 2/i.test(detail)) {
+    console.error("Post-migration zero-drift schema comparison FAILED: schema drift detected.");
+    console.error("Output:", detail.slice(0, 2000));
+    throw new Error(
+      "Post-migration verification failed: prisma migrate diff detected schema drift. " +
+        "The migration deploy did not produce a schema that matches the Prisma model.",
+    );
+  }
+  console.error("Post-migration zero-drift schema comparison FAILED: tool error.");
+  console.error("Output:", detail.slice(0, 2000));
+  throw new Error(
+    "Post-migration verification failed: prisma migrate diff could not complete.",
+  );
+}
+
+console.log("Database migration deployment completed — all verification checks passed.");

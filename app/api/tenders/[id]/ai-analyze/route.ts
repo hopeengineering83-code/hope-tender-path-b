@@ -870,6 +870,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // ── Durable background path ──────────────────────────────────────────
+  // ?mode=background is the unified durable workflow: enqueues an
+  // AI_ANALYZE job and returns 202 immediately. The caller then triggers
+  // /api/ai-jobs/run-next?jobType=AI_ANALYZE to start the worker.
+  const earlyUrl = new URL(req.url);
+  if (earlyUrl.searchParams.get("mode") === "background") {
+    const { enqueueBackgroundAnalysis } = await import("../../../../../lib/ai-analyze/background-enqueue");
+    const { id: tenderId } = await params;
+    return enqueueBackgroundAnalysis(tenderId, userId);
+  }
+
   const wantsStream = req.headers.get("accept") === "text/event-stream";
   if (wantsStream) {
     return handleStreamingAnalyze(req, userId, requestId, await params);

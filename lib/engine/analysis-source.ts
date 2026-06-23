@@ -45,11 +45,16 @@ export type TenderAnalysisSourceLike = {
 };
 
 function notesIncludeRegexFallback(notes?: string | null): boolean {
-  return /analysis\s+source:\s*regex\s+fallback/i.test(notes ?? "");
+  // Anchored + word-bounded so "REGEX_FALLBACK_AI_ERROR" mid-sentence
+  // can never match. Root Cause #3 fix.
+  return /^analysis\s+source:\s*regex\s+fallback\b/im.test(notes ?? "");
 }
 
 function notesIncludeAiAnalysis(notes?: string | null): boolean {
-  return /analysis\s+source:\s*ai/i.test(notes ?? "");
+  // Anchored + word-bounded so "REGEX_FALLBACK_AI_ERROR" in notes
+  // (which contains the substring "ai") can never be misread as an AI
+  // success marker. Root Cause #3 fix.
+  return /^analysis\s+source:\s*ai\b/im.test(notes ?? "");
 }
 
 /** Synchronous detection from the tender.notes line alone. Does NOT

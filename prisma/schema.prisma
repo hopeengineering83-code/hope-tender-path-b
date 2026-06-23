@@ -1170,3 +1170,31 @@ model ExtractionQualityOverride {
   @@index([tenderId])
   @@index([tenderFileId])
 }
+
+// Durable retry state for the AI Analyze automatic-retry feature.
+// Persists retry count, next retry time, retry reason, and last provider
+// availability result so a server-side scheduler (Vercel cron / GitHub
+// Actions) can re-arm retryable jobs with bounded exponential backoff
+// (30s, 1m, 3m, 10m) only when at least one provider is eligible.
+// Non-retryable failures (extraction corrupted, ownership revoked, content
+// hash changed, etc.) set nonRetryable=true so the scheduler skips them.
+model AiAnalyzeRetryState {
+  id                    String   @id @default(uuid())
+  jobId                 String   @unique
+  tenderId              String
+  userId                String
+  contentHash           String
+  retryCount            Int      @default(0)
+  nextRetryAt           DateTime?
+  retryReason           String
+  failureCategory       String
+  nonRetryable          Boolean  @default(false)
+  lastProviderAvailable Boolean  @default(false)
+  lastCheckedAt         DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  @@index([tenderId, contentHash])
+  @@index([nextRetryAt])
+  @@index([nonRetryable, nextRetryAt])
+}

@@ -1017,6 +1017,23 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiAnalyzeRetryState" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "jobId" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "contentHash" TEXT NOT NULL,
+    "retryCount" INTEGER NOT NULL DEFAULT 0,
+    "nextRetryAt" TIMESTAMPTZ,
+    "retryReason" TEXT NOT NULL,
+    "failureCategory" TEXT NOT NULL,
+    "nonRetryable" BOOLEAN NOT NULL DEFAULT false,
+    "lastProviderAvailable" BOOLEAN NOT NULL DEFAULT false,
+    "lastCheckedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -1086,6 +1103,10 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_tenderFileId_key" ON "ExtractionQualityOverride"("tenderId", "tenderFileId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_idx" ON "ExtractionQualityOverride"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderFileId_idx" ON "ExtractionQualityOverride"("tenderFileId")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "AiAnalyzeRetryState_jobId_key" ON "AiAnalyzeRetryState"("jobId")`,
+    `CREATE INDEX IF NOT EXISTS "AiAnalyzeRetryState_tenderId_contentHash_idx" ON "AiAnalyzeRetryState"("tenderId", "contentHash")`,
+    `CREATE INDEX IF NOT EXISTS "AiAnalyzeRetryState_nextRetryAt_idx" ON "AiAnalyzeRetryState"("nextRetryAt")`,
+    `CREATE INDEX IF NOT EXISTS "AiAnalyzeRetryState_nonRetryable_nextRetryAt_idx" ON "AiAnalyzeRetryState"("nonRetryable", "nextRetryAt")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
