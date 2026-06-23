@@ -168,16 +168,28 @@ describe("AI Analyze unified durable workflow", () => {
         /await upsertRequirements\(tx,\s*job\.tenderId!,\s*drafts\)/,
         "finalizeJob must call upsertRequirements to write canonical requirements",
       );
-      // tender.analysisSource = "AI" + analysisExtractionStatus = FULL_AI_SUCCESS
+      // tender.analysisSource = "AI"
       expectContains(
         ANALYSIS_JOB_SERVICE,
         /analysisSource:\s*["']AI["']/,
         "finalizeJob must set tender.analysisSource = 'AI'",
       );
+      // analysisExtractionStatus uses the CANONICAL vocabulary that
+      // downstream gates recognize: FULL_EXTRACTION_AI_ANALYZED on full
+      // success, PARTIAL_EXTRACTION_AI_ANALYZED on partial. The previous
+      // bespoke "FULL_AI_SUCCESS"/"PARTIAL_AI_SUCCESS" values were
+      // write-only orphans no gate recognized (fixed in PR #856).
       expectContains(
         ANALYSIS_JOB_SERVICE,
-        /analysisExtractionStatus:\s*failed\.length\s*>\s*0\s*\?\s*["']PARTIAL_AI_SUCCESS["']\s*:\s*["']FULL_AI_SUCCESS["']/,
-        "finalizeJob must set analysisExtractionStatus to FULL_AI_SUCCESS on full success",
+        /analysisExtractionStatus:\s*failed\.length\s*>\s*0\s*\?\s*["']PARTIAL_EXTRACTION_AI_ANALYZED["']\s*:\s*["']FULL_EXTRACTION_AI_ANALYZED["']/,
+        "finalizeJob must set analysisExtractionStatus to FULL_EXTRACTION_AI_ANALYZED on full success (canonical vocabulary)",
+      );
+      // The canonical tender update is built via the shared helper so the
+      // durable worker and the synchronous route produce identical metadata.
+      expectContains(
+        ANALYSIS_JOB_SERVICE,
+        /buildCanonicalAnalysisTenderUpdate\(merged,/,
+        "finalizeJob must use buildCanonicalAnalysisTenderUpdate for canonical metadata",
       );
       // promoteAnalysisToCanonical marks the job as promoted
       expectContains(
