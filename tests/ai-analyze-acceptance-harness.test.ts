@@ -122,10 +122,12 @@ describe("PATH 1: Digital multi-page tender — success path", () => {
     assert.equal(detectAnalysisSource(tender), "AI");
   });
 
-  it("AI Analyze route writes the 'Analysis source: AI' marker on success", () => {
-    const routeSrc = read("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(routeSrc, /Analysis source: AI \(re-run via AI Analyze button\)/,
-      "AI Analyze route must write the 'Analysis source: AI' marker on success");
+  it("AI Analyze writes the 'Analysis source: AI' marker on success (shared builder)", () => {
+    // The analysis-source marker now lives in the shared canonical builder used
+    // by every analysis path.
+    const builderSrc = read("lib/engine/canonical-analysis-update.ts");
+    assert.match(builderSrc, /Analysis source: AI \(re-run via AI Analyze button\)/,
+      "shared builder must write the 'Analysis source: AI' marker on success");
   });
 
   it("AIRequirement type includes source-traceability fields (file, page, quote, confidence)", () => {
@@ -146,9 +148,9 @@ describe("PATH 1: Digital multi-page tender — success path", () => {
     assert.match(routeSrc, /sourceTenderFileId/);
   });
 
-  it("AI Analyze route persists verbatim tenderTitle (placeholder-guarded)", () => {
-    const routeSrc = read("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(routeSrc, /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)/);
+  it("AI Analyze persists verbatim tenderTitle (placeholder-guarded, shared builder)", () => {
+    const builderSrc = read("lib/engine/canonical-analysis-update.ts");
+    assert.match(builderSrc, /aiResult\.tenderTitle\s*&&\s*!containsMetadataPlaceholder\(aiResult\.tenderTitle\)/);
   });
 
   it("generation gate blocks when analysisSource is REGEX_FALLBACK (not AI)", async () => {
@@ -437,9 +439,11 @@ describe("PATH 4: Failed retry after prior AI success — prior success preserve
     // lines from tender.notes before writing the new marker. This prevents
     // a stale "AI" marker from persisting if the re-run fails, AND prevents
     // a stale "REGEX_FALLBACK" marker from persisting if the re-run succeeds.
-    const routeSrc = read("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(routeSrc, /\/\^Analysis source:\//i);
-    assert.match(routeSrc, /\/\^Analysis fallback diagnostics:\//i);
+    // The notes-stripping logic now lives in buildAnalysisNotes() in the shared
+    // canonical builder used by every analysis path.
+    const builderSrc = read("lib/engine/canonical-analysis-update.ts");
+    assert.match(builderSrc, /\/\^Analysis source:\//i);
+    assert.match(builderSrc, /\/\^Analysis fallback diagnostics:\//i);
   });
 
   it("a successful re-run writes 'Analysis source: AI' (overwriting any prior fallback marker)", () => {
