@@ -45,11 +45,25 @@ export type TenderAnalysisSourceLike = {
 };
 
 function notesIncludeRegexFallback(notes?: string | null): boolean {
-  return /analysis\s+source:\s*regex\s+fallback/i.test(notes ?? "");
+  // Anchored to the start of a line (`^` + `m` flag) and bounded with
+  // `\b` so that "REGEX_FALLBACK_AI_ERROR" appearing mid-sentence in a
+  // notes blob can NEVER match. Without the anchor, the old regex
+  // `/analysis\s+source:\s*regex\s+fallback/i` could be tripped by any
+  // line containing those words out of order — and worse, the AI
+  // variant below could match "REGEX_FALLBACK_AI_ERROR" because of the
+  // bare "ai" substring. The anchor + word boundary closes that hole.
+  return /^analysis\s+source:\s*regex\s+fallback\b/im.test(notes ?? "");
 }
 
 function notesIncludeAiAnalysis(notes?: string | null): boolean {
-  return /analysis\s+source:\s*ai/i.test(notes ?? "");
+  // Anchored + word-bounded so that "REGEX_FALLBACK_AI_ERROR" in notes
+  // (which contains the substring "ai") can NEVER be misread as an AI
+  // success marker. This is the Root Cause #3 fix — without the `^`
+  // anchor and `\b` word boundary, the legacy regex
+  // `/analysis\s+source:\s*ai/i` matched "Analysis source: regex
+  // fallback (REGEX_FALLBACK_AI_ERROR)" and unlocked generation/export
+  // on a tender that had actually fallen back to regex.
+  return /^analysis\s+source:\s*ai\b/im.test(notes ?? "");
 }
 
 /** Synchronous detection from the tender.notes line alone. Does NOT

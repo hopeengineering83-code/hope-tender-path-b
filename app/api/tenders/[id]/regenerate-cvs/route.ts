@@ -16,6 +16,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateExpertCvDocx, expertCvFileName } from "../../../../../lib/engine/expert-cv-docx";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -39,6 +40,28 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     select: { id: true, title: true },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // ── Central generation readiness gate ──────────────────────────────────
+  // Regenerating expert CVs creates GENERATED GeneratedDocument rows —
+  // a generation act that must pass the SAME central gate as /generate
+  // and the PROPOSAL_GENERATION handler. Without this, the maintenance
+  // endpoint could produce final-looking CV documents on a tender whose
+  // analysis is partial/failed/regex-fallback, bypassing hash-binding,
+  // chunk-integrity, source-grounding, and submission-plan checks.
+  // Fail-closed: a blocked gate creates ZERO GeneratedDocument rows.
+  const centralGate = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId,
+    userId: actor.id,
+    purpose: "regenerate-cvs",
+  });
+  if (!centralGate.ok) {
+    return NextResponse.json({
+      error: `CV regeneration blocked: ${centralGate.blockerDetail}`,
+      code: centralGate.blockerCode,
+      nextAction: "Resolve the readiness gate blocker before regenerating CVs.",
+    }, { status: 409 });
+  }
 
   const matches = await prisma.tenderExpertMatch.findMany({
     where: { tenderId, isSelected: true },
