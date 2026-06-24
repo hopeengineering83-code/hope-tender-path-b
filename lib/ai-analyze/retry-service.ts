@@ -4,8 +4,11 @@
  * This is the SERVER-SIDE backstop for the durable AI_ANALYZE workflow. The
  * panel/tender-detail UI already auto-retries while a browser is open, but a
  * run that stops short when no one is watching would otherwise sit idle. This
- * scheduler persists retry state and lets a cron (app/api/cron/ai-analyze-retry)
- * re-arm jobs the moment a provider is eligible again.
+ * scheduler persists retry state and lets the run-next cron (which fires every
+ * 5 minutes via vercel.json) re-arm jobs the moment a provider is eligible
+ * again. The re-arm logic lives inside /api/ai-jobs/run-next for automated
+ * callers (Vercel cron / worker secret), so no separate cron entry is needed
+ * (Vercel Hobby caps crons at 2).
  *
  * Guarantees:
  *   1. Retry state is durable (AiAnalyzeRetryState, one row per AiJob).

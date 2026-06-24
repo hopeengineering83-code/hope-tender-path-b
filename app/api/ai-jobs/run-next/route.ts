@@ -60,10 +60,12 @@ export async function POST(req: Request) {
     try {
       const due = await findJobsDueForRetry(10);
       for (const job of due) {
-        await rearmJobForRetry(job.jobId).catch(() => {});
+        await rearmJobForRetry(job.jobId).catch((err: unknown) => {
+          console.error(`[run-next] Retry re-arm failed for job ${job.jobId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
       }
-    } catch {
-      // ignore — re-arming is opportunistic; the claim loop still runs.
+    } catch (err) {
+      console.error(`[run-next] Retry due-job lookup failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -105,7 +107,9 @@ export async function POST(req: Request) {
           claimed.jobType === "AI_ANALYZE" &&
           (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED")
         ) {
-          await recordRetryStateForJob(claimed.id, result.terminalStatus).catch(() => {});
+          await recordRetryStateForJob(claimed.id, result.terminalStatus).catch((err: unknown) => {
+            console.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
+          });
         }
         processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: result.terminalStatus });
       } else {

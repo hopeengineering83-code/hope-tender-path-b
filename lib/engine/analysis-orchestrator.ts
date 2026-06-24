@@ -406,10 +406,11 @@ export async function executeAnalysis(
   }
 
   // Phase: Complete
+  const requirementCount = analysisMeta?.result?.requirements?.length ?? 0;
   await onProgress?.({
     phase: "complete",
     status: analysisMeta?.isPartial ? "PARTIAL" : "SUCCESS",
-    message: `Analysis complete — ${analysisMeta?.chunkResults.length ?? 0} requirements extracted`,
+    message: `Analysis complete — ${requirementCount} requirements extracted`,
   });
 
   return {

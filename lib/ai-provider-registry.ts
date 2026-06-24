@@ -114,7 +114,7 @@ const CONSERVATIVE_CAPS: ProviderOutputCaps = { analysis: 8000, proposal: 4000, 
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 // FIX: Z.ai and Cerebras need longer timeouts for AI Analyze. The analysis
-// prompt is very large (thousands of tokens) and glm-4.7-flash / gpt-oss-120b
+// prompt is very large (thousands of tokens) and glm-4-flash / gpt-oss-120b
 // can take 15-40s to generate a complete JSON response. 20s causes TIMEOUT
 // on the first provider, consuming an attempt budget slot for nothing.
 const ANALYSIS_TIMEOUT_MS = 45_000;
@@ -139,13 +139,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     defaults: {
       // General Z.ai API endpoint (NOT a Coding Plan endpoint).
       baseUrl: "https://api.z.ai/api/paas/v4",
-      proposalModel: "glm-4.7-flash",
-      analysisModel: "glm-4.7-flash",
-      fastModel: "glm-4.7-flash",
+      proposalModel: "glm-4-flash",
+      analysisModel: "glm-4-flash",
+      fastModel: "glm-4-flash",
     },
     outputCaps: CONSERVATIVE_CAPS,
     // FIX: 45s timeout for analysis — the large AI Analyze prompt needs
-    // more than the 20s default. Z.ai glm-4.7-flash can take 15-40s on
+    // more than the 20s default. Z.ai glm-4-flash can take 15-40s on
     // a full tender analysis JSON response.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,

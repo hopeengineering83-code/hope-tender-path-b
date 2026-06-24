@@ -100,11 +100,11 @@ describe("5. zai + cerebras appear in health surfaces", () => {
 describe("6. Z.ai general endpoint + configured model", () => {
   it("uses the general Z.ai endpoint and configured/default model", () => {
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4.7-flash");
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
     process.env.ZAI_BASE_URL = "https://api.z.ai/api/paas/v4/custom";
-    process.env.ZAI_ANALYSIS_MODEL = "glm-4.7-pro";
+    process.env.ZAI_ANALYSIS_MODEL = "glm-4.5-flash";
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4/custom");
-    assert.equal(getProviderModel("zai", "extraction"), "glm-4.7-pro");
+    assert.equal(getProviderModel("zai", "extraction"), "glm-4.5-flash");
   });
   it("is NOT a Coding Plan endpoint", () => {
     assert.ok(!getProviderBaseUrl("zai")!.includes("coding"));
