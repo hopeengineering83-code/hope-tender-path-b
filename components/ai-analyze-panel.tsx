@@ -30,6 +30,31 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
   // and never silently swallowed — the job is still queued, so we keep polling.
   const [workerError, setWorkerError] = useState("");
 
+  // Provider self-test: when a run fails, the user can ask "which provider is
+  // actually broken and why" instead of guessing. Hits the live diagnostics
+  // endpoint, which reports per-provider ok / redacted-reason (no keys).
+  type ProviderDiag = { provider: string; configured: boolean; ok: boolean; reason: string | null; latencyMs: number | null };
+  const [diag, setDiag] = useState<{ anyWorking: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+
+  async function runProviderDiagnostics() {
+    setDiagnosing(true);
+    setDiag(null);
+    try {
+      const res = await fetch(`/api/ai-providers/diagnostics?live=1`, { method: "GET" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json) {
+        setDiag({ anyWorking: false, summary: res.status === 403 ? "You need the ADMIN or PROPOSAL_MANAGER role to run provider diagnostics." : "Could not run provider diagnostics.", perProvider: [] });
+      } else {
+        setDiag({ anyWorking: Boolean(json.anyWorking), summary: String(json.summary ?? ""), perProvider: Array.isArray(json.perProvider) ? json.perProvider : [] });
+      }
+    } catch {
+      setDiag({ anyWorking: false, summary: "Could not reach the diagnostics endpoint.", perProvider: [] });
+    } finally {
+      setDiagnosing(false);
+    }
+  }
+
   // Auto-retry-when-available: when a run stops short because providers are
   // cooling down, we schedule a retry for when they recover. The durable path
   // resumes from the last completed chunk, so retries never restart from zero.
@@ -241,7 +266,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           <p className="font-semibold">Analysis {jobStatus === "PARTIAL_SUCCESS" ? "Incomplete" : "Error"}</p>
           <p className="mt-1 text-red-700">{error}</p>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => { setError(""); handleBackgroundAnalyze(); }}
               disabled={busy}
@@ -250,12 +275,45 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
               <RefreshIcon /> Retry AI Analyze
             </button>
             <button
+              onClick={runProviderDiagnostics}
+              disabled={diagnosing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+              title="Run a live test of every AI provider to see which key is working and why a run fails"
+            >
+              {diagnosing ? "Testing providers…" : "Diagnose providers"}
+            </button>
+            <button
               onClick={() => setError("")}
               className="text-xs font-medium underline hover:text-red-900"
             >
               Dismiss
             </button>
           </div>
+
+          {diag && (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+              <p className={`text-xs font-semibold ${diag.anyWorking ? "text-emerald-700" : "text-red-700"}`}>
+                {diag.summary}
+              </p>
+              {diag.perProvider.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {diag.perProvider.map((p) => (
+                    <li key={p.provider} className="flex items-start gap-2 text-xs">
+                      <span className={`mt-0.5 ${p.ok ? "text-emerald-600" : p.configured ? "text-red-600" : "text-slate-400"}`}>
+                        {p.ok ? "✓" : p.configured ? "✗" : "—"}
+                      </span>
+                      <span className="font-medium text-slate-700">{p.provider}</span>
+                      <span className="text-slate-500">
+                        {p.ok
+                          ? `OK${typeof p.latencyMs === "number" ? ` (${p.latencyMs}ms)` : ""}`
+                          : p.reason ?? (p.configured ? "failed" : "not configured")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

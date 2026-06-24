@@ -657,6 +657,55 @@ async function callProvider(
   }
 }
 
+// ─── Provider self-test (live diagnostic) ────────────────────────────────────
+// Definitively answers "is this provider actually working right now?" — the
+// question the recovery UI needs when AI Analyze keeps failing. Unconfigured
+// providers return instantly without an outbound call; configured ones make a
+// single tiny "fast" request and report ok / redacted-failure-reason. Never
+// returns or logs key values.
+export type ProviderSelfTestResult = {
+  provider: AiProviderName;
+  rank: number;
+  configured: boolean;
+  ok: boolean;
+  // Redacted, human-readable reason on failure / "not configured"; null on success.
+  reason: string | null;
+  latencyMs: number | null;
+};
+
+const PROVIDER_SELF_TEST_PROMPT = "Reply with the single word: OK";
+
+export async function selfTestProvider(provider: AiProviderName, rank: number): Promise<ProviderSelfTestResult> {
+  if (!registryIsProviderConfigured(provider)) {
+    return { provider, rank, configured: false, ok: false, reason: "Not configured — no API key set", latencyMs: null };
+  }
+  const startedAt = Date.now();
+  let r: string | null = null;
+  try {
+    // callProvider never throws (each branch catches + records the failure),
+    // but guard anyway so one provider can't break the whole diagnostic.
+    r = await callProvider(provider, PROVIDER_SELF_TEST_PROMPT, { useCase: "fast" });
+  } catch {
+    r = null;
+  }
+  const latencyMs = Date.now() - startedAt;
+  if (r && r.trim().length > 0) {
+    return { provider, rank, configured: true, ok: true, reason: null, latencyMs };
+  }
+  // callProvider already recorded the failure with a redacted reason.
+  const snap = getProviderRuntimeSnapshot(provider);
+  const reason = snap.lastSafeErrorMessage ?? snap.lastErrorCategory ?? "No response (provider returned empty)";
+  return { provider, rank, configured: true, ok: false, reason, latencyMs };
+}
+
+export async function selfTestAllProviders(): Promise<ProviderSelfTestResult[]> {
+  // Configured providers are tested live in parallel; unconfigured ones resolve
+  // instantly. Order follows the canonical provider chain.
+  return Promise.all(
+    CANONICAL_AI_PROVIDER_ORDER.map((p, i) => selfTestProvider(p, i + 1)),
+  );
+}
+
 export async function generateWithFallback(
   prompt: string,
   opts?: {
