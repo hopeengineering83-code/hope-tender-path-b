@@ -5,6 +5,7 @@ import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prismaReady } from "../../../../lib/prisma";
+import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -48,6 +49,24 @@ export async function POST(req: Request) {
   const maxRunMs = 40_000;
   const processedJobs: Array<{ jobId: string; jobType: string; status: string; error?: string }> = [];
 
+  // Provider-aware retry backstop. When an automated caller (Vercel cron or the
+  // worker secret) drives the queue, first re-arm any AI_ANALYZE jobs that
+  // stopped short and are now due — but only when a provider is eligible and
+  // the tender content is unchanged. This lets the EXISTING daily run-next cron
+  // resume stalled analyses with no extra cron entry (Vercel Hobby caps crons
+  // at two). UI-triggered calls (session auth) skip this so a user only ever
+  // drives their own job. Best-effort — never block the claim loop.
+  if (isAutomatedCaller) {
+    try {
+      const due = await findJobsDueForRetry(10);
+      for (const job of due) {
+        await rearmJobForRetry(job.jobId).catch(() => {});
+      }
+    } catch {
+      // ignore — re-arming is opportunistic; the claim loop still runs.
+    }
+  }
+
   while (Date.now() - startTime < maxRunMs) {
     const claimed = await claimJobForCaller({
       jobType: parsedJobType.value,
@@ -76,6 +95,18 @@ export async function POST(req: Request) {
         // PARTIAL_SUCCESS/FAILED). Respect it — calling completeJob() here
         // would corrupt a partial/failed analysis into SUCCEEDED and falsely
         // unlock generation/export. The handler owns output persistence.
+        //
+        // When an AI_ANALYZE run stops short, record durable retry state so the
+        // provider-aware scheduler (cron /api/cron/ai-analyze-retry) can re-arm
+        // it once a provider is eligible again — resuming from the last
+        // completed chunk. Best-effort: a bookkeeping failure must not break
+        // the worker loop. SUCCEEDED needs no retry.
+        if (
+          claimed.jobType === "AI_ANALYZE" &&
+          (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED")
+        ) {
+          await recordRetryStateForJob(claimed.id, result.terminalStatus).catch(() => {});
+        }
         processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: result.terminalStatus });
       } else {
         await completeJob(claimed.id, result);

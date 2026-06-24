@@ -892,12 +892,42 @@ model AiJob {
   updatedAt     DateTime    @updatedAt
   steps         AiJobStep[]
   analyzeChunks AiAnalyzeChunk[]
+  retryState    AiAnalyzeRetryState?
 
   @@index([userId, status])
   @@index([tenderId, jobType])
   @@index([status, createdAt])
   @@index([leaseExpiresAt, status])
   @@index([nextAttemptAt, status])
+}
+
+// Durable retry state for the AI_ANALYZE background workflow. One row per
+// AiJob (1:1). The provider-aware scheduler (lib/ai-analyze/retry-service.ts)
+// reads this to decide when a stopped run may resume — bounded exponential
+// backoff, only when a provider is actually eligible, never for non-retryable
+// failures (corrupted extraction, ownership/auth, content-hash drift, weak
+// grounding). Resumes from the SUCCEEDED AiAnalyzeChunk checkpoints, so a
+// retry continues where it left off rather than restarting.
+model AiAnalyzeRetryState {
+  id                    String    @id @default(uuid())
+  jobId                 String    @unique
+  job                   AiJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  tenderId              String
+  userId                String
+  contentHash           String
+  retryCount            Int       @default(0)
+  nextRetryAt           DateTime?
+  retryReason           String
+  failureCategory       String
+  nonRetryable          Boolean   @default(false)
+  lastProviderAvailable Boolean   @default(false)
+  lastCheckedAt         DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([tenderId, contentHash])
+  @@index([nextRetryAt])
+  @@index([nonRetryable, nextRetryAt])
 }
 
 model AiJobStep {

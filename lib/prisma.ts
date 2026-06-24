@@ -810,6 +810,29 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_status_idx" ON "AiAnalyzeChunk"("status")`);
   await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_jobId_idx" ON "AiAnalyzeChunk"("jobId")`);
 
+  // Durable retry state for the AI_ANALYZE workflow (one row per AiJob).
+  // Powers the provider-aware backoff scheduler in lib/ai-analyze/retry-service.ts.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiAnalyzeRetryState" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "jobId" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "contentHash" TEXT NOT NULL,
+    "retryCount" INTEGER NOT NULL DEFAULT 0,
+    "nextRetryAt" TIMESTAMPTZ,
+    "retryReason" TEXT NOT NULL,
+    "failureCategory" TEXT NOT NULL,
+    "nonRetryable" BOOLEAN NOT NULL DEFAULT false,
+    "lastProviderAvailable" BOOLEAN NOT NULL DEFAULT false,
+    "lastCheckedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "AiAnalyzeRetryState_jobId_key" ON "AiAnalyzeRetryState"("jobId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeRetryState_tenderId_contentHash_idx" ON "AiAnalyzeRetryState"("tenderId", "contentHash")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeRetryState_nextRetryAt_idx" ON "AiAnalyzeRetryState"("nextRetryAt")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeRetryState_nonRetryable_nextRetryAt_idx" ON "AiAnalyzeRetryState"("nonRetryable", "nextRetryAt")`);
+
   // ─── Pricing engine (G8) ───────────────────────────────────────────────
   // PricingWorkbook (one per tender) + CostLine rows. Replaces ad-hoc
   // commercial assumptions with a real pricing workbook the export gate
