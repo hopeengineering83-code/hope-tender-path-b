@@ -40,9 +40,9 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
     status("ZAI_API_KEY", "ai", "critical", `First-tier provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}). Z.ai GLM via the general OpenAI-compatible endpoint.`),
     status("ZAI_BASE_URL", "ai", "optional", "Z.ai general API base URL (default: https://api.z.ai/api/paas/v4)."),
-    status("ZAI_PROPOSAL_MODEL", "ai", "optional", "Z.ai proposal model (default: glm-4.7-flash)."),
-    status("ZAI_ANALYSIS_MODEL", "ai", "optional", "Z.ai analysis model (default: glm-4.7-flash)."),
-    status("ZAI_FAST_MODEL", "ai", "optional", "Z.ai fast model (default: glm-4.7-flash)."),
+    status("ZAI_PROPOSAL_MODEL", "ai", "optional", "Z.ai proposal model (default: glm-4-flash)."),
+    status("ZAI_ANALYSIS_MODEL", "ai", "optional", "Z.ai analysis model (default: glm-4-flash)."),
+    status("ZAI_FAST_MODEL", "ai", "optional", "Z.ai fast model (default: glm-4-flash)."),
     status("CEREBRAS_API_KEY", "ai", "critical", "Second-tier provider. Cerebras via OpenAI-compatible endpoint (uses max_completion_tokens)."),
     status("CEREBRAS_BASE_URL", "ai", "optional", "Cerebras API base URL (default: https://api.cerebras.ai/v1)."),
     status("CEREBRAS_PROPOSAL_MODEL", "ai", "optional", "Cerebras proposal model (default: gpt-oss-120b)."),
