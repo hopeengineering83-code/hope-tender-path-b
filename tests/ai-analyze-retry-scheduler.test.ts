@@ -128,7 +128,8 @@ describe("run-next records retry state and re-arms due jobs (automated path)", (
   });
 
   it("re-arm is best-effort and never throws into the claim loop", () => {
-    assert.match(src, /rearmJobForRetry\(job\.jobId\)\.catch\(\(\) => \{\}\)/);
+    assert.match(src, /rearmJobForRetry\(job\.jobId\)\.catch\(/);
+    assert.match(src, /Retry re-arm failed/);
   });
 });
 

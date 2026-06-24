@@ -197,7 +197,7 @@ export async function runNextChunk(jobId: string, userId: string) {
     .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((f: any) => {
         if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
+        return `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText}`;
     })
     .filter(Boolean)
     .join("\n\n---\n\n");

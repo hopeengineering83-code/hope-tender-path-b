@@ -877,7 +877,8 @@ async function generateWithOpenAI(
   const model = modelOverride || process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), (model.includes("o1") || model.includes("o3")) ? O1_O3_TIMEOUT_MS : OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
+  const openaiTimeoutMs = (model.includes("o1") || model.includes("o3")) ? O1_O3_TIMEOUT_MS : OPENAI_COMPAT_DEFAULT_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), openaiTimeoutMs);
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -932,7 +933,7 @@ async function generateWithOpenAI(
     clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
-      logger.warn(`[ai] OpenAI fetch timed out after 20000ms — falling through.`);
+      logger.warn(`[ai] OpenAI fetch timed out after ${openaiTimeoutMs}ms — falling through.`);
       return null;
     }
     logger.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to next provider.`);
@@ -1168,8 +1169,9 @@ async function generateOpenAICompatible(params: {
     clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
-      logger.warn(`[ai] ${providerLabel} fetch timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms — falling through.`);
-      note(`timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms`);
+      const actualTimeout = timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS;
+      logger.warn(`[ai] ${providerLabel} fetch timed out after ${actualTimeout}ms — falling through.`);
+      note(`timed out after ${actualTimeout}ms`);
       return null;
     }
     if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
@@ -1292,7 +1294,7 @@ async function generateWithZai(
     maxTokens,
     responseFormatJson: wantJson,
     // FIX: Use registry timeout (45s) instead of the 20s default.
-    // The AI Analyze prompt is very large and glm-4.7-flash needs more time.
+    // The AI Analyze prompt is very large and glm-4-flash needs more time.
     timeoutMs: getProviderTimeoutMs("zai"),
   });
 }
