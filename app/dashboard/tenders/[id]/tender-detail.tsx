@@ -871,6 +871,112 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
     finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
+  // Durable AI Analyze — the unified production path. Enqueues ONE background
+  // AI_ANALYZE job, kicks the worker (surfacing 401/403/500 instead of
+  // swallowing them), and polls the durable job to its terminal state. It does
+  // NOT use the SSE route — that path stays only for resume/auto-retry tooling.
+  // Promotion happens server-side in the worker's finalizer, so a partial or
+  // failed run can never unlock generation/export here.
+  async function handleDurableAnalyze() {
+    cancelAutoRetry();
+    setAnalyzing(true);
+    setError("");
+    setAnalyzeResult(null);
+    setAnalyzePhase("Queuing durable analysis…");
+    setAnalyzeProgress(8);
+
+    let jobId: string;
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze?mode=background`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.status !== 202 || !data?.jobId) {
+        setError(data?.error || "Analysis failed to start");
+        setAnalyzing(false); setAnalyzePhase(""); setAnalyzeProgress(0);
+        return;
+      }
+      jobId = data.jobId as string;
+      setContinueJobId(jobId);
+      setAnalyzePhase("Queued — starting worker…");
+      setAnalyzeProgress(15);
+    } catch {
+      setError("Analysis failed to start due to a network error.");
+      setAnalyzing(false); setAnalyzePhase(""); setAnalyzeProgress(0);
+      return;
+    }
+
+    // Kick the worker using the authenticated session. A 401/403/500 here MUST
+    // be visible; the job is durably queued, so we still poll (a scheduled
+    // recovery worker can pick it up).
+    try {
+      const w = await fetch(`/api/ai-jobs/run-next?jobType=AI_ANALYZE`, { method: "POST" });
+      if (w.status === 401) setError("Worker authorization failed (401) — your session may have expired. The job stays queued.");
+      else if (w.status === 403) setError("Worker permission denied (403) — ADMIN or PROPOSAL_MANAGER required. The job stays queued.");
+      else if (w.status >= 500) setError(`Worker failed to start (HTTP ${w.status}). The job is queued; the recovery worker will retry it.`);
+    } catch {
+      setError("Could not reach the analysis worker. The job is queued; the recovery worker will retry it.");
+    }
+
+    // Poll the durable job to its terminal state.
+    let attempts = 0;
+    const maxAttempts = 100; // ~300s window
+    await new Promise<void>((resolve) => {
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const pollRes = await fetch(`/api/ai-jobs/${jobId}`);
+          if (!pollRes.ok) return;
+          const pollData = await pollRes.json() as { job?: { status: string; steps?: Array<{ message: string }>; errorMessage?: string; output?: { providerRetryAfterMs?: number | null; resumableJobId?: string | null } | null } };
+          const job = pollData.job;
+          if (!job) return;
+          const steps = job.steps ?? [];
+          const latest = steps[steps.length - 1];
+          if (latest?.message) {
+            setAnalyzePhase(latest.message.slice(0, 48));
+            setAnalyzeProgress((p) => Math.min(90, Math.max(p, 40)));
+          }
+          const terminal = ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"].includes(job.status);
+          if (terminal || attempts >= maxAttempts) {
+            clearInterval(interval);
+            // Provider-cooldown signal recorded by the worker — present only when
+            // the run stopped short and a provider is cooling down (i.e. AI is
+            // expected to recover). Drives the auto-retry-when-available banner.
+            const providerRetryAfterMs = typeof job.output?.providerRetryAfterMs === "number" ? job.output.providerRetryAfterMs : null;
+            if (job.status === "SUCCEEDED") {
+              setAnalyzeProgress(100);
+              setContinueJobId(null);
+              setTender((t) => ({ ...t, latestPartialAnalysisJob: null }));
+              router.refresh();
+            } else if (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED") {
+              setError(job.status === "PARTIAL_SUCCESS"
+                ? "Analysis is only partial — generation and export stay blocked until a full analysis succeeds."
+                : (job.errorMessage || "AI analysis failed."));
+              setContinueJobId(jobId);
+              if (job.status === "PARTIAL_SUCCESS") router.refresh();
+              // Auto-retry ONLY when providers are cooling down (recovery
+              // expected). Resumes from the last completed chunk — the durable
+              // job is re-armed + checkpoints replayed server-side. The banner
+              // exposes Retry-now + Cancel via analyzeResult + autoRetrySecondsLeft.
+              if (providerRetryAfterMs !== null) {
+                setAnalyzeResult({
+                  ai: false, fallback: true, jobId, chunks: null, code: null, nextAction: null,
+                  extractionWarnings: null, providerDiagnostics: null,
+                  providerRetryAfterMs, resumableJobId: jobId,
+                });
+                scheduleAutoRetry(Math.max(providerRetryAfterMs, 5_000), jobId);
+              }
+            } else if (attempts >= maxAttempts) {
+              setError("Analysis is taking longer than expected — check the Recovery Command Center.");
+            }
+            resolve();
+          }
+        } catch { /* transient poll error — keep polling */ }
+      }, 3000);
+    });
+    setAnalyzing(false);
+    setAnalyzePhase("");
+    setAnalyzeProgress(0);
+  }
+
   async function handleAnalyzeStreaming() {
     cancelAutoRetry();
     setAnalyzing(true);
@@ -1200,7 +1306,9 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       autoRetryTimerRef.current = null;
       setAutoRetryAt(null);
       setAutoRetrySecondsLeft(null);
-      void handleAnalyzeStreaming();
+      // Auto-retry uses the durable path so it resumes from the last completed
+      // chunk (the job is re-armed + checkpoints replayed server-side).
+      void handleDurableAnalyze();
     }, delayMs);
   }
 
@@ -1757,7 +1865,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
 
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
-            <button onClick={handleAnalyzeStreaming} disabled={analyzing}
+            <button onClick={handleDurableAnalyze} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
               <SparklesIcon />
@@ -2010,8 +2118,16 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                         {analyzeResult.resumableJobId ? " (will resume from last checkpoint)" : ""}
                       </span>
                       <button
+                        onClick={() => { cancelAutoRetry(); void handleDurableAnalyze(); }}
+                        disabled={analyzing}
+                        className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        title="Retry now and resume from the last completed chunk"
+                      >
+                        Retry now
+                      </button>
+                      <button
                         onClick={cancelAutoRetry}
-                        className="ml-auto text-xs text-blue-600 underline hover:text-blue-800"
+                        className="text-xs text-blue-600 underline hover:text-blue-800"
                         title="Cancel auto-retry"
                       >
                         Cancel

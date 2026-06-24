@@ -21,7 +21,7 @@
 import { recordStep, type JobType } from "./ai-jobs";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
-import { executeAnalysis } from "./engine/analysis-orchestrator";
+import { executeAnalysis, finalizeAnalysisJob } from "./engine/analysis-orchestrator";
 import { prisma } from "./prisma";
 import {
   aiRematchExperts,
@@ -43,7 +43,82 @@ export interface JobContext {
   input: Record<string, unknown>;
 }
 
-export type JobHandler = (ctx: JobContext) => Promise<Record<string, unknown>>;
+/**
+ * Terminal-status result contract.
+ *
+ * Most handlers return a plain output object and let the worker
+ * (`/api/ai-jobs/run-next`) call `completeJob()`, which writes SUCCEEDED.
+ *
+ * The AI_ANALYZE handler is different: it drives the job to its own terminal
+ * state (SUCCEEDED only after canonical promotion via finalizeAnalysisJob;
+ * PARTIAL_SUCCESS / FAILED otherwise). When a handler returns this shape the
+ * worker MUST respect `terminalStatus` and MUST NOT call `completeJob()` —
+ * blindly completing would corrupt a PARTIAL_SUCCESS/FAILED analysis into a
+ * SUCCEEDED state and falsely unlock generation/export.
+ */
+export type JobHandlerTerminalResult = {
+  terminalStatus: "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED";
+  output: Record<string, unknown>;
+};
+
+export type JobHandlerResult = Record<string, unknown> | JobHandlerTerminalResult;
+
+export function isTerminalHandlerResult(value: unknown): value is JobHandlerTerminalResult {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "terminalStatus" in (value as Record<string, unknown>) &&
+      typeof (value as JobHandlerTerminalResult).terminalStatus === "string",
+  );
+}
+
+export type JobHandler = (ctx: JobContext) => Promise<JobHandlerResult>;
+
+// ─── AI_ANALYZE terminal-status decision (pure, unit-tested) ─────────────────
+// Centralises the rules that the AI_ANALYZE handler uses so they can be
+// verified without a database:
+//   • Full AI success (success && !isPartial && no error) is the ONLY case that
+//     may finalize and reach SUCCEEDED — and only if the finalizer actually
+//     promoted canonical data (returns SUCCEEDED).
+//   • Partial / fallback / provider-exhausted / error runs NEVER finalize and
+//     NEVER become SUCCEEDED. They preserve PARTIAL_SUCCESS (any progress) or
+//     FAILED (no progress).
+export type AnalyzeExecOutcome = {
+  success: boolean;
+  isPartial: boolean;
+  errorMessage?: string;
+  completedChunks: number;
+};
+
+export type AnalyzeFinalizeOutcome = {
+  // finalizeJob() infers a widened `string` status across its return branches,
+  // so accept string here; the resolver compares against the canonical literals.
+  status: string;
+  code?: string;
+};
+
+export function isFullAiSuccess(exec: AnalyzeExecOutcome): boolean {
+  return exec.success === true && exec.isPartial === false && !exec.errorMessage;
+}
+
+export function resolveAnalyzeTerminalStatus(
+  exec: AnalyzeExecOutcome,
+  finalize: AnalyzeFinalizeOutcome | null,
+): "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" {
+  if (isFullAiSuccess(exec)) {
+    // Promotion is the gate for SUCCEEDED. If the finalizer refused (weak
+    // grounding → FAILED, superseded → PARTIAL_SUCCESS), honour its decision.
+    if (finalize?.status === "SUCCEEDED") return "SUCCEEDED";
+    if (finalize?.status === "PARTIAL_SUCCESS") return "PARTIAL_SUCCESS";
+    return "FAILED";
+  }
+  // Not a full AI success — never promote, never SUCCEEDED. Mirror exactly what
+  // executeAnalysis persisted to the job row: any completed chunk → preserve
+  // PARTIAL_SUCCESS; nothing completed → FAILED. This keeps the worker's
+  // reported status identical to the durable job status.
+  if (exec.completedChunks > 0) return "PARTIAL_SUCCESS";
+  return "FAILED";
+}
 
 function safeJsonArray(value: string | null | undefined): string[] {
   if (!value) return [];
@@ -130,16 +205,50 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         },
       });
 
-      clearInterval(heartbeat);
-      await recordStep(ctx.jobId, { stepName: "analyze.complete", message: `Analysis complete — ${result.requirementCount} requirements extracted`, status: "SUCCEEDED" });
-      return {
+      const baseOutput: Record<string, unknown> = {
         analysisSource: result.analysisSource,
         requirementCount: result.requirementCount,
         isPartial: result.isPartial,
         success: result.success,
         totalChunks: result.totalChunks,
         completedChunks: result.completedChunks,
+        jobId: result.jobId,
       };
+
+      // ── Full AI success: ONLY now may we promote canonical data ──────────
+      // executeAnalysis deliberately leaves the job RUNNING (it never marks
+      // SUCCEEDED itself, because it has not promoted anything). The finalizer
+      // is the single place that writes canonical requirements + canonical
+      // tender metadata and then sets SUCCEEDED. We declare success only after
+      // it confirms the promotion.
+      if (isFullAiSuccess(result)) {
+        const finalize = await finalizeAnalysisJob(result.jobId, ctx.userId);
+        clearInterval(heartbeat);
+        const finalizeCode = "code" in finalize ? (finalize as { code?: string }).code ?? null : null;
+        const terminalStatus = resolveAnalyzeTerminalStatus(result, finalize);
+        await recordStep(ctx.jobId, {
+          stepName: terminalStatus === "SUCCEEDED" ? "analyze.complete" : "analyze.finalize_blocked",
+          message: terminalStatus === "SUCCEEDED"
+            ? `Analysis complete — ${result.requirementCount} requirements promoted to canonical`
+            : `Analysis NOT promoted (${finalizeCode ?? finalize.status}). Generation/export stay blocked.`,
+          status: terminalStatus === "FAILED" ? "FAILED" : "SUCCEEDED",
+        });
+        return { terminalStatus, output: { ...baseOutput, finalizeStatus: finalize.status, finalizeCode } };
+      }
+
+      // ── Partial / fallback / provider-exhausted / source-grounding gaps ──
+      // Do NOT finalize, do NOT overwrite with SUCCEEDED, do NOT create or
+      // unlock GeneratedDocument rows. executeAnalysis already persisted the
+      // PARTIAL_SUCCESS/FAILED state; we surface it as the worker's terminal
+      // status so run-next never blindly completes it as SUCCEEDED.
+      clearInterval(heartbeat);
+      const terminalStatus = resolveAnalyzeTerminalStatus(result, null);
+      await recordStep(ctx.jobId, {
+        stepName: "analyze.partial",
+        message: `Analysis ${terminalStatus === "FAILED" ? "failed" : "partial"} — ${result.completedChunks}/${result.totalChunks} chunks; canonical data NOT promoted.`,
+        status: terminalStatus === "FAILED" ? "FAILED" : "RUNNING",
+      });
+      return { terminalStatus, output: { ...baseOutput, errorMessage: result.errorMessage ?? null } };
     } catch (err) {
       clearInterval(heartbeat);
       await recordStep(ctx.jobId, { stepName: "analyze.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });

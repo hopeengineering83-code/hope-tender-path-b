@@ -19,6 +19,7 @@ import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
 import { executeAnalysis } from "../../../../../lib/engine/analysis-orchestrator";
+import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
 import {
   AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,
@@ -855,6 +856,86 @@ async function handleStreamingAnalyze(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Durable background enqueue — the authoritative production path for AI
+// Analyze. The caller is already authenticated as ADMIN/PROPOSAL_MANAGER by
+// POST(). Here we verify tender ownership, validate extraction quality, and
+// enqueue exactly one durable AI_ANALYZE job via the shared job service.
+// Returns 202 { jobId, status: "QUEUED" }.
+// ---------------------------------------------------------------------------
+async function handleBackgroundEnqueue(
+  req: Request,
+  userId: string,
+  requestId: string,
+  params: { id: string },
+): Promise<Response> {
+  await prismaReady;
+  const { id } = params;
+  const force = new URL(req.url).searchParams.get("force") === "true";
+
+  // Ownership check — scope the tender to this user. createAnalysisJob repeats
+  // this check, but we do it up front so extraction validation never runs on a
+  // tender the caller doesn't own.
+  const tender = await prisma.tender.findFirst({
+    where: { id, userId },
+    include: {
+      files: { select: { id: true, fileName: true, originalFileName: true, extractedText: true } },
+    },
+  });
+  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // Extraction-quality gate BEFORE enqueueing — mirrors the synchronous path so
+  // the durable worker never starts on corrupted or too-weak extraction.
+  const extractionReports = tender.files.map((file) => ({
+    fileName: file.originalFileName || file.fileName,
+    quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
+  }));
+  const corrupted = extractionReports.filter((item) => item.quality.corrupted);
+  if (corrupted.length > 0) {
+    await prisma.tender.update({
+      where: { id },
+      data: { status: "EXTRACTION_CORRUPTED_AI_SKIPPED", analysisExtractionStatus: "OCR_REQUIRED" },
+    }).catch(() => {});
+    return NextResponse.json({
+      error: "AI analysis skipped: extracted tender text is corrupted/gibberish and requires OCR or re-upload before reliable analysis.",
+      code: "EXTRACTION_CORRUPTED_AI_SKIPPED",
+      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+    }, { status: 422 });
+  }
+  const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
+  if (!force && blockers.length > 0) {
+    return NextResponse.json({
+      error: "AI analysis blocked: one or more tender files have poor extraction quality.",
+      code: "EXTRACTION_NOT_READY",
+      nextAction: "OPEN_EXTRACTION_QUALITY",
+      blockers,
+    }, { status: 422 });
+  }
+
+  try {
+    const job = await createAnalysisJob({ tenderId: id, userId });
+    void logAction({
+      userId, action: "AI_ANALYZE", entityType: "Tender", entityId: id,
+      description: `Enqueued durable AI analysis for "${tender.title}" (job ${job.jobId}, ${job.totalChunks} chunk(s))`,
+      metadata: { mode: "background", jobId: job.jobId, totalChunks: job.totalChunks },
+      requestId,
+    }).catch(() => {});
+    return NextResponse.json(
+      { jobId: job.jobId, status: "QUEUED", totalChunks: job.totalChunks },
+      { status: 202 },
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const notReady = /too short|not ready/i.test(msg);
+    return NextResponse.json({
+      error: notReady
+        ? "Tender extraction is not ready for analysis yet — re-extract or upload a clearer file first."
+        : "Failed to enqueue AI analysis.",
+      code: notReady ? "EXTRACTION_NOT_READY" : "ENQUEUE_FAILED",
+    }, { status: 422 });
+  }
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
   let actor;
@@ -868,6 +949,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { error: "Rate limit exceeded — too many analysis requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
       { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
     );
+  }
+
+  // Durable background path — the normal production "Run AI Analyze" button.
+  // Validates ownership + extraction quality, enqueues ONE durable AI_ANALYZE
+  // job, and returns 202 with the jobId so the client can poll
+  // /api/ai-jobs/[jobId] and trigger /api/ai-jobs/run-next. This is NOT the
+  // SSE/synchronous path (those stay for resume/recovery tooling).
+  if (new URL(req.url).searchParams.get("mode") === "background") {
+    return handleBackgroundEnqueue(req, userId, requestId, await params);
   }
 
   const wantsStream = req.headers.get("accept") === "text/event-stream";
