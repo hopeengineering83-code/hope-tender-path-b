@@ -54,6 +54,11 @@ export type AuditAction =
   // Maintenance: regenerate Expert CV DOCX files after the trace-stripper
   // fix landed in expert-cv-docx.ts. Triggered via /regenerate-cvs.
   | "EXPERT_CV_REGENERATE"
+  // Central generation gate blocked a GENERATED-document persist on the
+  // interactive AI-proposal path. The proposal text is still returned to
+  // the UI, but it is NOT persisted as a GeneratedDocument until the
+  // tender is genuinely ready (analysis SUCCEEDED + promoted + grounded).
+  | "AI_PROPOSAL_PERSIST_BLOCKED"
   // Manual reconciliation of GeneratedDocument rows against the current
   // submission plan (POST /api/tenders/[id]/reconcile-docs).
   | "TENDER_DOCS_RECONCILED"

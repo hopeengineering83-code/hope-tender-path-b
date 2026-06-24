@@ -19,15 +19,49 @@ const read = (p: string) => readFileSync(p, "utf-8");
 // ─── Analysis source marker format ───────────────────────────────────────────
 
 describe("REGRESSION: analysis source marker format is stable", () => {
-  it("the 'AI' marker uses the exact prefix 'Analysis source: AI'", () => {
+  it("the 'AI' marker uses the ANCHORED, word-bounded regex /^analysis\\s+source:\\s*ai\\b/im", () => {
     const src = read("lib/engine/analysis-source.ts");
-    // The notesIncludeAiAnalysis function uses a regex to match the marker
-    assert.match(src, /analysis\s+source:\s*ai/i);
+    // Root Cause #3 fix: the regex MUST be anchored (^ + m flag) and
+    // word-bounded (\b) so that "REGEX_FALLBACK_AI_ERROR" in notes
+    // cannot be misread as an AI success marker. The loose form
+    // /analysis\s+source:\s*ai/i is FORBIDDEN as a live regex.
+    assert.match(src, /\/\^analysis\\s\+source:\\s\*ai\\b\/im/);
   });
 
-  it("the 'regex fallback' marker uses the exact prefix 'Analysis source: regex fallback'", () => {
+  it("the 'AI' marker function body does NOT use the loose unanchored regex", () => {
     const src = read("lib/engine/analysis-source.ts");
-    assert.match(src, /analysis\s+source:\s*regex\s+fallback/i);
+    // Root Cause #3 fix: the LIVE regex in notesIncludeAiAnalysis must
+    // be anchored (^) and word-bounded (\b) with the m flag. Comments
+    // may mention the legacy form for context, but the actual
+    // `return /.../.test(...)` must be anchored.
+    const fnStart = src.indexOf("function notesIncludeAiAnalysis");
+    assert.ok(fnStart > -1, "notesIncludeAiAnalysis function must exist");
+    const fnEnd = src.indexOf("}", fnStart);
+    const fnBody = src.slice(fnStart, fnEnd);
+    const returnLine = fnBody.match(/return\s+(\/[^\s]+\.test)/);
+    assert.ok(returnLine, "notesIncludeAiAnalysis must have a return /regex/.test() call");
+    const liveRegex = returnLine[1];
+    // Must start with /^ (anchored) and end with \b/im (word-bounded + multiline)
+    assert.match(liveRegex, /\/\^/, "the live AI-marker regex must be anchored with /^");
+    assert.match(liveRegex, /\\b\/[a-z]*m/, "the live AI-marker regex must end with \\b and include the m flag");
+  });
+
+  it("the 'regex fallback' marker uses the ANCHORED, word-bounded regex", () => {
+    const src = read("lib/engine/analysis-source.ts");
+    assert.match(src, /\/\^analysis\\s\+source:\\s\*regex\\s\+fallback\\b\/im/);
+  });
+
+  it("the 'regex fallback' marker function body does NOT use the loose unanchored regex", () => {
+    const src = read("lib/engine/analysis-source.ts");
+    const fnStart = src.indexOf("function notesIncludeRegexFallback");
+    assert.ok(fnStart > -1, "notesIncludeRegexFallback function must exist");
+    const fnEnd = src.indexOf("}", fnStart);
+    const fnBody = src.slice(fnStart, fnEnd);
+    const returnLine = fnBody.match(/return\s+(\/[^\s]+\.test)/);
+    assert.ok(returnLine, "notesIncludeRegexFallback must have a return /regex/.test() call");
+    const liveRegex = returnLine[1];
+    assert.match(liveRegex, /\/\^/, "the live regex-fallback regex must be anchored with /^");
+    assert.match(liveRegex, /\\b\/[a-z]*m/, "the live regex-fallback regex must end with \\b and include the m flag");
   });
 
   it("the shared canonical builder writes the exact string 'Analysis source: AI (re-run via AI Analyze button).'", () => {
