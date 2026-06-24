@@ -107,37 +107,37 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   } else if (docReadiness.failures.length > 0) {
     nextAction = {
       title: "Bring documents to READY_FOR_EXPORT",
-      href: `/dashboard/tenders/${id}#documents`,
+      href: `/dashboard/tenders/${id}#generated-documents`,
       rationale: `${docReadiness.failures.length} document(s) still need review/validation.`,
     };
   } else if (openHigh.length > 0) {
     nextAction = {
       title: "Close HIGH-severity evaluator objections",
-      href: `#evaluator`,
+      href: `#evaluator-objections`,
       rationale: `${openHigh.length} HIGH objection(s) open from the last evaluator simulation.`,
     };
   } else if (tender.expertMatches.length === 0) {
     nextAction = {
       title: "Select experts for this tender",
-      href: `/dashboard/tenders/${id}#matching`,
+      href: `/dashboard/tenders/${id}#matching-quality`,
       rationale: "No experts are selected yet — the engine will not generate a meaningful proposal.",
     };
   } else if (tender.projectMatches.length === 0) {
     nextAction = {
       title: "Select reference projects for this tender",
-      href: `/dashboard/tenders/${id}#matching`,
+      href: `/dashboard/tenders/${id}#matching-quality`,
       rationale: "No projects are selected yet — the proposal needs comparable evidence.",
     };
   } else if (!latestVersion) {
     nextAction = {
       title: "Generate the technical proposal",
-      href: `/dashboard/tenders/${id}#generate`,
+      href: `/dashboard/tenders/${id}#generated-documents`,
       rationale: "Selections are in place. Run the proposal engine.",
     };
   } else {
     nextAction = {
       title: "Run evaluator simulation on the latest version",
-      href: `/dashboard/tenders/${id}#evaluator`,
+      href: `/dashboard/tenders/${id}#evaluator-objections`,
       rationale: "Last engine run produced a proposal; red-team it before final review.",
     };
   }

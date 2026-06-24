@@ -37,11 +37,11 @@ export function TenderWorkflowActionCenter({ tenderId }: { tenderId: string }) {
           fetchStages();
       } else {
           const targets: Record<number, string> = {
-              1: "#tender-source-files",
+              1: "#tender-files",
               3: "#ai-analyze-section",
               5: "#tender-edit-form",
               8: "#generated-documents",
-              10: "#export-section"
+              10: "#export-readiness"
           };
           const target = targets[s.stage];
           if (target) {
