@@ -2,9 +2,9 @@
 
 ## Executive score
 
-**Overall score: 78 / 100 — strong internal product, not yet enterprise-grade production.**
+**Overall score: 82 / 100 — strong internal product with one P0 audit-control gap closed, not yet enterprise-grade production.**
 
-Hope Tender has a much deeper safety and workflow architecture than a typical prototype: authenticated server-side routes, Prisma-backed sessions, CSRF/CSP middleware, AI provider fallback policy, tender-stage gates, source-traceability tests, and extensive regression coverage. The score is held back by operational complexity, duplicated/redundant surfaces, limited full-stack/e2e verification in this audit run, and remaining risks around route consistency, long-running AI jobs, storage scale, and maintainability.
+Hope Tender has a much deeper safety and workflow architecture than a typical prototype: authenticated server-side routes, Prisma-backed sessions, CSRF/CSP middleware, AI provider fallback policy, tender-stage gates, source-traceability tests, and extensive regression coverage. The score is held back by operational complexity, duplicated/redundant surfaces, limited full-stack/e2e verification in this audit run, and remaining risks around long-running AI jobs, storage scale, and maintainability. This revision adds a generated API route security matrix to reduce route-consistency risk.
 
 ## Scoring breakdown
 
@@ -12,11 +12,11 @@ Hope Tender has a much deeper safety and workflow architecture than a typical pr
 |---|---:|---:|---:|---|
 | Product completeness | 86 | 15% | 12.9 | End-to-end tender intake, analysis, matching, compliance, generation, review, export, admin, diagnostics, PWA, and Electron surfaces exist. |
 | Architecture | 82 | 15% | 12.3 | Clear Next.js App Router + Prisma + engine-module separation, but the engine/API surface is broad and hard to reason about. |
-| Security | 80 | 15% | 12.0 | Strong session HMAC, DB session revocation, production security headers, CSRF origin checks, route RBAC patterns, and secret redaction. Gaps remain in proving every route is consistently authorized and rate-limited. |
-| Data integrity and tenant isolation | 79 | 12% | 9.5 | Trust-level model and source grounding are strong; multi-tenant isolation appears intentional. Needs stronger automated route-coverage proof across all 144 route handlers. |
+| Security | 84 | 15% | 12.6 | Strong session HMAC, DB session revocation, production security headers, CSRF origin checks, route RBAC patterns, secret redaction, and a generated API route security matrix. Gaps remain in proving runtime behavior of every route/method combination. |
+| Data integrity and tenant isolation | 82 | 12% | 9.8 | Trust-level model and source grounding are strong; multi-tenant isolation appears intentional. Static route coverage is now tracked for all 144 route handlers; deeper runtime tenant-isolation proofs remain needed. |
 | AI safety and proposal quality controls | 84 | 13% | 10.9 | Best area: reviewed-evidence gates, regex-fallback blockers, provider diagnostics, chunk resume, fallback redaction, and benchmark/proof-density controls. |
 | Reliability and operations | 73 | 12% | 8.8 | Good health, cron, retry, readiness, and env checks. Risk remains in long-running AI workflows and production storage fallback. |
-| Test confidence | 76 | 10% | 7.6 | Large unit/contract suite passed in progress during audit; full e2e/build was not completed in this audit window. |
+| Test confidence | 76 | 10% | 7.6 | Large unit/contract suite passed during audit; full e2e/build was not completed in this audit window. |
 | Maintainability | 67 | 8% | 5.4 | Many docs and guardrails, but there are many API routes/components and accumulated audit/fix docs; onboarding and change safety are harder than they should be. |
 
 ## What is genuinely strong
@@ -29,13 +29,13 @@ Hope Tender has a much deeper safety and workflow architecture than a typical pr
 
 ## Major risks and gaps
 
-### 1. Route surface is too large to trust by inspection alone
+### 1. Route surface is large and now has static inventory coverage
 
-There are **144 `route.ts` handlers** under `app/api`. Many import `requireUser` or `requireRole`, but the audit did not establish a machine-checked authorization matrix for every route/method/resource combination. A product handling tender documents, company credentials, generated proposals, and share links needs a formal route inventory with expected auth, role, tenant scope, method, body schema, rate limit, and response-sensitive-fields classification.
+There are **144 `route.ts` handlers** under `app/api`. This revision adds a generated `docs/audits/api-route-security-matrix.md` inventory with auth classification, tenant-scope notes, rate-limit markers, sensitive-field markers, and source-file links for every handler. A test now fails if any handler is missing or classified as `REVIEW_REQUIRED`.
 
-**Impact:** One missed route can expose tender data or allow cross-company actions even if most routes are secure.
+**Impact:** Static inventory coverage reduces the chance that a route is forgotten during review, but it does not replace runtime authorization and cross-tenant tests for every method.
 
-**Recommended fix:** Add a generated `docs/audits/api-route-security-matrix.md` plus a test that fails when a new route is added without an entry.
+**Recommended fix:** Extend the matrix into executable per-route authorization tests for high-risk tender, document, export, share-link, and admin routes.
 
 ### 2. AI workflow complexity is high
 
@@ -73,7 +73,7 @@ Typecheck, lint, and the unit/contract test suite passed in this audit run. This
 
 ### P0 — before production expansion
 
-- Build and enforce an API route security matrix for all 144 route handlers.
+- Extend the generated API route security matrix into executable per-route authorization tests for high-risk routes.
 - Require object/blob storage for production-scale deployments; keep DB base64 as emergency-only.
 - Run and record a clean `npm run release:verify` on the deployment branch.
 - Add generated checks for sensitive response fields (`fileContent`, proposal body, raw provider bodies, secrets) across all list/detail endpoints.
