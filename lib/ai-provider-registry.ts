@@ -477,13 +477,40 @@ export function getProviderModel(
       : slot === "fastModel"
         ? entry.env.fastModel
         : entry.env.proposalModel;
+
+  // Z.ai known-invalid model codes — these were copy-pasted from earlier
+  // .env.example templates and silently break the Z.ai tier at runtime
+  // with HTTP 400 code 1211 "Unknown Model". Reject them here and fall
+  // through to the safe default so the chain stays healthy even when
+  // Vercel env vars still hold stale values. Bare "glm-4" is also rejected
+  // because Z.ai's OpenAI-compatible endpoint requires the "-flash" suffix
+  // for the GLM-4 family on this account tier.
+  const ZAI_INVALID_MODEL_CODES = new Set([
+    "glm-4",
+    "glm-4.7-flash",
+    "glm-4.5-flash",
+    "glm-4.6-flash",
+    "glm-4.7",
+    "glm-4.5",
+    "glm-4.6",
+  ]);
+  const isZaiInvalid = (value: string | undefined): boolean =>
+    provider === "zai" && Boolean(value) && ZAI_INVALID_MODEL_CODES.has(value!.toLowerCase());
+
   const fromEnv = envName ? env[envName]?.trim() : undefined;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  if (fromEnv && fromEnv.length > 0 && !isZaiInvalid(fromEnv)) return fromEnv;
+  if (isZaiInvalid(fromEnv)) {
+    console.warn(
+      `[ai-provider-registry] ZAI model override "${fromEnv}" is a known-invalid code ` +
+        `(HTTP 400 code 1211 "Unknown Model"). Falling back to "${entry.defaults[slot]}". ` +
+        `Remove the ZAI_*_MODEL env var or set it to "glm-4-flash".`,
+    );
+  }
   // Analysis/fast fall back to the proposal model env if their specific env is
   // unset (mirrors prior getMistralAnalysisModel behaviour), then to defaults.
   if (slot !== "proposalModel") {
     const proposalEnv = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
-    if (proposalEnv && proposalEnv.length > 0) return proposalEnv;
+    if (proposalEnv && proposalEnv.length > 0 && !isZaiInvalid(proposalEnv)) return proposalEnv;
   }
   return entry.defaults[slot];
 }

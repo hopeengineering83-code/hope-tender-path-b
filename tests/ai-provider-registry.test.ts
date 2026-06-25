@@ -102,9 +102,39 @@ describe("6. Z.ai general endpoint + configured model", () => {
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
     assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
     process.env.ZAI_BASE_URL = "https://api.z.ai/api/paas/v4/custom";
+    // Known-invalid Z.ai model codes (copy-pasted from stale .env.example)
+    // MUST fall back to the safe default "glm-4-flash" instead of breaking
+    // the Z.ai tier at runtime with HTTP 400 code 1211 "Unknown Model".
     process.env.ZAI_ANALYSIS_MODEL = "glm-4.5-flash";
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4/custom");
-    assert.equal(getProviderModel("zai", "extraction"), "glm-4.5-flash");
+    assert.equal(getProviderModel("zai", "extraction"), "glm-4-flash",
+      "glm-4.5-flash override must fall back to glm-4-flash (registry guard)");
+  });
+  it("rejects bare 'glm-4' as a Z.ai model override (HTTP 400 'Unknown Model')", () => {
+    delete process.env.ZAI_PROPOSAL_MODEL;
+    delete process.env.ZAI_ANALYSIS_MODEL;
+    delete process.env.ZAI_FAST_MODEL;
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4";
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash",
+      "bare 'glm-4' override must fall back to glm-4-flash (registry guard)");
+    delete process.env.ZAI_PROPOSAL_MODEL;
+  });
+  it("rejects 'glm-4.7-flash' as a Z.ai model override", () => {
+    delete process.env.ZAI_PROPOSAL_MODEL;
+    delete process.env.ZAI_ANALYSIS_MODEL;
+    delete process.env.ZAI_FAST_MODEL;
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4.7-flash";
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash",
+      "glm-4.7-flash override must fall back to glm-4-flash (registry guard)");
+    delete process.env.ZAI_PROPOSAL_MODEL;
+  });
+  it("accepts a valid explicit Z.ai model override (glm-4-flash)", () => {
+    delete process.env.ZAI_PROPOSAL_MODEL;
+    delete process.env.ZAI_ANALYSIS_MODEL;
+    delete process.env.ZAI_FAST_MODEL;
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4-flash";
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
+    delete process.env.ZAI_PROPOSAL_MODEL;
   });
   it("is NOT a Coding Plan endpoint", () => {
     assert.ok(!getProviderBaseUrl("zai")!.includes("coding"));

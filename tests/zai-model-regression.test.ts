@@ -15,7 +15,7 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
     assert.match(reg, /fastModel:\s*"glm-4-flash"/);
   });
 
-  it("NO file in the codebase uses glm-4.7-flash as a model value", () => {
+  it("NO file in the codebase uses glm-4.7-flash as a model value (except the registry rejection list)", () => {
     // Check every source file except node_modules
     const files = [
       "lib/ai-provider-registry.ts",
@@ -34,6 +34,18 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
     ];
     for (const f of files) {
       const src = read(f);
+      if (f === "lib/ai-provider-registry.ts") {
+        // The registry is ALLOWED to mention glm-4.7-flash / glm-4.5-flash /
+        // glm-4 inside the ZAI_INVALID_MODEL_CODES rejection set — that is the
+        // defensive guard that prevents stale env overrides from breaking the
+        // Z.ai tier at runtime. Only forbid using them as a "Model: ...",
+        // "modelDefault: ...", or "default: ..." value.
+        assert.ok(
+          !/Model:\s*"glm-4\.7|modelDefault:\s*"glm-4\.7|default:\s*"glm-4\.7-flash"/.test(src),
+          `${f} must NOT use glm-4.7-flash as a model/default value (rejection-list usage is OK)`,
+        );
+        continue;
+      }
       assert.ok(
         !/Model:\s*"glm-4\.7|modelDefault.*glm-4\.7|default.*glm-4\.7-flash|glm-4\.7-flash/.test(src),
         `${f} must NOT reference glm-4.7-flash`,
