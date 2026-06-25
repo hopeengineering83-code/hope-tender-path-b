@@ -33,6 +33,8 @@ export default defineConfig({
           ...process.env,
           NEXT_TELEMETRY_DISABLED: "1",
           DATABASE_URL: process.env.DATABASE_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder",
+          SESSION_SECRET: process.env.SESSION_SECRET || "playwright-local-session-secret-32-chars-min",
+          ZAI_API_KEY: process.env.ZAI_API_KEY || "playwright-local-zai-placeholder",
           // Full-auth CI runs against an isolated disposable database. Permit
           // the bounded DB file fallback only for that harness; production and
           // previews still require durable Blob/S3 storage.

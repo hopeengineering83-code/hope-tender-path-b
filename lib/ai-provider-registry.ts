@@ -17,6 +17,7 @@
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
   PROVIDER_API_KEY_ENV,
+  ZAI_FORBIDDEN_MODEL_OVERRIDES,
 } from "./ai-provider-catalog.cjs";
 
 export type AiProviderName =
@@ -120,6 +121,19 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const ANALYSIS_TIMEOUT_MS = 45_000;
 
 const FALLBACK_RETRY: ProviderRetryPolicy = { maxRetries: 0, retryOnAuth: false, retryOnBilling: false };
+
+const FORBIDDEN_ZAI_MODELS = new Set(ZAI_FORBIDDEN_MODEL_OVERRIDES);
+
+export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): { valid: boolean; reason?: string } {
+  const candidates = ["ZAI_PROPOSAL_MODEL", "ZAI_ANALYSIS_MODEL", "ZAI_FAST_MODEL"];
+  for (const name of candidates) {
+    const model = env[name]?.trim();
+    if (model && FORBIDDEN_ZAI_MODELS.has(model)) {
+      return { valid: false, reason: `${name}=${model} is forbidden; use glm-4-flash.` };
+    }
+  }
+  return { valid: true };
+}
 
 // The authoritative registry. Order in this array is irrelevant — rank governs
 // the canonical sequence — but it is kept in canonical order for readability.
@@ -444,6 +458,9 @@ export function isProviderConfigured(
     // OpenRouter is only "configured" when it has a key AND a valid explicit
     // `:free` model — otherwise a request could create paid usage.
     return Boolean(readProviderKey(provider, env)) && openRouterModelValidity(env).valid;
+  }
+  if (provider === "zai") {
+    return Boolean(readProviderKey(provider, env)) && zaiModelValidity(env).valid;
   }
   return Boolean(readProviderKey(provider, env));
 }

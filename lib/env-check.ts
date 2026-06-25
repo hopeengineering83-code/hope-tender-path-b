@@ -1,3 +1,4 @@
+import { AI_PROVIDER_API_KEY_ENVS, ZAI_FORBIDDEN_MODEL_OVERRIDES } from "./ai-provider-catalog.cjs";
 import { logger } from "./observability";
 /**
  * Startup environment validation.
@@ -27,53 +28,41 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
 ];
 
-// Canonical provider key order — mirrors lib/ai-provider-registry.ts
-// CANONICAL_AI_PROVIDER_ORDER (zai → cerebras → mistral → groq → openrouter →
-// gemini → openai → together → deepseek → anthropic).
-const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
-  {
-    name: "ZAI_API_KEY",
-    description: "Z.ai GLM API key. First-tier provider in the canonical chain (general OpenAI-compatible endpoint).",
-  },
-  {
-    name: "CEREBRAS_API_KEY",
-    description: "Cerebras API key. Second-tier provider (OpenAI-compatible, uses max_completion_tokens).",
-  },
-  {
-    name: "MISTRAL_API_KEY",
-    description: "Mistral API key. Third-tier proposal/validation provider and analysis fallback.",
-  },
-  {
-    name: "GROQ_API_KEY",
-    description: "Groq API key. Fourth-tier proposal fallback provider.",
-  },
-  {
-    name: "OPENROUTER_API_KEY",
-    description: "OpenRouter API key. Fifth-tier aggregator — requires an explicit ':free' model.",
-  },
-  {
-    name: "GEMINI_API_KEY",
-    description:
-      "Google Gemini API key (AIza...). Sixth-tier provider in the canonical chain. " +
-      "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
-  },
-  {
-    name: "OPENAI_API_KEY",
-    description: "OpenAI API key (sk-...). Seventh-tier provider in the canonical chain.",
-  },
-  {
-    name: "TOGETHER_API_KEY",
-    description: "Together API key. Eighth-tier proposal fallback provider.",
-  },
-  {
-    name: "DEEPSEEK_API_KEY",
-    description: "DeepSeek API key. Ninth-tier fallback via OpenAI-compatible endpoint.",
-  },
-  {
-    name: "ANTHROPIC_API_KEY",
-    description: "Anthropic Claude API key (sk-ant-...). Last-resort, emergency-only provider; Claude must remain last in the chain.",
-  },
-];
+// Canonical provider key order comes from the shared provider catalog so
+// startup/runtime validation cannot drift from build-time validation or the
+// registry fallback order.
+const AI_PROVIDER_KEY_DESCRIPTIONS: Record<string, string> = {
+  ZAI_API_KEY: "Z.ai GLM API key. First-tier provider in the canonical chain (general OpenAI-compatible endpoint).",
+  CEREBRAS_API_KEY: "Cerebras API key. Second-tier provider (OpenAI-compatible, uses max_completion_tokens).",
+  MISTRAL_API_KEY: "Mistral API key. Third-tier proposal/validation provider and analysis fallback.",
+  GROQ_API_KEY: "Groq API key. Fourth-tier proposal fallback provider.",
+  OPENROUTER_API_KEY: "OpenRouter API key. Fifth-tier aggregator — requires an explicit ':free' model.",
+  GEMINI_API_KEY:
+    "Google Gemini API key (AIza...). Sixth-tier provider in the canonical chain. " +
+    "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
+  OPENAI_API_KEY: "OpenAI API key (sk-...). Seventh-tier provider in the canonical chain.",
+  TOGETHER_API_KEY: "Together API key. Eighth-tier proposal fallback provider.",
+  DEEPSEEK_API_KEY: "DeepSeek API key. Ninth-tier fallback via OpenAI-compatible endpoint.",
+  ANTHROPIC_API_KEY: "Anthropic Claude API key (sk-ant-...). Last-resort, emergency-only provider; Claude must remain last in the chain.",
+};
+
+const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = AI_PROVIDER_API_KEY_ENVS.map((name) => ({
+  name,
+  description: AI_PROVIDER_KEY_DESCRIPTIONS[name] ?? `${name} AI provider key.`,
+}));
+
+const ZAI_MODEL_ENVS = ["ZAI_PROPOSAL_MODEL", "ZAI_ANALYSIS_MODEL", "ZAI_FAST_MODEL"] as const;
+const FORBIDDEN_ZAI_MODELS = new Set<string>(ZAI_FORBIDDEN_MODEL_OVERRIDES);
+
+function invalidZaiModelOverride(env: Record<string, string | undefined>): string | null {
+  for (const name of ZAI_MODEL_ENVS) {
+    const model = env[name]?.trim();
+    if (model && FORBIDDEN_ZAI_MODELS.has(model)) {
+      return `${name}=${model} is forbidden; use glm-4-flash.`;
+    }
+  }
+  return null;
+}
 
 const INSECURE_DEFAULTS: Record<string, string> = {
   SESSION_SECRET: "hope-tender-path-built-in-secret-v1",
@@ -152,8 +141,19 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
     }
   }
 
-  // At least one AI provider key.
-  const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
+  // At least one valid AI provider key. Z.ai is not treated as configured when
+  // an explicitly forbidden model override is present, matching the registry
+  // request-time configured check.
+  const zaiModelError = invalidZaiModelOverride(env);
+  if (zaiModelError) {
+    if (isProd || (isVercelPreview && strictPreview)) errors.push(zaiModelError);
+    else warnings.push(zaiModelError);
+  }
+
+  const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => {
+    if (name !== "ZAI_API_KEY") return Boolean(env[name]);
+    return Boolean(env[name]) && !zaiModelError;
+  });
   if (!hasAnyAIKey) {
     const message =
       `At least one AI provider key is required (${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}). ` +
@@ -203,18 +203,11 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(
-    process.env.ZAI_API_KEY ||
-    process.env.CEREBRAS_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.MISTRAL_API_KEY ||
-    process.env.DEEPSEEK_API_KEY ||
-    process.env.GROQ_API_KEY ||
-    process.env.TOGETHER_API_KEY ||
-    process.env.OPENROUTER_API_KEY,
-  );
+  const zaiModelError = invalidZaiModelOverride(process.env as Record<string, string | undefined>);
+  return AI_PROVIDER_KEYS.some(({ name }) => {
+    if (name !== "ZAI_API_KEY") return Boolean(process.env[name]);
+    return Boolean(process.env[name]) && !zaiModelError;
+  });
 }
 
 // Alias used in diagnostics and other routes

@@ -23,6 +23,7 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
+  containsMetadataPlaceholder,
 } from "../lib/engine/metadata-validators";
 import { CleanCorruptedMetadataButton } from "./clean-corrupted-metadata-button";
 
@@ -50,6 +51,25 @@ function badFieldsFor(tender: TenderShape): Array<{ field: string; label: string
   if (tender.clientContactName && tender.clientContactName.trim() !== "" && !isValidClientContact(tender.clientContactName)) {
     bad.push({ field: "clientContactName", label: "Client Contact", stored: tender.clientContactName });
   }
+
+  // Generic placeholder check for all relevant fields
+  const fieldsToCheck: Array<[keyof TenderShape, string]> = [
+    ["reference", "Reference Number"],
+    ["clientName", "Client Name"],
+    ["country", "Country"],
+    ["clientContactName", "Client Contact"]
+  ];
+
+  for (const [field, label] of fieldsToCheck) {
+    const val = tender[field];
+    if (val && typeof val === "string" && containsMetadataPlaceholder(val)) {
+      // Only push if not already caught by specific validators
+      if (!bad.some(b => b.field === field)) {
+        bad.push({ field, label, stored: val });
+      }
+    }
+  }
+
   return bad;
 }
 
