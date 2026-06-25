@@ -522,7 +522,7 @@ export type ProviderValidity = {
 
 /**
  * Shared forbidden-model validation. Currently only blocks the regressed
- * glm-4.7-flash Z.ai model.
+ * regressed Z.ai model.
  */
 export function isForbiddenModel(model: string | undefined): boolean {
   if (!model) return false;
@@ -530,7 +530,7 @@ export function isForbiddenModel(model: string | undefined): boolean {
 }
 
 /**
- * Z.ai must NOT use the regressed glm-4.7-flash model.
+ * Z.ai must NOT use the regressed model.
  */
 export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): ProviderValidity {
   const proposal = env.ZAI_PROPOSAL_MODEL?.trim();

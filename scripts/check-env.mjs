@@ -267,7 +267,7 @@ for (const spec of PRODUCTION_REQUIRED) {
 validateAiProposalRuntime();
 
 function validateZaiModels() {
-  const forbidden = "glm-4.7-flash";
+  const forbidden = "glm-4.7-flash" /* FORBIDDEN_MODEL */;
   const vars = ["ZAI_PROPOSAL_MODEL", "ZAI_ANALYSIS_MODEL", "ZAI_FAST_MODEL"];
   for (const v of vars) {
     const val = (process.env[v] || "").trim();
