@@ -43,7 +43,7 @@ const contentSecurityPolicy = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-inline'",
   "connect-src 'self' https: wss:",
   "worker-src 'self' blob:",
   "media-src 'self' blob:",
@@ -69,16 +69,13 @@ const nextConfig = {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
   env: {
-    NEXT_PUBLIC_AI_ENABLED: [
-      "MISTRAL_API_KEY",
-      "GROQ_API_KEY",
-      "OPENROUTER_API_KEY",
-      "GEMINI_API_KEY",
-      "OPENAI_API_KEY",
-      "TOGETHER_API_KEY",
-      "DEEPSEEK_API_KEY",
-      "ANTHROPIC_API_KEY",
-    ].some((name) => Boolean(process.env[name])) ? "true" : "false",
+    // Use the shared catalog so the build-time flag agrees with the runtime
+    // check in lib/env-check.ts. Previously this hardcoded 8 of the 10
+    // canonical providers (omitted ZAI_API_KEY + CEREBRAS_API_KEY), so a
+    // build with only Z.ai configured would report AI as disabled.
+    NEXT_PUBLIC_AI_ENABLED: require("./lib/ai-provider-catalog.cjs").AI_PROVIDER_API_KEY_ENVS.some(
+      (name) => Boolean(process.env[name]),
+    ) ? "true" : "false",
     NEXT_PUBLIC_BUILD_SHA: (process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? "").slice(0, 8) || "dev",
     NEXT_PUBLIC_BUILD_ENV: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development",
     NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),

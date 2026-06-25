@@ -1108,6 +1108,9 @@ model PasswordResetToken {
 
   @@index([userId])
   @@index([expiresAt])
+  // Composite index added by migration 20260614170000 — used for
+  // "list recent reset tokens for a user" admin queries.
+  @@index([userId, createdAt])
 }
 
 // ─── RateLimitBucket ─────────────────────────────────────────────────────────
@@ -1118,6 +1121,10 @@ model RateLimitBucket {
   resetAt   DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Added by migration 20260614170000 — used by the cleanup job that
+  // purges expired buckets before they accumulate.
+  @@index([resetAt])
 }
 
 // DB-005 FIX: This table was created by migration 20260613190000 but had no

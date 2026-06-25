@@ -4,8 +4,8 @@
   "installCommand": "npm ci",
   "crons": [
     {
-      "path": "/api/ai-jobs/run-next",
-      "schedule": "0 0 * * *"
+      "path": "/api/cron/deadline-alerts",
+      "schedule": "0 8 * * *"
     },
     {
       "path": "/api/cron/cleanup-old-records",

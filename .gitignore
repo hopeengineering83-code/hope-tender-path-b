@@ -16,3 +16,21 @@ benchmark-samples/
 
 # Local dev file storage (storage adapter writes here in non-Vercel environments)
 .storage/
+
+# Duplicate project trees — these are full Next.js project copies used
+# only for local gap analysis. They must NEVER be committed to git or
+# uploaded to Vercel (causes build OOM from ~28K extra TypeScript files
+# being pulled into type-checking). They are also excluded in tsconfig.json
+# and .eslintignore.
+repo/
+repo-866/
+repo-fix/
+repo-pr866/
+
+# Skill scaffolding — ships its own broken imports to z-ai-web-dev-sdk
+# which is not part of this app's dependencies. Also excluded in tsconfig.json
+# and .eslintignore.
+skills/
+
+# User uploads (transient — screenshots, etc.)
+upload/

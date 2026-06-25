@@ -478,31 +478,37 @@ export function getProviderModel(
         ? entry.env.fastModel
         : entry.env.proposalModel;
 
-  // Z.ai known-invalid model codes — these were copy-pasted from earlier
-  // .env.example templates and silently break the Z.ai tier at runtime
-  // with HTTP 400 code 1211 "Unknown Model". Reject them here and fall
-  // through to the safe default so the chain stays healthy even when
-  // Vercel env vars still hold stale values. Bare "glm-4" is also rejected
-  // because Z.ai's OpenAI-compatible endpoint requires the "-flash" suffix
-  // for the GLM-4 family on this account tier.
-  const ZAI_INVALID_MODEL_CODES = new Set([
-    "glm-4",
-    "glm-4.7-flash",
-    "glm-4.5-flash",
-    "glm-4.6-flash",
-    "glm-4.7",
-    "glm-4.5",
-    "glm-4.6",
+  // Z.ai model allowlist — only these model codes are accepted from env
+  // overrides. Any other value (including the stale glm-4.7-flash /
+  // glm-4.5-flash / glm-4.6-flash / bare glm-4 that previous .env.example
+  // templates suggested) is rejected and falls back to the safe default.
+  // This is a positive allowlist rather than a rejection set so it catches
+  // ALL unknown values, including future invalid codes we haven't seen.
+  //
+  // CONFIRMED VALID on the Z.ai OpenAI-compatible endpoint at
+  // https://api.z.ai/api/paas/v4 (verified 2026-06-25 via PR #864):
+  //   - glm-4-flash  (the only confirmed-working model on this account tier)
+  //
+  // Models like glm-4.5-flash, glm-4.6-flash, glm-4.7-flash, bare glm-4
+  // all return HTTP 400 code 1211 "Unknown Model" on this account tier.
+  // If Z.ai enables additional models on your account, add them here after
+  // verifying they work via the /api/admin/ai-provider-health/test endpoint.
+  const ZAI_VALID_MODEL_CODES = new Set([
+    "glm-4-flash", // default — fast, cheap, confirmed working (PR #864)
   ]);
-  const isZaiInvalid = (value: string | undefined): boolean =>
-    provider === "zai" && Boolean(value) && ZAI_INVALID_MODEL_CODES.has(value!.toLowerCase());
+  const isZaiInvalid = (value: string | undefined): boolean => {
+    if (provider !== "zai") return false;
+    if (!value) return false;
+    return !ZAI_VALID_MODEL_CODES.has(value.toLowerCase());
+  };
 
   const fromEnv = envName ? env[envName]?.trim() : undefined;
   if (fromEnv && fromEnv.length > 0 && !isZaiInvalid(fromEnv)) return fromEnv;
   if (isZaiInvalid(fromEnv)) {
     console.warn(
-      `[ai-provider-registry] ZAI model override "${fromEnv}" is a known-invalid code ` +
-        `(HTTP 400 code 1211 "Unknown Model"). Falling back to "${entry.defaults[slot]}". ` +
+      `[ai-provider-registry] ZAI model override "${fromEnv}" is not in the ` +
+        `known-valid allowlist (HTTP 400 code 1211 "Unknown Model" risk). ` +
+        `Falling back to "${entry.defaults[slot]}". ` +
         `Remove the ZAI_*_MODEL env var or set it to "glm-4-flash".`,
     );
   }

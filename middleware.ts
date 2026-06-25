@@ -168,5 +168,8 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/:path*", "/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Single matcher covers all routes except Next.js static assets.
+  // (Previously had a redundant "/api/:path*" entry that was fully covered
+  // by the negative-lookahead pattern below.)
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
