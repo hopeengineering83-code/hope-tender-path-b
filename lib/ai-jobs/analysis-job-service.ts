@@ -418,6 +418,13 @@ export async function finalizeJob(jobId: string, userId: string) {
             data: {
                 ...canonicalData,
                 analysisSource: "AI",
+                // Use the canonical ExtractionStatus vocabulary the downstream
+                // gates understand (export-readiness, final-submission-readiness,
+                // readiness-scoring, analysis-quality). The previous bespoke
+                // values "FULL_AI_SUCCESS"/"PARTIAL_AI_SUCCESS" were write-only
+                // orphans no gate recognized — so a PARTIAL run via the durable
+                // worker escaped the partial-extraction cap/export-block and was
+                // treated as a fully trusted analysis.
                 analysisExtractionStatus: failed.length > 0 ? "PARTIAL_EXTRACTION_AI_ANALYZED" : "FULL_EXTRACTION_AI_ANALYZED",
             }
         });
