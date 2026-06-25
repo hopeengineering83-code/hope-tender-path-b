@@ -73,7 +73,7 @@ type TraceabilitySummary = {
   selectedProjectsWithWeakEvidence: number;
 };
 
-export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
+export default function RequirementCoveragePanel({ tenderId, id }: { tenderId: string; id?: string }) {
   const router = useRouter();
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -381,7 +381,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       <div className="grid grid-cols-5 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
         {[
           { label: "Mandatory", value: data.totalMandatory, color: "text-gray-800" },
-          { label: "Traced", value: data.totalMandatory - data.missingSourceRef, color: "text-blue-700" },
+          { label: "Mandatory Traced", value: data.totalMandatory - data.missingSourceRef, color: "text-blue-700" },
           { label: "Covered", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-700" },
           { label: "Uncovered", value: data.uncovered, color: data.uncovered > 0 ? "text-red-600" : "text-gray-400" },

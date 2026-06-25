@@ -52,7 +52,7 @@ const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-
  * contains a "Bid-Team to confirm" / "TBC" / "TBD" / "placeholder" string
  * anywhere — not just as the whole value. Used by sanitize-stored-metadata
  * so the engine never reads internal placeholder text from any column. */
-export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|to\s+be\s+determined|not\s+specified|not\s+provided|unknown|pending|placeholder)\b|^(tbc|tbd|tba|n\/a|na|none|-+|blank)$/i;
+export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|to\s+be\s+determined|not\s+specified|not\s+provided|unknown|pending|placeholder|number|tbc|tbd|tba|n\/a|na|none)\b|^(tbc|tbd|tba|n\/a|na|none|-+|blank)$|[\[\(]?(tbc|tbd|tba|n\/a|na)[\]\)]?/i;
 
 export function containsMetadataPlaceholder(value: string | null | undefined): boolean {
   if (!value || typeof value !== "string") return false;
@@ -62,7 +62,7 @@ export function containsMetadataPlaceholder(value: string | null | undefined): b
 }
 
 /** Words that are NOT valid reference numbers when captured alone. */
-const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there)$/i;
+const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|tbc|none|number|refer|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there)$/i;
 
 /** Single-word tokens that are not real first-name + last-name combinations. */
 const CONTACT_NOISE_FRAGMENT = /^(s\s+|the\s+|a\s+|an\s+|contact|person|name|email|tel|phone|address|attn|attention|focal|point|of)/i;

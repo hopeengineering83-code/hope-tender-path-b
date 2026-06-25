@@ -4,6 +4,7 @@ import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profi
 import { detectAnalysisSource } from "@/lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
 import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
+import { CANONICAL_STATUS_CONFIG } from "@/lib/engine/canonical-readiness-state";
 
 type GeneratedDocLike = {
   id?: string;
@@ -97,7 +98,7 @@ function bidOutcomeBadgeClass(outcome: string): string {
   return "bg-amber-100 text-amber-700 border-amber-200";
 }
 
-export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: TenderLike; canonicalReadiness?: CanonicalTenderReadiness | null }) {
+export function ExecutiveSnapshot({ tender, canonicalReadiness, readinessScore }: { tender: TenderLike; canonicalReadiness?: CanonicalTenderReadiness | null; readinessScore?: any | null }) {
   const requirements = tender.requirements ?? [];
   const gaps = tender.complianceGaps ?? [];
   const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
@@ -256,8 +257,40 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness. Use the Canonical Readiness panel for export gating."><p className="text-xs text-slate-400">Workflow Progress</p><p className="mt-1 text-2xl font-bold text-slate-900">{workflowProgress}%</p><p className="text-[10px] text-slate-400">(workflow, not final)</p></div>
+
+      {canonicalReadiness?.modules && (
+        <div className="mt-4 mb-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10 gap-2">
+          {Object.entries(canonicalReadiness.modules).map(([key, detail]) => {
+            const config = (CANONICAL_STATUS_CONFIG as any)[detail.state];
+            if (!config) return null;
+            return (
+              <div key={key} className={`rounded-lg border p-2 text-center ${config.bgClass} ${config.borderClass}`} title={detail.reason}>
+                <p className="text-[9px] font-bold text-slate-500 uppercase truncate">{key.replace(/([A-Z])/g, ' $1')}</p>
+                <div className="flex items-center justify-center gap-1 mt-1">
+                  <span className={`text-xs font-black ${config.textClass}`}>{config.icon}</span>
+                  <span className={`text-[10px] font-bold ${config.textClass}`}>{config.label}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+
+        {readinessScore ? (
+          <div className="rounded-xl bg-slate-900 text-white p-4" title={readinessScore.summary.capReason || "Canonical readiness score"}>
+            <p className="text-xs text-slate-400 uppercase font-bold">Canonical Readiness</p>
+            <p className="mt-1 text-2xl font-black">{readinessScore.summary.readinessScore}%</p>
+            <p className="text-[10px] text-slate-400">({readinessScore.summary.readinessScore >= 80 ? 'READY' : readinessScore.summary.readinessScore >= 50 ? 'PARTIAL' : 'BLOCKED'})</p>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness. Use the Canonical Readiness panel for export gating.">
+            <p className="text-xs text-slate-400 uppercase font-bold">Workflow Progress</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{workflowProgress}%</p>
+            <p className="text-[10px] text-slate-400">(workflow, not final)</p>
+          </div>
+        )}
+
         <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence. Lenient (any link, including PARTIAL): ${evidenceScoreLegacy}%.`}><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p><p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Critical / High</p><p className="mt-1 text-2xl font-bold text-slate-900">{unresolvedCritical}/{unresolvedHigh}</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Experts ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongExperts}</p><p className="text-xs text-slate-500">{reviewedExperts}/{selectedExperts.length} reviewed selected</p></div>
@@ -288,7 +321,16 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
         <div className="rounded-xl border border-slate-100 p-4">
           <p className="text-sm font-semibold text-slate-900">Tender intelligence</p>
           <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-slate-600">
-            <span>Requirements</span><strong className="text-right text-slate-900">{requirements.length}</strong>
+            <span title="Total number of requirements extracted from source documents">Raw Extracted</span>
+            <strong className="text-right text-slate-900">{requirements.length}</strong>
+            <span title="Requirements that have been successfully grounded in the source text (file, page, quote)">Source Grounded</span>
+            <strong className="text-right text-slate-900">{requirements.filter(r => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0).length}</strong>
+            <span title="Requirements marked as MANDATORY or CRITICAL">Mandatory Total</span>
+            <strong className="text-right text-slate-900">{requirements.filter(r => r.priority === "MANDATORY" || r.priority === "CRITICAL").length}</strong>
+            <span title="Requirements successfully extracted and processed by AI (not regex fallback)">AI Verified</span>
+            <strong className="text-right text-slate-900">{analysisSourceNorm === "AI" ? requirements.length : 0}</strong>
+            <span title="Mandatory requirements with strong evidence (FULL or SUBSTANTIAL) and source grounding">Export Ready</span>
+            <strong className="text-right text-slate-900">{evidenceCoverage.requirementsWithStrongEvidence}</strong>
             <span>Evidence rows</span><strong className="text-right text-slate-900">{matrix.length}</strong>
             <span>Extracted files</span><strong className="text-right text-slate-900">{extractedFiles}/{files.length}</strong>
             <span>Selected evidence</span><strong className="text-right text-slate-900">{selectedExperts.length + selectedProjects.length}</strong>

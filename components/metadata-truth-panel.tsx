@@ -17,7 +17,7 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
 
   const metrics = [
     { label: "Extraction Coverage", value: data.extractionCoverage },
-    { label: "Submission Readiness", value: data.readinessScore },
+    { label: "Canonical Readiness", value: data.readinessScore },
     { label: "Source Grounding", value: data.groundingCoverage },
     { label: "Manual Confirmation", value: data.confirmationCoverage },
   ];

@@ -58,7 +58,7 @@ const STEP_TARGETS = [
   "#ai-analyze-section",
   "#tender-edit-form",
   "#requirement-coverage",
-  "#submission-plan-completeness",
+  "#submission-plan-reconciliation",
   "#generated-documents",
   "#generated-documents",
   "#final-package-manifest",
@@ -93,7 +93,7 @@ function stepIcon(step: WorkflowStep) {
   return "→";
 }
 
-export async function NextActionPanel({ tenderId }: { tenderId: string }) {
+export async function NextActionPanel({ tenderId, canonicalReadiness }: { tenderId: string; canonicalReadiness: any | null }) {
   const userId = await getSession();
   if (!userId) return null;
 
@@ -208,6 +208,11 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     (d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED",
   );
 
+
+  // If we have canonicalReadiness, use its blockers and status flags to override
+  // the locally computed ones where they conflict.
+  const canonicalBlockers = canonicalReadiness?.blockers ?? [];
+  const canonicalWarnings = canonicalReadiness?.warnings ?? [];
   const decision = resolveTenderNextAction({
     hasFiles,
     extraction: {
@@ -297,10 +302,33 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.rawVsTrustedRequirements && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
-          <p className="text-xs font-semibold uppercase">Requirement trust split</p>
-          <p className="mt-1 text-xs">
-            Raw fallback requirements: {decision.rawVsTrustedRequirements.raw} · Trusted traced requirements: {decision.rawVsTrustedRequirements.trusted} · Mandatory traced: {decision.rawVsTrustedRequirements.mandatoryTraced}/{decision.rawVsTrustedRequirements.mandatory}
-          </p>
+          <p className="text-xs font-semibold uppercase">Requirement Analysis State</p>
+          <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <div>
+              <p className="text-slate-500 font-medium">Raw Extracted</p>
+              <p className="text-sm font-bold text-slate-900">{decision.rawVsTrustedRequirements.raw}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 font-medium">Source Grounded</p>
+              <p className="text-sm font-bold text-slate-900">{decision.rawVsTrustedRequirements.trusted}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 font-medium">AI Verified</p>
+              <p className={`text-sm font-bold ${decision.primary !== 'REVIEW_REQUIREMENTS' || !decision.label.toLowerCase().includes('fallback') ? 'text-emerald-600' : 'text-amber-600'}`}>
+                {decision.primary !== 'REVIEW_REQUIREMENTS' || !decision.label.toLowerCase().includes('fallback') ? 'YES' : 'FALLBACK'}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-500 font-medium">Mandatory Total</p>
+              <p className="text-sm font-bold text-slate-900">{decision.rawVsTrustedRequirements.mandatory}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 font-medium">Mandatory Traced</p>
+              <p className={`text-sm font-bold ${decision.rawVsTrustedRequirements.mandatoryTraced === decision.rawVsTrustedRequirements.mandatory ? 'text-emerald-600' : 'text-red-600'}`}>
+                {decision.rawVsTrustedRequirements.mandatoryTraced}/{decision.rawVsTrustedRequirements.mandatory}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

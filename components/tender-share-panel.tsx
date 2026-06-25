@@ -14,7 +14,7 @@ interface TenderSharePanelProps {
   tenderId: string;
 }
 
-export function TenderSharePanel({ tenderId }: TenderSharePanelProps) {
+export function TenderSharePanel({ tenderId, id }: TenderSharePanelProps & { id?: string }) {
   const [shares, setShares] = useState<ShareEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -100,7 +100,7 @@ export function TenderSharePanel({ tenderId }: TenderSharePanelProps) {
   const noLinks = !loading && shares.length === 0 && !newShareUrl;
 
   return (
-    <div className="mb-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div id={id} className="mb-4 rounded-xl border border-slate-200 bg-white shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

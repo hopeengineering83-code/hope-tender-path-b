@@ -86,8 +86,8 @@ describe("visible wording contract", () => {
   it("next action panel exposes Fix Extraction First and raw/trusted requirement split", () => {
     const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
     assert.match(source, /Fix Extraction First/);
-    assert.match(source, /Raw fallback requirements/);
-    assert.match(source, /Trusted traced requirements/);
+    assert.match(source, /Raw Extracted/);
+    assert.match(source, /Source Grounded/);
   });
 
   it("untrusted sector warning is visible in the analysis quality panel", () => {

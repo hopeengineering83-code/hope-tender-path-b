@@ -3,9 +3,6 @@ import { FinalPackageManifestPanel } from "../../../../components/final-package-
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
 import { AuthorityReviewTruthPanel } from "../../../../components/authority-review-truth-panel";
 import { MetadataTruthPanel } from "../../../../components/metadata-truth-panel";
-import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
-import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
-import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -20,36 +17,32 @@ import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objec
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
 import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
+import { getFinalSubmissionReadiness } from "../../../../lib/engine/final-submission-readiness";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
 import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
-import { BidControlVerdictPanel } from "../../../../components/bid-control-verdict-panel";
 import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
-import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
-import { ClientSubmissionDetailsPanel } from "../../../../components/client-submission-details-panel";
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
-import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
 import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-suggestions-panel";
 import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
-import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
-import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
-import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
 import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
+import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
+import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
 import { prisma as prismaClient } from "../../../../lib/prisma";
 
 function WorkflowStage({
@@ -142,6 +135,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
+  const readinessScore = await getFinalSubmissionReadiness(prismaClient, { tenderId: id, userId }).catch(() => null);
 
   return (
     <main className="space-y-5" aria-label="Tender workflow workspace">
@@ -154,15 +148,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} />
 
-      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
-      <TenderWorkflowActionCenter tenderId={tender.id} />
-      <RequirementTruthBanner tenderId={tender.id} />
-      <NextActionPanel tenderId={tender.id} />
-      <TenderRecoveryCommandCenter tenderId={tender.id} />
-      <CanonicalReadinessScoreWidget tenderId={tender.id} />
-      <TenderHealthScorePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
-      <BidControlVerdictPanel tenderId={tender.id} />
-      <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
+      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} readinessScore={readinessScore} />
+      <NextActionPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
 
       <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
         Work from Stage 1 through Stage 5. Each major action appears once and uses the canonical server-side readiness gates.
@@ -171,15 +158,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical metadata." open>
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} />
         <ExtractionQualityDashboard tenderId={tender.id} />
-        <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
         <MetadataTruthPanel tenderId={tender.id} />
-        <MetadataCompletionPanel tenderId={tender.id} />
-        <ClientSubmissionDetailsPanel tenderId={tender.id} />
-        <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
+        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} id="ai-analyze-section" />
         <AIHealthPanel />
         <EngineActionPanel
           tenderId={tender.id}
@@ -189,7 +173,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <AIAnalyzeRecoveryPanel tenderId={tender.id} />
-        <RequirementCoveragePanel tenderId={tender.id} />
+        <RequirementCoveragePanel tenderId={tender.id} id="requirement-coverage" />
         <AICopilotSuggestionsPanel tenderId={tender.id} />
         {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
         {ai && <TenderAICopilotPanel tenderId={tender.id} />}
@@ -215,12 +199,17 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
+        <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
         <PricingWorkbookPanel tenderId={tender.id} />
-        <FinalPackageManifestPanel tenderId={tender.id} />
+        <FinalPackageManifestPanel tenderId={tender.id} id="final-package-manifest" />
         <ExportReadinessPanel tenderId={tender.id} />
-        <TenderSharePanel tenderId={tender.id} />
+        <TenderSharePanel tenderId={tender.id} id="export-package" />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
+      <WorkflowStage number={6} title="System recovery and diagnostics" description="Advanced tools to repair source grounding, retry extraction, and resolve lifecycle blocks.">
+        <TenderRecoveryCommandCenter tenderId={tender.id} />
+      </WorkflowStage>
+
       <TenderDownloadActionsPanel tenderId={tender.id} />
     </main>
   );

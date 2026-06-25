@@ -42,6 +42,7 @@ export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\b(?:not\s+provided|not\s+available|not\s+specified|unknown|pending)\b/i,
   /\bn\/?a\b/i,
   /\bplaceholder\b/i,
+  /\bnumber\b/i,
   /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
   /\b\[?fill[\s_-]?in\]?/i,
   /\bexact\s+site\s+to\s+be\s+determined\b/i,

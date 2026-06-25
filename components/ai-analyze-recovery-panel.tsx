@@ -66,7 +66,7 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
         {staged ? (
           <div className="mt-3 rounded-xl border border-white bg-white p-3 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">This staged result is not canonical and cannot enable generation or export.</p>
-            <p className="mt-1">{staged.requirementCount} requirement(s){staged.totalChunks !== null ? ` · ${staged.completedChunks ?? 0}/${staged.totalChunks} chunks` : ""}</p>
+            <p className="mt-1">{staged.requirementCount} raw requirement(s){staged.totalChunks !== null ? ` · ${staged.completedChunks ?? 0}/${staged.totalChunks} chunks` : ""}</p>
             <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{staged.summary.slice(0, 1000)}</p>
             <p className="mt-2 text-xs">{staged.source === "FALLBACK_DRAFT" ? "Re-run with a healthy provider or explicitly review the fallback. Trusted analysis remains unchanged." : "Resume AI Analyze to complete the missing chunks. Trusted analysis remains unchanged."}</p>
           </div>

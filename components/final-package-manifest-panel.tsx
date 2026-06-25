@@ -110,7 +110,7 @@ function ManifestRowsTable({ rows, hasExplicitPlan, faded = false }: { rows: Man
   );
 }
 
-export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string }) {
+export async function FinalPackageManifestPanel({ tenderId, id }: { tenderId: string; id?: string }) {
   const userId = await getSession();
   if (!userId) return null;
 
@@ -207,7 +207,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
     const excludedRows = rows.filter((r) => !r.includedInZip && !blockedRows.some((b) => b.doc.id === r.doc.id));
 
     return (
-      <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
+      <section id={id} className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Final Package Manifest</p>
@@ -274,7 +274,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
   } catch (err) {
     console.error("[FinalPackageManifestPanel] render error:", err);
     return (
-      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+      <section id={id} className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
         <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
       </section>
     );

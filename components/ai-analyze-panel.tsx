@@ -19,7 +19,7 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
+export function AIAnalyzePanel({ tenderId, aiEnabled, id }: Props & { id?: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);
@@ -194,7 +194,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
   const busy = analyzing || isPending;
 
   return (
-    <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
+    <section id={id || "ai-analyze-section"} className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">AI analysis action</p>

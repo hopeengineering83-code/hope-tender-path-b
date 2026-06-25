@@ -135,11 +135,33 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
   const [ocrProvider, setOcrProvider] = useState<string>("auto");
 
   function scrollToPanel(anchorId: string, fallbackMessage: string) {
-    const el = document.getElementById(anchorId);
+    let el = document.getElementById(anchorId);
     if (!el) {
-      setActionMsg(`${fallbackMessage} Panel #${anchorId} is not visible on this page; use the tender detail tabs manually.`);
+      el = document.querySelector(`[id="${anchorId}"]`);
+    }
+    if (!el) {
+      // Try to find the section by stage number if it's a stage link
+      const stageMatch = anchorId.match(/stage-(\d+)/);
+      if (stageMatch) {
+        const stageNum = stageMatch[1];
+        const allSummaries = Array.from(document.querySelectorAll('summary'));
+        el = allSummaries.find(s => s.textContent?.includes(`${stageNum}`)) as HTMLElement;
+      }
+    }
+    if (!el) {
+      setActionMsg(`${fallbackMessage} Panel #${anchorId} is not visible on this page; use the tender stages manually.`);
       return;
     }
+
+    // If it's inside a closed details block, open it
+    let parent = el.parentElement;
+    while (parent) {
+      if (parent.tagName === 'DETAILS') {
+        (parent as HTMLDetailsElement).open = true;
+      }
+      parent = parent.parentElement;
+    }
+
     el.scrollIntoView({ behavior: "smooth" });
     setActionMsg(fallbackMessage);
   }
@@ -166,65 +188,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     return `${recoveryCommandLabel(action)} completed.`;
   }
 
-  // AI Analyze runs the full analysis, which can take 30–90s. A plain POST gives
-  // no feedback (the button just sits on "Working…") and can hit the serverless
-  // timeout — which is why it looked like the command center analysis "wasn't
-  // working". Stream it instead so the user sees live chunk progress and the
-  // same reliable path (auto-retry/fallback) the main panel uses.
-  async function runStreamingAnalyze(path: string): Promise<string> {
-    setAnalyzeProgress(5);
-    setActionMsg("Connecting to AI providers…");
-    const res = await fetch(path, { method: "POST", headers: { Accept: "text/event-stream" } });
 
-    if (!res.ok || !res.body) {
-      const json = await res.json().catch(() => ({}));
-      setAnalyzeProgress(null);
-      throw new Error(json.error ?? json.message ?? "AI Analyze failed to start");
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let finalMsg = "Analysis complete.";
-    let done = false;
-
-    while (!done) {
-      const { done: streamDone, value } = await reader.read();
-      if (streamDone) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-      for (const part of parts) {
-        if (!part.startsWith("data: ")) continue;
-        try {
-          const event = JSON.parse(part.slice(6));
-          if (event.phase === "analyzing" && event.chunk !== undefined) {
-            const total = event.totalChunks ?? 0;
-            setAnalyzeProgress(total ? Math.round(20 + (event.chunk / total) * 60) : 50);
-            setActionMsg(`Analyzing chunk ${event.chunk}${total ? `/${total}` : ""}…`);
-          } else if (event.phase === "extracting") {
-            setAnalyzeProgress(15);
-            setActionMsg("Preparing tender content…");
-          } else if (event.phase === "saving") {
-            setAnalyzeProgress(90);
-            setActionMsg("Saving analysis results…");
-          } else if (event.phase === "complete") {
-            setAnalyzeProgress(100);
-            finalMsg = event.fallback
-              ? "Regex fallback used — approve below or retry when providers recover."
-              : `Analysis complete — ${event.requirementCount ?? 0} requirement(s) extracted.`;
-            done = true;
-          } else if (event.phase === "error") {
-            throw new Error(event.message ?? "Analysis failed");
-          }
-        } catch (e) {
-          if (e instanceof Error && e.message !== "Unexpected end of JSON input") throw e;
-        }
-      }
-    }
-    setAnalyzeProgress(null);
-    return finalMsg;
-  }
 
   async function executeAction(action: string) {
     setActioning(true);
@@ -272,14 +236,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         return;
       }
       if (spec.kind === "api" && spec.path) {
-        // AI Analyze actions stream live progress instead of a blind POST.
-        if (spec.path.includes("/ai-analyze")) {
-          const msg = await runStreamingAnalyze(renderRecoveryActionPath(spec.path, tenderId));
-          setActionMsg(msg);
-          await load();
-          router.refresh();
-          return;
-        }
+
         const isReExtract = action === "RE_EXTRACT_METADATA";
         const fetchOptions: RequestInit = {
           method: spec.method ?? "POST",
@@ -385,13 +342,24 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
           <p className="text-sm font-semibold text-blue-900">{actionLabel}</p>
           {data.primaryNextAction !== "DOWNLOAD_FINAL_ZIP" && (
-            <button
-              onClick={() => void executeAction(data.primaryNextAction)}
-              disabled={actioning}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              <PlayIcon /> {actioning ? "Working…" : "Execute"}
-            </button>
+            <div className="flex items-center gap-2">
+              {data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
+                <input
+                  type="text"
+                  value={approvalNote}
+                  onChange={(e) => setApprovalNote(e.target.value)}
+                  placeholder="Approval note..."
+                  className="rounded border border-blue-200 px-2 py-1 text-[10px] w-32 focus:outline-none focus:border-blue-500"
+                />
+              )}
+              <button
+                onClick={() => void executeAction(data.primaryNextAction)}
+                disabled={actioning || (data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && !approvalNote.trim())}
+                className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <PlayIcon /> {actioning ? "Working…" : "Execute"}
+              </button>
+            </div>
           )}
           {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
             <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
@@ -406,18 +374,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             </div>
           </div>
         )}
-        {data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
-          <div className="mt-2 flex gap-2">
-            <input
-              type="text"
-              value={approvalNote}
-              onChange={(e) => setApprovalNote(e.target.value)}
-              placeholder="Approval note (required)…"
-              className="flex-1 rounded border border-blue-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
-              maxLength={200}
-            />
-          </div>
-        )}
+
         {actionMsg && (
           <p className="mt-2 text-xs text-blue-700 font-medium">{actionMsg}</p>
         )}
