@@ -15,12 +15,12 @@ describe("Z.ai Forbidden Model Protection", () => {
       ZAI_API_KEY: "test-key",
       ZAI_PROPOSAL_MODEL: "glm-4.7-flash"
     };
-    const validity = zaiModelValidity(env as NodeJS.ProcessEnv);
+    const validity = zaiModelValidity(env as unknown as NodeJS.ProcessEnv);
     assert.strictEqual(validity.valid, false);
     assert.match(validity.message!, /forbidden regressed model 'glm-4.7-flash'/);
 
     // isProviderConfigured should also return false
-    assert.strictEqual(isProviderConfigured("zai", env as NodeJS.ProcessEnv), false);
+    assert.strictEqual(isProviderConfigured("zai", env as unknown as NodeJS.ProcessEnv), false);
   });
 
   it("accepts Z.ai when valid model is in env", () => {
@@ -28,8 +28,8 @@ describe("Z.ai Forbidden Model Protection", () => {
       ZAI_API_KEY: "test-key",
       ZAI_PROPOSAL_MODEL: "glm-4-flash"
     };
-    const validity = zaiModelValidity(env as NodeJS.ProcessEnv);
+    const validity = zaiModelValidity(env as unknown as NodeJS.ProcessEnv);
     assert.strictEqual(validity.valid, true);
-    assert.strictEqual(isProviderConfigured("zai", env as NodeJS.ProcessEnv), true);
+    assert.strictEqual(isProviderConfigured("zai", env as unknown as NodeJS.ProcessEnv), true);
   });
 });
