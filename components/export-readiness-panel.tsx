@@ -348,7 +348,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       });
       const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
       if (data.success) {
-        setRepairMessage("Regex fallback analysis approved. Re-checking readiness…");
+        setRepairMessage("Fallback note saved for audit. Re-checking readiness — generation and export remain blocked until full AI analysis succeeds.");
       } else {
         setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
       }

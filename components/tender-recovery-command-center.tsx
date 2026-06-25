@@ -146,7 +146,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
 
   function messageForApiAction(action: string, json: Record<string, unknown>) {
     if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS" || action === "RESUME_AI_ANALYZE") {
-      return json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.";
+      return json.fallback ? "Regex fallback used — generation remains blocked. Retry when providers recover or approve for audit only." : "Analysis completed. Verify results in the Analysis Quality panel.";
     }
     if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;
     if (action === "RUN_ENGINE") return "Engine ran. Review lifecycle, generation readiness, and export readiness before proceeding.";
@@ -284,7 +284,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? "Approval failed");
-        setActionMsg("Fallback analysis approved — generation unblocked.");
+        setActionMsg("Fallback note saved for audit. Generation and export remain blocked until full AI analysis succeeds.");
         setApprovalNote("");
         await load();
         router.refresh();
