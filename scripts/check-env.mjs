@@ -11,7 +11,8 @@
 
 // The canonical provider ORDER and API-key env NAMES come from the single
 // shared catalog (lib/ai-provider-catalog.cjs) — never re-declared here.
-import { AI_PROVIDER_API_KEY_ENVS, ZAI_FORBIDDEN_MODEL_OVERRIDES } from "../lib/ai-provider-catalog.cjs";
+import { AI_PROVIDER_API_KEY_ENVS } from "../lib/ai-provider-catalog.cjs";
+import { ZAI_FORBIDDEN_MODEL_OVERRIDES } from "../lib/ai-provider-catalog.cjs";
 
 // Required in production AND preview deployments (app cannot function without these)
 const ALWAYS_REQUIRED = [
