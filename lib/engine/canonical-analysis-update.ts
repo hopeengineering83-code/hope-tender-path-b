@@ -2,23 +2,10 @@
 // Tender update payload (client/procuring-entity metadata, submission details,
 // source-traceability columns, and the metadataContaminated flag).
 //
-// Previously this ~30-field mapping was duplicated inline in THREE places:
-//   - the streaming AI Analyze route (handleStreamingAnalyze)
-//   - the non-streaming AI Analyze route (POST)
-//   - the durable worker (lib/ai-jobs/analysis-job-service.ts finalizeJob)
-//
-// The duplication caused real divergence bugs (PR #855: the non-streaming and
-// durable paths dropped req.sourceSectionHeading; the durable path persisted NO
-// client metadata at all and skipped contamination detection). Centralising the
-// mapping here guarantees every analysis path writes identical, fully-traceable
-// canonical metadata and runs the same contamination check — satisfying the
-// CLAUDE.md requirements for client extraction (priority #3) and contamination
-// blocking (priority #6).
-//
-// This module is PURE: no Prisma, no I/O. It returns a plain data object the
-// caller spreads into its own `tx.tender.update({ data })`, plus the computed
-// `metadataContaminated` flag. That keeps it trivially unit-testable without a
-// database.
+// This module is intentionally Prisma-free. It supplies a runtime contract so
+// every caller can reject unsupported Tender keys before a database write. That
+// prevents a deployment with stale mapper code from leaking raw Prisma errors
+// or partially promoting an analysis.
 
 import type { AIAnalysisResult } from "../ai";
 import {
@@ -30,8 +17,6 @@ import {
 import { detectMetadataContamination } from "./tender-metadata-completeness";
 
 export type CanonicalAnalysisExisting = {
-  // Existing canonical values that gate whether the AI value is allowed to
-  // overwrite them (mirrors the route's conditional spreads exactly).
   clientName?: string | null;
   submissionMethod?: string | null;
   submissionEmails?: string | null;
@@ -39,17 +24,74 @@ export type CanonicalAnalysisExisting = {
 };
 
 export type CanonicalAnalysisUpdate = {
-  // Spread directly into prisma `tx.tender.update({ data })`. Typed loosely on
-  // purpose so this module stays Prisma-agnostic and unit-testable.
   data: Record<string, unknown>;
-  // True when any client/entity field is contaminated by portal noise / unrelated
-  // text. Callers persist this as Tender.metadataContaminated (it is already
-  // included in `data`, but is returned separately for logging/diagnostics).
   metadataContaminated: boolean;
 };
 
-// The single note line every AI promotion appends, after stripping any prior
-// analysis-source / fallback-diagnostics lines.
+/**
+ * Contract for every value that may be passed to prisma.tender.update during
+ * canonical AI promotion. Keep this list aligned with prisma/schema.prisma.
+ * Classification-only AI fields belong in their own canonical records, not in
+ * Tender unless a reviewed schema migration adds them.
+ */
+export const CANONICAL_TENDER_UPDATE_FIELDS = [
+  "analysisSummary",
+  "title",
+  "evaluationMethodology",
+  "exactFileNaming",
+  "exactFileOrder",
+  "category",
+  "notes",
+  "status",
+  "stage",
+  "procuringEntityName",
+  "clientName",
+  "legalClientName",
+  "donorAgency",
+  "implementingAgency",
+  "country",
+  "clientAddress",
+  "clientContactName",
+  "clientContactTitle",
+  "clientContactEmail",
+  "clientContactPhone",
+  "submissionAddress",
+  "clientCity",
+  "clientWebsite",
+  "submissionEmailSubject",
+  "preBidChannel",
+  "preBidMeetingDate",
+  "preBidMeetingLocation",
+  "clientRepresentative",
+  "reference",
+  "submissionMethod",
+  "submissionEmails",
+  "clientNameSourcePage",
+  "clientNameSourceQuote",
+  "submissionEmailSourcePage",
+  "contactDetailsSourceJson",
+  "submissionMethodSourcePage",
+  "submissionMethodSourceQuote",
+  "submissionAddressSourcePage",
+  "submissionAddressSourceQuote",
+  "evaluationCriteriaSourceJson",
+  "metadataContaminated",
+  "analysisExtractionStatus",
+] as const;
+
+const CANONICAL_TENDER_UPDATE_FIELD_SET = new Set<string>(CANONICAL_TENDER_UPDATE_FIELDS);
+
+/**
+ * Fails closed before Prisma when a caller tries to append an unsupported
+ * field. This is deliberately reusable by streaming, HTTP, and durable paths.
+ */
+export function assertCanonicalTenderUpdateFields(data: Record<string, unknown>): void {
+  const unsupported = Object.keys(data).filter((key) => !CANONICAL_TENDER_UPDATE_FIELD_SET.has(key));
+  if (unsupported.length > 0) {
+    throw new Error(`CANONICAL_TENDER_UPDATE_CONTRACT_FAILED: ${unsupported.join(", ")}`);
+  }
+}
+
 const AI_ANALYSIS_NOTE = "Analysis source: AI (re-run via AI Analyze button).";
 
 export function buildAnalysisNotes(existingNotes: string | null | undefined): string | null {
@@ -68,20 +110,14 @@ export function buildAnalysisNotes(existingNotes: string | null | undefined): st
 }
 
 /**
- * Build the canonical Tender update payload from an AI analysis result.
- *
- * Mirrors the proven streaming-path mapping verbatim: every client/contact/
- * submission field is gated by the same validators (containsMetadataPlaceholder,
- * isValidClientContact, isValidCountry, isValidReferenceNumber) so placeholder
- * text ("Bid-Team to confirm", "TBD", "N/A") never enters canonical metadata,
- * and submissionMethod/submissionEmails only fill when not already set.
+ * Build the canonical Tender update payload from a complete AI analysis.
+ * Placeholder and contaminated values are blocked before they become factual
+ * tender metadata. Callers must still enforce promotion and ZIP gates.
  */
 export function buildCanonicalAnalysisTenderUpdate(
   aiResult: AIAnalysisResult,
   existing: CanonicalAnalysisExisting = {},
 ): CanonicalAnalysisUpdate {
-  // Contamination is evaluated on the effective client name (AI value, falling
-  // back to the existing canonical clientName) plus the other entity fields.
   const clientNameForContaminationCheck = aiResult.procuringEntityName || existing.clientName;
   const metadataContaminated =
     detectMetadataContamination(clientNameForContaminationCheck).contaminated ||
@@ -137,5 +173,6 @@ export function buildCanonicalAnalysisTenderUpdate(
     metadataContaminated,
   };
 
+  assertCanonicalTenderUpdateFields(data);
   return { data, metadataContaminated };
 }
