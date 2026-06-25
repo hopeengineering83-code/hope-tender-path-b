@@ -3,7 +3,7 @@
 // The runtime env-check (lib/env-check.ts) and the build-time check
 // (scripts/check-env.mjs) must agree:
 //   - production REQUIRES DATABASE_URL, SESSION_SECRET, AND at least one
-//     AI key (ANTHROPIC_API_KEY or GEMINI_API_KEY)
+//     valid canonical AI provider key
 //   - SESSION_SECRET must be ≥32 chars in production
 //   - DATABASE_URL must start with postgresql:// or postgres://
 //   - preview deployments warn unless STRICT_PREVIEW_ENV_CHECK=true
@@ -32,7 +32,7 @@ describe("evaluateEnv — production policy", () => {
     assert.equal(r.ok, true, r.errors.join("; "));
   });
 
-  it("fails when both AI keys are missing", () => {
+  it("fails when all AI provider keys are missing", () => {
     const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }));
     assert.equal(r.ok, false);
     assert.match(r.errors.join("\n"), /AI provider key/i);
@@ -41,6 +41,28 @@ describe("evaluateEnv — production policy", () => {
   it("passes when only ANTHROPIC_API_KEY is set", () => {
     const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, ANTHROPIC_API_KEY: "sk-ant-test" }));
     assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("fails when Z.ai is the only key and a forbidden model override is present", () => {
+    const r = evaluateEnv(baseEnv({
+      GEMINI_API_KEY: undefined,
+      ZAI_API_KEY: "zai-test",
+      ZAI_ANALYSIS_MODEL: "glm-4.7-flash",
+    }));
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join("\n"), /ZAI_ANALYSIS_MODEL=glm-4\.7-flash is forbidden/);
+    assert.match(r.errors.join("\n"), /AI provider key/i);
+  });
+
+  it("does not report missing AI keys when another provider exists despite a forbidden Z.ai override", () => {
+    const r = evaluateEnv(baseEnv({
+      ZAI_API_KEY: "zai-test",
+      ZAI_FAST_MODEL: "glm-4.7-flash",
+      MISTRAL_API_KEY: "mistral-test",
+    }));
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join("\n"), /ZAI_FAST_MODEL=glm-4\.7-flash is forbidden/);
+    assert.doesNotMatch(r.errors.join("\n"), /At least one AI provider key/);
   });
 
   it("fails when DATABASE_URL is missing", () => {
@@ -132,6 +154,17 @@ describe("check-env.mjs operational warnings (Gap 5 — non-blocking)", () => {
     assert.match(src, /OPERATIONAL_WARNINGS/);
     assert.match(src, /AI_JOBS_WORKER_SECRET/);
     assert.match(src, /CRON_SECRET/);
+  });
+
+  it("env-check.ts derives provider-key order from the shared catalog", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../lib/env-check.ts", import.meta.url), "utf8");
+    assert.match(src, /import \{ AI_PROVIDER_API_KEY_ENVS, ZAI_FORBIDDEN_MODEL_OVERRIDES \} from "\.\/ai-provider-catalog\.cjs"/);
+    assert.match(src, /AI_PROVIDER_API_KEY_ENVS\.map\(\(name\) => \(\{/);
+    assert.doesNotMatch(
+      src,
+      new RegExp(String.raw`const AI_PROVIDER_KEYS:\s*Array<\{ name: string; description: string \}> = \[\s*\{`),
+    );
   });
 
   it("check-env.mjs aligns AI-key requirement with env-check.ts", async () => {
