@@ -111,7 +111,7 @@ describe("development local storage", () => {
 });
 
 describe("production storage falls back safely", () => {
-  it("allows database-backed storage as fallback when Blob is not configured", async () => {
+  it("does not silently allow database-backed storage when Blob is not configured", async () => {
     const snapshot = snapshotEnv();
     try {
       const mutable = process.env as Record<string, string | undefined>;
@@ -123,12 +123,11 @@ describe("production storage falls back safely", () => {
       resetStorageAdapter();
 
       assert.equal(resolveStorageProvider(), "db-base64");
-      assert.equal(isProductionStorageReady(), true);
-      const adapter = getStorageAdapter();
-      const small = Buffer.from("fallback-content");
-      const written = await adapter.putFile(small, { fileName: "small.txt", mimeType: "text/plain" });
-      assert.equal(written.provider, "db-base64");
-      assert.equal(written.fileContent, small.toString("base64"));
+      assert.equal(isProductionStorageReady(), false);
+      await assert.rejects(
+        () => getStorageAdapter().putFile(Buffer.from("fallback-content"), { fileName: "small.txt", mimeType: "text/plain" }),
+        /Durable production storage is not configured/,
+      );
     } finally {
       restoreEnv(snapshot);
       resetStorageAdapter();

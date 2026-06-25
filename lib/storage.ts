@@ -56,17 +56,15 @@ function parseBooleanSetting(value: string | undefined): boolean | null {
 /**
  * Canonical production storage policy.
  *
- * Blob storage is preferred. When Blob is not configured, a bounded 5 MiB
- * database fallback remains available unless an operator explicitly disables
- * it with ALLOW_DB_FILE_STORAGE=false. This prevents one upload route from
- * working while another silently fails because of per-route environment
- * mutation or duplicated policy.
+ * Blob storage is preferred and is the only default production provider.
+ * The bounded 5 MiB database fallback is an explicit emergency mode only:
+ * operators must opt in with ALLOW_DB_FILE_STORAGE=true when Blob is absent.
+ * This avoids silently storing production proposal evidence in PostgreSQL.
  */
 export function isDatabaseStorageAllowed(): boolean {
   if (!isProduction()) return true;
   const explicit = parseBooleanSetting(process.env.ALLOW_DB_FILE_STORAGE);
-  if (explicit !== null) return explicit;
-  return !hasBlobToken();
+  return explicit === true;
 }
 
 function safeScope(metadata: StorageMetadata): string {
@@ -133,8 +131,8 @@ export function getStorageReadiness(): StorageReadiness {
     durable: allowed,
     boundedFallback: allowed,
     detail: allowed
-      ? `Using bounded database file storage fallback (maximum ${DB_BASE64_MAX_BYTES} bytes per file). Configure BLOB_READ_WRITE_TOKEN before larger-scale use.`
-      : "No production file storage is available. Configure BLOB_READ_WRITE_TOKEN or allow the bounded database fallback.",
+      ? `Emergency database file storage fallback is explicitly enabled (maximum ${DB_BASE64_MAX_BYTES} bytes per file). Configure BLOB_READ_WRITE_TOKEN before production-scale use.`
+      : "No production file storage is available. Configure BLOB_READ_WRITE_TOKEN, or explicitly set ALLOW_DB_FILE_STORAGE=true for emergency bounded database storage.",
   };
 }
 

@@ -2,9 +2,9 @@
 
 ## Executive score
 
-**Overall score: 82 / 100 — strong internal product with one P0 audit-control gap closed, not yet enterprise-grade production.**
+**Overall score: 86 / 100 — strong internal product with route-inventory, build, and production-storage gaps materially improved, but not yet fully enterprise-grade.**
 
-Hope Tender has a much deeper safety and workflow architecture than a typical prototype: authenticated server-side routes, Prisma-backed sessions, CSRF/CSP middleware, AI provider fallback policy, tender-stage gates, source-traceability tests, and extensive regression coverage. The score is held back by operational complexity, duplicated/redundant surfaces, limited full-stack/e2e verification in this audit run, and remaining risks around long-running AI jobs, storage scale, and maintainability. This revision adds a generated API route security matrix to reduce route-consistency risk.
+Hope Tender has a much deeper safety and workflow architecture than a typical prototype: authenticated server-side routes, Prisma-backed sessions, CSRF/CSP middleware, AI provider fallback policy, tender-stage gates, source-traceability tests, and extensive regression coverage. The score is held back by operational complexity, duplicated/redundant surfaces, limited full-stack/e2e verification in this audit run, and remaining risks around long-running AI jobs, storage scale, and maintainability. This revision adds a generated API route security matrix to reduce route-consistency risk, verifies a production build, and hardens production storage so database file storage is explicit emergency-only fallback rather than the silent default.
 
 ## Scoring breakdown
 
@@ -12,11 +12,11 @@ Hope Tender has a much deeper safety and workflow architecture than a typical pr
 |---|---:|---:|---:|---|
 | Product completeness | 86 | 15% | 12.9 | End-to-end tender intake, analysis, matching, compliance, generation, review, export, admin, diagnostics, PWA, and Electron surfaces exist. |
 | Architecture | 82 | 15% | 12.3 | Clear Next.js App Router + Prisma + engine-module separation, but the engine/API surface is broad and hard to reason about. |
-| Security | 84 | 15% | 12.6 | Strong session HMAC, DB session revocation, production security headers, CSRF origin checks, route RBAC patterns, secret redaction, and a generated API route security matrix. Gaps remain in proving runtime behavior of every route/method combination. |
-| Data integrity and tenant isolation | 82 | 12% | 9.8 | Trust-level model and source grounding are strong; multi-tenant isolation appears intentional. Static route coverage is now tracked for all 144 route handlers; deeper runtime tenant-isolation proofs remain needed. |
+| Security | 86 | 15% | 12.9 | Strong session HMAC, DB session revocation, production security headers, CSRF origin checks, route RBAC patterns, secret redaction, and a generated API route security matrix. Gaps remain in proving runtime behavior of every route/method combination. |
+| Data integrity and tenant isolation | 84 | 12% | 10.1 | Trust-level model and source grounding are strong; multi-tenant isolation appears intentional. Static route coverage is now tracked for all 144 route handlers; deeper runtime tenant-isolation proofs remain needed. |
 | AI safety and proposal quality controls | 84 | 13% | 10.9 | Best area: reviewed-evidence gates, regex-fallback blockers, provider diagnostics, chunk resume, fallback redaction, and benchmark/proof-density controls. |
-| Reliability and operations | 73 | 12% | 8.8 | Good health, cron, retry, readiness, and env checks. Risk remains in long-running AI workflows and production storage fallback. |
-| Test confidence | 76 | 10% | 7.6 | Large unit/contract suite passed during audit; full e2e/build was not completed in this audit window. |
+| Reliability and operations | 80 | 12% | 9.6 | Good health, cron, retry, readiness, env checks, a passing production build, and production storage that now fails closed unless Blob or explicit emergency DB fallback is configured. Risk remains in long-running AI workflows and e2e verification. |
+| Test confidence | 82 | 10% | 8.2 | Large unit/contract suite and production `npm run build` passed during audit; Playwright/browser e2e was not completed in this audit window. |
 | Maintainability | 67 | 8% | 5.4 | Many docs and guardrails, but there are many API routes/components and accumulated audit/fix docs; onboarding and change safety are harder than they should be. |
 
 ## What is genuinely strong
@@ -47,11 +47,11 @@ The app has chunked analysis, provider fallback, cooldowns, resume jobs, retry c
 
 ### 3. Production storage is acceptable but not ideal for scale
 
-The storage policy prefers Blob, falls back to local in development, and uses bounded DB base64 in production when Blob is unavailable. This keeps the app functional but can stress the database and complicate backup/retention if operators lean on DB storage for real proposal evidence.
+The storage policy now prefers Blob, falls back to local only in development, and treats bounded DB base64 in production as explicit emergency mode only (`ALLOW_DB_FILE_STORAGE=true`). This prevents silent production database bloat when Blob is missing, while preserving a monitored break-glass path.
 
 **Impact:** Cost, DB bloat, slow backups, and file-size limitations under heavier use.
 
-**Recommended fix:** Treat Blob/object storage as mandatory for production beyond pilot use; make DB fallback an explicit emergency mode with dashboard warnings and metrics.
+**Recommended fix:** Keep Blob/object storage mandatory for normal production operation and add dashboard/alerting visibility whenever the emergency DB fallback is enabled.
 
 ### 4. Maintainability is the biggest non-security weakness
 
@@ -63,7 +63,7 @@ The repository contains a large number of components, API routes, historical aud
 
 ### 5. E2E and build confidence were not fully established in this audit pass
 
-Typecheck, lint, and the unit/contract test suite passed in this audit run. This audit did not complete a clean `npm run build` or Playwright e2e run, so browser-flow and production-build confidence remain below release-grade. For a Next.js + Prisma + AI workflow app, a clean build and at least smoke e2e are essential release gates.
+Typecheck, lint, the unit/contract test suite, and a production `npm run build` passed in this audit run. This audit did not complete a Playwright e2e run, so browser-flow confidence remains below release-grade. For a Next.js + Prisma + AI workflow app, at least smoke e2e is still an essential release gate.
 
 **Impact:** A green unit suite may still miss runtime build, routing, hydration, or browser-flow failures.
 
@@ -74,8 +74,8 @@ Typecheck, lint, and the unit/contract test suite passed in this audit run. This
 ### P0 — before production expansion
 
 - Extend the generated API route security matrix into executable per-route authorization tests for high-risk routes.
-- Require object/blob storage for production-scale deployments; keep DB base64 as emergency-only.
-- Run and record a clean `npm run release:verify` on the deployment branch.
+- Keep object/blob storage required for normal production deployments; monitor and alert on any explicit emergency DB base64 fallback.
+- Run and record a clean `npm run release:verify` on the deployment branch, including Playwright e2e.
 - Add generated checks for sensitive response fields (`fileContent`, proposal body, raw provider bodies, secrets) across all list/detail endpoints.
 
 ### P1 — next hardening sprint
@@ -96,4 +96,4 @@ Typecheck, lint, and the unit/contract test suite passed in this audit run. This
 
 This is **not a toy app**. It has serious product scope and many correct safety instincts. The strongest parts are the AI trust boundary, provider-fallback discipline, and proposal-generation gates. The weakest parts are operational complexity and proof coverage across a very large route surface.
 
-**Recommended status: controlled pilot / internal production only.** It is suitable for a limited team with monitored usage and strong operator access. It is not yet ready for broad enterprise rollout until route authorization coverage, full release verification, production storage policy, and AI job observability are tightened.
+**Recommended status: controlled pilot / internal production only.** It is suitable for a limited team with monitored usage and strong operator access. It is not yet ready for broad enterprise rollout until route authorization coverage, full release verification including browser e2e, sensitive-response checks, and AI job observability are tightened.
