@@ -38,6 +38,11 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "repo",
+    "repo-866",
+    "repo-fix",
+    "repo-pr866",
+    "skills"
   ]
 }

@@ -1,0 +1,24 @@
+# Duplicate project copies — should never have been type-checked or linted.
+# Each contains a full Next.js project tree (~7K TS files each).
+repo/
+repo-866/
+repo-fix/
+repo-pr866/
+
+# Skill scaffolding — ships its own broken imports to z-ai-web-dev-sdk
+# which is not part of this app's dependencies. Skills are run by the
+# parent agent, not by this Next.js app.
+skills/
+
+# Generated Prisma client — large, not meant for direct lint.
+node_modules/
+
+# Build output
+.next/
+out/
+build/
+dist/
+
+# Playwright reports
+playwright-report/
+test-results/
