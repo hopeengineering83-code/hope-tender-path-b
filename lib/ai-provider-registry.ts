@@ -540,7 +540,7 @@ export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): Provider
   if (isForbiddenModel(proposal)) {
     return {
       valid: false,
-      model: proposal,
+      model: proposal ?? null,
       reason: "CONFIGURATION_INVALID",
       message: "ZAI_PROPOSAL_MODEL uses forbidden regressed model 'glm-4.7-flash'. Change to 'glm-4-flash'.",
     };
@@ -548,7 +548,7 @@ export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): Provider
   if (isForbiddenModel(analysis)) {
     return {
       valid: false,
-      model: analysis,
+      model: analysis ?? null,
       reason: "CONFIGURATION_INVALID",
       message: "ZAI_ANALYSIS_MODEL uses forbidden regressed model 'glm-4.7-flash'. Change to 'glm-4-flash'.",
     };
@@ -556,7 +556,7 @@ export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): Provider
   if (isForbiddenModel(fast)) {
     return {
       valid: false,
-      model: fast,
+      model: fast ?? null,
       reason: "CONFIGURATION_INVALID",
       message: "ZAI_FAST_MODEL uses forbidden regressed model 'glm-4.7-flash'. Change to 'glm-4-flash'.",
     };
