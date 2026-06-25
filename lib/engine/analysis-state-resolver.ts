@@ -396,7 +396,7 @@ export async function resolveTenderAnalysisState(
   let chunks: ResolverChunkInput[] = [];
   if (latestJob?.analysisInputHash) {
     chunks = await prismaClient.aiAnalyzeChunk.findMany({
-      where: { tenderId, contentHash: latestJob.analysisInputHash, ...(userId ? { tender: { userId } } : {}) },
+      where: { tenderId, contentHash: latestJob.analysisInputHash, ...(userId ? { userId } : {}) },
       select: { status: true, provider: true },
     });
   }

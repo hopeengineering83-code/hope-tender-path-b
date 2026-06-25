@@ -1,5 +1,6 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { prisma } from "../prisma";
+import type { Prisma } from "@prisma/client";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
@@ -384,6 +385,7 @@ export async function finalizeJob(jobId: string, userId: string) {
     }
 
     // Atomically promote canonical requirements
+    try {
     await prisma.$transaction(async (tx) => {
         await tx.aiJob.update({
             where: { id: jobId },
@@ -412,25 +414,23 @@ export async function finalizeJob(jobId: string, userId: string) {
             notes: existingTender?.notes,
         });
 
+        // Type-safe Tender update — Prisma.TenderUpdateInput prevents
+        // non-schema fields (analysisSource, envelopeMode, clientType,
+        // submissionFormat) from being added. analysisSource is a virtual
+        // field derived from Tender.notes via regex; the notes marker
+        // "Analysis source: AI" is already set by buildCanonicalAnalysisTenderUpdate
+        // via buildAnalysisNotes().
+        const tenderUpdate: Prisma.TenderUpdateInput = {
+            ...canonicalData,
+            analysisExtractionStatus:
+                failed.length > 0
+                    ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+                    : "FULL_EXTRACTION_AI_ANALYZED",
+        };
+
         await tx.tender.update({
             where: { id: job.tenderId! },
-            data: {
-                ...canonicalData,
-                analysisSource: "AI",
-                // Use the canonical ExtractionStatus vocabulary the downstream
-                // gates understand (export-readiness, final-submission-readiness,
-                // readiness-scoring, analysis-quality). The previous bespoke
-                // values "FULL_AI_SUCCESS"/"PARTIAL_AI_SUCCESS" were write-only
-                // orphans no gate recognized — so a PARTIAL run via the durable
-                // worker escaped the partial-extraction cap/export-block and was
-                // treated as a fully trusted analysis.
-                analysisExtractionStatus: failed.length > 0 ? "PARTIAL_EXTRACTION_AI_ANALYZED" : "FULL_EXTRACTION_AI_ANALYZED",
-                // Classification fields are not part of the shared client-metadata
-                // builder; set them here from the merged analysis result.
-                envelopeMode: merged.envelopeMode || undefined,
-                clientType: merged.clientType || undefined,
-                submissionFormat: merged.submissionFormat || undefined,
-            }
+            data: tenderUpdate,
         });
 
         const output = JSON.stringify({
@@ -455,6 +455,25 @@ export async function finalizeJob(jobId: string, userId: string) {
 
         await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID());
     });
+    } catch (persistErr) {
+        const correlationId = require("crypto").randomUUID().slice(0, 8);
+        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId}: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`);
+        await prisma.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: "FAILED",
+                finishedAt: new Date(),
+                errorMessage: `AI_ANALYSIS_PERSISTENCE_FAILED (ref: ${correlationId})`,
+            },
+        }).catch((updateErr) => {
+            console.error(
+                `[finalizeJob] Failed to mark job ${jobId} as FAILED after persistence error: ${
+                    updateErr instanceof Error ? updateErr.message : String(updateErr)
+                }`
+            );
+        });
+        return { status: "FAILED", code: "AI_ANALYSIS_PERSISTENCE_FAILED" };
+    }
 
     return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
 }

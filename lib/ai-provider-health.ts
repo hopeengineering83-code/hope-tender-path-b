@@ -213,7 +213,7 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   if (/401|403|invalid\s+api\s+key|unauthor|forbidden|api\s+key/.test(lower)) return "AUTH";
   if (/402|insufficient.?balance|payment\s+required|billing|account\s+balance/.test(lower)) return "BILLING";
   if (/timed?\s*out|timeout|abort/.test(lower)) return "TIMEOUT";
-  if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request/.test(lower)) return "MODEL_UNAVAILABLE";
+  if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request|unknown\s+model|please\s+check\s+the\s+model|model\s+code/.test(lower)) return "MODEL_UNAVAILABLE";
   if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
   if (/no\s+json|malformed\s+json|invalid\s+json|json\s+parse/.test(lower)) return "MALFORMED_RESPONSE";
   return "UNKNOWN";
