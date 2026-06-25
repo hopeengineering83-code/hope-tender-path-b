@@ -60,10 +60,12 @@ function errorText(error) {
 
 // Serverless Postgres (e.g. Neon) auto-suspends its compute after inactivity.
 // At deploy time the first connection has to wake it, which can exceed Prisma's
-// connect timeout and surface as `P1001: Can't reach database server`. A single
-// failed attempt then kills the entire Vercel build. Retry a few times with
-// exponential backoff so the database has time to wake before we give up.
+// connect timeout and surface as `P1001: Can't reach database server` or
+// `P1002: Database was unreachable`. A single failed attempt then kills the
+// entire Vercel build. Retry a few times with exponential backoff so the
+// database has time to wake before we give up.
 const MAX_DB_REACH_ATTEMPTS = 5;
+const DB_REACH_ERROR_CODES = ["P1001", "P1002"];
 
 function sleepSync(ms) {
   // Synchronous, dependency-free sleep. Atomics.wait is permitted on the main
@@ -80,12 +82,16 @@ function deploy(attempt = 1) {
     if (message.includes("P3005") || /database schema is not empty/i.test(message)) return "no-history";
     if (message.includes("P3009") && message.includes(INIT_MIGRATION)) return "failed-init";
     if (message.includes(INIT_MIGRATION) && /already exists/i.test(message)) return "failed-init";
-    // P1001 = database unreachable. Most often a suspended serverless compute
-    // that simply needs a few seconds to wake — retry before failing the build.
-    if (message.includes("P1001") && attempt < MAX_DB_REACH_ATTEMPTS) {
+    // P1001 / P1002 = database unreachable. Most often a suspended serverless
+    // compute that simply needs a few seconds to wake — retry before failing
+    // the build. Both codes cover the same cold-start failure mode on Neon /
+    // Supabase / Railway serverless Postgres.
+    const isReachable = DB_REACH_ERROR_CODES.some((code) => message.includes(code));
+    if (isReachable && attempt < MAX_DB_REACH_ATTEMPTS) {
       const delayMs = Math.min(2000 * 2 ** (attempt - 1), 16000);
+      const codes = DB_REACH_ERROR_CODES.join("/");
       console.warn(
-        `Database unreachable (P1001) on attempt ${attempt}/${MAX_DB_REACH_ATTEMPTS}. ` +
+        `Database unreachable (${codes}) on attempt ${attempt}/${MAX_DB_REACH_ATTEMPTS}. ` +
           `Waiting ${delayMs}ms for the database to wake, then retrying migrate deploy...`,
       );
       sleepSync(delayMs);
