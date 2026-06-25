@@ -58,7 +58,7 @@ const STEP_TARGETS = [
   "#ai-analyze-section",
   "#tender-edit-form",
   "#requirement-coverage",
-  "#submission-plan-reconciliation",
+  "#submission-plan",
   "#generated-documents",
   "#generated-documents",
   "#final-package-manifest",
@@ -305,10 +305,12 @@ export async function NextActionPanel({ tenderId, canonicalReadiness }: { tender
           <p className="text-xs font-semibold uppercase">Requirement Analysis State</p>
           <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
             <div>
+              <p className="sr-only">Raw fallback requirements</p>
               <p className="text-slate-500 font-medium">Raw Extracted</p>
               <p className="text-sm font-bold text-slate-900">{decision.rawVsTrustedRequirements.raw}</p>
             </div>
             <div>
+              <p className="sr-only">Trusted traced requirements</p>
               <p className="text-slate-500 font-medium">Source Grounded</p>
               <p className="text-sm font-bold text-slate-900">{decision.rawVsTrustedRequirements.trusted}</p>
             </div>

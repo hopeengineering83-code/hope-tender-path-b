@@ -1200,3 +1200,6 @@ model ExtractionQualityOverride {
   @@index([tenderId])
   @@index([tenderFileId])
 }
+
+// Placeholder to ensure prisma knows about AiJob if it didn't
+// Though it probably does if generate worked.

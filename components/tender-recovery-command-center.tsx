@@ -1,443 +1,299 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import {
+  AlertTriangleIcon as WarningIcon,
+  CheckCircleIcon as CheckIcon,
+  XCircleIcon as CrossIcon,
+  BanIcon,
+  RefreshCwIcon as RefreshIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath } from "../lib/recovery-command-actions";
-import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon } from "./icons";
 
-// ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
-
-type LifecycleState =
-  | "UPLOADED" | "EXTRACTED" | "AI_ANALYSIS_REQUIRED" | "AI_ANALYSIS_FAILED"
-  | "ANALYSIS_FALLBACK_UNAPPROVED" | "ANALYSIS_READY_FOR_REVIEW" | "ANALYSIS_APPROVED"
-  | "METADATA_INCOMPLETE" | "SOURCE_REFERENCES_INCOMPLETE" | "SUBMISSION_PLAN_REQUIRED"
-  | "SUBMISSION_PLAN_READY" | "EVIDENCE_MATCHING_REQUIRED" | "EVIDENCE_MATCHED"
-  | "DOCUMENT_GENERATION_REQUIRED" | "DOCUMENTS_GENERATED" | "OFFICIAL_ORIGINALS_REQUIRED"
-  | "QUALITY_REVIEW_REQUIRED" | "AUTO_FINALIZE_REQUIRED" | "EXPORT_READINESS_BLOCKED"
-  | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
-
-type BlockedAction = { action: string; reason: string };
-type Blocker = { code: string; message: string; action: string };
-type Warning = { code: string; message: string };
-
-type LifecycleResult = {
-  lifecycleState: LifecycleState;
-  finalSubmissionStatus: "BLOCKED" | "PARTIAL" | "READY";
-  primaryNextAction: string;
-  allowedActions: string[];
-  blockedActions: BlockedAction[];
-  blockers: Blocker[];
-  warnings: Warning[];
-  advisoryWarnings: Warning[];
-  counts: {
-    requiredPlanRows: number;
-    generatedNarrativeDocs: number;
-    attachedOfficialOriginals: number;
-    plannedMissingDocs: number;
-    controlRows: number;
-    outsidePlanRows: number;
-    finalExportCandidates: number;
-    qualityFailedCandidates: number;
-    historicalSupersededRows: number;
-    envelopes: { TECHNICAL: number; FINANCIAL: number; ADMIN: number };
-  };
-  providerStatus: {
-    totalConfigured: number;
-    totalHealthy: number;
-    hasAnyProvider: boolean;
-    hasCooledDownProvider: boolean;
-    primaryProvider: string | null;
-  };
-  analysisStatus: { source: string; hasText: boolean; score: number | null };
-  metadataStatus: {
-    completenessRatio: number;
-    criticalMissing: string[];
-    nonCriticalMissing: string[];
-  };
-  sourceReferenceStatus: { ungroundedMandatoryCount: number; totalMandatoryCount: number };
-  planStatus: {
-    hasExplicitPlan: boolean;
-    totalRequired: number;
-    totalGenerated: number;
-    totalMissing: number;
-    totalOutsidePlan: number;
-    totalOfficialOriginalsRequired: number;
-  };
-  evidenceStatus: { totalMandatory: number; fullyCoveredMandatory: number; coverageRatio: number };
-  documentStatus: { total: number; generated: number; planned: number; superseded: number };
-  qualityStatus: { qualityFailed: number };
-  officialOriginalStatus: { required: number; attached: number };
-  exportStatus: {
-    ready: boolean;
-    blockerCount: number;
-    documentBlockerCount: number;
-    advisoryCount: number;
-  };
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const STATE_LABELS: Record<LifecycleState, string> = {
-  UPLOADED: "Uploaded",
-  EXTRACTED: "Text Extracted",
-  AI_ANALYSIS_REQUIRED: "AI Analysis Required",
-  AI_ANALYSIS_FAILED: "AI Analysis Failed",
-  ANALYSIS_FALLBACK_UNAPPROVED: "Fallback Analysis — Unapproved",
-  ANALYSIS_READY_FOR_REVIEW: "Analysis Ready",
-  ANALYSIS_APPROVED: "Analysis Approved",
-  METADATA_INCOMPLETE: "Metadata Incomplete",
-  SOURCE_REFERENCES_INCOMPLETE: "Source References Incomplete",
-  SUBMISSION_PLAN_REQUIRED: "Submission Plan Required",
-  SUBMISSION_PLAN_READY: "Submission Plan Ready",
-  EVIDENCE_MATCHING_REQUIRED: "Evidence Matching Required",
-  EVIDENCE_MATCHED: "Evidence Matched",
-  DOCUMENT_GENERATION_REQUIRED: "Documents Need Generation",
-  DOCUMENTS_GENERATED: "Documents Generated",
-  OFFICIAL_ORIGINALS_REQUIRED: "Official Originals Required",
-  QUALITY_REVIEW_REQUIRED: "Quality Review Required",
-  AUTO_FINALIZE_REQUIRED: "Ready to Finalize",
-  EXPORT_READINESS_BLOCKED: "Export Blocked",
-  EXPORT_READY: "Export Ready",
-  ZIP_READY: "ZIP Ready",
-  CLOSED: "Closed (WON/LOST/WITHDRAWN)",
-};
-
-const ACTION_LABELS = new Proxy({} as Record<string, string>, {
-  get: (_target, prop: string | symbol) => typeof prop === "string" ? recoveryCommandLabel(prop) : undefined,
-});
-
-function stateColor(state: LifecycleState): string {
-  if (state === "EXPORT_READY" || state === "ZIP_READY") return "bg-green-100 text-green-800 border-green-300";
-  if (state === "CLOSED") return "bg-slate-100 text-slate-600 border-slate-300";
-  if (state === "AUTO_FINALIZE_REQUIRED" || state === "DOCUMENTS_GENERATED") return "bg-blue-100 text-blue-800 border-blue-300";
-  if (state.includes("REQUIRED") || state.includes("MISSING") || state.includes("FAILED") || state.includes("UNAPPROVED")) return "bg-red-100 text-red-800 border-red-300";
-  return "bg-amber-100 text-amber-800 border-amber-300";
-}
-
-function submissionBadge(status: "BLOCKED" | "PARTIAL" | "READY") {
-  if (status === "READY") return "bg-green-600 text-white";
-  if (status === "PARTIAL") return "bg-amber-500 text-white";
-  return "bg-red-600 text-white";
-}
-
-// ─── Component ─────────────────────────────────────────────────────────────────
+type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "PARTIAL_SUCCESS";
 
 export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: string }) {
   const router = useRouter();
-  const [data, setData] = useState<LifecycleResult | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [actioning, setActioning] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<number | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
-  const [ocrProvider, setOcrProvider] = useState<string>("auto");
+  const [ocrProvider, setOcrProvider] = useState("auto");
 
-  function scrollToPanel(anchorId: string, fallbackMessage: string) {
-    const el = document.getElementById(anchorId);
-    if (!el) {
-      setActionMsg(`${fallbackMessage} Panel #${anchorId} is not visible on this page; use the tender detail tabs manually.`);
-      return;
+  async function load() {
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/workflow-center`);
+      if (!res.ok) throw new Error("Failed to load workflow state");
+      const d = await res.json();
+      setData(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Load failed");
+    } finally {
+      setLoading(false);
     }
-    el.scrollIntoView({ behavior: "smooth" });
-    setActionMsg(fallbackMessage);
   }
+
+  useEffect(() => {
+    load();
+  }, [tenderId]);
+
+  if (loading) return (
+    <div className="mb-4 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm animate-pulse">
+      <div className="h-6 w-48 bg-gray-100 rounded mb-2" />
+      <div className="h-4 w-64 bg-gray-50 rounded" />
+    </div>
+  );
+  if (error || !data) return null;
+
+  const ACTION_LABELS: Record<string, string> = {
+    RUN_AI_ANALYZE: "Run AI Analyze",
+    BUILD_SUBMISSION_PLAN: "Build Plan",
+    RUN_ENGINE: "Run Engine",
+    EXPORT_READINESS: "Check Export",
+    RE_EXTRACT_METADATA: "Re-extract",
+    REPAIR_METADATA: "Repair",
+    RE_CHECK: "Re-check",
+  };
 
   function messageForApiAction(action: string, json: Record<string, unknown>) {
     if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS" || action === "RESUME_AI_ANALYZE") {
-      return json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.";
+      return json.fallback ? "Regex fallback used — generation remains blocked. Retry when providers recover or approve for audit only." : "Analysis completed. Verify results in the Analysis Quality panel.";
     }
     if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;
     if (action === "RUN_ENGINE") return "Engine ran. Review lifecycle, generation readiness, and export readiness before proceeding.";
-    if (action === "REPAIR_SOURCE_REFERENCES") return `Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`;
-    if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "GENERATE_DOCS" || action === "GENERATE_MISSING_PLANNED_DOCS") return `Missing planned document generation finished — ${json.generated ?? json.created ?? json.count ?? 0} row(s) updated. Review and validate before export.`;
-    if (action === "VALIDATE_DOCS") return "Validation completed. Review validation results and remaining blockers.";
-    if (action === "REPAIR_DOCUMENT_QUALITY" || action === "REPAIR_DOCS") return `Export-gap repair completed — ${json.repaired ?? json.updated ?? 0} document(s) updated. Re-check readiness before export.`;
-    if (action === "AUTO_FINALIZE") return `Auto-finalize completed — ${json.finalized ?? json.updated ?? 0} document(s) updated. Re-check export readiness before download.`;
-    if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") return "Export readiness re-checked. Review the Export Readiness panel for canonical blockers.";
-    if (action === "RECONCILE_OUTSIDE_PLAN_DOCS" || action === "EXCLUDE_OUTSIDE_PLAN_DOCS") return `Outside-plan reconciliation completed — ${json.superseded ?? 0} document(s) excluded/superseded.`;
-    if (action === "REPAIR_METADATA") {
-      const repaired: string[] = Array.isArray(json.repaired) ? json.repaired as string[] : [];
-      return repaired.length > 0 ? `Metadata repaired — ${repaired.join(", ")} updated from tender source text.` : "Metadata repair ran — no missing fields could be extracted from the tender source text.";
-    }
-    if (action === "RE_EXTRACT_METADATA") return "Metadata re-extraction complete. Review the tender detail panel to confirm updated fields.";
-    if (action === "LINK_VAULT_EVIDENCE") return (json.message as string | undefined) ?? `Vault evidence linking completed — ${(json.linked as number | undefined) ?? 0} document(s) ready.`;
+    if (action === "REPAIR_METADATA") return "Metadata repaired.";
+    if (action === "RE_EXTRACT_METADATA") return "Metadata re-extracted.";
     return `${recoveryCommandLabel(action)} completed.`;
   }
 
-  // AI Analyze runs the full analysis, which can take 30–90s. A plain POST gives
-  // no feedback (the button just sits on "Working…") and can hit the serverless
-  // timeout — which is why it looked like the command center analysis "wasn't
-  // working". Stream it instead so the user sees live chunk progress and the
-  // same reliable path (auto-retry/fallback) the main panel uses.
-  async function runStreamingAnalyze(path: string): Promise<string> {
+  async function runDurableAnalyze(path: string): Promise<string> {
     setAnalyzeProgress(5);
-    setActionMsg("Connecting to AI providers…");
-    const res = await fetch(path, { method: "POST", headers: { Accept: "text/event-stream" } });
+    setActionMsg("Enqueuing durable analysis job…");
 
-    if (!res.ok || !res.body) {
-      const json = await res.json().catch(() => ({}));
+    const enqueueRes = await fetch(path, { method: "POST" });
+    if (enqueueRes.status === 401 || enqueueRes.status === 403) {
       setAnalyzeProgress(null);
-      throw new Error(json.error ?? json.message ?? "AI Analyze failed to start");
+      throw new Error("You are not authorized to run AI analysis. Please sign in again.");
+    }
+    if (enqueueRes.status === 422) {
+      const d = await enqueueRes.json().catch(() => ({}));
+      setAnalyzeProgress(null);
+      throw new Error(d.error ?? "Extraction is not ready. Run OCR or re-upload.");
+    }
+    if (enqueueRes.status !== 202) {
+      const d = await enqueueRes.json().catch(() => ({}));
+      setAnalyzeProgress(null);
+      throw new Error(d.error ?? `Failed to start analysis (HTTP ${enqueueRes.status}).`);
+    }
+    const enqueued = await enqueueRes.json();
+    const jobId: string | undefined = enqueued.jobId;
+    if (!jobId) {
+      setAnalyzeProgress(null);
+      throw new Error("No job ID returned from the analysis endpoint.");
+    }
+    setAnalyzeProgress(10);
+    setActionMsg("Starting worker…");
+
+    try {
+      const workerRes = await fetch(`/api/ai-jobs/run-next?jobType=AI_ANALYZE`, { method: "POST" });
+      if (workerRes.status === 401 || workerRes.status === 403) {
+        setActionMsg("Worker could not be started (session expired). The job is queued and will be picked up automatically.");
+      } else if (workerRes.status >= 500) {
+        setActionMsg("Worker start failed. The job is queued and will be retried automatically.");
+      }
+    } catch {
+      // ignore worker trigger failure
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let finalMsg = "Analysis complete.";
-    let done = false;
+    setAnalyzeProgress(15);
+    setActionMsg("Analysis running…");
+    let pollCount = 0;
+    const maxPolls = 240;
+    while (pollCount < maxPolls) {
+      pollCount++;
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const res = await fetch(`/api/ai-jobs/${jobId}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const job = data?.job;
+        if (!job) continue;
 
-    while (!done) {
-      const { done: streamDone, value } = await reader.read();
-      if (streamDone) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-      for (const part of parts) {
-        if (!part.startsWith("data: ")) continue;
-        try {
-          const event = JSON.parse(part.slice(6));
-          if (event.phase === "analyzing" && event.chunk !== undefined) {
-            const total = event.totalChunks ?? 0;
-            setAnalyzeProgress(total ? Math.round(20 + (event.chunk / total) * 60) : 50);
-            setActionMsg(`Analyzing chunk ${event.chunk}${total ? `/${total}` : ""}…`);
-          } else if (event.phase === "extracting") {
-            setAnalyzeProgress(15);
-            setActionMsg("Preparing tender content…");
-          } else if (event.phase === "saving") {
-            setAnalyzeProgress(90);
-            setActionMsg("Saving analysis results…");
-          } else if (event.phase === "complete") {
-            setAnalyzeProgress(100);
-            finalMsg = event.fallback
-              ? "Regex fallback used — approve below or retry when providers recover."
-              : `Analysis complete — ${event.requirementCount ?? 0} requirement(s) extracted.`;
-            done = true;
-          } else if (event.phase === "error") {
-            throw new Error(event.message ?? "Analysis failed");
+        const steps: Array<{ message?: string | null }> = job.steps ?? [];
+        const latestStep = steps[steps.length - 1];
+        if (latestStep?.message) setActionMsg(String(latestStep.message).slice(0, 80));
+
+        const status: string = job.status;
+        const output: Record<string, unknown> = job.output ?? {};
+
+        if (status === "QUEUED" || status === "RUNNING") {
+          const completed = typeof output.completedChunks === "number" ? output.completedChunks : 0;
+          const total = typeof output.totalChunks === "number" ? output.totalChunks : 0;
+          if (total > 0 && completed > 0) {
+            setAnalyzeProgress(Math.min(Math.round(15 + (completed / total) * 75), 90));
+          } else {
+            setAnalyzeProgress(Math.min(15 + pollCount * 2, 85));
           }
-        } catch (e) {
-          if (e instanceof Error && e.message !== "Unexpected end of JSON input") throw e;
+          continue;
+        }
+
+        setAnalyzeProgress(null);
+        if (status === "SUCCEEDED") {
+          const reqCount = typeof output.requirementCount === "number" ? output.requirementCount : 0;
+          return `Analysis complete — ${reqCount} requirement(s) extracted and promoted.`;
+        }
+        if (status === "PARTIAL_SUCCESS") {
+          return "Analysis partial — some chunks failed. Generation remains blocked. Retry when providers recover.";
+        }
+        const errMsg = (typeof job.errorMessage === "string" && job.errorMessage) ||
+          (typeof output.errorMessage === "string" && output.errorMessage) ||
+          "Analysis failed.";
+        throw new Error(errMsg);
+      } catch (e) {
+        if (pollCount >= maxPolls) {
+          setAnalyzeProgress(null);
+          throw new Error("Analysis is taking longer than expected. It may still be running — refresh the page.");
         }
       }
     }
     setAnalyzeProgress(null);
-    return finalMsg;
+    return "Analysis is still running in the background. Refresh the page to check status.";
   }
 
   async function executeAction(action: string) {
+    if (actioning) return;
     setActioning(true);
     setActionMsg(null);
+    setError(null);
     try {
       const spec = getRecoveryCommandActionSpec(action);
-      if (!spec) {
-        setActionMsg("Action not available yet — open the relevant panel manually.");
-        return;
-      }
+      if (!spec) setError("Action not available yet"); return;
 
       if (action === "APPROVE_FALLBACK_WITH_NOTE") {
-        const note = approvalNote.trim();
-        if (!note) { setActionMsg("An approval note is required."); return; }
-        const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
+        if (!approvalNote.trim()) throw new Error("Please provide a note for approval.");
+        const res = await fetch(`/api/tenders/${tenderId}/approve-fallback`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ note }),
+          body: JSON.stringify({ note: approvalNote, contentHash: data.analysisStatus.contentHash }),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? "Approval failed");
-        setActionMsg("Fallback analysis approved — generation unblocked.");
+        setActionMsg("Fallback note saved for audit. Generation and export remain blocked until full AI analysis succeeds.");
         setApprovalNote("");
         await load();
         router.refresh();
         return;
       }
 
-      if (spec.kind === "download" && spec.path) {
-        window.location.href = renderRecoveryActionPath(spec.path, tenderId);
-        return;
-      }
       if (spec.kind === "navigate" && spec.path) {
-        window.location.href = renderRecoveryActionPath(spec.path, tenderId);
+        router.push(renderRecoveryActionPath(spec.path, tenderId));
         return;
       }
       if (spec.kind === "scroll" && spec.anchorId) {
-        scrollToPanel(spec.anchorId, spec.message ?? `Open ${spec.label}.`);
+        const el = document.getElementById(spec.anchorId);
+        if (el) el.scrollIntoView({ behavior: "smooth" });
+        else router.push(`/dashboard/tenders/${tenderId}#${spec.anchorId}`);
         return;
       }
       if (spec.kind === "refresh") {
         await load();
         router.refresh();
-        setActionMsg("Readiness re-checked. Review the command center and export-readiness panels for current blockers.");
         return;
       }
       if (spec.kind === "api" && spec.path) {
-        // AI Analyze actions stream live progress instead of a blind POST.
         if (spec.path.includes("/ai-analyze")) {
-          const msg = await runStreamingAnalyze(renderRecoveryActionPath(spec.path, tenderId));
+          const msg = await runDurableAnalyze(renderRecoveryActionPath(spec.path, tenderId));
           setActionMsg(msg);
           await load();
           router.refresh();
           return;
         }
-        const isReExtract = action === "RE_EXTRACT_METADATA";
-        const fetchOptions: RequestInit = {
-          method: spec.method ?? "POST",
-          ...(isReExtract && ocrProvider !== "auto"
-            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ocrProvider }) }
-            : {}),
-        };
-        const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), fetchOptions);
+
+        const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), {
+          method: spec.method || "POST",
+          headers: { "Content-Type": "application/json" },
+          body: action === "RE_EXTRACT_METADATA" ? JSON.stringify({ ocrProvider }) : undefined,
+        });
         const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? json.message ?? `${spec.label} failed`);
+        if (!res.ok) throw new Error(json.error ?? json.message ?? `Action failed (HTTP ${res.status})`);
         setActionMsg(messageForApiAction(action, json));
         await load();
         router.refresh();
-        if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") {
-          document.getElementById("export-readiness")?.scrollIntoView({ behavior: "smooth" });
-        }
-        return;
       }
-
-      setActionMsg("Action not available yet — open the relevant panel manually.");
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : "Action failed");
+      setError(e instanceof Error ? e.message : "Action failed");
     } finally {
       setActioning(false);
-      setAnalyzeProgress(null);
     }
   }
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/lifecycle`);
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error ?? "Failed to load lifecycle");
-      setData(json as LifecycleResult);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load lifecycle");
-    } finally {
-      setLoading(false);
-    }
-  }, [tenderId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  if (loading) {
-    return (
-      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-          Loading tender lifecycle…
-        </div>
-      </div>
-    );
+  function scrollToPanel(id: string, msg: string) {
+    setActionMsg(msg);
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth" });
+    else router.push(`/dashboard/tenders/${tenderId}#${id}`);
   }
-
-  if (error || !data) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-        <p className="text-sm text-red-700">{error ?? "Unable to compute lifecycle state."}</p>
-        <button onClick={load} className="mt-2 text-xs text-red-600 underline">Retry</button>
-      </div>
-    );
-  }
-
-  const stateLabel = STATE_LABELS[data.lifecycleState] ?? data.lifecycleState;
-  const actionLabel = ACTION_LABELS[data.primaryNextAction] ?? data.primaryNextAction;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-gray-800">Recovery Command Center</span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${stateColor(data.lifecycleState)}`}>
-            {stateLabel}
-          </span>
-          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${submissionBadge(data.finalSubmissionStatus)}`}>
-            {data.finalSubmissionStatus}
-          </span>
+    <div className="mb-4 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-200 hover:shadow-md">
+      <div className="flex items-center justify-between border-b border-gray-50 bg-gray-50/30 px-5 py-3">
+        <div className="flex items-center gap-2 text-slate-900">
+          <TerminalIcon className="h-4 w-4 text-slate-500" />
+          <h2 className="text-sm font-bold tracking-tight">Stage 6: System Recovery & Diagnostics</h2>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {actionMsg && (
+            <span className="text-xs font-medium text-emerald-600 animate-in fade-in slide-in-from-right-1">
+              {actionMsg}
+            </span>
+          )}
+          {error && (
+            <span className="text-xs font-medium text-red-600">
+              {error}
+            </span>
+          )}
           <button
-            onClick={load}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
-            aria-label="Refresh lifecycle state"
+            onClick={() => setExpanded(!expanded)}
+            className="rounded-full p-1 text-slate-400 hover:bg-gray-100 hover:text-slate-600 transition-colors"
+            title={expanded ? "Collapse details" : "Expand details"}
           >
-            <RefreshIcon /> Refresh
-          </button>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
-            aria-label={expanded ? "Collapse details" : "Expand details"}
-          >
-            <ChevronDownIcon className={`transition-transform ${expanded ? "rotate-180" : ""}`} /> {expanded ? "Collapse" : "Details"}
+            {expanded ? <ChevronUpIcon className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />}
           </button>
         </div>
       </div>
 
-      {/* Primary Next Action */}
-      <div className="border-b border-gray-100 bg-blue-50 px-5 py-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Primary Next Action</p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold text-blue-900">{actionLabel}</p>
-          {data.primaryNextAction !== "DOWNLOAD_FINAL_ZIP" && (
-            <button
-              onClick={() => void executeAction(data.primaryNextAction)}
-              disabled={actioning}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              <PlayIcon /> {actioning ? "Working…" : "Execute"}
-            </button>
-          )}
-          {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
-            <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
-              <DownloadIcon /> Download ZIP
-            </a>
-          )}
+      {analyzeProgress !== null && (
+        <div className="h-1 w-full bg-gray-100">
+          <div
+            className="h-full bg-emerald-500 transition-all duration-500 ease-out"
+            style={{ width: `${analyzeProgress}%` }}
+          />
         </div>
-        {analyzeProgress !== null && (
-          <div className="mt-2">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-100">
-              <div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${analyzeProgress}%` }} />
-            </div>
-          </div>
-        )}
-        {data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
-          <div className="mt-2 flex gap-2">
-            <input
-              type="text"
-              value={approvalNote}
-              onChange={(e) => setApprovalNote(e.target.value)}
-              placeholder="Approval note (required)…"
-              className="flex-1 rounded border border-blue-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
-              maxLength={200}
-            />
-          </div>
-        )}
-        {actionMsg && (
-          <p className="mt-2 text-xs text-blue-700 font-medium">{actionMsg}</p>
-        )}
-      </div>
+      )}
 
-      {/* Blockers */}
       {data.blockers.length > 0 && (
-        <div className="border-b border-gray-100 px-5 py-3">
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-red-600">
-            Blockers ({data.blockers.length})
+        <div className="border-b border-red-50 bg-red-50/30 px-5 py-3">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-red-700">
+            Critical Readiness Blockers ({data.blockers.length})
           </p>
-          <ul className="space-y-1.5">
-            {data.blockers.map((b) => (
-              <li key={b.code} className="rounded border border-red-200 bg-red-50 px-3 py-1.5">
-                <p className="text-xs font-medium text-red-800">{b.message}</p>
-                <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
-                {/* Quick-action shortcuts for specific blocker codes */}
+          <ul className="space-y-2">
+            {data.blockers.map((b: any) => (
+              <li key={b.code} className="group">
+                <div className="flex items-start gap-1.5 text-xs text-red-800">
+                  <WarningIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
+                  <span className="leading-relaxed">{b.message}</span>
+                </div>
                 {b.code === "METADATA_INCOMPLETE" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    <button onClick={() => void executeAction("REPAIR_METADATA")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Repair Metadata</button>
                     <select value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} className="rounded border border-red-300 bg-white px-1.5 py-0.5 text-xs text-red-700" title="OCR provider for re-extraction">
                       <option value="auto">Auto OCR</option>
                       <option value="tesseract">Tesseract</option>
@@ -469,14 +325,13 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         </div>
       )}
 
-      {/* Blocked Actions */}
       {data.blockedActions.length > 0 && (
         <div className="border-b border-gray-100 px-5 py-3">
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
             Blocked Actions ({data.blockedActions.length})
           </p>
           <ul className="space-y-1">
-            {data.blockedActions.map((b) => (
+            {data.blockedActions.map((b: any) => (
               <li key={b.action} className="flex items-start gap-1.5 text-xs text-gray-700">
                 <BanIcon className="mt-0.5 shrink-0 text-amber-500" />
                 <span>
@@ -490,7 +345,6 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         </div>
       )}
 
-      {/* Document count summary — always visible */}
       <div className="grid grid-cols-4 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
         {[
           { label: "Required", value: data.counts.requiredPlanRows },
@@ -506,7 +360,6 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
           </div>
         ))}
       </div>
-      {/* Plan-not-built notice: shown when all counters are 0 and no submission plan exists */}
       {data.counts.requiredPlanRows === 0
         && data.counts.generatedNarrativeDocs === 0
         && data.counts.finalExportCandidates === 0
@@ -516,38 +369,34 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         </div>
       )}
 
-      {/* Expanded details */}
       {expanded && (
         <div className="divide-y divide-gray-100">
-          {/* Warnings */}
           {data.warnings.length > 0 && (
             <div className="px-5 py-3">
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
                 Warnings ({data.warnings.length})
               </p>
               <ul className="space-y-1">
-                {data.warnings.map((w) => (
-                  <li key={w.code} className="flex items-start gap-1.5 text-xs text-amber-800"><WarningIcon className="mt-0.5 shrink-0" /> {w.message}</li>
+                {data.warnings.map((w: any) => (
+                  <li key={w.code} className="flex items-start gap-1.5 text-xs text-amber-800"><WarningIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {w.message}</li>
                 ))}
               </ul>
             </div>
           )}
 
-          {/* Advisory warnings */}
           {data.advisoryWarnings.length > 0 && (
             <div className="px-5 py-3">
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">
                 Advisory ({data.advisoryWarnings.length}) — do not block export
               </p>
               <ul className="space-y-1">
-                {data.advisoryWarnings.map((w) => (
+                {data.advisoryWarnings.map((w: any) => (
                   <li key={w.code} className="text-xs text-gray-600">ℹ {w.message}</li>
                 ))}
               </ul>
             </div>
           )}
 
-          {/* Status grid */}
           <div className="px-5 py-3">
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Status Summary</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
@@ -578,7 +427,6 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             </div>
           </div>
 
-          {/* Envelope breakdown */}
           {data.planStatus.totalRequired > 0 && (
             <div className="px-5 py-3">
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Envelope Breakdown</p>
@@ -593,16 +441,15 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             </div>
           )}
 
-          {/* Allowed actions */}
           {data.allowedActions.length > 0 && (
             <div className="px-5 py-3">
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">
                 Allowed Actions ({data.allowedActions.length})
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {data.allowedActions.map((a) => (
+                {data.allowedActions.map((a: string) => (
                   <span key={a} className="inline-flex items-center gap-1 rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800">
-                    <CheckIcon /> {ACTION_LABELS[a] ?? a}
+                    <CheckIcon className="h-3 w-3" /> {ACTION_LABELS[a] ?? a}
                   </span>
                 ))}
               </div>
@@ -627,7 +474,7 @@ function StatusRow({
     <div className="flex items-center justify-between gap-2">
       <span className="text-gray-600">{label}</span>
       <span className={`inline-flex items-center gap-1 font-medium ${ok ? "text-green-700" : "text-red-600"}`}>
-        {ok ? <CheckIcon /> : <CrossIcon />} {value}
+        {ok ? <CheckIcon className="h-3 w-3" /> : <CrossIcon className="h-3 w-3" />} {value}
       </span>
     </div>
   );
