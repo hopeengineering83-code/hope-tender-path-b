@@ -65,7 +65,7 @@ function statusBadge(state: string) {
 function ManifestRowsTable({ rows, hasExplicitPlan, faded = false }: { rows: ManifestRow[]; hasExplicitPlan: boolean; faded?: boolean }) {
   if (rows.length === 0) return null;
   return (
-    <div id="final-package-manifest" className="overflow-x-auto">
+    <div className="overflow-x-auto">
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="border-b border-slate-200 text-left uppercase tracking-wide text-slate-500">

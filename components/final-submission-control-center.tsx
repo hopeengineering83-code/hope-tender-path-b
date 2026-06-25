@@ -125,7 +125,7 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
         state: (generationReady ? "done" : generationBlocked ? "blocked" : "unknown") as "done" | "blocked" | "unknown",
         status: generationReady ? "Generation gate passed" : generationBlocked ? "Blocked" : "Not confirmed",
         action: "Open Generate Docs",
-        href: "#generated-documents",
+        href: "#generate-docs-action",
       },
       {
         no: 3,

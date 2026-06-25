@@ -15,7 +15,7 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
   if (!data) return null;
 
   return (
-    <div id="submission-plan" className={`mt-4 rounded-xl border p-4 ${data.isVerified ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
+    <div className={`mt-4 rounded-xl border p-4 ${data.isVerified ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
       <h3 className={`text-sm font-bold ${data.isVerified ? "text-green-900" : "text-amber-900"}`}>
         Submission Plan: {data.status.replace(/_/g, " ")}
       </h3>

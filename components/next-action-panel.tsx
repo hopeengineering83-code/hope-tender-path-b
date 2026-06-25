@@ -58,11 +58,11 @@ const STEP_TARGETS = [
   "#ai-analyze-section",
   "#tender-edit-form",
   "#requirement-coverage",
-  "#submission-plan",
+  "#submission-plan-completeness",
   "#generated-documents",
   "#generated-documents",
   "#final-package-manifest",
-  "#export-readiness",
+  "#export-package",
 ] as const;
 
 function stepFromPrimary(primary: TenderNextActionPrimary): WorkflowStep {

@@ -445,6 +445,10 @@ export function isProviderConfigured(
     // `:free` model — otherwise a request could create paid usage.
     return Boolean(readProviderKey(provider, env)) && openRouterModelValidity(env).valid;
   }
+  if (provider === "zai") {
+    // Z.ai is only "configured" when it has a key AND a valid (non-regressed) model.
+    return Boolean(readProviderKey(provider, env)) && zaiModelValidity(env).valid;
+  }
   return Boolean(readProviderKey(provider, env));
 }
 
@@ -509,12 +513,60 @@ export function getProviderTimeoutMs(provider: AiProviderName): number {
 
 // ─── OpenRouter free-model policy ─────────────────────────────────────────────
 
-export type OpenRouterModelValidity = {
+export type ProviderValidity = {
   valid: boolean;
   model: string | null;
   reason: "OK" | "MODEL_UNAVAILABLE" | "CONFIGURATION_INVALID";
   message: string | null;
 };
+
+/**
+ * Shared forbidden-model validation. Currently only blocks the regressed
+ * glm-4.7-flash Z.ai model.
+ */
+export function isForbiddenModel(model: string | undefined): boolean {
+  if (!model) return false;
+  return model.trim() === "glm-4.7-flash";
+}
+
+/**
+ * Z.ai must NOT use the regressed glm-4.7-flash model.
+ */
+export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): ProviderValidity {
+  const proposal = env.ZAI_PROPOSAL_MODEL?.trim();
+  const analysis = env.ZAI_ANALYSIS_MODEL?.trim();
+  const fast = env.ZAI_FAST_MODEL?.trim();
+
+  if (isForbiddenModel(proposal)) {
+    return {
+      valid: false,
+      model: proposal,
+      reason: "CONFIGURATION_INVALID",
+      message: "ZAI_PROPOSAL_MODEL uses forbidden regressed model 'glm-4.7-flash'. Change to 'glm-4-flash'.",
+    };
+  }
+  if (isForbiddenModel(analysis)) {
+    return {
+      valid: false,
+      model: analysis,
+      reason: "CONFIGURATION_INVALID",
+      message: "ZAI_ANALYSIS_MODEL uses forbidden regressed model 'glm-4.7-flash'. Change to 'glm-4-flash'.",
+    };
+  }
+  if (isForbiddenModel(fast)) {
+    return {
+      valid: false,
+      model: fast,
+      reason: "CONFIGURATION_INVALID",
+      message: "ZAI_FAST_MODEL uses forbidden regressed model 'glm-4.7-flash'. Change to 'glm-4-flash'.",
+    };
+  }
+
+  return { valid: true, model: null, reason: "OK", message: null };
+}
+
+export type OpenRouterModelValidity = ProviderValidity;
+
 
 /**
  * OpenRouter must use an explicit free model. `openrouter/auto` is rejected and

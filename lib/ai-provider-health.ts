@@ -14,6 +14,7 @@ import {
   getProviderBaseUrl,
   getProviderModel,
   openRouterModelValidity,
+  zaiModelValidity,
   type AiProviderName,
 } from "./ai-provider-registry";
 
@@ -347,13 +348,18 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   if (h.lastAnalysisSucceededAt) return "ANALYSIS_VERIFIED";
   if (h.lastPingSucceededAt) return "CONNECTIVITY_VERIFIED";
 
-  // OpenRouter with a key but a missing/invalid (non-:free) model is a
-  // configuration problem, surfaced distinctly so operators fix the model
-  // rather than see a misleading NOT_CONFIGURED. It never consumes an attempt.
+  // Model-validity checks (OpenRouter free-policy and Z.ai regression-policy)
+  // are configuration problems surfaced distinctly so operators fix the model.
   if (provider === "openrouter") {
     const validity = openRouterModelValidity();
     if (!validity.valid) {
       return validity.reason === "MODEL_UNAVAILABLE" ? "MODEL_UNAVAILABLE" : "CONFIGURATION_INVALID";
+    }
+  }
+  if (provider === "zai") {
+    const validity = zaiModelValidity();
+    if (!validity.valid) {
+      return "CONFIGURATION_INVALID";
     }
   }
 

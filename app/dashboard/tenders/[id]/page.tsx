@@ -32,7 +32,6 @@ import { MatchingQualityPanel } from "../../../../components/matching-quality-pa
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
-import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
 import { ClientSubmissionDetailsPanel } from "../../../../components/client-submission-details-panel";
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
@@ -181,7 +180,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
-        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} />
         <AIHealthPanel />
         <EngineActionPanel
           tenderId={tender.id}

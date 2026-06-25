@@ -32,13 +32,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Run AI Analyze",
     kind: "api",
     method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    path: "/api/tenders/{tenderId}/ai-analyze",
   },
   RETRY_AI_ANALYZE: {
     label: "Retry AI Analyze",
     kind: "api",
     method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    path: "/api/tenders/{tenderId}/ai-analyze",
   },
   RESUME_AI_ANALYZE: {
     label: "Resume AI Analyze",
@@ -46,13 +46,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     method: "POST",
     // The ai-analyze endpoint auto-detects the latest resumable PARTIAL_SUCCESS
     // or FAILED job with saved chunkResults — no ?continue= param needed.
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    path: "/api/tenders/{tenderId}/ai-analyze",
   },
   REVIEW_ANALYSIS: {
     label: "Review Analysis",
     kind: "api",
     method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    path: "/api/tenders/{tenderId}/ai-analyze",
   },
   APPROVE_FALLBACK_WITH_NOTE: {
     label: "Approve Fallback Analysis (with note)",
@@ -70,7 +70,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Run AI Analyze",
     kind: "api",
     method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    path: "/api/tenders/{tenderId}/ai-analyze",
     aliases: ["REVIEW_ANALYSIS"],
   },
   COMPLETE_METADATA: {
@@ -279,7 +279,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Re-run AI Analyze",
     kind: "api",
     method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    path: "/api/tenders/{tenderId}/ai-analyze",
     aliases: ["RERUN_AI_ANALYZE_AFTER_OCR", "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK", "CONTINUE_AI_ANALYSIS"],
   },
   // Auto-finalize resume ─────────────────────────────────────────────────────

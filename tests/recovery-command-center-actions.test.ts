@@ -101,9 +101,7 @@ const REQUIRED_EXECUTE_ACTIONS = [
 ];
 
 function routeFileForApiPath(path: string): string {
-  // Strip query string (e.g. ?mode=background) before resolving to a file path.
-  const pathWithoutQuery = path.split("?")[0];
-  const withoutTender = pathWithoutQuery.replace("/api/tenders/{tenderId}", "app/api/tenders/[id]").replace(/^\//, "");
+  const withoutTender = path.replace("/api/tenders/{tenderId}", "app/api/tenders/[id]").replace(/^\//, "");
   return resolve(process.cwd(), withoutTender, "route.ts");
 }
 
