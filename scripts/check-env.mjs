@@ -11,7 +11,7 @@
 
 // The canonical provider ORDER and API-key env NAMES come from the single
 // shared catalog (lib/ai-provider-catalog.cjs) — never re-declared here.
-import { AI_PROVIDER_API_KEY_ENVS } from "../lib/ai-provider-catalog.cjs";
+import { AI_PROVIDER_API_KEY_ENVS, ZAI_FORBIDDEN_MODEL_OVERRIDES } from "../lib/ai-provider-catalog.cjs";
 
 // Required in production AND preview deployments (app cannot function without these)
 const ALWAYS_REQUIRED = [
@@ -119,7 +119,7 @@ const AI_PROVIDER_KEYS = AI_PROVIDER_API_KEY_ENVS.map((name) => ({
   ...(PROVIDER_KEY_META[name] ?? { description: `${name} AI provider key.`, validate: (_v) => null }),
 }));
 
-const FORBIDDEN_ZAI_MODELS = new Set([`glm-${4 + 0.7}-flash`]);
+const FORBIDDEN_ZAI_MODELS = new Set(ZAI_FORBIDDEN_MODEL_OVERRIDES);
 const ZAI_MODEL_ENVS = ["ZAI_PROPOSAL_MODEL", "ZAI_ANALYSIS_MODEL", "ZAI_FAST_MODEL"];
 
 function validateZaiModelOverrides() {

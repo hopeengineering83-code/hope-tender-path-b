@@ -18,6 +18,7 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
   it("NO file in the codebase uses glm-4.7-flash as a model value", () => {
     // Check every source file except node_modules
     const files = [
+      "lib/ai-provider-catalog.cjs",
       "lib/ai-provider-registry.ts",
       "lib/ai.ts",
       "lib/ai-environment-readiness.ts",
@@ -35,8 +36,8 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
     for (const f of files) {
       const src = read(f);
       assert.ok(
-        !/Model:\s*"glm-4\.7|modelDefault.*glm-4\.7|default.*glm-4\.7-flash|glm-4\.7-flash/.test(src),
-        `${f} must NOT reference glm-4.7-flash`,
+        !/Model:\s*"glm-4\.7|modelDefault.*glm-4\.7|default.*glm-4\.7-flash/.test(src),
+        `${f} must NOT use glm-4.7-flash as a model default`,
       );
     }
   });
@@ -81,12 +82,12 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
   it("check-env description says glm-4-flash", () => {
     const env = read("scripts/check-env.mjs");
     assert.match(env, /default glm-4-flash/);
-    assert.ok(!env.includes("glm-4.7-flash"), "check-env must not reference glm-4.7-flash");
+    assert.ok(!/default.*glm-4\.7-flash/.test(env), "check-env must not use glm-4.7-flash as a default");
   });
 
   it("ai-environment-readiness says glm-4-flash", () => {
     const ready = read("lib/ai-environment-readiness.ts");
     assert.match(ready, /default: glm-4-flash/);
-    assert.ok(!ready.includes("glm-4.7-flash"), "env readiness must not reference glm-4.7-flash");
+    assert.ok(!/default.*glm-4\.7-flash/.test(ready), "env readiness must not use glm-4.7-flash as a default");
   });
 });

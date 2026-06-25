@@ -17,6 +17,7 @@
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
   PROVIDER_API_KEY_ENV,
+  ZAI_FORBIDDEN_MODEL_OVERRIDES,
 } from "./ai-provider-catalog.cjs";
 
 export type AiProviderName =
@@ -121,7 +122,7 @@ const ANALYSIS_TIMEOUT_MS = 45_000;
 
 const FALLBACK_RETRY: ProviderRetryPolicy = { maxRetries: 0, retryOnAuth: false, retryOnBilling: false };
 
-const FORBIDDEN_ZAI_MODELS = new Set([`glm-${4 + 0.7}-flash`]);
+const FORBIDDEN_ZAI_MODELS = new Set(ZAI_FORBIDDEN_MODEL_OVERRIDES);
 
 export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): { valid: boolean; reason?: string } {
   const candidates = ["ZAI_PROPOSAL_MODEL", "ZAI_ANALYSIS_MODEL", "ZAI_FAST_MODEL"];
