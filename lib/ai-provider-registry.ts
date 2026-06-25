@@ -521,7 +521,7 @@ export type ProviderValidity = {
 };
 
 /**
- * Shared forbidden-model validation. Currently only blocks the regressed
+ * Shared forbidden-model validation. Currently only blocks the
  * regressed Z.ai model.
  */
 export function isForbiddenModel(model: string | undefined): boolean {
