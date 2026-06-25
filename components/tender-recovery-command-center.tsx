@@ -3,18 +3,27 @@
 import React, { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  AlertTriangleIcon as WarningIcon,
-  CheckCircleIcon as CheckIcon,
-  XCircleIcon as CrossIcon,
+  WarningIcon,
+  CheckIcon,
+  CrossIcon,
   BanIcon,
-  RefreshCwIcon as RefreshIcon,
+  RefreshIcon,
   ChevronDownIcon,
-  ChevronUpIcon,
-  TerminalIcon,
-} from "lucide-react";
+  CheckCircleIcon,
+} from "./icons";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath } from "../lib/recovery-command-actions";
 
 type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "PARTIAL_SUCCESS";
+
+/** ChevronUp icon shim — rotate ChevronDown */
+function ChevronUpIcon(props?: any) {
+  return <ChevronDownIcon {...props} className="rotate-180" />;
+}
+
+/** Terminal icon shim — simpler Ban */
+function TerminalIcon(props?: any) {
+  return <BanIcon {...props} />;
+}
 
 export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: string }) {
   const router = useRouter();
@@ -79,6 +88,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     setAnalyzeProgress(5);
     setActionMsg("Enqueuing durable analysis job…");
 
+    // 1. Enqueue
     const enqueueRes = await fetch(path, { method: "POST" });
     if (enqueueRes.status === 401 || enqueueRes.status === 403) {
       setAnalyzeProgress(null);
@@ -103,17 +113,15 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     setAnalyzeProgress(10);
     setActionMsg("Starting worker…");
 
-    try {
-      const workerRes = await fetch(`/api/ai-jobs/run-next?jobType=AI_ANALYZE`, { method: "POST" });
-      if (workerRes.status === 401 || workerRes.status === 403) {
-        setActionMsg("Worker could not be started (session expired). The job is queued and will be picked up automatically.");
-      } else if (workerRes.status >= 500) {
-        setActionMsg("Worker start failed. The job is queued and will be retried automatically.");
-      }
-    } catch {
-      // ignore worker trigger failure
+    // 2. Trigger the worker
+    const workerRes = await fetch(`/api/ai-jobs/run-next?jobType=AI_ANALYZE`, { method: "POST" });
+    if (workerRes.status === 401 || workerRes.status === 403) {
+      setActionMsg("Worker could not be started (session expired). The job is queued and will be picked up automatically.");
+    } else if (workerRes.status >= 500) {
+      setActionMsg("Worker start failed. The job is queued and will be retried automatically.");
     }
 
+    // 3. Poll job status
     setAnalyzeProgress(15);
     setActionMsg("Analysis running…");
     let pollCount = 0;
@@ -146,6 +154,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
           continue;
         }
 
+        // Terminal
         setAnalyzeProgress(null);
         if (status === "SUCCEEDED") {
           const reqCount = typeof output.requirementCount === "number" ? output.requirementCount : 0;
@@ -176,7 +185,10 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     setError(null);
     try {
       const spec = getRecoveryCommandActionSpec(action);
-      if (!spec) setError("Action not available yet"); return;
+      if (!spec) {
+        setError("Action not available yet");
+        return;
+      }
 
       if (action === "APPROVE_FALLBACK_WITH_NOTE") {
         if (!approvalNote.trim()) throw new Error("Please provide a note for approval.");
@@ -210,15 +222,16 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         return;
       }
       if (spec.kind === "api" && spec.path) {
+        const targetPath = renderRecoveryActionPath(spec.path, tenderId);
         if (spec.path.includes("/ai-analyze")) {
-          const msg = await runDurableAnalyze(renderRecoveryActionPath(spec.path, tenderId));
+          const msg = await runDurableAnalyze(targetPath);
           setActionMsg(msg);
           await load();
           router.refresh();
           return;
         }
 
-        const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), {
+        const res = await fetch(targetPath, {
           method: spec.method || "POST",
           headers: { "Content-Type": "application/json" },
           body: action === "RE_EXTRACT_METADATA" ? JSON.stringify({ ocrProvider }) : undefined,
@@ -266,7 +279,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             className="rounded-full p-1 text-slate-400 hover:bg-gray-100 hover:text-slate-600 transition-colors"
             title={expanded ? "Collapse details" : "Expand details"}
           >
-            {expanded ? <ChevronUpIcon className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />}
+            {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
           </button>
         </div>
       </div>
@@ -449,7 +462,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
               <div className="flex flex-wrap gap-1.5">
                 {data.allowedActions.map((a: string) => (
                   <span key={a} className="inline-flex items-center gap-1 rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800">
-                    <CheckIcon className="h-3 w-3" /> {ACTION_LABELS[a] ?? a}
+                    <CheckCircleIcon className="h-3 w-3" /> {ACTION_LABELS[a] ?? a}
                   </span>
                 ))}
               </div>
@@ -474,7 +487,7 @@ function StatusRow({
     <div className="flex items-center justify-between gap-2">
       <span className="text-gray-600">{label}</span>
       <span className={`inline-flex items-center gap-1 font-medium ${ok ? "text-green-700" : "text-red-600"}`}>
-        {ok ? <CheckIcon className="h-3 w-3" /> : <CrossIcon className="h-3 w-3" />} {value}
+        {ok ? <CheckCircleIcon className="h-3 w-3" /> : <CrossIcon className="h-3 w-3" />} {value}
       </span>
     </div>
   );
