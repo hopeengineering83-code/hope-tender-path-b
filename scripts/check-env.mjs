@@ -119,6 +119,40 @@ const AI_PROVIDER_KEYS = AI_PROVIDER_API_KEY_ENVS.map((name) => ({
   ...(PROVIDER_KEY_META[name] ?? { description: `${name} AI provider key.`, validate: (_v) => null }),
 }));
 
+const FORBIDDEN_ZAI_MODELS = new Set([`glm-${4 + 0.7}-flash`]);
+const ZAI_MODEL_ENVS = ["ZAI_PROPOSAL_MODEL", "ZAI_ANALYSIS_MODEL", "ZAI_FAST_MODEL"];
+
+function validateZaiModelOverrides() {
+  for (const name of ZAI_MODEL_ENVS) {
+    const model = process.env[name]?.trim();
+    if (model && FORBIDDEN_ZAI_MODELS.has(model)) {
+      errors.push(`  ✗ ${name}: ${model} is forbidden; use glm-4-flash.`);
+    }
+  }
+}
+
+function validateProductionStorage() {
+  const hasBlob = Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+  const allowDb = process.env.ALLOW_DB_FILE_STORAGE === "true";
+  if (hasBlob) return;
+
+  const message =
+    "Production storage is NOT configured. Either set BLOB_READ_WRITE_TOKEN for Vercel Blob storage, " +
+    "or set ALLOW_DB_FILE_STORAGE=true to enable emergency-only database fallback (bounded to 5MiB per file). " +
+    "Filesystem storage is not supported in production.";
+
+  if (!allowDb) {
+    if (isProd || (isVercelPreview && strictPreviewEnvCheck)) {
+      errors.push(`  ✗ STORAGE_NOT_READY: ${message}`);
+    } else {
+      warnings.push(`  ⚠  STORAGE_NOT_READY: ${message} [Preview/Dev build allowed; uploads may fail]`);
+    }
+    return;
+  }
+
+  warnings.push("  ⚠  ALLOW_DB_FILE_STORAGE: emergency database file storage fallback is enabled; configure BLOB_READ_WRITE_TOKEN for durable production storage.");
+}
+
 // Operational readiness — important for full functionality but never a build
 // blocker. Missing values surface as warnings only.
 const OPERATIONAL_WARNINGS = [
@@ -264,6 +298,8 @@ for (const spec of PRODUCTION_REQUIRED) {
   }
 }
 
+validateZaiModelOverrides();
+validateProductionStorage();
 validateAiProposalRuntime();
 
 if (warnings.length > 0) {

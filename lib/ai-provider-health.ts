@@ -11,6 +11,7 @@ import {
   CANONICAL_AI_PROVIDER_ORDER,
   readProviderKey,
   isProviderConfigured as registryIsProviderConfigured,
+  zaiModelValidity as registryZaiModelValidity,
   getProviderBaseUrl,
   getProviderModel,
   openRouterModelValidity,
@@ -85,6 +86,7 @@ const state = new Map<AiProviderName, InternalState>();
 
 export function getZaiApiKey(): string | undefined { return readProviderKey("zai"); }
 export function isZaiConfigured(): boolean { return registryIsProviderConfigured("zai"); }
+export function zaiModelValidity(env: NodeJS.ProcessEnv = process.env): { valid: boolean; reason?: string } { return registryZaiModelValidity(env); }
 export function getZaiBaseUrl(): string { return getProviderBaseUrl("zai") ?? "https://api.z.ai/api/paas/v4"; }
 export function getZaiProposalModel(): string { return getProviderModel("zai", "proposal"); }
 export function getZaiAnalysisModel(): string { return getProviderModel("zai", "extraction"); }
