@@ -62,7 +62,7 @@ const STEP_TARGETS = [
   "#generated-documents",
   "#generated-documents",
   "#final-package-manifest",
-  "#export-package",
+  "#export-readiness",
 ] as const;
 
 function stepFromPrimary(primary: TenderNextActionPrimary): WorkflowStep {

@@ -93,15 +93,17 @@ const REQUIRED_EXECUTE_ACTIONS = [
   "BUILD_SUBMISSION_PLAN",
   "COMPLETE_METADATA",
   "EXCLUDE_OUTSIDE_PLAN_DOCS",
-  "GENERATE_MISSING_PLANNED_DOCS",
-  "VALIDATE_DOCS",
+  "GENERATE_REQUIRED_DOCUMENTS",
+  "RESOLVE_EXPORT_BLOCKERS",
   "EXPORT_READINESS",
   "RE_CHECK",
   "RETRY_AI_ANALYZE",
 ];
 
 function routeFileForApiPath(path: string): string {
-  const withoutTender = path.replace("/api/tenders/{tenderId}", "app/api/tenders/[id]").replace(/^\//, "");
+  // Strip query string (e.g. ?mode=background) before resolving to a file path.
+  const pathWithoutQuery = path.split("?")[0];
+  const withoutTender = pathWithoutQuery.replace("/api/tenders/{tenderId}", "app/api/tenders/[id]").replace(/^\//, "");
   return resolve(process.cwd(), withoutTender, "route.ts");
 }
 
@@ -129,6 +131,7 @@ describe("Recovery Command Center — action registry coverage", () => {
       "extraction-quality",
       "extraction-quality-detail",
       "analysis-quality",
+      "ai-analyze-section",
     ]);
     for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
       if (spec.kind !== "scroll") continue;
@@ -425,7 +428,7 @@ const EXECUTE_PATH_ROUTES = [
   // primaryNextAction → API path mappings
   { action: "GENERATE_REQUIRED_DOCUMENTS", file: "app/api/tenders/[id]/generate-missing-plan-files/route.ts" },
   { action: "AUTO_FINALIZE",               file: "app/api/tenders/[id]/auto-finalize/route.ts" },
-  { action: "VALIDATE_DOCS",               file: "app/api/tenders/[id]/validate/route.ts" },
+  { action: "RESOLVE_EXPORT_BLOCKERS",               file: "app/api/tenders/[id]/validate/route.ts" },
   { action: "REPAIR_SOURCE_REFERENCES",    file: "app/api/tenders/[id]/repair-source-grounding/route.ts" },
   { action: "REPAIR_DOCUMENT_QUALITY",     file: "app/api/tenders/[id]/repair-export-gaps/route.ts" },
   { action: "BUILD_SUBMISSION_PLAN",       file: "app/api/tenders/[id]/submission-plan/build/route.ts" },

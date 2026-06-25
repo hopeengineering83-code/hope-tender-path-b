@@ -94,7 +94,7 @@ export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
   const hasLoaded = summary !== null;
 
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+    <div id="evaluator-objections" className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Evaluator Objections</h3>

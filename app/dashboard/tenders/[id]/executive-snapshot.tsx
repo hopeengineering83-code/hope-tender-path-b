@@ -31,6 +31,9 @@ type TenderRequirementLike = {
   pageLimit?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  sourceConfidence?: number | null;
+  sourcePageNumber?: number | null;
+  sourceExactQuote?: string | null;
 };
 
 type TenderLike = {

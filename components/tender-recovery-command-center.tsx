@@ -168,7 +168,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
 
   function messageForApiAction(action: string, json: Record<string, unknown>) {
     if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS" || action === "RESUME_AI_ANALYZE") {
-      return json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.";
+      return json.fallback ? "Regex fallback used — generation remains blocked. Retry when providers recover or approve for audit only." : "Analysis completed. Verify results in the Analysis Quality panel.";
     }
     if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;
     if (action === "RUN_ENGINE") return "Engine ran. Review lifecycle, generation readiness, and export readiness before proceeding.";
@@ -188,7 +188,103 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     return `${recoveryCommandLabel(action)} completed.`;
   }
 
+  // AI Analyze uses the durable background path (?mode=background) — NOT direct
+  // SSE. The old SSE path was bounded by Vercel's 60s function cap and would
+  // silently fail on large tenders. The durable path enqueues a job (202),
+  // triggers the worker, and polls /api/ai-jobs/[jobId] until terminal.
+  async function runDurableAnalyze(path: string): Promise<string> {
+    setAnalyzeProgress(5);
+    setActionMsg("Enqueuing durable analysis job…");
 
+    // 1. Enqueue
+    const enqueueRes = await fetch(path, { method: "POST" });
+    if (enqueueRes.status === 401 || enqueueRes.status === 403) {
+      setAnalyzeProgress(null);
+      throw new Error("You are not authorized to run AI analysis. Please sign in again.");
+    }
+    if (enqueueRes.status === 422) {
+      const d = await enqueueRes.json().catch(() => ({}));
+      setAnalyzeProgress(null);
+      throw new Error(d.error ?? "Extraction is not ready. Run OCR or re-upload.");
+    }
+    if (enqueueRes.status !== 202) {
+      const d = await enqueueRes.json().catch(() => ({}));
+      setAnalyzeProgress(null);
+      throw new Error(d.error ?? `Failed to start analysis (HTTP ${enqueueRes.status}).`);
+    }
+    const enqueued = await enqueueRes.json();
+    const jobId: string | undefined = enqueued.jobId;
+    if (!jobId) {
+      setAnalyzeProgress(null);
+      throw new Error("No job ID returned from the analysis endpoint.");
+    }
+    setAnalyzeProgress(10);
+    setActionMsg("Starting worker…");
+
+    // 2. Trigger the worker
+    const workerRes = await fetch(`/api/ai-jobs/run-next?jobType=AI_ANALYZE`, { method: "POST" });
+    if (workerRes.status === 401 || workerRes.status === 403) {
+      setActionMsg("Worker could not be started (session expired). The job is queued and will be picked up automatically.");
+    } else if (workerRes.status >= 500) {
+      setActionMsg("Worker start failed. The job is queued and will be retried automatically.");
+    }
+
+    // 3. Poll job status
+    setAnalyzeProgress(15);
+    setActionMsg("Analysis running…");
+    let pollCount = 0;
+    const maxPolls = 240;
+    while (pollCount < maxPolls) {
+      pollCount++;
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const res = await fetch(`/api/ai-jobs/${jobId}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const job = data?.job;
+        if (!job) continue;
+
+        const steps: Array<{ message?: string | null }> = job.steps ?? [];
+        const latestStep = steps[steps.length - 1];
+        if (latestStep?.message) setActionMsg(String(latestStep.message).slice(0, 80));
+
+        const status: string = job.status;
+        const output: Record<string, unknown> = job.output ?? {};
+
+        if (status === "QUEUED" || status === "RUNNING") {
+          const completed = typeof output.completedChunks === "number" ? output.completedChunks : 0;
+          const total = typeof output.totalChunks === "number" ? output.totalChunks : 0;
+          if (total > 0 && completed > 0) {
+            setAnalyzeProgress(Math.min(Math.round(15 + (completed / total) * 75), 90));
+          } else {
+            setAnalyzeProgress(Math.min(15 + pollCount * 2, 85));
+          }
+          continue;
+        }
+
+        // Terminal
+        setAnalyzeProgress(null);
+        if (status === "SUCCEEDED") {
+          const reqCount = typeof output.requirementCount === "number" ? output.requirementCount : 0;
+          return `Analysis complete — ${reqCount} requirement(s) extracted and promoted.`;
+        }
+        if (status === "PARTIAL_SUCCESS") {
+          return "Analysis partial — some chunks failed. Generation remains blocked. Retry when providers recover.";
+        }
+        const errMsg = (typeof job.errorMessage === "string" && job.errorMessage) ||
+          (typeof output.errorMessage === "string" && output.errorMessage) ||
+          "Analysis failed.";
+        throw new Error(errMsg);
+      } catch (e) {
+        if (pollCount >= maxPolls) {
+          setAnalyzeProgress(null);
+          throw new Error("Analysis is taking longer than expected. It may still be running — refresh the page.");
+        }
+      }
+    }
+    setAnalyzeProgress(null);
+    return "Analysis is still running in the background. Refresh the page to check status.";
+  }
 
   async function executeAction(action: string) {
     setActioning(true);
@@ -210,7 +306,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? "Approval failed");
-        setActionMsg("Fallback analysis approved — generation unblocked.");
+        setActionMsg("Fallback note saved for audit. Generation and export remain blocked until full AI analysis succeeds.");
         setApprovalNote("");
         await load();
         router.refresh();
@@ -236,7 +332,14 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         return;
       }
       if (spec.kind === "api" && spec.path) {
-
+        // AI Analyze actions use the durable background path (?mode=background).
+        if (spec.path.includes("/ai-analyze")) {
+          const msg = await runDurableAnalyze(renderRecoveryActionPath(spec.path, tenderId));
+          setActionMsg(msg);
+          await load();
+          router.refresh();
+          return;
+        }
         const isReExtract = action === "RE_EXTRACT_METADATA";
         const fetchOptions: RequestInit = {
           method: spec.method ?? "POST",
