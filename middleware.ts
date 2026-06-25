@@ -6,6 +6,34 @@ import { extractRequestId, withRequestId } from "./lib/request-id";
 const INTERNAL_GUARD_HEADER = "x-hope-internal-rate-guard";
 const GUARDED_AI_ROUTE = /^\/api\/tenders\/[^/?]+\/(ai-analyze|generate)$/;
 const REQUEST_ID_HEADER = "x-request-id";
+const WORKER_SECRET_HEADER = "x-worker-secret";
+
+/**
+ * Detect authenticated server-to-server callers (GitHub Actions drain job,
+ * Vercel Cron, internal worker). These callers authenticate via a shared
+ * secret header instead of a browser session, so they have no Origin /
+ * Referer and would otherwise be rejected by the CSRF origin check.
+ *
+ * The route handler still re-validates the secret — this ONLY skips the
+ * CSRF origin check, it does NOT authenticate the caller.
+ */
+function isAutomatedCaller(req: NextRequest): boolean {
+  // Worker secret (GitHub Actions → /api/ai-jobs/run-next, /api/cron/ai-analyze-retry)
+  const workerSecret = process.env.AI_JOBS_WORKER_SECRET;
+  const workerHeader = req.headers.get(WORKER_SECRET_HEADER);
+  if (workerSecret && workerSecret.length >= 16 && workerHeader && workerHeader === workerSecret) {
+    return true;
+  }
+
+  // Vercel Cron (Authorization: Bearer ${CRON_SECRET} or VERCEL_CRON_SECRET)
+  const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  if (cronSecret && cronSecret.length >= 16) {
+    const authHeader = req.headers.get("authorization") ?? "";
+    if (authHeader === `Bearer ${cronSecret}`) return true;
+  }
+
+  return false;
+}
 
 async function deriveInternalGuardToken(): Promise<string | null> {
   const secret = process.env.SESSION_SECRET?.trim();
@@ -60,23 +88,29 @@ export async function middleware(req: NextRequest) {
   const requestId = extractRequestId(req as unknown as Request);
 
   return withRequestId(requestId, async () => {
-    // 1. CSRF Protection
-    const decision = evaluateCsrf({
-      method: req.method,
-      pathname: req.nextUrl.pathname,
-      expectedOrigin: req.nextUrl.origin,
-      origin: req.headers.get("origin"),
-      referer: req.headers.get("referer"),
-      nodeEnv: process.env.NODE_ENV,
-      csrfMode: process.env.CSRF_MODE,
-      csrfStrictDev: process.env.CSRF_STRICT_DEV,
-    });
+    // 1. CSRF Protection — skip for authenticated server-to-server callers
+    //    (GitHub Actions drain job, Vercel Cron). These carry a shared secret
+    //    header and have no browser Origin/Referer, so the origin check would
+    //    reject them with HTTP 403 "Invalid request origin." The route handler
+    //    still re-validates the secret.
+    if (!isAutomatedCaller(req)) {
+      const decision = evaluateCsrf({
+        method: req.method,
+        pathname: req.nextUrl.pathname,
+        expectedOrigin: req.nextUrl.origin,
+        origin: req.headers.get("origin"),
+        referer: req.headers.get("referer"),
+        nodeEnv: process.env.NODE_ENV,
+        csrfMode: process.env.CSRF_MODE,
+        csrfStrictDev: process.env.CSRF_STRICT_DEV,
+      });
 
-    if (!decision.allowed) {
-      return withRequestIdHeader(
-        withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 })),
-        requestId,
-      );
+      if (!decision.allowed) {
+        return withRequestIdHeader(
+          withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 })),
+          requestId,
+        );
+      }
     }
 
     // 2. Persistently guard the two large AI handlers without duplicating their
