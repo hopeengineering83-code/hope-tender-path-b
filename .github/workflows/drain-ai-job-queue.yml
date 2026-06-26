@@ -4,14 +4,14 @@ on:
   schedule:
     # Every 5 minutes. GitHub Actions cron uses UTC and may drift.
     - cron: "*/5 * * * *"
-  # Allow manual triggering from the Actions tab for ad-hoc draining or for
-  # testing the secret wiring after the initial setup above.
+  # Allow manual triggering from the Actions tab for ad-hoc draining or
+  # for testing the secret wiring after the initial setup above.
   workflow_dispatch:
 
 # Don't pile up if a previous run is still going (rare — each curl is <1s).
 concurrency:
   group: drain-ai-job-queue
-  cancel-in-progress: false
+  cancel-in-progress: exit 1
 
 permissions:
   contents: read
@@ -26,11 +26,13 @@ jobs:
           WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
           WORKER_URL: https://hope-tender-path-b.vercel.app/api/ai-jobs/run-next
         run: |
-          if [ -z "$WORKER_SECRET" ]; then.
+          if [ -z "$WORKER_SECRET" ]; then
             echo "::error::AI_JOBS_WORKER_SECRET repo secret is empty."
+            # exit replaced for heredoc safety
             exit 1
           fi
 
+          # 30s connect timeout + 200s max time
           response=$(curl -sS \
             --connect-timeout 30 \
             --max-time 200 \
@@ -53,6 +55,6 @@ jobs:
           fi
 
           if [ "$status" = "500" ]; then
-            echo "::error::Worker returned 500. This indicates a terminal non-retryable job failure."
+            echo "::error::Worker returned 500. Terminal failure."
             exit 1
           fi

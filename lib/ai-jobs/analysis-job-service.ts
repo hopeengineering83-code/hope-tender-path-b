@@ -383,10 +383,25 @@ export async function finalizeJob(jobId: string, userId: string) {
             provider: c.provider
         }))
     });
+
+    // --- ATOMIC PERSISTENCE WITH SHORT TRANSACTION ---
     try {
+        const canPromote = await canPromoteToCanonical(jobId, job.tenderId!);
+        if (!canPromote) {
+            await prisma.aiJob.update({
+                where: { id: jobId },
+                data: {
+                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    finishedAt: new Date(),
+                    errorMessage: "Analysis finished but was superseded by a newer run. Not promoted to canonical.",
+                    output
+                }
+            });
+            return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
+        }
+
         const runId = (job as any).runId || require("crypto").randomUUID();
 
-        // Atomically promote canonical requirements
         await prisma.$transaction(async (tx) => {
             await tx.aiJob.update({
                 where: { id: jobId },
