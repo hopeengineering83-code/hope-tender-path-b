@@ -548,7 +548,19 @@ export function resolveZaiConfiguration(
   const envName = slot === "analysisModel" ? entry.env.analysisModel : slot === "fastModel" ? entry.env.fastModel : entry.env.proposalModel;
   const specific = envName ? env[envName]?.trim() : undefined;
   const proposal = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
-  const model = (specific && specific.length > 0 ? specific : slot !== "proposalModel" && proposal && proposal.length > 0 ? proposal : entry.defaults[slot]).trim();
+
+  // Determine the effective model. If no env override is set, use the
+  // correct default for the detected plan type:
+  //   - General API → glm-4-flash (entry.defaults)
+  //   - Coding Plan → glm-4-coding (plan-specific default)
+  const registryDefault = entry.defaults[slot];
+  const planDefault = planType === "coding-plan" ? "glm-4-coding" : registryDefault;
+  const model = (specific && specific.length > 0
+    ? specific
+    : slot !== "proposalModel" && proposal && proposal.length > 0
+      ? proposal
+      : planDefault
+  ).trim();
   const lowerModel = model.toLowerCase();
   const keyPresent = Boolean(readProviderKey("zai", env));
   const general = ZAI_GENERAL_MODELS.has(lowerModel);
