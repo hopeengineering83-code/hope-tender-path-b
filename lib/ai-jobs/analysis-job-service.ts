@@ -271,7 +271,6 @@ function mapToDraft(req: AIRequirement): RequirementDraft {
         sourceExtractionMethod: req.sourceExtractionMethod
     };
 }
-
 export async function finalizeJob(jobId: string, userId: string) {
     const job = await prisma.aiJob.findUnique({
         where: { id: jobId, userId },
@@ -288,7 +287,6 @@ export async function finalizeJob(jobId: string, userId: string) {
     const runningOrQueued = allChunks.filter((c: any) => c.status === "RUNNING" || c.status === "QUEUED");
 
     if (runningOrQueued.length > 0) {
-        // satisfy non-destructive test for stagePartialResult
         await stagePartialResult(jobId, {
             requirements: [],
             summary: "Partial analysis in progress",
@@ -315,14 +313,13 @@ export async function finalizeJob(jobId: string, userId: string) {
         if (isProviderExhaustion) {
             await prisma.tender.update({
                 where: { id: job.tenderId! },
-                data: {
-                    analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED"
-                }
+                data: { analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED" }
             });
         }
         return { status: "FAILED", code: isProviderExhaustion ? "AI_PROVIDERS_EXHAUSTED" : "AI_CHUNKS_FAILED" };
     }
 
+    // --- HEAVY PREPARATION OUTSIDE TRANSACTION ---
     const parts = succeeded
         .sort((a: any, b: any) => a.chunkIndex - b.chunkIndex)
         .map((c: any) => JSON.parse(c.resultJson!) as AIAnalysisResult);
@@ -331,14 +328,11 @@ export async function finalizeJob(jobId: string, userId: string) {
 
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {
-        // Treat a file reference as present only when it is a non-empty string —
-        // guards against undefined/null/"" tokens slipping through as truthy.
         const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
         const fileToken = typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
         const hasId = fileId.length > 0 || fileToken.length > 0;
         const hasPage = typeof r.sourcePage === "number" && r.sourcePage > 0;
         const hasQuote = typeof r.sourceQuote === "string" && r.sourceQuote.trim().length > 0;
-        // Strict grounding: mandatory requirements MUST have file, page, and quote.
         return !hasId || !hasPage || !hasQuote;
     });
 
@@ -358,106 +352,87 @@ export async function finalizeJob(jobId: string, userId: string) {
         };
     }
 
-    // NON-DESTRUCTIVE FIX: version guard
-    const canPromote = await canPromoteToCanonical(jobId, job.tenderId!);
+    const drafts = merged.requirements.map(mapToDraft);
 
-    if (!canPromote) {
-        await prisma.aiJob.update({
-            where: { id: jobId },
-            data: {
-                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
-                finishedAt: new Date(),
-                errorMessage: "Analysis finished but was superseded by a newer run. Not promoted to canonical.",
-                output: JSON.stringify({
-                    requirementCount: merged.requirements.length,
-                    succeededChunks: succeeded.length,
-                    failedChunks: failed.length,
-                    superseded: true,
-                    chunkResults: succeeded.map(c => ({
-                        index: c.chunkIndex,
-                        result: JSON.parse(c.resultJson!),
-                        provider: c.provider
-                    }))
-                })
-            }
-        });
-        return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
-    }
-
-    // Atomically promote canonical requirements
-    try {
-    await prisma.$transaction(async (tx) => {
-        await tx.aiJob.update({
-            where: { id: jobId },
-            data: { status: "RUNNING", updatedAt: new Date() }
-        });
-
-        const drafts = merged.requirements.map(mapToDraft);
-        await upsertRequirements(tx, job.tenderId!, drafts);
-
-        // Persist the FULL canonical metadata set via the shared builder so the
-        // durable worker writes identical client/procuring-entity details,
-        // submission fields, source-traceability columns, and the
-        // metadataContaminated flag as the streaming/non-streaming routes.
-        // Previously this path persisted NO client metadata and skipped
-        // contamination detection — a tender analyzed via the async worker lost
-        // every client detail (CLAUDE.md #3) and bypassed contamination
-        // blocking (CLAUDE.md #6).
-        const existingTender = await tx.tender.findUnique({
-            where: { id: job.tenderId! },
-            select: { clientName: true, submissionMethod: true, submissionEmails: true, notes: true },
-        });
-        const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
-            clientName: existingTender?.clientName,
-            submissionMethod: existingTender?.submissionMethod,
-            submissionEmails: existingTender?.submissionEmails,
-            notes: existingTender?.notes,
-        });
-
-        // Type-safe Tender update — Prisma.TenderUpdateInput prevents
-        // non-schema fields (analysisSource, envelopeMode, clientType,
-        // submissionFormat) from being added. analysisSource is a virtual
-        // field derived from Tender.notes via regex; the notes marker
-        // "Analysis source: AI" is already set by buildCanonicalAnalysisTenderUpdate
-        // via buildAnalysisNotes().
-        const tenderUpdate: Prisma.TenderUpdateInput = {
-            ...canonicalData,
-            analysisExtractionStatus:
-                failed.length > 0
-                    ? "PARTIAL_EXTRACTION_AI_ANALYZED"
-                    : "FULL_EXTRACTION_AI_ANALYZED",
-        };
-
-        await tx.tender.update({
-            where: { id: job.tenderId! },
-            data: tenderUpdate,
-        });
-
-        const output = JSON.stringify({
-            requirementCount: merged.requirements.length,
-            succeededChunks: succeeded.length,
-            failedChunks: failed.length,
-            chunkResults: succeeded.map(c => ({
-                index: c.chunkIndex,
-                result: JSON.parse(c.resultJson!),
-                provider: c.provider
-            }))
-        });
-
-        await tx.aiJob.update({
-            where: { id: jobId },
-            data: {
-                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
-                finishedAt: new Date(),
-                output,
-            }
-        });
-
-        await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID());
+    const existingTender = await prisma.tender.findUnique({
+        where: { id: job.tenderId! },
+        select: { clientName: true, submissionMethod: true, submissionEmails: true, notes: true },
     });
+    const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
+        clientName: existingTender?.clientName,
+        submissionMethod: existingTender?.submissionMethod,
+        submissionEmails: existingTender?.submissionEmails,
+        notes: existingTender?.notes,
+    });
+
+    const tenderUpdate: Prisma.TenderUpdateInput = {
+        ...canonicalData,
+        analysisExtractionStatus:
+            failed.length > 0
+                ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+                : "FULL_EXTRACTION_AI_ANALYZED",
+    };
+
+    const output = JSON.stringify({
+        requirementCount: merged.requirements.length,
+        succeededChunks: succeeded.length,
+        failedChunks: failed.length,
+        chunkResults: succeeded.map(c => ({
+            index: c.chunkIndex,
+            result: JSON.parse(c.resultJson!),
+            provider: c.provider
+        }))
+    });
+
+    // --- ATOMIC PERSISTENCE WITH SHORT TRANSACTION ---
+    try {
+        const canPromote = await canPromoteToCanonical(jobId, job.tenderId!);
+        if (!canPromote) {
+            await prisma.aiJob.update({
+                where: { id: jobId },
+                data: {
+                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    finishedAt: new Date(),
+                    errorMessage: "Analysis finished but was superseded by a newer run. Not promoted to canonical.",
+                    output
+                }
+            });
+            return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
+        }
+
+        const runId = (job as any).runId || require("crypto").randomUUID();
+
+        await prisma.$transaction(async (tx) => {
+            await tx.aiJob.update({
+                where: { id: jobId },
+                data: { status: "RUNNING", updatedAt: new Date() }
+            });
+
+            await upsertRequirements(tx, job.tenderId!, drafts);
+
+            await tx.tender.update({
+                where: { id: job.tenderId! },
+                data: tenderUpdate,
+            });
+
+            await tx.aiJob.update({
+                where: { id: jobId },
+                data: {
+                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    finishedAt: new Date(),
+                    output,
+                    promotedAt: new Date(),
+                    promotedBy: userId,
+                    runId,
+                }
+            });
+        }, { timeout: 10000 });
+
+        return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
     } catch (persistErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
-        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId}: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`);
+        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`);
+
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
@@ -465,15 +440,8 @@ export async function finalizeJob(jobId: string, userId: string) {
                 finishedAt: new Date(),
                 errorMessage: `AI_ANALYSIS_PERSISTENCE_FAILED (ref: ${correlationId})`,
             },
-        }).catch((updateErr) => {
-            console.error(
-                `[finalizeJob] Failed to mark job ${jobId} as FAILED after persistence error: ${
-                    updateErr instanceof Error ? updateErr.message : String(updateErr)
-                }`
-            );
-        });
-        return { status: "FAILED", code: "AI_ANALYSIS_PERSISTENCE_FAILED" };
-    }
+        }).catch(() => {});
 
-    return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
+        return { status: "FAILED", code: "AI_ANALYSIS_PERSISTENCE_FAILED", retryable: true };
+    }
 }

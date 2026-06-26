@@ -20,6 +20,7 @@ function check(name, condition, detail) {
   if (!ok) failures.push(`${name}: ${detail}`);
 }
 
+check("no .env files", !existsSync(join(root, ".env.local")) && !existsSync(join(root, ".env")), ".env and .env.local must not be present in the repository root");
 const pkg = JSON.parse(read("package.json") || "{}");
 const scripts = pkg.scripts ?? {};
 const lifecycle = ["postinstall", "build", "vercel-build", "typecheck", "lint", "test", "test:integration"];

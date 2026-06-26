@@ -265,6 +265,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   await prismaReady;
   const { id } = await params;
+  // P0 FIX: Orderly deletion to handle non-cascading relations and circular trigger races.
+  // 1. Manually delete SubmissionPlanState first to avoid the trigger race from GeneratedDocument delete.
+  await prisma.submissionPlanState.delete({ where: { tenderId: id } }).catch(() => {});
+
   const existing = await prisma.tender.findFirst({ where: { id, userId: actor.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
