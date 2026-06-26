@@ -5,6 +5,7 @@ import {
   getProviderModel,
   isProviderConfigured,
   providerDisplayName,
+  zaiConfigurationValidity,
 } from "./ai-provider-registry";
 
 export type AIEnvironmentVariableStatus = {
@@ -99,6 +100,14 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
 
   const blockers: string[] = [];
   const warnings: string[] = [];
+
+  const zaiConfigured = Boolean((process.env.ZAI_API_KEY ?? "").trim());
+  if (zaiConfigured) {
+    const zai = zaiConfigurationValidity("proposal");
+    if (!zai.valid) {
+      warnings.push(`Z.ai configuration: ${zai.safeMessage}`);
+    }
+  }
 
   const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
   if (!anyProviderConfigured) {

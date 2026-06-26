@@ -200,18 +200,32 @@ async function testProvider(
       }
       // Cerebras requires max_completion_tokens instead of max_tokens.
       const tokenParam = entry.requestFormat === "cerebras" ? "max_completion_tokens" : "max_tokens";
+
+      // Z.ai and Cerebras need longer timeouts for AI Analyze (matching real AI Analyze logic).
+      const timeoutMs = (capability === "analysis" && (provider === "zai" || provider === "cerebras"))
+        ? 45_000
+        : PER_PROVIDER_TIMEOUT_MS;
+
+      // Ensure Z.ai structured-analysis diagnostic uses JSON mode if supported.
+      const response_format = (capability === "analysis" && entry.supportsStructuredJson)
+        ? { type: "json_object" }
+        : undefined;
+
+      const body: any = {
+        model,
+        messages: [{ role: "user", content: prompt }],
+        [tokenParam]: maxTokens,
+        temperature: 0,
+        response_format,
+      };
+
       const res: any = await withTimeout(
         fetch(`${url}/chat/completions`, {
           method: "POST",
           headers,
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: prompt }],
-            [tokenParam]: maxTokens,
-            temperature: 0,
-          }),
+          body: JSON.stringify(body),
         }),
-        PER_PROVIDER_TIMEOUT_MS
+        timeoutMs
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       const data = await res.json();

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
-import { getProviderModel, getProviderBaseUrl, readProviderKey } from "@/lib/ai-provider-registry";
+import { getProviderModel, getProviderBaseUrl, readProviderKey, zaiConfigurationValidity } from "@/lib/ai-provider-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -22,8 +22,9 @@ export async function GET(req: Request) {
   }
 
   const apiKey = readProviderKey("zai");
-  const baseUrl = getProviderBaseUrl("zai");
-  const model = getProviderModel("zai", "proposal");
+  const validity = zaiConfigurationValidity("proposal");
+  const baseUrl = validity.baseUrl;
+  const model = validity.model;
 
   const maskedKey = apiKey
     ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (${apiKey.length} chars)`
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
     if (apiKey.startsWith("gsk_")) keyFormatIssues.push("Key starts with 'gsk_' — this looks like a Groq key, NOT a Z.ai key");
   }
 
-  const modelsToTest = ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4-coding", "glm-4"];
+  const modelsToTest = ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4-coding", "glm-4-flashx", "glm-4"];
   const modelTestResults: Array<{ model: string; status: string; httpCode?: number; error?: string }> = [];
 
   if (!apiKey) {
@@ -58,7 +59,7 @@ export async function GET(req: Request) {
             max_tokens: 5,
             temperature: 0,
           }),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(30000),
         });
         if (res.ok) {
           modelTestResults.push({ model: testModel, status: "OK", httpCode: 200 });
@@ -78,6 +79,9 @@ export async function GET(req: Request) {
   if (!apiKey) {
     rootCause = "ZAI_API_KEY is not set";
     recommendation = "Set ZAI_API_KEY in Vercel env vars. Get a key from https://z.ai";
+  } else if (!validity.valid) {
+    rootCause = `Configuration invalid: ${validity.reason}`;
+    recommendation = validity.safeMessage || "Check Z.ai configuration.";
   } else if (keyFormatIssues.some((i) => i.includes("OpenAI") || i.includes("Google") || i.includes("Groq"))) {
     rootCause = "Wrong API key type — key appears to be from a different provider";
     recommendation = "ZAI_API_KEY contains a key from another provider. Get a Z.ai key from https://z.ai";
@@ -88,7 +92,7 @@ export async function GET(req: Request) {
       const authFailure = modelTestResults.some((r) => r.httpCode === 401 || r.httpCode === 403);
       if (all1211) {
         rootCause = "API key is valid but NO models are accessible — likely a Coding Plan key on wrong endpoint, or expired key";
-        recommendation = "Your Z.ai key cannot access ANY model. If you're on the Coding Plan, set ZAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4 and ZAI_PROPOSAL_MODEL=glm-4-coding. Otherwise get a new key from https://z.ai";
+        recommendation = "Your Z.ai key cannot access ANY model. If you are on the Coding Plan, set ZAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4 and ZAI_PROPOSAL_MODEL=glm-4-coding. Otherwise get a new key from https://z.ai";
       } else if (authFailure) {
         rootCause = "Authentication failed — API key is invalid or expired";
         recommendation = "Z.ai API returned 401/403. Generate a new key at https://z.ai";

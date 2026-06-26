@@ -51,9 +51,10 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
       const cooldownUntilMs = snap.cooldownUntil ? snap.cooldownUntil.getTime() : null;
       // Skip expired cooldowns — nothing to restore
       if (cooldownUntilMs && cooldownUntilMs <= now) continue;
-      // Skip very stale records (> 10 min since last failure) to avoid
-      // carrying forward state from a much earlier run
-      if (snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 10 * 60_000 && !cooldownUntilMs) continue;
+      // Skip very stale records (> 30 min since last failure) to avoid
+      // carrying forward state from a much earlier run. 30 min is safer for
+      // background workers that might only run every 15-20 min.
+      if (snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 30 * 60_000 && !cooldownUntilMs) continue;
 
       if (!ALL_PROVIDERS.includes(snap.provider as AiProviderName)) continue;
 

@@ -1,0 +1,149 @@
+<<<<<<< SEARCH
+  // Get Model (with fallback logic mirroring getProviderModel)
+  let rawModel = (envModelName ? env[envModelName]?.trim() : undefined) || "";
+  if (!rawModel && slot !== "proposalModel") {
+    rawModel = (entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined) || "";
+  }
+  const model = (rawModel || entry.defaults[slot]).toLowerCase();
+
+  const CODING_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
+  const GENERAL_MODELS = new Set([
+    "glm-4-flash",
+    "glm-4-flashx",
+    "glm-4-air",
+    "glm-4-airx",
+    "glm-4-plus",
+    "glm-4-long",
+    "glm-4-0520",
+    "glm-4v",
+    "glm-4v-flash",
+  ]);
+
+  const isCodingModel = CODING_MODELS.has(model);
+  const isGeneralModel = GENERAL_MODELS.has(model);
+
+  // 1. Model Availability Check (PR #864 preservation)
+  if (!isCodingModel && !isGeneralModel) {
+    return {
+      valid: false,
+      reason: "MODEL_UNAVAILABLE",
+      safeMessage: `Z.ai model "${model}" is not in the known-valid allowlist.`,
+      baseUrl,
+      model,
+      planType,
+      useCase,
+    };
+  }
+=======
+  // Get Model (with fallback logic mirroring getProviderModel)
+  let rawModel = (envModelName ? env[envModelName]?.trim() : undefined) || "";
+  if (!rawModel && slot !== "proposalModel") {
+    rawModel = (entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined) || "";
+  }
+  const modelToReturn = rawModel || entry.defaults[slot];
+  const modelMatch = modelToReturn.toLowerCase();
+
+  const CODING_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
+  const GENERAL_MODELS = new Set([
+    "glm-4-flash",
+    "glm-4-flashx",
+    "glm-4-air",
+    "glm-4-airx",
+    "glm-4-plus",
+    "glm-4-long",
+    "glm-4-0520",
+    "glm-4v",
+    "glm-4v-flash",
+  ]);
+
+  const isCodingModel = CODING_MODELS.has(modelMatch);
+  const isGeneralModel = GENERAL_MODELS.has(modelMatch);
+
+  // 1. Model Availability Check (PR #864 preservation)
+  if (!isCodingModel && !isGeneralModel) {
+    return {
+      valid: false,
+      reason: "MODEL_UNAVAILABLE",
+      safeMessage: `Z.ai model "${modelToReturn}" is not in the known-valid allowlist.`,
+      baseUrl,
+      model: modelToReturn,
+      planType,
+      useCase,
+    };
+  }
+>>>>>>> REPLACE
+<<<<<<< SEARCH
+  // 2. Compatibility Check
+  if (isCodingModel && planType === "GENERAL") {
+    return {
+      valid: false,
+      reason: "MODEL_ENDPOINT_MISMATCH",
+      safeMessage: `Z.ai Coding model "${model}" requires a Coding Plan endpoint (bigmodel.cn).`,
+      baseUrl,
+      model,
+      planType,
+      useCase,
+    };
+  }
+
+  if (isGeneralModel && planType === "CODING") {
+    // General models usually don't work on the Coding endpoint unless explicitly supported.
+    // We strictly enforce the mismatch to avoid 1211 errors.
+    return {
+      valid: false,
+      reason: "MODEL_ENDPOINT_MISMATCH",
+      safeMessage: `Z.ai General model "${model}" is not supported on the Coding Plan endpoint.`,
+      baseUrl,
+      model,
+      planType,
+      useCase,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "OK",
+    safeMessage: null,
+    baseUrl,
+    model,
+    planType,
+    useCase,
+  };
+=======
+  // 2. Compatibility Check
+  if (isCodingModel && planType === "GENERAL") {
+    return {
+      valid: false,
+      reason: "MODEL_ENDPOINT_MISMATCH",
+      safeMessage: `Z.ai Coding model "${modelToReturn}" requires a Coding Plan endpoint (bigmodel.cn).`,
+      baseUrl,
+      model: modelToReturn,
+      planType,
+      useCase,
+    };
+  }
+
+  if (isGeneralModel && planType === "CODING") {
+    // General models usually don't work on the Coding endpoint unless explicitly supported.
+    // We strictly enforce the mismatch to avoid 1211 errors.
+    return {
+      valid: false,
+      reason: "MODEL_ENDPOINT_MISMATCH",
+      safeMessage: `Z.ai General model "${modelToReturn}" is not supported on the Coding Plan endpoint.`,
+      baseUrl,
+      model: modelToReturn,
+      planType,
+      useCase,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "OK",
+    safeMessage: null,
+    baseUrl,
+    model: modelToReturn,
+    planType,
+    useCase,
+  };
+>>>>>>> REPLACE

@@ -445,6 +445,11 @@ export function isProviderConfigured(
     // `:free` model — otherwise a request could create paid usage.
     return Boolean(readProviderKey(provider, env)) && openRouterModelValidity(env).valid;
   }
+  if (provider === "zai") {
+    // Z.ai is only "configured" when it has a key AND a valid model/endpoint pair.
+    // Invalid config must never consume an attempt budget slot.
+    return Boolean(readProviderKey(provider, env)) && zaiConfigurationValidity("proposal", env).valid;
+  }
   return Boolean(readProviderKey(provider, env));
 }
 
@@ -452,6 +457,9 @@ export function getProviderBaseUrl(
   provider: AiProviderName,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
+  if (provider === "zai") {
+    return zaiConfigurationValidity("proposal", env).baseUrl;
+  }
   const entry = REGISTRY[provider];
   const envName = entry.env.baseUrl;
   const fromEnv = envName ? env[envName]?.trim() : undefined;
@@ -464,6 +472,22 @@ export function getProviderModel(
   useCase: AiUseCase = "proposal",
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  if (provider === "zai") {
+    const validity = zaiConfigurationValidity(useCase, env);
+    if (validity.valid) return validity.model;
+
+    // If it's a mismatch, return the model they asked for.
+    // isProviderConfigured will still return false, so this provider
+    // will be skipped in the canonical chain, but we aren't "silently
+    // replacing" the value with a different model code in the getter.
+    if (validity.reason === "MODEL_ENDPOINT_MISMATCH") {
+      return validity.model;
+    }
+
+    // If invalid (unknown model), fall back to the safe default (preserving
+    // PR #864 intent for back-compat).
+    return REGISTRY.zai.defaults.proposalModel;
+  }
   const entry = REGISTRY[provider];
   const slot: keyof ProviderRegistryEntry["defaults"] =
     useCase === "extraction"
@@ -478,55 +502,13 @@ export function getProviderModel(
         ? entry.env.fastModel
         : entry.env.proposalModel;
 
-  // Z.ai model allowlist — only these model codes are accepted from env
-  // overrides. Any other value (including the stale glm-4.7-flash /
-  // glm-4.5-flash / glm-4.6-flash / bare glm-4 that previous .env.example
-  // templates suggested) is rejected and falls back to the safe default.
-  // This is a positive allowlist rather than a rejection set so it catches
-  // ALL unknown values, including future invalid codes we haven't seen.
-  //
-  // CONFIRMED VALID on the Z.ai OpenAI-compatible endpoint at
-  // https://api.z.ai/api/paas/v4 (verified 2026-06-25 via PR #864):
-  //   - glm-4-flash  (the only confirmed-working model on this account tier)
-  //
-  // Models like glm-4.5-flash, glm-4.6-flash, glm-4.7-flash, bare glm-4
-  // all return HTTP 400 code 1211 "Unknown Model" on this account tier.
-  // If Z.ai enables additional models on your account, add them here after
-  // verifying they work via the /api/admin/ai-provider-health/test endpoint.
-  const ZAI_VALID_MODEL_CODES = new Set([
-    "glm-4-flash",     // default — general API plan (fast, cheap, confirmed PR #864)
-    "glm-4-flashx",    // faster variant of glm-4-flash
-    "glm-4-air",       // mid-tier general model
-    "glm-4-airx",      // faster variant of glm-4-air
-    "glm-4-plus",      // premium general model
-    "glm-4-long",      // long-context general model
-    "glm-4-0520",      // GLM-4 snapshot 0520
-    "glm-4-coding",    // Coding Plan — code-optimized model
-    "glm-4v-coding",   // Coding Plan — vision + code model
-    "glm-4v",          // general vision model
-    "glm-4v-flash",    // fast vision model
-  ]);
-  const isZaiInvalid = (value: string | undefined): boolean => {
-    if (provider !== "zai") return false;
-    if (!value) return false;
-    return !ZAI_VALID_MODEL_CODES.has(value.toLowerCase());
-  };
-
   const fromEnv = envName ? env[envName]?.trim() : undefined;
-  if (fromEnv && fromEnv.length > 0 && !isZaiInvalid(fromEnv)) return fromEnv;
-  if (isZaiInvalid(fromEnv)) {
-    console.warn(
-      `[ai-provider-registry] ZAI model override "${fromEnv}" is not in the ` +
-        `known-valid allowlist (HTTP 400 code 1211 "Unknown Model" risk). ` +
-        `Falling back to "${entry.defaults[slot]}". ` +
-        `Remove the ZAI_*_MODEL env var or set it to "glm-4-flash".`,
-    );
-  }
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
   // Analysis/fast fall back to the proposal model env if their specific env is
   // unset (mirrors prior getMistralAnalysisModel behaviour), then to defaults.
   if (slot !== "proposalModel") {
     const proposalEnv = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
-    if (proposalEnv && proposalEnv.length > 0 && !isZaiInvalid(proposalEnv)) return proposalEnv;
+    if (proposalEnv && proposalEnv.length > 0) return proposalEnv;
   }
   return entry.defaults[slot];
 }
@@ -564,6 +546,129 @@ export type OpenRouterModelValidity = {
  * any model whose identifier does not end in `:free` is rejected so the app can
  * never create paid OpenRouter usage.
  */
+export type ZaiConfigurationValidity = {
+  valid: boolean;
+  reason: "OK" | "MODEL_ENDPOINT_MISMATCH" | "MODEL_UNAVAILABLE" | "CONFIGURATION_INVALID";
+  safeMessage: string | null;
+  baseUrl: string;
+  model: string;
+  planType: "GENERAL" | "CODING" | "UNKNOWN";
+  useCase: AiUseCase;
+};
+
+/**
+ * Z.ai Configuration Resolver
+ * Enforces model and endpoint compatibility to prevent HTTP 400 code 1211.
+ * General endpoint + general model = valid.
+ * Coding endpoint + coding model = valid.
+ * Mismatches are rejected and skipped to preserve the attempt budget.
+ */
+export function zaiConfigurationValidity(
+  useCase: AiUseCase = "proposal",
+  env: NodeJS.ProcessEnv = process.env,
+): ZaiConfigurationValidity {
+  const entry = REGISTRY.zai;
+  const slot: keyof ProviderRegistryEntry["defaults"] =
+    useCase === "extraction"
+      ? "analysisModel"
+      : useCase === "fast"
+        ? "fastModel"
+        : "proposalModel";
+  const envModelName =
+    slot === "analysisModel"
+      ? entry.env.analysisModel
+      : slot === "fastModel"
+        ? entry.env.fastModel
+        : entry.env.proposalModel;
+
+  const envBaseUrl = env.ZAI_BASE_URL?.trim();
+  const baseUrl = (envBaseUrl || entry.defaults.baseUrl || "").replace(/\/+$/, "");
+
+  // Detect Plan Type from Endpoint
+  // - https://api.z.ai/api/paas/v4 -> GENERAL
+  // - https://open.bigmodel.cn/api/paas/v4 -> CODING
+  const isCodingEndpoint = baseUrl.includes("open.bigmodel.cn");
+  const planType: "GENERAL" | "CODING" | "UNKNOWN" = isCodingEndpoint
+    ? "CODING"
+    : baseUrl.includes("api.z.ai")
+      ? "GENERAL"
+      : "UNKNOWN";
+
+  // Get Model (with fallback logic mirroring getProviderModel)
+  let rawModel = (envModelName ? env[envModelName]?.trim() : undefined) || "";
+  if (!rawModel && slot !== "proposalModel") {
+    rawModel = (entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined) || "";
+  }
+  const modelToReturn = rawModel || entry.defaults[slot];
+  const modelMatch = modelToReturn.toLowerCase();
+
+  const CODING_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
+  const GENERAL_MODELS = new Set([
+    "glm-4-flash",
+    "glm-4-flashx",
+    "glm-4-air",
+    "glm-4-airx",
+    "glm-4-plus",
+    "glm-4-long",
+    "glm-4-0520",
+    "glm-4v",
+    "glm-4v-flash",
+  ]);
+
+  const isCodingModel = CODING_MODELS.has(modelMatch);
+  const isGeneralModel = GENERAL_MODELS.has(modelMatch);
+
+  // 1. Model Availability Check (PR #864 preservation)
+  if (!isCodingModel && !isGeneralModel) {
+    return {
+      valid: false,
+      reason: "MODEL_UNAVAILABLE",
+      safeMessage: `Z.ai model "${modelToReturn}" is not in the known-valid allowlist.`,
+      baseUrl,
+      model: modelToReturn,
+      planType,
+      useCase,
+    };
+  }
+
+  // 2. Compatibility Check
+  if (isCodingModel && planType === "GENERAL") {
+    return {
+      valid: false,
+      reason: "MODEL_ENDPOINT_MISMATCH",
+      safeMessage: `Z.ai Coding model "${modelToReturn}" requires a Coding Plan endpoint (bigmodel.cn).`,
+      baseUrl,
+      model: modelToReturn,
+      planType,
+      useCase,
+    };
+  }
+
+  if (isGeneralModel && planType === "CODING") {
+    // General models usually don't work on the Coding endpoint unless explicitly supported.
+    // We strictly enforce the mismatch to avoid 1211 errors.
+    return {
+      valid: false,
+      reason: "MODEL_ENDPOINT_MISMATCH",
+      safeMessage: `Z.ai General model "${modelToReturn}" is not supported on the Coding Plan endpoint.`,
+      baseUrl,
+      model: modelToReturn,
+      planType,
+      useCase,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "OK",
+    safeMessage: null,
+    baseUrl,
+    model: modelToReturn,
+    planType,
+    useCase,
+  };
+}
+
 export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): OpenRouterModelValidity {
   const configured = (env.OPENROUTER_PROPOSAL_MODEL || env.OPENROUTER_ANALYSIS_MODEL || "").trim();
   if (!configured) {

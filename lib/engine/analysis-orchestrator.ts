@@ -405,6 +405,13 @@ export async function executeAnalysis(
     });
   }
 
+  // Persist provider health (cooldowns) to DB before exiting so that a cold
+  // worker start can restore the state and skip known-bad providers first.
+  const { persistAllHealthToDb } = await import("../ai-provider-health-db");
+  await persistAllHealthToDb().catch((err: unknown) => {
+    logger.warn("[orchestrator] Failed to persist provider health to DB:", { detail: err instanceof Error ? err.message : String(err) });
+  });
+
   // Phase: Complete
   const requirementCount = analysisMeta?.result?.requirements?.length ?? 0;
   await onProgress?.({

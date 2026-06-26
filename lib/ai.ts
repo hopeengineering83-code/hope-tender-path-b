@@ -2,7 +2,7 @@ import { logger } from "./observability";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, zaiConfigurationValidity, CANONICAL_AI_FALLBACK_CHAIN_DISPLAY, type AiUseCase } from "./ai-provider-registry";
 import { protectPrompt } from "./ai-trust-boundary";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
@@ -499,11 +499,24 @@ export class NoAiProviderReadyError extends Error {
   }
 }
 
-function isProviderEnabled(name: AiProviderName): boolean {
+function isProviderEnabled(name: AiProviderName, useCase: AiUseCase = "proposal"): boolean {
   // Single configured check via the registry. For OpenRouter this also enforces
   // the explicit `:free` model policy, so an invalid OpenRouter configuration
   // is treated as "not configured" and skipped WITHOUT consuming an attempt.
-  return registryIsProviderConfigured(name);
+  if (!registryIsProviderConfigured(name)) return false;
+
+  // For Z.ai, also enforce the canonical model/endpoint compatibility resolver.
+  // Invalid config is treated as "not configured" and skipped WITHOUT consuming
+  // an attempt budget slot.
+  if (name === "zai") {
+    const zai = zaiConfigurationValidity(useCase);
+    if (!zai.valid) {
+      logger.warn(`[ai] skipping Z.ai: ${zai.safeMessage}`);
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -753,7 +766,7 @@ export async function generateWithFallback(
   let deadlineHit = false;
 
   for (const provider of chain) {
-    const configured = isProviderEnabled(provider);
+    const configured = isProviderEnabled(provider, useCase);
     const coolingDown = isProviderCooledDown(provider);
     // Read the safe runtime snapshot for lastErrorCategory + cooldownUntil.
     // We re-read it AFTER the attempt as well, because a fresh failure will
@@ -2210,7 +2223,9 @@ export async function analyzeWithAI(
     let chunkProvider: string | null = null;
     try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
     try {
-      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt, opts?.deadlineAt);
+      const result = await analyzeOneChunkWithRetry(chunks[0], 0, 1, (p) => {
+        chunkProvider = p;
+      }, opts?.onProviderAttempt, opts?.deadlineAt);
       const chunkResults = [{ index: 0, result, provider: chunkProvider }];
       try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
       return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };
@@ -4249,6 +4264,11 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     .join(" ");
   const modeLabel = isChunked ? `chunked[${sectionFilter!.join(",")}]` : deepMode ? "deep" : "standard";
   logger.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
+
+  // Persist provider health (cooldowns) to DB after batch operations so that a
+  // cold worker start can restore state and skip known-bad providers first.
+  const { persistAllHealthToDb } = await import("./ai-provider-health-db");
+  void persistAllHealthToDb().catch(() => {});
 
   // Stitch in canonical order. Cover+Summary first, then A+B, then C,
   // then D+Appendices+Declaration. The downstream section-reorderer in

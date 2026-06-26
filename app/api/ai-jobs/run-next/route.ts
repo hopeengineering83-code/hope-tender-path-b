@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { restoreHealthFromDb } from "../../../../lib/ai-provider-health-db";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -35,6 +36,14 @@ export async function POST(req: Request) {
   }
 
   await prismaReady;
+  // Restore provider health (cooldowns, verified status) before processing the
+  // first job. This ensures that if the daily run-next cron starts a cold worker
+  // instance, it doesn't immediately retry known-bad providers that were cooling
+  // down at the time of the previous failure.
+  await restoreHealthFromDb().catch((err: unknown) => {
+    console.error(`[run-next] Failed to restore provider health from DB (non-critical): ${err instanceof Error ? err.message : String(err)}`);
+  });
+
   const { searchParams } = new URL(req.url);
   const parsedJobType = parseJobTypeFilter(searchParams.get("jobType"));
   if (!parsedJobType.ok) {
