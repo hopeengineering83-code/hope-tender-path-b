@@ -66,7 +66,9 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
 
   it("selfTestProvider calls callProvider with useCase fast (which reads registry model)", () => {
     const ai = read("lib/ai.ts");
-    const block = ai.slice(ai.indexOf("selfTestProvider"), ai.indexOf("selfTestAllProviders"));
+    const blockStart = ai.indexOf("export async function selfTestProvider");
+    const blockEnd = ai.indexOf("export async function selfTestAllProviders");
+    const block = ai.slice(blockStart, blockEnd);
     assert.match(block, /callProvider\(provider,\s*PROVIDER_SELF_TEST_PROMPT,\s*\{\s*useCase:\s*"fast"\s*\}\)/);
   });
 

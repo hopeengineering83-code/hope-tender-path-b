@@ -602,6 +602,35 @@ export function zaiConfigurationValidity(
   const modelToReturn = rawModel || entry.defaults[slot];
   const modelMatch = modelToReturn.toLowerCase();
 
+  // Z.ai model allowlist — only these model codes are accepted from env
+  // overrides. Any other value (including the stale glm-4.7-flash /
+  // glm-4.5-flash / glm-4.6-flash / bare glm-4 that previous .env.example
+  // templates suggested) is rejected and falls back to the safe default.
+  // This is a positive allowlist rather than a rejection set so it catches
+  // ALL unknown values, including future invalid codes we haven't seen.
+  //
+  // CONFIRMED VALID on the Z.ai OpenAI-compatible endpoint at
+  // https://api.z.ai/api/paas/v4 (verified 2026-06-25 via PR #864):
+  //   - glm-4-flash  (the only confirmed-working model on this account tier)
+  //
+  // Models like glm-4.5-flash, glm-4.6-flash, glm-4.7-flash, bare glm-4
+  // all return HTTP 400 code 1211 "Unknown Model" on this account tier.
+  // If Z.ai enables additional models on your account, add them here after
+  // verifying they work via the /api/admin/ai-provider-health/test endpoint.
+  const ZAI_VALID_MODEL_CODES = new Set([
+    "glm-4-flash",     // default — general API plan (fast, cheap, confirmed PR #864)
+    "glm-4-flashx",    // faster variant of glm-4-flash
+    "glm-4-air",       // mid-tier general model
+    "glm-4-airx",      // faster variant of glm-4-air
+    "glm-4-plus",      // premium general model
+    "glm-4-long",      // long-context general model
+    "glm-4-0520",      // GLM-4 snapshot 0520
+    "glm-4-coding",    // Coding Plan — code-optimized model
+    "glm-4v-coding",   // Coding Plan — vision + code model
+    "glm-4v",          // general vision model
+    "glm-4v-flash",    // fast vision model
+  ]);
+
   const CODING_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
   const GENERAL_MODELS = new Set([
     "glm-4-flash",

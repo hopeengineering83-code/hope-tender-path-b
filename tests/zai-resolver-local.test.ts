@@ -66,7 +66,7 @@ describe("zaiConfigurationValidity", () => {
     const env = {
       ...baseEnv,
       ZAI_API_KEY: "test-key",
-      ZAI_PROPOSAL_MODEL: "glm-4-7-flash"
+      ZAI_PROPOSAL_MODEL: "glm-4.7-flash"
     };
     assert.strictEqual(isProviderConfigured("zai", env as any), false);
   });
