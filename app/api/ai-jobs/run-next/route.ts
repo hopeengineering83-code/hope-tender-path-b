@@ -47,7 +47,17 @@ export async function POST(req: Request) {
 
   const startTime = Date.now();
   const maxRunMs = 40_000;
-  const processedJobs: Array<{ jobId: string; jobType: string; status: string; error?: string }> = [];
+  type WorkerJobResult = {
+    jobId: string;
+    jobType: string;
+    status: string;
+    terminalStatus?: string;
+    resultCode?: string;
+    error?: string;
+    retryable?: boolean;
+    retryScheduled?: boolean;
+  };
+  const processedJobs: WorkerJobResult[] = [];
 
   // Provider-aware retry backstop. When an automated caller (Vercel cron or the
   // worker secret) drives the queue, first re-arm any AI_ANALYZE jobs that
@@ -80,7 +90,15 @@ export async function POST(req: Request) {
     const handler = getHandler(claimed.jobType);
     if (!handler) {
       await failJob(claimed.id, `No handler registered for jobType=${claimed.jobType}`);
-      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "No handler" });
+      processedJobs.push({
+        jobId: claimed.id,
+        jobType: claimed.jobType,
+        status: "FAILED",
+        terminalStatus: "FAILED",
+        resultCode: "NO_HANDLER_REGISTERED",
+        error: `No handler registered for jobType=${claimed.jobType}`,
+        retryable: false,
+      });
       continue;
     }
 
@@ -111,27 +129,76 @@ export async function POST(req: Request) {
             console.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
           });
         }
-        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: result.terminalStatus });
+        processedJobs.push({
+          jobId: claimed.id,
+          jobType: claimed.jobType,
+          status: result.terminalStatus,
+          terminalStatus: result.terminalStatus,
+          resultCode: result.code,
+          retryable: result.terminalStatus === "FAILED" ? Boolean(result.retryable) : undefined,
+          retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
+        });
       } else {
         await completeJob(claimed.id, result);
-        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+        processedJobs.push({
+          jobId: claimed.id,
+          jobType: claimed.jobType,
+          status: "SUCCEEDED",
+          terminalStatus: "SUCCEEDED",
+          resultCode: "OK",
+          retryable: false,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await failJob(claimed.id, message);
-      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "Job execution failed" });
+      processedJobs.push({
+        jobId: claimed.id,
+        jobType: claimed.jobType,
+        status: "FAILED",
+        terminalStatus: "FAILED",
+        resultCode: "JOB_EXECUTION_FAILED",
+        error: message.slice(0, 200),
+        retryable: true,
+      });
     }
 
     if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "AI_ANALYZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {
-    return NextResponse.json({ ran: 0, message: "queue empty" });
+    return NextResponse.json({
+      ran: 0,
+      message: "queue empty",
+      processed: false,
+      terminalStatus: null,
+      resultCode: "QUEUE_EMPTY",
+      retryable: false,
+    });
   }
+
+  const statusPriority: Record<string, number> = {
+    "FAILED": 4,
+    "PARTIAL_SUCCESS": 3,
+    "SUPERSEDED": 2,
+    "SUCCEEDED": 1,
+  };
+  const worst = processedJobs.reduce((worstSoFar, j) => {
+    const pri = statusPriority[j.terminalStatus ?? ""] ?? 0;
+    const worstPri = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
+    return pri > worstPri ? j : worstSoFar;
+  });
 
   return NextResponse.json({
     ran: processedJobs.length,
+    processed: true,
     processedJobs,
     durationMs: Date.now() - startTime,
+    terminalStatus: worst.terminalStatus ?? "UNKNOWN",
+    resultCode: worst.resultCode ?? "UNKNOWN",
+    jobId: worst.jobId,
+    retryable: Boolean(worst.retryable),
+    retryScheduled: Boolean(worst.retryScheduled),
+    workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
   });
 }
