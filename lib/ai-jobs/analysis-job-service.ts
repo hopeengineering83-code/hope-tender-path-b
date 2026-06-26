@@ -384,26 +384,19 @@ export async function finalizeJob(jobId: string, userId: string) {
         return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
     }
 
-    // Atomically promote canonical requirements
+    // ─── PRE-TRANSACTION PREPARATION (outside interactive tx) ──────────
+    // All expensive work happens HERE, before the transaction opens, so the
+    // 5000ms interactive transaction budget is reserved for the actual DB
+    // writes only. Previously this work was inside the transaction and
+    // caused AI_ANALYSIS_PERSISTENCE_FAILED on large analyses.
+    const preparationStart = Date.now();
+    let drafts: RequirementDraft[];
+    let tenderUpdate: Prisma.TenderUpdateInput;
+    let outputJson: string;
     try {
-    await prisma.$transaction(async (tx) => {
-        await tx.aiJob.update({
-            where: { id: jobId },
-            data: { status: "RUNNING", updatedAt: new Date() }
-        });
+        drafts = merged.requirements.map(mapToDraft);
 
-        const drafts = merged.requirements.map(mapToDraft);
-        await upsertRequirements(tx, job.tenderId!, drafts);
-
-        // Persist the FULL canonical metadata set via the shared builder so the
-        // durable worker writes identical client/procuring-entity details,
-        // submission fields, source-traceability columns, and the
-        // metadataContaminated flag as the streaming/non-streaming routes.
-        // Previously this path persisted NO client metadata and skipped
-        // contamination detection — a tender analyzed via the async worker lost
-        // every client detail (CLAUDE.md #3) and bypassed contamination
-        // blocking (CLAUDE.md #6).
-        const existingTender = await tx.tender.findUnique({
+        const existingTender = await prisma.tender.findUnique({
             where: { id: job.tenderId! },
             select: { clientName: true, submissionMethod: true, submissionEmails: true, notes: true },
         });
@@ -414,13 +407,7 @@ export async function finalizeJob(jobId: string, userId: string) {
             notes: existingTender?.notes,
         });
 
-        // Type-safe Tender update — Prisma.TenderUpdateInput prevents
-        // non-schema fields (analysisSource, envelopeMode, clientType,
-        // submissionFormat) from being added. analysisSource is a virtual
-        // field derived from Tender.notes via regex; the notes marker
-        // "Analysis source: AI" is already set by buildCanonicalAnalysisTenderUpdate
-        // via buildAnalysisNotes().
-        const tenderUpdate: Prisma.TenderUpdateInput = {
+        tenderUpdate = {
             ...canonicalData,
             analysisExtractionStatus:
                 failed.length > 0
@@ -428,12 +415,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                     : "FULL_EXTRACTION_AI_ANALYZED",
         };
 
-        await tx.tender.update({
-            where: { id: job.tenderId! },
-            data: tenderUpdate,
-        });
-
-        const output = JSON.stringify({
+        outputJson = JSON.stringify({
             requirementCount: merged.requirements.length,
             succeededChunks: succeeded.length,
             failedChunks: failed.length,
@@ -443,21 +425,75 @@ export async function finalizeJob(jobId: string, userId: string) {
                 provider: c.provider
             }))
         });
+    } catch (prepErr) {
+        const correlationId = require("crypto").randomUUID().slice(0, 8);
+        console.error(`[finalizeJob] AI_ANALYSIS_PREPARATION_FAILED correlation=${correlationId} job=${jobId}: ${prepErr instanceof Error ? prepErr.message : String(prepErr)}`);
+        await prisma.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: "FAILED",
+                finishedAt: new Date(),
+                errorMessage: `AI_ANALYSIS_PREPARATION_FAILED (ref: ${correlationId})`,
+            },
+        }).catch(() => {});
+        return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED" };
+    }
+    const preparationMs = Date.now() - preparationStart;
+
+    // ─── SHORT INTERACTIVE TRANSACTION (writes only) ──────────────────
+    try {
+    await prisma.$transaction(async (tx) => {
+        const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!);
+        if (!stillPromotable) {
+            throw new Error("STALE_JOB_SUPERSeded");
+        }
+
+        await tx.aiJob.update({
+            where: { id: jobId },
+            data: { status: "RUNNING", updatedAt: new Date() }
+        });
+
+        await upsertRequirements(tx, job.tenderId!, drafts);
+
+        await tx.tender.update({
+            where: { id: job.tenderId! },
+            data: tenderUpdate,
+        });
 
         await tx.aiJob.update({
             where: { id: jobId },
             data: {
                 status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
                 finishedAt: new Date(),
-                output,
+                output: outputJson,
             }
         });
 
         await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID());
+    }, {
+        timeout: 10000,
+        isolationLevel: "Serializable",
     });
+    console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
     } catch (persistErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
-        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId}: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`);
+        const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+
+        if (errMsg.includes("STALE_JOB_SUPERSeded")) {
+            console.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
+            await prisma.aiJob.update({
+                where: { id: jobId },
+                data: {
+                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    finishedAt: new Date(),
+                    errorMessage: "Superseded by newer run during promotion. Not promoted to canonical.",
+                    output: outputJson,
+                },
+            }).catch(() => {});
+            return { status: "SUPERSEDED", code: "STALE_JOB_SUPERSeded" };
+        }
+
+        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
@@ -472,7 +508,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 }`
             );
         });
-        return { status: "FAILED", code: "AI_ANALYSIS_PERSISTENCE_FAILED" };
+        return { status: "FAILED", code: "AI_ANALYSIS_PERSISTENCE_FAILED", retryable: true, correlationId };
     }
 
     return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };

@@ -269,7 +269,60 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    await prisma.tender.delete({ where: { id } });
+    // Explicit ordered deletion in a transaction to avoid P2003 foreign-key
+    // errors when the database has schema drift (e.g., SubmissionPlanState
+    // constraint present but cascade not applied).
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete generated-document children first
+      const generatedDocs = await tx.generatedDocument.findMany({
+        where: { tenderId: id },
+        select: { id: true },
+      });
+      if (generatedDocs.length > 0) {
+        const docIds = generatedDocs.map((d: { id: string }) => d.id);
+        await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch(() => {});
+        await tx.documentEvidence.deleteMany({ where: { documentId: { in: docIds } } }).catch(() => {});
+        await tx.generatedDocument.deleteMany({ where: { tenderId: id } });
+      }
+
+      // 2. Delete AI job children (chunks, retry states, steps)
+      const aiJobs = await tx.aiJob.findMany({
+        where: { tenderId: id },
+        select: { id: true },
+      });
+      if (aiJobs.length > 0) {
+        const jobIds = aiJobs.map((j: { id: string }) => j.id);
+        await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: { in: jobIds } } }).catch(() => {});
+        await tx.aiAnalyzeRetryState.deleteMany({ where: { jobId: { in: jobIds } } }).catch(() => {});
+        await tx.aiJobStep.deleteMany({ where: { jobId: { in: jobIds } } }).catch(() => {});
+        await tx.aiJob.deleteMany({ where: { tenderId: id } });
+      }
+
+      // 3. Delete submission plan state (the table that caused P2003)
+      await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch(() => {});
+
+      // 4. Delete remaining children
+      await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
+      await tx.tenderFile.deleteMany({ where: { tenderId: id } });
+      await tx.complianceGap.deleteMany({ where: { tenderId: id } });
+      await tx.pricingWorkbook.deleteMany({ where: { tenderId: id } }).catch(() => {});
+      await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch(() => {});
+      await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch(() => {});
+
+      // 5. Delete AI analysis checkpoints if the table exists
+      try {
+        await tx.$executeRawUnsafe('DELETE FROM "AiAnalysisCheckpoint" WHERE "tenderId" = $1', id);
+      } catch {
+        // Table may not exist — safe to ignore
+      }
+
+      // 6. Finally delete the tender itself
+      await tx.tender.delete({ where: { id } });
+    }, {
+      timeout: 15000,
+      isolationLevel: "Serializable",
+    });
+
     await logAction({
       userId: actor.id,
       action: "TENDER_DELETE",
@@ -280,7 +333,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true });
   } catch (error) {
-    logger.error("Request failed", { detail: error });
-    return NextResponse.json({ error: "Failed to delete tender" }, { status: 500 });
+    logger.error("Tender deletion failed", { detail: error, tenderId: id });
+    return NextResponse.json(
+      { error: "Failed to delete tender", detail: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 }
+    );
   }
 }
