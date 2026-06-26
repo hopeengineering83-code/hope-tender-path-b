@@ -14,6 +14,7 @@ import {
   getProviderBaseUrl,
   getProviderModel,
   openRouterModelValidity,
+  resolveZaiConfiguration,
   type AiProviderName,
 } from "./ai-provider-registry";
 
@@ -85,10 +86,10 @@ const state = new Map<AiProviderName, InternalState>();
 
 export function getZaiApiKey(): string | undefined { return readProviderKey("zai"); }
 export function isZaiConfigured(): boolean { return registryIsProviderConfigured("zai"); }
-export function getZaiBaseUrl(): string { return getProviderBaseUrl("zai") ?? "https://api.z.ai/api/paas/v4"; }
-export function getZaiProposalModel(): string { return getProviderModel("zai", "proposal"); }
-export function getZaiAnalysisModel(): string { return getProviderModel("zai", "extraction"); }
-export function getZaiFastModel(): string { return getProviderModel("zai", "fast"); }
+export function getZaiBaseUrl(): string { return resolveZaiConfiguration("proposal").baseUrl; }
+export function getZaiProposalModel(): string { return resolveZaiConfiguration("proposal").model; }
+export function getZaiAnalysisModel(): string { return resolveZaiConfiguration("extraction").model; }
+export function getZaiFastModel(): string { return resolveZaiConfiguration("fast").model; }
 
 export function getCerebrasApiKey(): string | undefined { return readProviderKey("cerebras"); }
 export function isCerebrasConfigured(): boolean { return registryIsProviderConfigured("cerebras"); }

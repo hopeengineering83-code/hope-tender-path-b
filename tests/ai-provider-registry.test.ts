@@ -18,6 +18,7 @@ import {
   getProviderBaseUrl,
   getProviderModel,
   getProviderOutputCap,
+  resolveZaiConfiguration,
   openRouterModelValidity,
   providerDisplayName,
   preferredConfiguredProviderName,
@@ -72,11 +73,15 @@ describe("2. no other automatic provider order exists", () => {
 
 // 3 & 4. Detection from env keys
 describe("3+4. provider detection from API keys", () => {
-  it("Z.ai is detected from ZAI_API_KEY", () => {
+  it("Z.ai is detected from ZAI_API_KEY only when endpoint/model configuration is valid", () => {
     assert.equal(isProviderConfigured("zai"), false);
     process.env.ZAI_API_KEY = "zai-test-key";
     assert.equal(isProviderConfigured("zai"), true);
     assert.equal(readProviderKey("zai"), "zai-test-key");
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4.7-flash";
+    assert.equal(isProviderConfigured("zai"), false);
+    assert.equal(resolveZaiConfiguration("proposal").valid, false);
+    delete process.env.ZAI_PROPOSAL_MODEL;
   });
   it("Cerebras is detected from CEREBRAS_API_KEY", () => {
     assert.equal(isProviderConfigured("cerebras"), false);
@@ -97,74 +102,47 @@ describe("5. zai + cerebras appear in health surfaces", () => {
 });
 
 // 6. Z.ai endpoint + model
-describe("6. Z.ai general endpoint + configured model", () => {
-  it("uses the general Z.ai endpoint and configured/default model", () => {
+describe("6. Z.ai endpoint/model compatibility resolver", () => {
+  it("accepts the valid general endpoint/model pair", () => {
+    process.env.ZAI_API_KEY = "zai-test-key";
+    delete process.env.ZAI_BASE_URL;
     delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
-    process.env.ZAI_BASE_URL = "https://api.z.ai/api/paas/v4/custom";
-    // Known-invalid Z.ai model codes (copy-pasted from stale .env.example)
-    // MUST fall back to the safe default "glm-4-flash" instead of breaking
-    // the Z.ai tier at runtime with HTTP 400 code 1211 "Unknown Model".
-    process.env.ZAI_ANALYSIS_MODEL = "glm-4.5-flash";
-    assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4/custom");
-    assert.equal(getProviderModel("zai", "extraction"), "glm-4-flash",
-      "glm-4.5-flash override must fall back to glm-4-flash (allowlist guard)");
-    delete process.env.ZAI_ANALYSIS_MODEL;
+    const resolved = resolveZaiConfiguration("proposal");
+    assert.equal(resolved.valid, true);
+    assert.equal(resolved.baseUrl, "https://api.z.ai/api/paas/v4");
+    assert.equal(resolved.model, "glm-4-flash");
+    assert.equal(resolved.planType, "general");
   });
-  it("rejects bare 'glm-4' as a Z.ai model override (HTTP 400 'Unknown Model')", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash",
-      "bare 'glm-4' override must fall back to glm-4-flash (allowlist guard)");
-    delete process.env.ZAI_PROPOSAL_MODEL;
+  it("accepts the valid Coding Plan endpoint/model pair", () => {
+    process.env.ZAI_API_KEY = "zai-test-key";
+    process.env.ZAI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4-coding";
+    const resolved = resolveZaiConfiguration("proposal");
+    assert.equal(resolved.valid, true);
+    assert.equal(resolved.planType, "coding-plan");
+    assert.equal(resolved.model, "glm-4-coding");
+    assert.equal(isProviderConfigured("zai"), true);
   });
-  it("rejects 'glm-4.7-flash' as a Z.ai model override", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4.7-flash";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash",
-      "glm-4.7-flash override must fall back to glm-4-flash (allowlist guard)");
-    delete process.env.ZAI_PROPOSAL_MODEL;
+  it("rejects coding model plus general endpoint without silently replacing the model", () => {
+    process.env.ZAI_API_KEY = "zai-test-key";
+    process.env.ZAI_BASE_URL = "https://api.z.ai/api/paas/v4";
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4-coding";
+    const resolved = resolveZaiConfiguration("proposal");
+    assert.equal(resolved.valid, false);
+    assert.equal(resolved.reason, "MODEL_ENDPOINT_MISMATCH");
+    assert.equal(resolved.model, "glm-4-coding");
+    assert.equal(isProviderConfigured("zai"), false);
   });
-  it("rejects ANY value not in the allowlist (positive allowlist, not rejection set)", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    // Even plausible-looking values that aren't in the allowlist must be rejected.
-    // This is the key difference from a rejection set — it catches unknown values too.
-    // Note: "GLM-4-FLASH" IS allowed (case-insensitive match) — see separate test.
-    for (const bad of ["glm-4-air", "glm-4-plus", "glm-4v", "gpt-4", "claude-3", "glm-4.5", "glm-4.6"]) {
+  it("rejects glm-4.7-flash and bare glm-4 without falling back to glm-4-flash", () => {
+    process.env.ZAI_API_KEY = "zai-test-key";
+    for (const bad of ["glm-4.7-flash", "glm-4"]) {
       process.env.ZAI_PROPOSAL_MODEL = bad;
-      assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash",
-        `'${bad}' override must fall back to glm-4-flash (positive allowlist)`);
+      const resolved = resolveZaiConfiguration("proposal");
+      assert.equal(resolved.valid, false);
+      assert.equal(resolved.reason, "MODEL_UNSUPPORTED");
+      assert.equal(resolved.model, bad);
+      assert.equal(getProviderModel("zai", "proposal"), bad);
     }
-    delete process.env.ZAI_PROPOSAL_MODEL;
-  });
-  it("accepts a valid explicit Z.ai model override (glm-4-flash)", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4-flash";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
-    delete process.env.ZAI_PROPOSAL_MODEL;
-  });
-  it("accepts glm-4-flash case-insensitively", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    process.env.ZAI_PROPOSAL_MODEL = "GLM-4-FLASH";
-    assert.equal(getProviderModel("zai", "proposal"), "GLM-4-FLASH",
-      "allowlist match must be case-insensitive but preserve original casing");
-    delete process.env.ZAI_PROPOSAL_MODEL;
-  });
-  it("is NOT a Coding Plan endpoint", () => {
-    assert.ok(!getProviderBaseUrl("zai")!.includes("coding"));
   });
   it("uses conservative output caps (analysis 8000 / proposal 4000 / fast 1200)", () => {
     assert.equal(getProviderOutputCap("zai", "extraction"), 8000);

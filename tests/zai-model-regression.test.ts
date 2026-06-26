@@ -43,11 +43,10 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
           !/Model:\s*"glm-4\.7|modelDefault:\s*"glm-4\.7|default:\s*"glm-4\.7-flash"/.test(src),
           `${f} must NOT use glm-4.7-flash as a model/default value (comment usage is OK)`,
         );
-        // Must use a positive allowlist (not a rejection set)
-        assert.match(src, /ZAI_VALID_MODEL_CODES/, "registry must use a positive allowlist");
-        assert.match(src, /glm-4-flash.*confirmed/, "allowlist comment must explain glm-4-flash is confirmed");
-        // Coding Plan models must be in the allowlist (Coding Plan keys
-        // can't access glm-4-flash — they need glm-4-coding instead).
+        // Must use canonical positive allowlists and endpoint/model resolver.
+        assert.match(src, /resolveZaiConfiguration/, "registry must expose the canonical Z.ai resolver");
+        assert.match(src, /ZAI_GENERAL_MODELS/, "registry must allowlist general Z.ai models");
+        assert.match(src, /ZAI_CODING_PLAN_MODELS/, "registry must allowlist Coding Plan Z.ai models");
         assert.match(src, /glm-4-coding/, "allowlist must include glm-4-coding for Coding Plan users");
         assert.match(src, /glm-4v-coding/, "allowlist must include glm-4v-coding for Coding Plan users");
         continue;
@@ -70,11 +69,12 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
     assert.match(block, /callProvider\(provider,\s*PROVIDER_SELF_TEST_PROMPT,\s*\{\s*useCase:\s*"fast"\s*\}\)/);
   });
 
-  it("generateWithZai calls getProviderModel (not a hardcoded model)", () => {
+  it("generateWithZai calls the canonical Z.ai resolver (not a hardcoded model)", () => {
     const ai = read("lib/ai.ts");
     const block = ai.slice(ai.indexOf("async function generateWithZai"), ai.indexOf("async function generateWithCerebras"));
-    assert.match(block, /getProviderModel\("zai"/);
-    // Must NOT hardcode glm-4.7-flash
+    assert.match(block, /resolveZaiConfiguration\(useCase\)/);
+    assert.match(block, /model:\s*config\.model/);
+    assert.match(block, /endpoint:\s*`\$\{config\.baseUrl\}\/chat\/completions`/);
     assert.ok(!block.includes("glm-4.7-flash"), "generateWithZai must not hardcode glm-4.7-flash");
   });
 

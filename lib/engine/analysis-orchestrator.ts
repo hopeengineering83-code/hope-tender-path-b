@@ -23,7 +23,8 @@ import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service"
 import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
-import { getMinCooldownExpiryMs } from "../ai-provider-health";
+import { getMinCooldownExpiryMs, restoreProviderHealthBeforeResponse } from "../ai-provider-health";
+import { persistAllHealthToDb } from "../ai-provider-health-db";
 import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
@@ -77,6 +78,7 @@ export async function executeAnalysis(
   userId: string,
   options: AnalysisOrchestrationOptions = {},
 ): Promise<AnalysisOrchestrationResult> {
+  await restoreProviderHealthBeforeResponse();
   const {
     force = false,
     deadlineMs = 48000,
@@ -412,6 +414,8 @@ export async function executeAnalysis(
     status: analysisMeta?.isPartial ? "PARTIAL" : "SUCCESS",
     message: `Analysis complete — ${requirementCount} requirements extracted`,
   });
+
+  await persistAllHealthToDb();
 
   return {
     jobId,

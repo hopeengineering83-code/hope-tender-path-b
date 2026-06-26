@@ -1,37 +1,23 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
-import { getProviderModel, getProviderBaseUrl, readProviderKey } from "@/lib/ai-provider-registry";
+import { getProviderOutputCap, readProviderKey, resolveZaiConfiguration } from "@/lib/ai-provider-registry";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
-/**
- * Z.ai API Key Diagnostic Endpoint
- * Helps operators diagnose why Z.ai returns "Unknown Model" (HTTP 400
- * code 1211) even when the model name is correct.
- * Admin-only — never exposes the full API key.
- */
-export async function GET(req: Request) {
-  let actor;
+const ANALYSIS_TIMEOUT_MS = 45_000;
+const STRUCTURED_ANALYSIS_DIAGNOSTIC_PROMPT = `Analyze this tender excerpt and return ONLY JSON with keys: tenderTitle, clientName, requirements. Tender: The client requires a technical proposal, valid business registration, and submission by email.`;
+
+export async function GET() {
   try {
-    actor = await requireRole("ADMIN");
+    await requireRole("ADMIN");
   } catch (e) {
-    return e instanceof Error && e.message === "Forbidden"
-      ? forbiddenResponse()
-      : unauthorizedResponse();
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
   const apiKey = readProviderKey("zai");
-  const baseUrl = getProviderBaseUrl("zai");
-  const model = getProviderModel("zai", "proposal");
-
-  const maskedKey = apiKey
-    ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (${apiKey.length} chars)`
-    : "NOT SET";
-
-  const envProposalModel = process.env.ZAI_PROPOSAL_MODEL?.trim() || "NOT SET";
-  const envBaseUrl = process.env.ZAI_BASE_URL?.trim() || "NOT SET (using default)";
-
+  const config = resolveZaiConfiguration("extraction");
+  const maskedKey = apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (${apiKey.length} chars)` : "NOT SET";
   const keyFormatIssues: string[] = [];
   if (apiKey) {
     if (apiKey.length < 20) keyFormatIssues.push("Key is unusually short (<20 chars) — may be truncated");
@@ -41,67 +27,55 @@ export async function GET(req: Request) {
     if (apiKey.startsWith("gsk_")) keyFormatIssues.push("Key starts with 'gsk_' — this looks like a Groq key, NOT a Z.ai key");
   }
 
-  const modelsToTest = ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4-coding", "glm-4"];
-  const modelTestResults: Array<{ model: string; status: string; httpCode?: number; error?: string }> = [];
+  const checks: Record<string, unknown> = {
+    keyPresent: Boolean(apiKey),
+    configurationValid: config.valid,
+    pingVerified: false,
+    structuredTenderAnalysisVerified: false,
+  };
+  let rootCause = config.valid ? "Z.ai configuration is valid but live checks were not run." : config.safeMessage;
+  let recommendation = config.valid ? "Run this diagnostic with a valid ZAI_API_KEY to verify live analysis." : "Set ZAI_BASE_URL and ZAI_*_MODEL to a supported endpoint/model pair, then redeploy.";
+  const live: Record<string, unknown> = { skipped: !apiKey || !config.valid };
 
-  if (!apiKey) {
-    modelTestResults.push({ model: "N/A", status: "skipped", error: "ZAI_API_KEY is not set" });
-  } else {
-    for (const testModel of modelsToTest) {
-      try {
-        const res = await fetch(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: testModel,
-            messages: [{ role: "user", content: "Reply with: PING" }],
-            max_tokens: 5,
-            temperature: 0,
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-        if (res.ok) {
-          modelTestResults.push({ model: testModel, status: "OK", httpCode: 200 });
-        } else {
-          const body = await res.text();
-          modelTestResults.push({ model: testModel, status: "FAILED", httpCode: res.status, error: body.slice(0, 300) });
-        }
-      } catch (err) {
-        modelTestResults.push({ model: testModel, status: "ERROR", error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-  }
+  if (apiKey && config.valid) {
+    try {
+      const ping = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: config.model, messages: [{ role: "user", content: "Reply with: PING" }], max_tokens: 5, temperature: 0 }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      checks.pingVerified = ping.ok;
+      live.pingHttpCode = ping.status;
 
-  let rootCause = "UNKNOWN";
-  let recommendation = "";
-
-  if (!apiKey) {
-    rootCause = "ZAI_API_KEY is not set";
-    recommendation = "Set ZAI_API_KEY in Vercel env vars. Get a key from https://z.ai";
-  } else if (keyFormatIssues.some((i) => i.includes("OpenAI") || i.includes("Google") || i.includes("Groq"))) {
-    rootCause = "Wrong API key type — key appears to be from a different provider";
-    recommendation = "ZAI_API_KEY contains a key from another provider. Get a Z.ai key from https://z.ai";
-  } else {
-    const workingModels = modelTestResults.filter((r) => r.status === "OK").map((r) => r.model);
-    if (workingModels.length === 0) {
-      const all1211 = modelTestResults.every((r) => r.error?.includes("1211"));
-      const authFailure = modelTestResults.some((r) => r.httpCode === 401 || r.httpCode === 403);
-      if (all1211) {
-        rootCause = "API key is valid but NO models are accessible — likely a Coding Plan key on wrong endpoint, or expired key";
-        recommendation = "Your Z.ai key cannot access ANY model. If you're on the Coding Plan, set ZAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4 and ZAI_PROPOSAL_MODEL=glm-4-coding. Otherwise get a new key from https://z.ai";
-      } else if (authFailure) {
-        rootCause = "Authentication failed — API key is invalid or expired";
-        recommendation = "Z.ai API returned 401/403. Generate a new key at https://z.ai";
+      const analysis = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: "user", content: STRUCTURED_ANALYSIS_DIAGNOSTIC_PROMPT }],
+          max_tokens: getProviderOutputCap("zai", "extraction"),
+          temperature: 0,
+          response_format: { type: "json_object" },
+        }),
+        signal: AbortSignal.timeout(ANALYSIS_TIMEOUT_MS),
+      });
+      live.structuredAnalysisHttpCode = analysis.status;
+      if (analysis.ok) {
+        const data = await analysis.json();
+        const text = data?.choices?.[0]?.message?.content ?? "";
+        JSON.parse(text);
+        checks.structuredTenderAnalysisVerified = true;
+        rootCause = "Z.ai ping and structured tender-analysis diagnostic both succeeded.";
+        recommendation = "Z.ai is ready for AI Analyze with the configured endpoint/model.";
       } else {
-        rootCause = "All model tests failed — check error details below";
-        recommendation = "Review modelTests array for specific error messages";
+        rootCause = "Z.ai ping/configuration may be valid, but structured AI Analyze failed.";
+        recommendation = "Use this ADMIN-only diagnostic result to inspect HTTP code, then check key access/billing/model entitlement.";
       }
-    } else if (workingModels.includes("glm-4-flash")) {
-      rootCause = "Z.ai API is working correctly with glm-4-flash";
-      recommendation = "Diagnostic succeeded. Try 'Test provider chain' again from the AI Health panel.";
-    } else {
-      rootCause = `glm-4-flash not accessible, but these work: ${workingModels.join(", ")}`;
-      recommendation = `Set ZAI_PROPOSAL_MODEL to one of: ${workingModels.join(", ")}`;
+    } catch (err) {
+      live.error = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
+      rootCause = "Z.ai live structured-analysis diagnostic failed.";
+      recommendation = "Check endpoint/model compatibility, account access, billing, and timeout before relying on Z.ai for AI Analyze.";
     }
   }
 
@@ -112,15 +86,18 @@ export async function GET(req: Request) {
     recommendation,
     configuration: {
       apiKeyMasked: maskedKey,
-      baseUrl,
-      modelReturnedByGuard: model,
-      envVars: {
-        ZAI_API_KEY: apiKey ? "SET" : "NOT SET",
-        ZAI_PROPOSAL_MODEL: envProposalModel,
-        ZAI_BASE_URL: envBaseUrl,
-      },
+      baseUrl: config.baseUrl,
+      model: config.model,
+      planType: config.planType,
+      useCase: config.useCase,
+      valid: config.valid,
+      reason: config.reason,
+      safeMessage: config.safeMessage,
+      envVars: { ZAI_API_KEY: apiKey ? "SET" : "NOT SET", ZAI_PROPOSAL_MODEL: process.env.ZAI_PROPOSAL_MODEL?.trim() || "NOT SET", ZAI_ANALYSIS_MODEL: process.env.ZAI_ANALYSIS_MODEL?.trim() || "NOT SET", ZAI_BASE_URL: process.env.ZAI_BASE_URL?.trim() || "NOT SET (using default)" },
       keyFormatIssues,
     },
-    modelTests: modelTestResults,
+    checks,
+    live,
+    structuredAnalysisDiagnostic: { timeoutMs: ANALYSIS_TIMEOUT_MS, jsonMode: true, outputTokens: getProviderOutputCap("zai", "extraction") },
   });
 }

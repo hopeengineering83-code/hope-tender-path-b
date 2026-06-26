@@ -17,6 +17,7 @@ import {
 import {
   CANONICAL_AI_PROVIDER_ORDER,
   getProviderEntry,
+  resolveZaiConfiguration,
   getProviderModel,
   getProviderBaseUrl,
   readProviderKey,
@@ -131,7 +132,7 @@ async function testProvider(
   provider: AiProviderName,
   capability: "ping" | "analysis" | "generation"
 ): Promise<ProviderTestResult> {
-  if (!isProviderConfigured(provider)) return { provider, capability, status: "not_configured", model: "", durationMs: 0 };
+  if (!isProviderConfigured(provider)) return { provider, capability, status: "not_configured", model: provider === "zai" ? resolveZaiConfiguration(capability === "analysis" ? "extraction" : "proposal").model : "", durationMs: 0 };
   if (isProviderCooledDown(provider)) return { provider, capability, status: "skipped_cooldown", model: "", durationMs: 0 };
 
   const start = Date.now();
@@ -191,8 +192,11 @@ async function testProvider(
       // openai, together, deepseek) — all config derived from the registry.
       const entry = getProviderEntry(provider);
       const key = readProviderKey(provider);
-      const url = getProviderBaseUrl(provider);
-      model = getProviderModel(provider, capability === "analysis" ? "extraction" : "proposal");
+      const useCase = capability === "analysis" ? "extraction" : "proposal";
+      const zaiConfig = provider === "zai" ? resolveZaiConfiguration(useCase) : null;
+      if (provider === "zai" && !zaiConfig!.valid) throw new Error(`CONFIGURATION_INVALID: ${zaiConfig!.safeMessage}`);
+      const url = provider === "zai" ? zaiConfig!.baseUrl : getProviderBaseUrl(provider);
+      model = provider === "zai" ? zaiConfig!.model : getProviderModel(provider, useCase);
       const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${key}` };
       if (provider === "openrouter") {
         headers["HTTP-Referer"] = getOpenRouterSiteUrl();
@@ -211,7 +215,7 @@ async function testProvider(
             temperature: 0,
           }),
         }),
-        PER_PROVIDER_TIMEOUT_MS
+        provider === "zai" && capability === "analysis" ? 45_000 : PER_PROVIDER_TIMEOUT_MS
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       const data = await res.json();

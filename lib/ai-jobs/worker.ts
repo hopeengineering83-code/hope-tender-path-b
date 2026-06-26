@@ -14,6 +14,8 @@ import { prisma } from "../prisma";
 import { executeAnalysis, finalizeAnalysisJob, type AnalysisOrchestrationOptions } from "../engine/analysis-orchestrator";
 import type { AnalysisJobCreateInput } from "./analysis-job-service";
 import { logger } from "../observability";
+import { restoreProviderHealthBeforeResponse } from "../ai-provider-health";
+import { persistAllHealthToDb } from "../ai-provider-health-db";
 
 export type JobWorkerOptions = {
   maxConcurrentJobs?: number;
@@ -35,6 +37,7 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
   } = options;
 
   logger.info("[worker] draining analysis job queue...");
+  await restoreProviderHealthBeforeResponse();
 
   // Find jobs ready to process
   const queuedJobs = await prisma.aiJob.findMany({
@@ -109,9 +112,11 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
       }
 
       if (finalStatus === "SUCCEEDED") succeeded++;
+      await persistAllHealthToDb();
       logger.info(`[worker] job ${job.id} ${finalStatus}`);
     } catch (err) {
       failed++;
+      await persistAllHealthToDb();
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error(`[worker] job ${job.id} failed`, { error: errorMsg });
 
