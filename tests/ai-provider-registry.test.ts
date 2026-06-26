@@ -136,10 +136,10 @@ describe("6. Z.ai general endpoint + configured model", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
-    // Even plausible-looking values that aren't in the allowlist must be rejected.
-    // This is the key difference from a rejection set — it catches unknown values too.
-    // Note: "GLM-4-FLASH" IS allowed (case-insensitive match) — see separate test.
-    for (const bad of ["glm-4-air", "glm-4-plus", "glm-4v", "gpt-4", "claude-3", "glm-4.5", "glm-4.6"]) {
+    // Values NOT in the allowlist must be rejected. This catches unknown values.
+    // Note: allowlisted values (glm-4-flash, glm-4-air, glm-4-plus, glm-4v, etc.)
+    // are tested separately — this test only uses values NOT in the allowlist.
+    for (const bad of ["gpt-4", "claude-3", "glm-4.5", "glm-4.6", "glm-4.7", "deepseek-chat", "llama-3"]) {
       process.env.ZAI_PROPOSAL_MODEL = bad;
       assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash",
         `'${bad}' override must fall back to glm-4-flash (positive allowlist)`);

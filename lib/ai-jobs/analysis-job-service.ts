@@ -435,7 +435,9 @@ export async function finalizeJob(jobId: string, userId: string) {
                 finishedAt: new Date(),
                 errorMessage: `AI_ANALYSIS_PREPARATION_FAILED (ref: ${correlationId})`,
             },
-        }).catch(() => {});
+        }).catch((cleanupErr) => {
+            console.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+        });
         return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED" };
     }
     const preparationMs = Date.now() - preparationStart;
@@ -489,7 +491,9 @@ export async function finalizeJob(jobId: string, userId: string) {
                     errorMessage: "Superseded by newer run during promotion. Not promoted to canonical.",
                     output: outputJson,
                 },
-            }).catch(() => {});
+            }).catch((cleanupErr) => {
+                console.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+            });
             return { status: "SUPERSEDED", code: "STALE_JOB_SUPERSeded" };
         }
 
