@@ -1,14 +1,15 @@
 # Release Evidence
 
 Audited at: 2026-06-26T15:01:07Z  
-Tested local commit SHA: `7bd282ba0d3af97e9d03dc3eab79570edf9c2761`  
+Initial local baseline SHA: `7bd282ba0d3af97e9d03dc3eab79570edf9c2761`  
+Current branch commit SHA is recorded in the PR body and final release-engineering response because a Git commit cannot contain its own final hash.  
 Branch: `release/production-stabilization`
 
 ## Executive status
 
 **Verdict: BLOCKED — not safe to merge.**
 
-A verified repository-local stabilization fix was made: the unsafe downloaded Z.ai patch artifacts were quarantined so they cannot be accidentally copied or auto-applied. This does not fix the production app because the production application source tree is absent.
+A verified repository-local stabilization fix was made: the unsafe downloaded Z.ai patch artifacts were quarantined so they cannot be accidentally copied or auto-applied, and an executable self-audit now verifies that quarantine. This does not fix the production app because the production application source tree is absent.
 
 This checkout does not contain the production application source tree required to verify or repair durable AI Analyze persistence, provider quarantine, safe error handling, strict generation/export/ZIP gates, ownership checks, or an in-app System Safety Center. The Git remote is also not configured, so latest `origin/main` and open PRs could not be fetched from this workspace.
 
@@ -30,6 +31,7 @@ Production being currently ready and `/api/health` being healthy is not contradi
 | `rg -n "glm-4-coding|glm-4v-coding|glm-4-air|glm-4-plus|body\.slice|modelTests|Redeploy|Set these Vercel|DELETE ZAI_API_KEY|Unknown Model.*correct|all known" download -S` | Passed after quarantine; no unsafe Z.ai patch/application instructions remained. |
 | `node --test download/zai-fix/zai-model-regression.test.ts` | Passed; quarantined artifact test is syntactically valid. |
 | `bash download/apply-fix.sh` | Passed as a safety check by refusing to apply the quarantined patch and exiting non-zero intentionally. |
+| `node scripts/release/self-audit.mjs` | Passed repository-local checks; reported missing remote and missing production app source as BLOCKED environment conditions. |
 
 ## Required validation status
 
@@ -71,7 +73,7 @@ See `docs/release/current-pr-resolution-matrix.md`. No open PR was accepted as s
 
 ## Manual Vercel actions required
 
-No Vercel preview or production deployment was created. The repository-local downloaded Z.ai patch artifacts now explicitly refuse automatic application and document that they are not verified production fixes. A final Vercel verification may be needed **only after** the above blockers are resolved locally and in CI and Hope explicitly approves a single final verification deployment.
+No Vercel preview or production deployment was created. The repository-local downloaded Z.ai patch artifacts now explicitly refuse automatic application, document that they are not verified production fixes, and are covered by `scripts/release/self-audit.mjs`. A final Vercel verification may be needed **only after** the above blockers are resolved locally and in CI and Hope explicitly approves a single final verification deployment.
 
 ## Deployment statement
 
