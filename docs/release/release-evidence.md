@@ -8,6 +8,8 @@ Branch: `release/production-stabilization`
 
 **Verdict: BLOCKED — not safe to merge.**
 
+A verified repository-local stabilization fix was made: the unsafe downloaded Z.ai patch artifacts were quarantined so they cannot be accidentally copied or auto-applied. This does not fix the production app because the production application source tree is absent.
+
 This checkout does not contain the production application source tree required to verify or repair durable AI Analyze persistence, provider quarantine, safe error handling, strict generation/export/ZIP gates, ownership checks, or an in-app System Safety Center. The Git remote is also not configured, so latest `origin/main` and open PRs could not be fetched from this workspace.
 
 Production being currently ready and `/api/health` being healthy is not contradicted here. I did **not** verify the durable AI Analyze path, and I do **not** claim AI Analyze is fixed.
@@ -25,6 +27,9 @@ Production being currently ready and `/api/health` being healthy is not contradi
 | `rg --files -g 'package.json' -g 'prisma/schema.prisma' -g 'app/**' -g 'lib/**' -g 'src/**'` | Passed but returned no application files. |
 | `find . -maxdepth 3 -type f` | Passed; showed only repository metadata/docs/download/upload files, not the app source tree. |
 | `gh pr list --state open --json number,title,baseRefOid,headRefOid,url --limit 100` | Failed: `gh` is not installed. |
+| `rg -n "glm-4-coding|glm-4v-coding|glm-4-air|glm-4-plus|body\.slice|modelTests|Redeploy|Set these Vercel|DELETE ZAI_API_KEY|Unknown Model.*correct|all known" download -S` | Passed after quarantine; no unsafe Z.ai patch/application instructions remained. |
+| `node --test download/zai-fix/zai-model-regression.test.ts` | Passed; quarantined artifact test is syntactically valid. |
+| `bash download/apply-fix.sh` | Passed as a safety check by refusing to apply the quarantined patch and exiting non-zero intentionally. |
 
 ## Required validation status
 
@@ -66,7 +71,7 @@ See `docs/release/current-pr-resolution-matrix.md`. No open PR was accepted as s
 
 ## Manual Vercel actions required
 
-No Vercel preview or production deployment was created. A final Vercel verification may be needed **only after** the above blockers are resolved locally and in CI and Hope explicitly approves a single final verification deployment.
+No Vercel preview or production deployment was created. The repository-local downloaded Z.ai patch artifacts now explicitly refuse automatic application and document that they are not verified production fixes. A final Vercel verification may be needed **only after** the above blockers are resolved locally and in CI and Hope explicitly approves a single final verification deployment.
 
 ## Deployment statement
 

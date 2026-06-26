@@ -1,64 +1,42 @@
-# Z.ai Coding Plan Fix — Apply These Files
+# Quarantined Z.ai Patch — Do Not Apply
 
-## The Problem
-Your Z.ai API key is from the **GLM Coding Plan**, which only includes
-`glm-4-coding` and `glm-4v-coding` — NOT `glm-4-flash`.
+This directory previously contained a speculative Z.ai "Coding Plan" fix. It is
+now intentionally quarantined and must **not** be copied into the production
+application.
 
-The code's allowlist only accepted `glm-4-flash`, so even if you set
-`ZAI_PROPOSAL_MODEL=glm-4-coding` in Vercel, the guard rejected it and
-forced `glm-4-flash` — which your Coding Plan key can't access.
+## Why this patch is rejected
 
-## The Fix (3 files to update)
+The release-stabilization rules require that we do **not**:
 
-### File 1: `lib/ai-provider-registry.ts`
-Copy this file to your repo, replacing the existing one.
-The only change is in the `ZAI_VALID_MODEL_CODES` Set (around line 496)
-which now includes all Z.ai model codes across all plan types.
+- assume any Z.ai model is valid merely because it appears in code or an env
+  example;
+- guess Z.ai model names;
+- expose model names, provider response bodies, keys, or raw provider errors to
+  standard users;
+- repeatedly call a provider returning HTTP 400 configuration/model errors;
+- alter Vercel environment variables or trigger deployments without explicit
+  approval.
 
-### File 2: `app/api/admin/ai-provider-health/zai-diagnostic/route.ts`
-Copy this file to your repo (new file). It's a diagnostic endpoint that
-tests your Z.ai API key against multiple model names and tells you
-exactly which models work and which don't.
+The previous patch violated those constraints by expanding a model allowlist
+without live account-specific proof, recommending Vercel env changes, probing a
+list of guessed models, and returning provider error snippets from a diagnostic
+route.
 
-### File 3: `tests/zai-model-regression.test.ts`
-Copy this file to your repo, replacing the existing one.
-Updated to require glm-4-coding + glm-4v-coding in the allowlist.
+## Safe replacement guidance
 
-## How to Apply
+When the real application source tree is available, implement Z.ai handling in
+production code only after review and tests:
 
-1. Download the 3 files from this folder:
-   - `ai-provider-registry.ts` → copy to `lib/ai-provider-registry.ts`
-   - `zai-diagnostic-route.ts` → copy to `app/api/admin/ai-provider-health/zai-diagnostic/route.ts`
-   - `zai-model-regression.test.ts` → copy to `tests/zai-model-regression.test.ts`
+1. Treat HTTP 400 "Unknown Model", invalid model, model code error, or equivalent
+   configuration failures as `CONFIGURATION_INVALID` or `MODEL_UNAVAILABLE`, not
+   `UNKNOWN`.
+2. Quarantine Z.ai for a bounded cooldown window after such failures.
+3. Continue safely through the canonical provider order without retrying Z.ai in
+   the same cooldown window.
+4. Keep Anthropic/Claude last.
+5. Return only safe status codes, plain-language remediation, and correlation IDs
+   from admin diagnostics; log technical details server-side only.
+6. Never expose provider response bodies, secrets, raw errors, tender text, or AI
+   JSON to browser users.
 
-2. Commit and push:
-   ```bash
-   git add lib/ai-provider-registry.ts app/api/admin/ai-provider-health/zai-diagnostic/route.ts tests/zai-model-regression.test.ts
-   git commit -m "fix(zai): add Coding Plan models to allowlist + diagnostic endpoint"
-   git push origin main
-   ```
-
-3. Wait for Vercel to deploy (2-3 minutes)
-
-4. Set these Vercel env vars (Settings → Environment Variables):
-   ```
-   ZAI_BASE_URL = https://open.bigmodel.cn/api/paas/v4
-   ZAI_PROPOSAL_MODEL = glm-4-coding
-   ZAI_ANALYSIS_MODEL = glm-4-coding
-   ZAI_FAST_MODEL = glm-4-coding
-   ```
-
-5. Redeploy in Vercel (Deployments → click the latest → Redeploy)
-
-6. After redeploy, test at:
-   https://hope-tender-path-b.vercel.app/api/admin/ai-provider-health/zai-diagnostic
-   (Login as admin first)
-
-7. Then go to the AI Health panel and click "Test provider chain"
-   Z.ai should now show OK with model glm-4-coding
-
-## Alternative: Just Remove ZAI_API_KEY
-If you don't want to deal with the Coding Plan, simply DELETE the
-ZAI_API_KEY env var from Vercel. Z.ai will show "Not configured" instead
-of "Failed". Your app will use Cerebras/Mistral/Groq (which are already
-working).
+No file in this `download/` folder is a verified production fix.

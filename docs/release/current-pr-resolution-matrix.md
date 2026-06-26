@@ -7,7 +7,7 @@ Local checked commit: `7bd282ba0d3af97e9d03dc3eab79570edf9c2761`
 
 This workspace does **not** contain a configured `origin` remote (`git remote -v` returned no remotes), and GitHub CLI is not installed (`gh: command not found`). Therefore I could not fetch `origin/main` or enumerate live open PR metadata from GitHub from this checkout. I did not infer PR state from stale local files.
 
-Because the production application source tree is not present in this checkout, no open PR code can be safely accepted, cherry-picked, or represented as verified.
+Because the production application source tree is not present in this checkout, no open PR code can be safely accepted, cherry-picked, or represented as verified. The only repository-local unsafe code I could verify was the downloaded Z.ai patch bundle; it has been quarantined rather than applied.
 
 ## Matrix
 
@@ -25,4 +25,4 @@ Because the production application source tree is not present in this checkout, 
 
 ## Release-engineering conclusion
 
-No currently open PR should be treated as verified from this checkout. The only safe action is to restore a full repository checkout with a configured GitHub remote, fetch latest `origin/main`, inspect each PR diff against the current schema and gates, and run the required validation suite before preserving any code.
+No currently open PR should be treated as verified from this checkout. The downloaded Z.ai patch bundle in this repository should also be treated as rejected/superseded by the quarantine changes, not as a safe PR candidate. The only safe action is to restore a full repository checkout with a configured GitHub remote, fetch latest `origin/main`, inspect each PR diff against the current schema and gates, and run the required validation suite before preserving any code.
