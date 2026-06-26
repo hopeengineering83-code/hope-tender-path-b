@@ -1,4 +1,3 @@
-import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
@@ -9,6 +8,7 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { getLatestAnalyzeCheckpointProgress } from "../../../../lib/ai-analyze-checkpoints";
 import { detectMetadataContamination } from "../../../../lib/engine/tender-metadata-completeness";
 import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
+import { logger } from "../../../../lib/observability";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -264,6 +264,8 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
+  const { id } = await params;
+
   // P0 FIX: Orderly deletion to handle non-cascading relations and circular trigger races.
   // 1. Manually delete SubmissionPlanState first to avoid the trigger race from GeneratedDocument delete.
   await prisma.submissionPlanState.delete({ where: { tenderId: id } }).catch((err) => {
@@ -286,7 +288,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     logger.warn(`[DELETE /api/tenders/${id}] dummy AI job creation failed`, { detail: err });
   });
 
-  const { id } = await params;
   const existing = await prisma.tender.findFirst({ where: { id, userId: actor.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
