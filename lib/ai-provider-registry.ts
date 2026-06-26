@@ -494,7 +494,17 @@ export function getProviderModel(
   // If Z.ai enables additional models on your account, add them here after
   // verifying they work via the /api/admin/ai-provider-health/test endpoint.
   const ZAI_VALID_MODEL_CODES = new Set([
-    "glm-4-flash", // default — fast, cheap, confirmed working (PR #864)
+    "glm-4-flash",     // default — general API plan (fast, cheap, confirmed PR #864)
+    "glm-4-flashx",    // faster variant of glm-4-flash
+    "glm-4-air",       // mid-tier general model
+    "glm-4-airx",      // faster variant of glm-4-air
+    "glm-4-plus",      // premium general model
+    "glm-4-long",      // long-context general model
+    "glm-4-0520",      // GLM-4 snapshot 0520
+    "glm-4-coding",    // Coding Plan — code-optimized model
+    "glm-4v-coding",   // Coding Plan — vision + code model
+    "glm-4v",          // general vision model
+    "glm-4v-flash",    // fast vision model
   ]);
   const isZaiInvalid = (value: string | undefined): boolean => {
     if (provider !== "zai") return false;

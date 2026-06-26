@@ -45,7 +45,11 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
         );
         // Must use a positive allowlist (not a rejection set)
         assert.match(src, /ZAI_VALID_MODEL_CODES/, "registry must use a positive allowlist");
-        assert.match(src, /glm-4-flash.*confirmed working/, "allowlist comment must explain glm-4-flash is confirmed");
+        assert.match(src, /glm-4-flash.*confirmed/, "allowlist comment must explain glm-4-flash is confirmed");
+        // Coding Plan models must be in the allowlist (Coding Plan keys
+        // can't access glm-4-flash — they need glm-4-coding instead).
+        assert.match(src, /glm-4-coding/, "allowlist must include glm-4-coding for Coding Plan users");
+        assert.match(src, /glm-4v-coding/, "allowlist must include glm-4v-coding for Coding Plan users");
         continue;
       }
       assert.ok(
