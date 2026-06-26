@@ -54,9 +54,8 @@ describe("optional provider adapters", () => {
 describe("canonical provider chain", () => {
   const source = readFileSync("lib/ai.ts", "utf8");
 
-  it("derives the chain from the registry (zai first, anthropic last)", () => {
-    // CANONICAL_PROVIDER_CHAIN is re-exported from the registry; assert via import.
-    const { CANONICAL_PROVIDER_CHAIN } = require("../lib/ai");
+  it("derives the chain from the registry (zai first, anthropic last)", async () => {
+    const { CANONICAL_PROVIDER_CHAIN } = await import("../lib/ai");
     const chain = [...CANONICAL_PROVIDER_CHAIN];
     assert.deepEqual(chain, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
     assert.equal(chain[0], "zai", "Z.ai must be first in the canonical chain");
