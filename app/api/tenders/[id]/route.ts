@@ -281,7 +281,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       if (generatedDocs.length > 0) {
         const docIds = generatedDocs.map((d: { id: string }) => d.id);
         await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch(() => {});
-        await tx.documentEvidence.deleteMany({ where: { documentId: { in: docIds } } }).catch(() => {});
         await tx.generatedDocument.deleteMany({ where: { tenderId: id } });
       }
 

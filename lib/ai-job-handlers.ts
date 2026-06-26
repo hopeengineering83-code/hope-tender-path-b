@@ -57,8 +57,11 @@ export interface JobContext {
  * SUCCEEDED state and falsely unlock generation/export.
  */
 export type JobHandlerTerminalResult = {
-  terminalStatus: "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED";
+  terminalStatus: "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "SUPERSEDED";
   output: Record<string, unknown>;
+  code?: string;
+  retryable?: boolean;
+  correlationId?: string;
 };
 
 export type JobHandlerResult = Record<string, unknown> | JobHandlerTerminalResult;
