@@ -19,13 +19,14 @@ import {
   getProviderEntry,
   resolveZaiConfiguration,
   getProviderModel,
+  getProviderOutputCap,
   getProviderBaseUrl,
   readProviderKey,
 } from "@/lib/ai-provider-registry";
 import { PER_PROVIDER_TIMEOUT_MS, ANTHROPIC_TIMEOUT_MS, GEMINI_TIMEOUT_MS } from "@/lib/timeout-config";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export type ProviderTestResult = {
   provider: string;
@@ -145,7 +146,7 @@ async function testProvider(
     maxTokens = 10;
   } else if (capability === "analysis") {
     prompt = ANALYSIS_PROMPT;
-    maxTokens = 1000;
+    maxTokens = provider === "zai" ? getProviderOutputCap("zai", "extraction") : 1000;
   } else {
     prompt = GENERATION_PROMPT;
     maxTokens = 2000;
@@ -213,6 +214,7 @@ async function testProvider(
             messages: [{ role: "user", content: prompt }],
             [tokenParam]: maxTokens,
             temperature: 0,
+            ...(provider === "zai" && capability === "analysis" ? { response_format: { type: "json_object" } } : {}),
           }),
         }),
         provider === "zai" && capability === "analysis" ? 45_000 : PER_PROVIDER_TIMEOUT_MS

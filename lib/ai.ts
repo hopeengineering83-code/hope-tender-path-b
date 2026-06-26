@@ -676,7 +676,12 @@ export type ProviderSelfTestResult = {
 const PROVIDER_SELF_TEST_PROMPT = "Reply with the single word: OK";
 
 export async function selfTestProvider(provider: AiProviderName, rank: number): Promise<ProviderSelfTestResult> {
-  if (!registryIsProviderConfigured(provider)) {
+  if (provider === "zai") {
+    const config = resolveZaiConfiguration("fast");
+    if (!config.valid) {
+      return { provider, rank, configured: false, ok: false, reason: config.safeMessage, latencyMs: null };
+    }
+  } else if (!registryIsProviderConfigured(provider)) {
     return { provider, rank, configured: false, ok: false, reason: "Not configured — no API key set", latencyMs: null };
   }
   const startedAt = Date.now();

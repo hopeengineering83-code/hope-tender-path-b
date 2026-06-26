@@ -445,7 +445,11 @@ export function isProviderConfigured(
     // `:free` model — otherwise a request could create paid usage.
     return Boolean(readProviderKey(provider, env)) && openRouterModelValidity(env).valid;
   }
-  if (provider === "zai") return resolveZaiConfiguration("proposal", env).valid;
+  if (provider === "zai") {
+    return resolveZaiConfiguration("proposal", env).valid
+      && resolveZaiConfiguration("extraction", env).valid
+      && resolveZaiConfiguration("fast", env).valid;
+  }
   return Boolean(readProviderKey(provider, env));
 }
 

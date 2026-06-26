@@ -88,7 +88,7 @@ describe("admin provider-chain ping budget", () => {
   const route = readFileSync("app/api/admin/ai-provider-health/test/route.ts", "utf8");
 
   it("keeps provider pings within the route budget", () => {
-    assert.match(route, /export const maxDuration = 30/);
+    assert.match(route, /export const maxDuration = 60/);
     assert.match(route, /from.*timeout-config.*import.*PER_PROVIDER_TIMEOUT_MS|import.*PER_PROVIDER_TIMEOUT_MS.*from.*timeout-config/);
   });
 

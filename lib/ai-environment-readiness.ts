@@ -5,6 +5,8 @@ import {
   getProviderModel,
   isProviderConfigured,
   providerDisplayName,
+  readProviderKey,
+  resolveZaiConfiguration,
 } from "./ai-provider-registry";
 
 export type AIEnvironmentVariableStatus = {
@@ -101,6 +103,12 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const warnings: string[] = [];
 
   const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
+  if (readProviderKey("zai")) {
+    for (const useCase of ["proposal", "extraction", "fast"] as const) {
+      const zai = resolveZaiConfiguration(useCase);
+      if (!zai.valid) blockers.push(`Z.ai ${useCase} configuration invalid: ${zai.safeMessage}`);
+    }
+  }
   if (!anyProviderConfigured) {
     const keyNames = Object.values(getProviderRegistry()).map((e) => e.env.apiKey).join(", ");
     blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
