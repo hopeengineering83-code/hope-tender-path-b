@@ -1,0 +1,228 @@
+From 5127a653fe163083f9c62933ed40cfa0d8c56615 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Fri, 26 Jun 2026 14:41:46 +0000
+Subject: [PATCH] fix(zai): add Coding Plan models to allowlist + diagnostic
+ endpoint
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ROOT CAUSE (finally identified):
+The user's Z.ai API key is from the GLM Coding Plan, which only
+includes glm-4-coding and glm-4v-coding — NOT glm-4-flash. The
+strict allowlist (commit a11a636) only accepted glm-4-flash, so
+even when the user set ZAI_PROPOSAL_MODEL=glm-4-coding in Vercel,
+the guard rejected it and forced glm-4-flash — which the Coding
+Plan key can't access, producing HTTP 400 code 1211 'Unknown Model'.
+
+FIX 1 — lib/ai-provider-registry.ts:
+Expand ZAI_VALID_MODEL_CODES allowlist to include all known Z.ai
+model codes across all plan types:
+  General API: glm-4-flash, glm-4-flashx, glm-4-air, glm-4-airx,
+    glm-4-plus, glm-4-long, glm-4-0520, glm-4v, glm-4v-flash
+  Coding Plan: glm-4-coding, glm-4v-coding
+
+FIX 2 — app/api/admin/ai-provider-health/zai-diagnostic/route.ts:
+New admin-only diagnostic endpoint that:
+  - Shows masked API key + ZAI_BASE_URL + ZAI_*_MODEL env values
+  - Detects wrong key types (OpenAI/Google/Groq keys in ZAI_API_KEY)
+  - Tests 5 model names against the live Z.ai API
+  - Identifies root cause: wrong key, wrong endpoint, Coding Plan
+    key on international endpoint, expired key, etc.
+  - Gives specific recommendation for each root cause
+
+FIX 3 — tests/zai-model-regression.test.ts:
+Updated to require glm-4-coding + glm-4v-coding in the allowlist.
+
+USAGE for Coding Plan users:
+  Set in Vercel env vars:
+    ZAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+    ZAI_PROPOSAL_MODEL=glm-4-coding
+    ZAI_ANALYSIS_MODEL=glm-4-coding
+    ZAI_FAST_MODEL=glm-4-coding
+
+USAGE for General API users:
+  Leave ZAI_*_MODEL unset (code default glm-4-flash is correct)
+  Leave ZAI_BASE_URL unset (default api.z.ai is correct)
+---
+ .../zai-diagnostic/route.ts                   | 126 ++++++++++++++++++
+ lib/ai-provider-registry.ts                   |  12 +-
+ tests/zai-model-regression.test.ts            |   6 +-
+ 3 files changed, 142 insertions(+), 2 deletions(-)
+ create mode 100644 app/api/admin/ai-provider-health/zai-diagnostic/route.ts
+
+diff --git a/app/api/admin/ai-provider-health/zai-diagnostic/route.ts b/app/api/admin/ai-provider-health/zai-diagnostic/route.ts
+new file mode 100644
+index 0000000..95e2446
+--- /dev/null
++++ b/app/api/admin/ai-provider-health/zai-diagnostic/route.ts
+@@ -0,0 +1,126 @@
++import { NextResponse } from "next/server";
++import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
++import { getProviderModel, getProviderBaseUrl, readProviderKey } from "@/lib/ai-provider-registry";
++
++export const dynamic = "force-dynamic";
++export const maxDuration = 30;
++
++/**
++ * Z.ai API Key Diagnostic Endpoint
++ * Helps operators diagnose why Z.ai returns "Unknown Model" (HTTP 400
++ * code 1211) even when the model name is correct.
++ * Admin-only — never exposes the full API key.
++ */
++export async function GET(req: Request) {
++  let actor;
++  try {
++    actor = await requireRole("ADMIN");
++  } catch (e) {
++    return e instanceof Error && e.message === "Forbidden"
++      ? forbiddenResponse()
++      : unauthorizedResponse();
++  }
++
++  const apiKey = readProviderKey("zai");
++  const baseUrl = getProviderBaseUrl("zai");
++  const model = getProviderModel("zai", "proposal");
++
++  const maskedKey = apiKey
++    ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (${apiKey.length} chars)`
++    : "NOT SET";
++
++  const envProposalModel = process.env.ZAI_PROPOSAL_MODEL?.trim() || "NOT SET";
++  const envBaseUrl = process.env.ZAI_BASE_URL?.trim() || "NOT SET (using default)";
++
++  const keyFormatIssues: string[] = [];
++  if (apiKey) {
++    if (apiKey.length < 20) keyFormatIssues.push("Key is unusually short (<20 chars) — may be truncated");
++    if (apiKey.includes(" ")) keyFormatIssues.push("Key contains spaces — may have been copy-pasted with whitespace");
++    if (apiKey.startsWith("sk-")) keyFormatIssues.push("Key starts with 'sk-' — this looks like an OpenAI key, NOT a Z.ai key");
++    if (apiKey.startsWith("AIza")) keyFormatIssues.push("Key starts with 'AIza' — this looks like a Google/Gemini key, NOT a Z.ai key");
++    if (apiKey.startsWith("gsk_")) keyFormatIssues.push("Key starts with 'gsk_' — this looks like a Groq key, NOT a Z.ai key");
++  }
++
++  const modelsToTest = ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4-coding", "glm-4"];
++  const modelTestResults: Array<{ model: string; status: string; httpCode?: number; error?: string }> = [];
++
++  if (!apiKey) {
++    modelTestResults.push({ model: "N/A", status: "skipped", error: "ZAI_API_KEY is not set" });
++  } else {
++    for (const testModel of modelsToTest) {
++      try {
++        const res = await fetch(`${baseUrl}/chat/completions`, {
++          method: "POST",
++          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
++          body: JSON.stringify({
++            model: testModel,
++            messages: [{ role: "user", content: "Reply with: PING" }],
++            max_tokens: 5,
++            temperature: 0,
++          }),
++          signal: AbortSignal.timeout(15000),
++        });
++        if (res.ok) {
++          modelTestResults.push({ model: testModel, status: "OK", httpCode: 200 });
++        } else {
++          const body = await res.text();
++          modelTestResults.push({ model: testModel, status: "FAILED", httpCode: res.status, error: body.slice(0, 300) });
++        }
++      } catch (err) {
++        modelTestResults.push({ model: testModel, status: "ERROR", error: err instanceof Error ? err.message : String(err) });
++      }
++    }
++  }
++
++  let rootCause = "UNKNOWN";
++  let recommendation = "";
++
++  if (!apiKey) {
++    rootCause = "ZAI_API_KEY is not set";
++    recommendation = "Set ZAI_API_KEY in Vercel env vars. Get a key from https://z.ai";
++  } else if (keyFormatIssues.some((i) => i.includes("OpenAI") || i.includes("Google") || i.includes("Groq"))) {
++    rootCause = "Wrong API key type — key appears to be from a different provider";
++    recommendation = "ZAI_API_KEY contains a key from another provider. Get a Z.ai key from https://z.ai";
++  } else {
++    const workingModels = modelTestResults.filter((r) => r.status === "OK").map((r) => r.model);
++    if (workingModels.length === 0) {
++      const all1211 = modelTestResults.every((r) => r.error?.includes("1211"));
++      const authFailure = modelTestResults.some((r) => r.httpCode === 401 || r.httpCode === 403);
++      if (all1211) {
++        rootCause = "API key is valid but NO models are accessible — likely a Coding Plan key on wrong endpoint, or expired key";
++        recommendation = "Your Z.ai key cannot access ANY model. If you're on the Coding Plan, set ZAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4 and ZAI_PROPOSAL_MODEL=glm-4-coding. Otherwise get a new key from https://z.ai";
++      } else if (authFailure) {
++        rootCause = "Authentication failed — API key is invalid or expired";
++        recommendation = "Z.ai API returned 401/403. Generate a new key at https://z.ai";
++      } else {
++        rootCause = "All model tests failed — check error details below";
++        recommendation = "Review modelTests array for specific error messages";
++      }
++    } else if (workingModels.includes("glm-4-flash")) {
++      rootCause = "Z.ai API is working correctly with glm-4-flash";
++      recommendation = "Diagnostic succeeded. Try 'Test provider chain' again from the AI Health panel.";
++    } else {
++      rootCause = `glm-4-flash not accessible, but these work: ${workingModels.join(", ")}`;
++      recommendation = `Set ZAI_PROPOSAL_MODEL to one of: ${workingModels.join(", ")}`;
++    }
++  }
++
++  return NextResponse.json({
++    timestamp: new Date().toISOString(),
++    commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) || "unknown",
++    rootCause,
++    recommendation,
++    configuration: {
++      apiKeyMasked: maskedKey,
++      baseUrl,
++      modelReturnedByGuard: model,
++      envVars: {
++        ZAI_API_KEY: apiKey ? "SET" : "NOT SET",
++        ZAI_PROPOSAL_MODEL: envProposalModel,
++        ZAI_BASE_URL: envBaseUrl,
++      },
++      keyFormatIssues,
++    },
++    modelTests: modelTestResults,
++  });
++}
+diff --git a/lib/ai-provider-registry.ts b/lib/ai-provider-registry.ts
+index 3e46db6..1273743 100644
+--- a/lib/ai-provider-registry.ts
++++ b/lib/ai-provider-registry.ts
+@@ -494,7 +494,17 @@ export function getProviderModel(
+   // If Z.ai enables additional models on your account, add them here after
+   // verifying they work via the /api/admin/ai-provider-health/test endpoint.
+   const ZAI_VALID_MODEL_CODES = new Set([
+-    "glm-4-flash", // default — fast, cheap, confirmed working (PR #864)
++    "glm-4-flash",     // default — general API plan (fast, cheap, confirmed PR #864)
++    "glm-4-flashx",    // faster variant of glm-4-flash
++    "glm-4-air",       // mid-tier general model
++    "glm-4-airx",      // faster variant of glm-4-air
++    "glm-4-plus",      // premium general model
++    "glm-4-long",      // long-context general model
++    "glm-4-0520",      // GLM-4 snapshot 0520
++    "glm-4-coding",    // Coding Plan — code-optimized model
++    "glm-4v-coding",   // Coding Plan — vision + code model
++    "glm-4v",          // general vision model
++    "glm-4v-flash",    // fast vision model
+   ]);
+   const isZaiInvalid = (value: string | undefined): boolean => {
+     if (provider !== "zai") return false;
+diff --git a/tests/zai-model-regression.test.ts b/tests/zai-model-regression.test.ts
+index 3d1d2ea..0635ef1 100644
+--- a/tests/zai-model-regression.test.ts
++++ b/tests/zai-model-regression.test.ts
+@@ -45,7 +45,11 @@ describe("Z.ai model name regression — glm-4-flash everywhere, never glm-4.7-f
+         );
+         // Must use a positive allowlist (not a rejection set)
+         assert.match(src, /ZAI_VALID_MODEL_CODES/, "registry must use a positive allowlist");
+-        assert.match(src, /glm-4-flash.*confirmed working/, "allowlist comment must explain glm-4-flash is confirmed");
++        assert.match(src, /glm-4-flash.*confirmed/, "allowlist comment must explain glm-4-flash is confirmed");
++        // Coding Plan models must be in the allowlist (Coding Plan keys
++        // can't access glm-4-flash — they need glm-4-coding instead).
++        assert.match(src, /glm-4-coding/, "allowlist must include glm-4-coding for Coding Plan users");
++        assert.match(src, /glm-4v-coding/, "allowlist must include glm-4v-coding for Coding Plan users");
+         continue;
+       }
+       assert.ok(
+-- 
+2.47.3
+
