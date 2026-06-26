@@ -185,7 +185,7 @@ async function testProvider(
         }),
         ANTHROPIC_TIMEOUT_MS
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       resultText = data.content[0].text;
     } else {
@@ -219,7 +219,7 @@ async function testProvider(
         }),
         provider === "zai" && capability === "analysis" ? 45_000 : PER_PROVIDER_TIMEOUT_MS
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       resultText = data.choices[0].message.content;
     }

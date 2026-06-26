@@ -100,6 +100,14 @@ describe("admin provider-chain ping budget", () => {
   it("iterates providers in canonical registry order", () => {
     assert.match(route, /CANONICAL_AI_PROVIDER_ORDER/);
   });
+
+  it("does not expose provider response bodies or partial API keys in admin diagnostics", () => {
+    const diagnostic = readFileSync("app/api/admin/ai-provider-health/zai-diagnostic/route.ts", "utf8");
+    assert.ok(!route.includes("await res.text()"), "provider health test route must not expose raw provider bodies");
+    assert.ok(!diagnostic.includes("apiKeyMasked"), "Z.ai diagnostic must not expose even partially masked API keys");
+    assert.ok(!diagnostic.includes("apiKey.slice"), "Z.ai diagnostic must not derive partial API key prefixes or suffixes");
+    assert.ok(diagnostic.includes("apiKeyStatus"), "Z.ai diagnostic may expose SET/NOT SET only");
+  });
 });
 
 describe("AI provider status surfaces stay aligned with canonical chain", () => {

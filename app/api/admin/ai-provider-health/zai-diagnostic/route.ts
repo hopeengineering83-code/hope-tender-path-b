@@ -17,7 +17,6 @@ export async function GET() {
 
   const apiKey = readProviderKey("zai");
   const config = resolveZaiConfiguration("extraction");
-  const maskedKey = apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)} (${apiKey.length} chars)` : "NOT SET";
   const keyFormatIssues: string[] = [];
   if (apiKey) {
     if (apiKey.length < 20) keyFormatIssues.push("Key is unusually short (<20 chars) — may be truncated");
@@ -85,7 +84,7 @@ export async function GET() {
     rootCause,
     recommendation,
     configuration: {
-      apiKeyMasked: maskedKey,
+      apiKeyStatus: apiKey ? "SET" : "NOT SET",
       baseUrl: config.baseUrl,
       model: config.model,
       planType: config.planType,
