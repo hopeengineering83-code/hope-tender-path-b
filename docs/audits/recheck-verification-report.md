@@ -35,3 +35,13 @@
 
 ## One Next Action
 **Merge PR 875** into `main` to restore security audit assets, then **Close PR 876** and **Close PR 871/870** to prevent schema-drift regressions.
+
+## CI Regression Analysis (Post-Pass 5)
+The initial submission failed CI due to two unit test regressions:
+1. **Registry Chain Mismatch**: `tests/mistral-together-providers.test.ts` was using a stale hardcoded array that didn't match the new 10-provider canonical order.
+2. **Environment Pollution**: In CI, `GEMINI_API_KEY` is present as a placeholder, causing `isProviderConfigured('gemini')` to return true, which broke the "all providers unconfigured" assertion in `tests/ai-provider-registry.test.ts`.
+
+**Fixes Applied:**
+- Updated `tests/mistral-together-providers.test.ts` to use dynamic import and the authoritative `CANONICAL_PROVIDER_CHAIN`.
+- Hardened `tests/ai-provider-registry.test.ts` to snapshot and clear all AI keys during the configuration test.
+- Verified 100% pass rate in the local sandbox with simulated CI pollution.
