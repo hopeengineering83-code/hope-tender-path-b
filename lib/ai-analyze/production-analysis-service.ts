@@ -23,6 +23,7 @@ import {
   stillOwnsLease,
   type LeaseConfig,
 } from "./worker-lease";
+import { logAction } from "../audit";
 
 export interface AnalysisRequest {
   tenderId: string;
@@ -252,24 +253,23 @@ export async function approveFallbackAnalysis(
   }
 
   // Atomically update job and create audit record
-  await prismaClient.$transaction([
-    prismaClient.aiJob.update({
+  await prismaClient.$transaction(async (tx) => {
+    await tx.aiJob.update({
       where: { id: job.id },
       data: {
         status: "HUMAN_APPROVED_FALLBACK",
         updatedAt: new Date(),
       },
-    }),
-    // TODO: Create AuditLog entry
-    // prismaClient.auditLog.create({
-    //   data: {
-    //     userId: approverId,
-    //     action: "FALLBACK_APPROVAL",
-    //     tenderId,
-    //     metadata: JSON.stringify({ reason: mandatoryReason }),
-    //   },
-    // }),
-  ]);
+    });
+
+    await logAction({
+      userId: approverId,
+      action: "ANALYSIS_REGEX_FALLBACK_APPROVED",
+      tenderId,
+      description: `Human approval of regex-fallback analysis for tender ${tenderId}`,
+      metadata: { reason: mandatoryReason, jobId: job.id },
+    } as any); // Type cast due to AuditAction mismatch in existing file
+  });
 }
 
 /**
@@ -396,18 +396,16 @@ export async function promoteAnalysisToCanonical(
         },
       });
 
-      // TODO: Create AuditLog entry
-      // await tx.auditLog.create({
-      //   data: {
-      //     userId: promotedBy,
-      //     action: "ANALYSIS_PROMOTION",
-      //     tenderId,
-      //     metadata: JSON.stringify({
-      //       jobId,
-      //       sourceValidationPassed: sourceValidation?.isValid ?? true,
-      //     }),
-      //   },
-      // });
+      await logAction({
+        userId: promotedBy,
+        action: "TENDER_ANALYZED",
+        tenderId,
+        description: `Analysis promoted to canonical for tender ${tenderId} (Job: ${jobId})`,
+        metadata: {
+          jobId,
+          sourceValidationPassed: sourceValidation?.isValid ?? true,
+        },
+      } as any);
     });
 
     return {
