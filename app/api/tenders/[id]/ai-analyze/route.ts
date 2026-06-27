@@ -599,6 +599,7 @@ async function handleStreamingAnalyze(
                 f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
             ) ? "ocr" : "text";
 
+            let streamPromoSuperseded = false;
             if (aiMeta.isPartial) {
               // Non-destructive: stage partial result without touching canonical tender data.
               if (analysisJob) {
@@ -627,7 +628,6 @@ async function handleStreamingAnalyze(
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
               // AiJob was created between the outer canPromoteToCanonical check above
               // and this write. If superseded, the tx returns without any writes.
-              let streamPromoSuperseded = false;
               await prisma.$transaction(async (tx) => {
                 // Serialize all promotion attempts for this tender. The advisory
                 // lock prevents a concurrent run from inserting a higher-version
