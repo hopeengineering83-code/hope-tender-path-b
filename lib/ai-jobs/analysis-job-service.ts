@@ -438,45 +438,45 @@ export async function finalizeJob(jobId: string, userId: string) {
         }).catch((cleanupErr) => {
             console.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
-        return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED" };
+        return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED", retryable: true, correlationId };
     }
     const preparationMs = Date.now() - preparationStart;
 
     // ─── SHORT INTERACTIVE TRANSACTION (writes only) ──────────────────
     try {
-    await prisma.$transaction(async (tx) => {
-        const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!);
-        if (!stillPromotable) {
-            throw new Error("STALE_JOB_SUPERSeded");
-        }
-
-        await tx.aiJob.update({
-            where: { id: jobId },
-            data: { status: "RUNNING", updatedAt: new Date() }
-        });
-
-        await upsertRequirements(tx, job.tenderId!, drafts);
-
-        await tx.tender.update({
-            where: { id: job.tenderId! },
-            data: tenderUpdate,
-        });
-
-        await tx.aiJob.update({
-            where: { id: jobId },
-            data: {
-                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
-                finishedAt: new Date(),
-                output: outputJson,
+        await prisma.$transaction(async (tx) => {
+            const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!, tx);
+            if (!stillPromotable) {
+                throw new Error("STALE_JOB_SUPERSeded");
             }
-        });
 
-        await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID());
-    }, {
-        timeout: 10000,
-        isolationLevel: "Serializable",
-    });
-    console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
+            await tx.aiJob.update({
+                where: { id: jobId },
+                data: { status: "RUNNING", updatedAt: new Date() }
+            });
+
+            await upsertRequirements(tx, job.tenderId!, drafts);
+
+            await tx.tender.update({
+                where: { id: job.tenderId! },
+                data: tenderUpdate,
+            });
+
+            await tx.aiJob.update({
+                where: { id: jobId },
+                data: {
+                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    finishedAt: new Date(),
+                    output: outputJson,
+                }
+            });
+
+            await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID(), tx);
+        }, {
+            timeout: 10000,
+            isolationLevel: "Serializable",
+        });
+        console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
     } catch (persistErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
         const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);

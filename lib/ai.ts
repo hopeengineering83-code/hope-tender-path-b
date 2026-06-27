@@ -2210,7 +2210,7 @@ export async function analyzeWithAI(
     let chunkProvider: string | null = null;
     try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
     try {
-      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt, opts?.deadlineAt);
+      const result = await analyzeOneChunkWithRetry(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt, opts?.deadlineAt);
       const chunkResults = [{ index: 0, result, provider: chunkProvider }];
       try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
       return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };
