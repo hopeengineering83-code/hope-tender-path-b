@@ -78,6 +78,39 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
   }
 }
 
+
+export async function restoreHealthFromDbBounded(timeoutMs = 2_000): Promise<ProviderHealthRestoreResult> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      restoreHealthFromDb(),
+      new Promise<ProviderHealthRestoreResult>((resolve) => {
+        timeout = setTimeout(() => resolve({
+          restored: false,
+          skipped: false,
+          warning: `Provider health DB restore timed out after ${timeoutMs}ms; using in-memory provider health for this response.`,
+        }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function persistAllHealthToDbBounded(timeoutMs = 1_500): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      persistAllHealthToDb(),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export const __testing__ = { resetRestoreGuard: () => { restoredAt = null; } };
 
 export async function persistAllHealthToDb(): Promise<void> {

@@ -69,11 +69,28 @@ describe("production AI Analyze persistence blocker fix", () => {
     assert.doesNotMatch(oneChunk, /await analyzeOneChunk\(/);
   });
 
-  it("durable AI Analyze restores and persists provider health without changing outcomes", () => {
+  it("durable AI Analyze bounds health restore before the analysis deadline", () => {
     const src = read("lib/engine/analysis-orchestrator.ts");
-    assert.match(src, /restoreHealthFromDb\(\)\.catch/);
-    assert.match(src, /finally \{/);
-    assert.match(src, /persistAllHealthToDb\(\)\.catch/);
-    assert.match(src, /health persistence must never change AI Analyze outcome/i);
+    const restoreAt = src.indexOf("restoreHealthFromDbBounded(2_000)");
+    const deadlineAt = src.indexOf("const deadlineAt = Date.now() + deadlineMs");
+    assert.ok(restoreAt > 0, "durable AI Analyze must use bounded provider-health restore");
+    assert.ok(deadlineAt > restoreAt, "provider-health restore must run before the AI deadline starts");
+  });
+
+  it("durable AI Analyze persists provider health only after job output/status persistence", () => {
+    const src = read("lib/engine/analysis-orchestrator.ts");
+    const jobUpdateAt = src.indexOf("await prisma.aiJob.update({");
+    const persistAt = src.indexOf("persistAllHealthToDbBounded(1_500)");
+    assert.ok(jobUpdateAt > 0, "job output/status update must exist");
+    assert.ok(persistAt > jobUpdateAt, "provider-health persistence must happen after job output/status persistence");
+    assert.match(src, /provider-health\s+\/\/ persistence must never delay or change the AI Analyze terminal outcome/i);
+  });
+
+  it("run-next restores provider cooldowns before automated retry re-arm", () => {
+    const route = read("app/api/ai-jobs/run-next/route.ts");
+    const restoreAt = route.indexOf("restoreHealthFromDbBounded(2_000)");
+    const dueAt = route.indexOf("findJobsDueForRetry(10)");
+    assert.ok(restoreAt > 0, "run-next must restore provider health before retry lookup");
+    assert.ok(dueAt > restoreAt, "retry due-job lookup must happen after health restore");
   });
 });

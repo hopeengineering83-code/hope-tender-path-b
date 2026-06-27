@@ -24,7 +24,7 @@ import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
-import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
+import { restoreHealthFromDbBounded, persistAllHealthToDbBounded } from "../ai-provider-health-db";
 import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
@@ -143,6 +143,13 @@ export async function executeAnalysis(
         ? `Resuming at chunk ${startFromChunk + 1} of ${totalChunks}…`
         : `Analyzing chunk 1 of ${totalChunks}…`,
   });
+
+  // Restore durable provider health before starting the analysis deadline so a
+  // slow ProviderHealthSnapshot read cannot consume the worker's AI budget.
+  const healthRestore = await restoreHealthFromDbBounded(2_000);
+  if (healthRestore.warning) {
+    logger.warn("[orchestrator] Provider health restore warning before durable AI Analyze", { warning: healthRestore.warning });
+  }
 
   // Phase: Analyzing
   const deadlineAt = Date.now() + deadlineMs;
@@ -298,11 +305,6 @@ export async function executeAnalysis(
     }
   }
 
-  // Restore durable provider health before selection so cold starts respect cooldowns.
-  await restoreHealthFromDb().catch((err) => {
-    logger.warn("[orchestrator] Provider health restore failed before durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
-  });
-
   // Execute analysis through AI system
   let analysisMeta: AnalysisWithMeta | null = null;
   let analysisProvider: string | null = null;
@@ -346,11 +348,6 @@ export async function executeAnalysis(
       chunkProviders,
       chunkResults: previousChunkResults,
     };
-  } finally {
-    // Best-effort only: health persistence must never change AI Analyze outcome.
-    await persistAllHealthToDb().catch((err) => {
-      logger.warn("[orchestrator] Provider health persistence failed after durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
-    });
   }
 
   // Phase: Merging (implicit in analyzeWithAI)
@@ -415,6 +412,12 @@ export async function executeAnalysis(
       logger.error(`[orchestrator] Failed to update job ${jobId} status`, { error: err instanceof Error ? err.message : String(err) });
     });
   }
+
+  // Best-effort only and after job output/status persistence: provider-health
+  // persistence must never delay or change the AI Analyze terminal outcome.
+  void persistAllHealthToDbBounded(1_500).catch((err) => {
+    logger.warn("[orchestrator] Provider health persistence failed after durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
+  });
 
   // Phase: Complete
   const requirementCount = analysisMeta?.result?.requirements?.length ?? 0;
