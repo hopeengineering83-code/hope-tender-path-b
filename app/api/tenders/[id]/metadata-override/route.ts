@@ -16,6 +16,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { VALID_FIELD_STATES, KNOWN_METADATA_FIELDS, type MetadataFieldState } from "../../../../../lib/engine/metadata-override";
+import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../../lib/engine/canonical-field-state";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -34,7 +35,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const tender = await prisma.tender.findFirst({
     where: { id, userId: actor.id },
-    select: { id: true },
+    select: {
+      id: true, title: true, reference: true, clientName: true, procuringEntityName: true,
+      deadline: true, currency: true, country: true, submissionMethod: true,
+      submissionAddress: true, submissionEmails: true, submissionEmailSubject: true,
+      clientContactName: true, clientContactEmail: true, clientContactTitle: true,
+      clientContactPhone: true, clientCity: true, clientAddress: true, clientWebsite: true,
+      clientRepresentative: true, legalClientName: true, donorAgency: true, implementingAgency: true,
+      preBidChannel: true, preBidMeetingDate: true, preBidMeetingLocation: true,
+      evaluationMethodology: true, metadataContaminated: true,
+      clientNameSourcePage: true, clientNameSourceQuote: true,
+      submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
+      submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
+      submissionEmailSourcePage: true, contactDetailsSourceJson: true,
+      requirements: { select: { id: true }, take: 1 },
+    },
   });
   if (!tender) return err("Tender not found", 404, "TENDER_NOT_FOUND");
 
@@ -55,7 +70,68 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     throw lookupErr;
   }
 
-  return NextResponse.json({ ok: true, overrides });
+  // Server-derived canonical field states — the SINGLE source of truth for the
+  // Client & Submission Details panel chips. The panel renders these directly
+  // instead of recomputing status from raw values client-side.
+  let fieldStates: Record<string, {
+    status: string; isGrounded: boolean; criticality: string;
+    sourcePage: number | null; sourceQuote: string | null; value: string | null;
+  }> = {};
+  try {
+    const pbDate = tender.preBidMeetingDate instanceof Date
+      ? tender.preBidMeetingDate.toISOString().split("T")[0]
+      : (tender.preBidMeetingDate ?? null);
+    const resolved = resolveCanonicalFieldState({
+      tender: {
+        id: tender.id, title: tender.title, reference: tender.reference,
+        clientName: tender.clientName, procuringEntityName: tender.procuringEntityName,
+        deadline: tender.deadline ?? null, currency: tender.currency, country: tender.country,
+        submissionMethod: tender.submissionMethod, submissionAddress: tender.submissionAddress,
+        submissionEmails: tender.submissionEmails, submissionEmailSubject: tender.submissionEmailSubject,
+        clientContactName: tender.clientContactName, clientContactEmail: tender.clientContactEmail,
+        metadataContaminated: tender.metadataContaminated === true,
+        clientNameSourcePage: tender.clientNameSourcePage ?? null,
+        clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+        submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
+        submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+        submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
+        submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+        submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+        evaluationMethodology: tender.evaluationMethodology ?? null,
+        legalClientName: tender.legalClientName ?? null, donorAgency: tender.donorAgency ?? null,
+        implementingAgency: tender.implementingAgency ?? null,
+        clientContactTitle: tender.clientContactTitle ?? null,
+        clientContactPhone: tender.clientContactPhone ?? null,
+        clientCity: tender.clientCity ?? null, clientAddress: tender.clientAddress ?? null,
+        clientWebsite: tender.clientWebsite ?? null, clientRepresentative: tender.clientRepresentative ?? null,
+        preBidChannel: tender.preBidChannel ?? null, preBidMeetingDate: pbDate,
+        preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
+      },
+      overrides: overrides.map((o) => ({
+        field: o.field, fieldState: o.fieldState, overrideValue: o.overrideValue ?? null,
+        reason: o.reason ?? null, overriddenBy: o.overriddenBy ?? null, createdAt: o.createdAt ?? null,
+      })),
+      hasExtractedRequirements: tender.requirements.length > 0,
+      submissionMethodContext: tender.submissionMethod ?? undefined,
+    });
+    for (const f of resolved.fields) {
+      fieldStates[f.fieldKey] = {
+        status: canonicalToClientChip(f),
+        isGrounded: f.isGrounded,
+        criticality: f.criticality,
+        sourcePage: f.sourcePage,
+        sourceQuote: f.sourceQuote,
+        value: f.effectiveValue,
+      };
+    }
+  } catch {
+    // Resolver is best-effort for the panel; on any failure the panel falls
+    // back to its local rendering. Never block the overrides response.
+    fieldStates = {};
+  }
+
+  return NextResponse.json({ ok: true, overrides, fieldStates });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -116,7 +192,133 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const overrideValue = typeof body.overrideValue === "string" ? body.overrideValue.trim() || null : null;
   const reason = typeof body.reason === "string" ? body.reason.trim() || null : null;
-  const previousValue = typeof body.previousValue === "string" ? body.previousValue.trim() || null : null;
+  // NEVER trust client-supplied previousValue — compute it server-side.
+  const previousValue = null; // Will be set from the existing override row below.
+
+  // ─── SERVER-SIDE POLICY VALIDATION (P0) ──────────────────────────
+  // The API must enforce policy. Hidden UI buttons are not security controls.
+
+  // Load existing override to compute real prior value
+  const existingOverride = await prisma.tenderMetadataOverride.findUnique({
+    where: { tenderId_field: { tenderId: id, field } },
+  }).catch(() => null);
+  const realPriorValue = existingOverride?.overrideValue ?? null;
+
+  // Load tender fields for validation context
+  const tenderData = await prisma.tender.findFirst({
+    where: { id, userId: actor.id },
+    select: {
+      id: true, title: true, reference: true, clientName: true,
+      procuringEntityName: true, submissionMethod: true,
+      submissionAddress: true, submissionEmails: true,
+      deadline: true, submissionEmailSubject: true,
+      bidBondAmount: true, bidBondCurrency: true,
+    },
+  });
+
+  // Placeholder/generic value detection
+  const PLACEHOLDER_PATTERNS = /^(n\/?a|na|tbd|tbc|nil|none|unknown|-|\.\.\.|bid[\s-]?team\s+to\s+confirm|to\s+be\s+(confirmed|determined|announced)|not\s+(available|specified|stated|determined))$/i;
+  const GENERIC_LABEL_PATTERNS = /^(number|reference\s*(number)?|tender\s*(number|reference|title)?|title|client\s*name|date|deadline|address|email|subject|amount|currency|name|description|details|field|value)$/i;
+
+  function isPlaceholderOrGeneric(value: string | null): boolean {
+    if (!value) return true;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return true;
+    if (PLACEHOLDER_PATTERNS.test(trimmed)) return true;
+    if (GENERIC_LABEL_PATTERNS.test(trimmed)) return true;
+    if (trimmed.length < 2) return true;
+    return false;
+  }
+
+  // Always-critical fields that can NEVER be NOT_APPLICABLE
+  const ALWAYS_CRITICAL_FIELDS = new Set([
+    "clientName", "procuringEntityName", "title", "reference",
+    "submissionMethod", "submissionEndpoint", "submissionEmails",
+    "submissionAddress", "deadline", "requiredDocuments",
+  ]);
+
+  // ─── Validate by fieldState ──────────────────────────────────────
+  if (fieldState === "USER_EDITED") {
+    if (!overrideValue || isPlaceholderOrGeneric(overrideValue)) {
+      return err(
+        "Manual override value is empty, generic, or a placeholder. Provide a meaningful value.",
+        400,
+        "INVALID_OVERRIDE_VALUE",
+      );
+    }
+    // Deadline-specific validation
+    if (field === "deadline") {
+      const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(overrideValue);
+      const isoDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(overrideValue);
+      if (!isoDate && !isoDateTime) {
+        return err(
+          "Deadline override must be YYYY-MM-DD or a complete ISO datetime with timezone.",
+          400,
+          "INVALID_DEADLINE_FORMAT",
+        );
+      }
+      const parsed = new Date(overrideValue);
+      if (isNaN(parsed.getTime())) {
+        return err("Deadline override is not a valid date.", 400, "INVALID_DEADLINE");
+      }
+    }
+    // Reference format validation
+    if (field === "reference" && overrideValue.length < 3) {
+      return err("Reference override is too short — must be a real tender reference.", 400, "INVALID_REFERENCE");
+    }
+  }
+
+  if (fieldState === "USER_CONFIRMED") {
+    // Confirmation requires a valid effective value
+    const effectiveValue = overrideValue ?? tenderData?.[field as keyof typeof tenderData];
+    const effectiveStr = effectiveValue instanceof Date
+      ? effectiveValue.toISOString()
+      : typeof effectiveValue === "string" ? effectiveValue : String(effectiveValue ?? "");
+    if (!effectiveStr || isPlaceholderOrGeneric(effectiveStr)) {
+      return err(
+        "Cannot confirm an empty, generic, or placeholder value. Provide a valid value first.",
+        400,
+        "INVALID_CONFIRMATION_VALUE",
+      );
+    }
+    // Require a meaningful audit reason for confirmation
+    if (!reason || reason.trim().length < 5) {
+      return err("Confirmation requires a meaningful audit reason (at least 5 characters).", 400, "REASON_REQUIRED");
+    }
+  }
+
+  if (fieldState === "NOT_APPLICABLE") {
+    if (ALWAYS_CRITICAL_FIELDS.has(field)) {
+      return err(
+        `Field "${field}" is always-critical and cannot be marked Not Applicable.`,
+        400,
+        "NOT_APPLICABLE_REJECTED",
+      );
+    }
+    if (!reason || reason.trim().length < 5) {
+      return err("Not Applicable requires a non-empty reason (at least 5 characters).", 400, "REASON_REQUIRED");
+    }
+  }
+
+  if (fieldState === "IGNORED_WITH_REASON") {
+    if (!reason || reason.trim().length < 5) {
+      return err("Not stated / ignored requires a non-empty reason (at least 5 characters).", 400, "REASON_REQUIRED");
+    }
+    // For always-critical fields, this is an audited absence — does NOT unblock gates
+    if (ALWAYS_CRITICAL_FIELDS.has(field)) {
+      // Allow recording but it will not resolve the field for generation/export
+      // The canonical resolver must enforce this.
+    }
+  }
+
+  // ─── Required documents cannot be satisfied by a string override ───
+  if (field === "requiredDocuments" && fieldState === "USER_EDITED") {
+    return err(
+      "Required documents cannot be satisfied by a metadata override. Use the requirement extraction or manual requirement entry flow.",
+      400,
+      "REQUIRED_DOCUMENTS_OVERRIDE_REJECTED",
+    );
+  }
 
   // Upsert: update if exists, create if not.
   // Guarded against P2021/P2010 in case the migration hasn't been applied yet.
@@ -128,7 +330,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fieldState,
         overrideValue,
         reason,
-        previousValue,
+        // Use server-computed prior value, never client-supplied
+        previousValue: realPriorValue,
         overriddenBy: actor.id,
         updatedAt: new Date(),
       },
@@ -138,7 +341,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fieldState,
         overrideValue,
         reason,
-        previousValue,
+        previousValue: realPriorValue,
         overriddenBy: actor.id,
       },
     });

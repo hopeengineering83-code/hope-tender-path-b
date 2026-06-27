@@ -61,18 +61,26 @@ export const CONDITIONALLY_OPTIONAL_FIELDS = new Set([
   "submissionAddress",
 ]);
 
-export const CRITICAL_METADATA_FIELDS = new Set([
-  "clientName",
-  "title",
-  "submissionMethod",
+// Canonical critical-field set comes from the single tender-policy registry so
+// this module can never drift from the generation/export gates (Manual Override
+// & Evidence Policy point 7 — no conflicting hard-coded critical-field lists).
+export { ALWAYS_CRITICAL_FIELDS as CRITICAL_METADATA_FIELDS } from "./tender-policy-registry";
+
+// Fields that are known/override-able but classified non-critical by the
+// registry (evaluationCriteria) or are workflow-derived (requiredDocuments).
+// Kept here only so KNOWN_METADATA_FIELDS stays complete for input validation.
+const ADDITIONAL_KNOWN_FIELDS = new Set([
   "submissionEndpoint",
-  "deadline",
   "requiredDocuments",
   "evaluationCriteria",
 ]);
 
 export const KNOWN_METADATA_FIELDS = new Set([
-  ...CRITICAL_METADATA_FIELDS,
+  "clientName",
+  "title",
+  "submissionMethod",
+  "deadline",
+  ...ADDITIONAL_KNOWN_FIELDS,
   ...OPTIONAL_METADATA_FIELDS,
   ...CONDITIONALLY_OPTIONAL_FIELDS,
 ]);

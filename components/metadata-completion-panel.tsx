@@ -3,14 +3,41 @@
 // Metadata Completion Panel.
 //
 // Shows missing critical and non-critical tender metadata fields with actions:
-//   - "Fill manually" → opens an inline input
-//   - "Mark Not Applicable" → requires a short reason
-//   - "Ignore with reason" → for non-critical fields only
-//
-// Fetches overrides from /api/tenders/[id]/metadata-override (GET)
-// and saves via POST.
+//   - "Set value" → opens an inline input (date picker for deadline)
+//   - "Mark not applicable" → requires a short reason (blocked for deadline)
+//   - "Record not found" → for non-critical fields only
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+// User-facing field labels (never expose raw DB column names to users)
+const FIELD_LABELS: Record<string, string> = {
+  clientName:            "Client / procuring entity",
+  procuringEntityName:   "Procuring entity name",
+  title:                 "Tender title",
+  reference:             "Reference number",
+  deadline:              "Submission deadline",
+  country:               "Country",
+  submissionMethod:      "Submission method",
+  submissionAddress:     "Submission address / portal",
+  submissionEmails:      "Submission email(s)",
+  currency:              "Currency",
+  clientContactName:     "Contact person",
+  clientContactEmail:    "Contact email",
+  clientContactPhone:    "Contact phone",
+  submissionEmailSubject:"Submission email subject",
+  evaluationCriteria:    "Evaluation criteria",
+  requiredDocuments:     "Required documents / forms",
+  clientCity:            "City / location",
+  clientAddress:         "Client address",
+  clientWebsite:         "Client website / portal",
+};
+
+function fieldLabel(raw: string): string {
+  return FIELD_LABELS[raw] ?? raw.replace(/([A-Z])/g, " $1").trim();
+}
+
+// Fields that may NEVER be marked Not Applicable
+const NEVER_NOT_APPLICABLE = new Set(["deadline"]);
 
 type FieldState =
   | "AI_EXTRACTED"
@@ -48,12 +75,12 @@ type MetadataReport = {
 };
 
 const FIELD_STATE_BADGE: Record<FieldState, { label: string; classes: string }> = {
-  AI_EXTRACTED: { label: "AI Extracted", classes: "bg-blue-100 text-blue-700" },
-  USER_CONFIRMED: { label: "Confirmed", classes: "bg-green-100 text-green-700" },
-  USER_EDITED: { label: "Edited", classes: "bg-green-100 text-green-700" },
-  MISSING: { label: "Missing", classes: "bg-red-100 text-red-700" },
-  NOT_APPLICABLE: { label: "Not Applicable", classes: "bg-slate-100 text-slate-600" },
-  IGNORED_WITH_REASON: { label: "Ignored", classes: "bg-amber-100 text-amber-700" },
+  AI_EXTRACTED:        { label: "Extracted — review evidence", classes: "bg-blue-100 text-blue-700" },
+  USER_CONFIRMED:      { label: "Manually confirmed",          classes: "bg-emerald-100 text-emerald-700" },
+  USER_EDITED:         { label: "Manual override",             classes: "bg-indigo-100 text-indigo-700" },
+  MISSING:             { label: "Not detected",                classes: "bg-red-100 text-red-700" },
+  NOT_APPLICABLE:      { label: "Not applicable",              classes: "bg-slate-100 text-slate-600" },
+  IGNORED_WITH_REASON: { label: "Not stated in tender",        classes: "bg-amber-100 text-amber-700" },
 };
 
 type InlineAction = "FILL" | "NOT_APPLICABLE" | "IGNORE" | null;
@@ -206,47 +233,71 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
     const isActive = activeAction?.field === finding.field;
     const state: FieldState = override?.fieldState ?? "MISSING";
     const badge = FIELD_STATE_BADGE[state];
+    const label = fieldLabel(finding.field);
+    const isDeadline = finding.field === "deadline";
+    const canMarkNA = !NEVER_NOT_APPLICABLE.has(finding.field) && !isCritical;
 
     return (
       <div key={finding.field} className="border-t border-slate-100 py-3 first:border-t-0">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-800">{finding.field}</span>
-              {isCritical && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700">CRITICAL</span>}
-              <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.classes}`}>{badge.label}</span>
+              <span className="text-xs font-semibold text-slate-800">{label}</span>
+              {isCritical && (
+                <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700">
+                  Critical
+                </span>
+              )}
+              <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.classes}`}>
+                {badge.label}
+              </span>
             </div>
             <p className="mt-0.5 text-[11px] text-slate-500">{finding.reason}</p>
             {override?.overrideValue && (
-              <p className="mt-0.5 text-[11px] text-green-700">Value: {override.overrideValue}</p>
+              <p className="mt-0.5 text-[11px] text-indigo-700">
+                Current value: {override.overrideValue}
+              </p>
             )}
             {override?.reason && (
               <p className="mt-0.5 text-[11px] text-slate-500">Reason: {override.reason}</p>
             )}
           </div>
+
+          {/* Primary action + overflow */}
           {!isActive && (
             <div className="flex flex-wrap gap-1">
               <button
                 type="button"
                 onClick={() => startAction(finding.field, "FILL")}
-                className="rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-50"
+                className="min-h-[36px] rounded border border-blue-300 bg-blue-50 px-2 py-1 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
               >
-                Fill manually
+                {isDeadline ? "Set or correct deadline" : "Set value"}
               </button>
-              <button
-                type="button"
-                onClick={() => startAction(finding.field, "NOT_APPLICABLE")}
-                className="rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
-              >
-                Mark N/A
-              </button>
-              {allowIgnore && !isCritical && (
+              {canMarkNA && (
+                <button
+                  type="button"
+                  onClick={() => startAction(finding.field, "NOT_APPLICABLE")}
+                  className="min-h-[36px] rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Not applicable
+                </button>
+              )}
+              {allowIgnore && !isCritical && !isDeadline && (
                 <button
                   type="button"
                   onClick={() => startAction(finding.field, "IGNORE")}
-                  className="rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-500 hover:bg-slate-50"
+                  className="min-h-[36px] rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-500 hover:bg-slate-50"
                 >
-                  Ignore
+                  Record not found
+                </button>
+              )}
+              {isDeadline && (
+                <button
+                  type="button"
+                  onClick={() => startAction(finding.field, "IGNORE")}
+                  className="min-h-[36px] rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-500 hover:bg-slate-50"
+                >
+                  Record deadline not stated
                 </button>
               )}
             </div>
@@ -256,36 +307,64 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
         {isActive && activeAction && (
           <div className="mt-2 ml-0">
             {activeAction.type === "FILL" && (
-              <p className="mb-1 text-[11px] text-slate-600">Enter the value for <strong>{finding.field}</strong>:</p>
+              <p className="mb-1 text-[11px] text-slate-600">
+                {isDeadline
+                  ? <>Enter the confirmed submission deadline for <strong>{label}</strong> using the date picker:</>
+                  : <>Enter the value for <strong>{label}</strong>:</>}
+              </p>
             )}
             {activeAction.type === "NOT_APPLICABLE" && (
-              <p className="mb-1 text-[11px] text-slate-600">Why is <strong>{finding.field}</strong> not applicable? (required):</p>
+              <p className="mb-1 text-[11px] text-slate-600">
+                Why is <strong>{label}</strong> not applicable to this tender? (required):
+              </p>
             )}
             {activeAction.type === "IGNORE" && (
-              <p className="mb-1 text-[11px] text-slate-600">Reason for ignoring <strong>{finding.field}</strong> (required):</p>
+              <p className="mb-1 text-[11px] text-slate-600">
+                {isDeadline
+                  ? <>Confirm that the submission deadline was <strong>not stated</strong> in the tender document. This will remain a final-package blocker.</>
+                  : <>Reason for recording <strong>{label}</strong> as not found in tender:</>}
+              </p>
             )}
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                placeholder={activeAction.type === "FILL" ? "Enter value…" : "Short reason…"}
-                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
-                onKeyDown={(e) => { if (e.key === "Enter") { void commitAction(finding.field); } if (e.key === "Escape") cancelAction(); }}
-                autoFocus
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              {activeAction.type === "FILL" && isDeadline ? (
+                <input
+                  type="date"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none min-h-[36px]"
+                  autoFocus
+                />
+              ) : activeAction.type === "IGNORE" && isDeadline ? (
+                // No text input for deadline not-stated — just a confirm button
+                <span className="text-[11px] text-slate-500 italic">
+                  This will mark the deadline as not stated and keep generation blocked.
+                </span>
+              ) : (
+                <input
+                  type="text"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  placeholder={activeAction.type === "FILL" ? "Enter value…" : "Short reason…"}
+                  className="flex-1 min-w-[160px] rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none min-h-[36px]"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void commitAction(finding.field);
+                    if (e.key === "Escape") cancelAction();
+                  }}
+                  autoFocus
+                />
+              )}
               <button
                 type="button"
                 onClick={() => void commitAction(finding.field)}
                 disabled={saving}
-                className="rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                className="min-h-[36px] rounded bg-blue-600 px-3 py-1.5 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save"}
               </button>
               <button
                 type="button"
                 onClick={cancelAction}
-                className="rounded border border-slate-300 px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-50"
+                className="min-h-[36px] rounded border border-slate-300 px-2 py-1.5 text-[10px] text-slate-600 hover:bg-slate-50"
               >
                 Cancel
               </button>
@@ -351,14 +430,14 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
       {hasCritical && (
         <div className="mt-4">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-red-700">
-            Critical fields ({criticalFindings.length + invalidFindings.length}) — block generation
+            Critical fields ({criticalFindings.length + invalidFindings.length}) — block generation and export
           </p>
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2">
             {criticalFindings.map((f) => renderFieldRow(f, true, false))}
             {invalidFindings.map((f) => (
               <div key={`invalid-${f.field}`} className="border-t border-red-100 py-2 first:border-t-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-red-800">{f.field}</span>
+                  <span className="text-xs font-semibold text-red-800">{fieldLabel(f.field)}</span>
                   <span className="rounded bg-red-200 px-1 py-0.5 text-[10px] font-semibold text-red-800">PLACEHOLDER</span>
                 </div>
                 <p className="mt-0.5 text-[11px] text-red-700">{f.reason}</p>
@@ -389,7 +468,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
               const override = overrideByField.get(f.field);
               return (
                 <div key={f.field} className="border-t border-slate-100 py-2 first:border-t-0 flex items-center gap-2">
-                  <span className="text-xs text-slate-700">{f.field}</span>
+                  <span className="text-xs text-slate-700">{fieldLabel(f.field)}</span>
                   <span className="rounded bg-slate-200 px-1 py-0.5 text-[10px] text-slate-600">N/A</span>
                   {override?.reason && <span className="text-[11px] text-slate-500">— {override.reason}</span>}
                 </div>
@@ -409,7 +488,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
               const badge = FIELD_STATE_BADGE[o.fieldState] ?? FIELD_STATE_BADGE.MISSING;
               return (
                 <div key={o.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
-                  <span className="font-medium text-slate-800">{o.field}</span>
+                  <span className="font-medium text-slate-800">{fieldLabel(o.field)}</span>
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.classes}`}>{badge.label}</span>
                   {o.overrideValue && <span className="text-slate-600">&ldquo;{o.overrideValue}&rdquo;</span>}
                   {o.reason && <span className="text-slate-500">— {o.reason}</span>}

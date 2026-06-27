@@ -52,13 +52,77 @@ const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-
  * contains a "Bid-Team to confirm" / "TBC" / "TBD" / "placeholder" string
  * anywhere — not just as the whole value. Used by sanitize-stored-metadata
  * so the engine never reads internal placeholder text from any column. */
-export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|to\s+be\s+determined|not\s+specified|not\s+provided|unknown|pending|placeholder)\b|^(tbc|tbd|tba|n\/a|na|none|-+|blank)$/i;
+export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|to\s+be\s+determined|not\s+specified|not\s+provided|unknown|pending|placeholder)\b|^(tbc|tbd|tba|n\/a|na|none|nil|-+|blank)$/i;
 
 export function containsMetadataPlaceholder(value: string | null | undefined): boolean {
   if (!value || typeof value !== "string") return false;
   const text = value.trim();
   if (text.length === 0) return false;
   return ANYWHERE_PLACEHOLDER_PATTERN.test(text) || PLACEHOLDER_CLIENT_PATTERN.test(text);
+}
+
+// ─── Generic field-label / heading detection ─────────────────────────────────
+
+/**
+ * Values that are just field headings, column labels, or boilerplate printed on
+ * tender forms — not real data. If the OCR or AI captures a row label as the
+ * value, any downstream consumer would display misleading "extracted" UI.
+ *
+ * Examples seen in production:
+ *   reference field → "Number", "Reference Number", "Tender No."
+ *   title field     → "Title", "Subject"
+ *   deadline field  → "Date", "Submission Date", "Deadline"
+ *   client field    → "Client Name", "Procuring Entity", "Client"
+ */
+const GENERIC_FIELD_LABEL_PATTERN = /^(number|ref(?:erence)?\.?\s*(?:no\.?|num(?:ber)?)?|tender\s+(?:no\.?|number|ref(?:erence)?)|client\s+(?:name|details?)?|procuring\s+entity|title|subject|description|date|deadline|submission\s+(?:date|deadline)|name|address|email|phone|contact(?:\s+(?:person|name|details?))?|method|currency|website|location|city|country|type|status|value|amount|budget|remarks?|comments?|notes?|details?)$/i;
+
+/**
+ * Returns true when a field value is just a generic heading or column label,
+ * not real extracted data. Used to block EXTRACTED_AND_GROUNDED status.
+ */
+export function isGenericFieldLabel(value: string | null | undefined): boolean {
+  const text = (value ?? "").trim();
+  if (text.length === 0) return false;
+  return GENERIC_FIELD_LABEL_PATTERN.test(text);
+}
+
+/**
+ * Returns true when a date string is ambiguous — i.e., when day and month
+ * cannot be determined unambiguously from the format.
+ *
+ * "12/12/2026" — ambiguous (day and month both ≤ 12).
+ * "15/12/2026" — unambiguous (15 can only be a day).
+ * "2026-12-15" — unambiguous ISO format.
+ */
+export function isAmbiguousDateString(value: string | null | undefined): boolean {
+  const text = (value ?? "").trim();
+  if (!text) return false;
+  // ISO format is always unambiguous
+  if (/^\d{4}-\d{2}-\d{2}(T.*)?$/.test(text)) return false;
+  // Slash/dot/dash separated dates where both first and second tokens ≤ 12
+  const slashMatch = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.]\d{2,4}$/);
+  if (slashMatch) {
+    const a = parseInt(slashMatch[1], 10);
+    const b = parseInt(slashMatch[2], 10);
+    return a <= 12 && b <= 12;
+  }
+  return false;
+}
+
+/**
+ * Format a date value into an unambiguous human-readable form: "12 Dec 2026".
+ * Returns null when the value is not a parseable date.
+ * Accepts ISO strings, Date objects, and unambiguous date strings.
+ */
+export function formatDateUnambiguous(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const d = value instanceof Date ? value : new Date(value);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return null;
+  }
 }
 
 /** Words that are NOT valid reference numbers when captured alone. */
