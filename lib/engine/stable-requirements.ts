@@ -23,9 +23,35 @@ export async function upsertRequirements(
     if (!existingMap.has(key)) existingMap.set(key, e.id);
   }
 
+  // ─── BATCH PERSISTENCE ─────────────────────────────────────────────
+  // Split into two phases to reduce transaction budget consumption:
+  //   1. Updates: dispatched via Promise.all (still individual UPDATE
+  //      statements, but dispatched concurrently through the tx client)
+  //   2. Creates: batched into a single createMany call (one INSERT)
   const processedIds = new Set<string>();
   const created: string[] = [];
   const updated: string[] = [];
+
+  const toCreate: Array<{
+    tenderId: string;
+    title: string;
+    requirementType: string;
+    description: string;
+    priority: string;
+    requiredQuantity: number | null;
+    pageLimit: number | null;
+    exactFileName: string | null;
+    exactOrder: number | null;
+    restrictions: string | null;
+    sectionReference: string | null;
+    sourcePageNumber: number | null;
+    sourceExactQuote: string | null;
+    sourceTenderFileId: string | null;
+    sourceConfidence: number;
+    sourceExtractionMethod: string | null;
+    sourceSectionHeading: string | null;
+  }> = [];
+  const toUpdate: Array<{ id: string; data: Record<string, unknown> }> = [];
 
   for (const req of newReqs) {
     const key = `${req.requirementType ?? "UNKNOWN"}::${(req.title ?? "").toLowerCase().replace(/\s+/g, " ").trim()}`;
@@ -49,24 +75,41 @@ export async function upsertRequirements(
     };
 
     if (existingId) {
-      await tx.tenderRequirement.update({
-        where: { id: existingId },
-        data,
-      });
+      toUpdate.push({ id: existingId, data });
       processedIds.add(existingId);
       updated.push(existingId);
     } else {
-      const createdReq = await tx.tenderRequirement.create({
-        data: {
-          tenderId,
-          title: req.title,
-          requirementType: req.requirementType,
-          ...data,
-        },
+      toCreate.push({
+        tenderId,
+        title: req.title,
+        requirementType: req.requirementType,
+        ...data,
       });
-      processedIds.add(createdReq.id);
-      created.push(createdReq.id);
     }
+  }
+
+  // Phase 1: updates. Each is a separate UPDATE statement but dispatched
+  // via Promise.all so they are queued together.
+  if (toUpdate.length > 0) {
+    await Promise.all(
+      toUpdate.map(({ id, data }) =>
+        tx.tenderRequirement.update({ where: { id }, data })
+      )
+    );
+  }
+
+  // Batch 2: creates via createMany (single SQL INSERT).
+  // createMany is the most efficient way to insert multiple rows — it
+  // generates a single INSERT statement instead of N round-trips.
+  if (toCreate.length > 0) {
+    const result = await tx.tenderRequirement.createMany({
+      data: toCreate,
+    });
+    // Note: createMany does not return created IDs on PostgreSQL by default.
+    // The created count is available via result.count. The IDs are not
+    // needed here because the requirements are matched by content hash
+    // on subsequent runs, not by ID.
+    created.push(`${result.count} created`);
   }
 
   if (options.deleteMissing) {

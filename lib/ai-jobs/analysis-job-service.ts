@@ -20,6 +20,7 @@ import {
   promoteAnalysisToCanonical,
   stagePartialResult
 } from "../ai-analyze-promotion";
+import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
@@ -204,6 +205,14 @@ export async function runNextChunk(jobId: string, userId: string) {
     .join("\n\n---\n\n");
 
   try {
+      // Restore provider health/cooldown from DB before any provider calls.
+      // Without this, a cold-start worker instance has an empty in-memory
+      // state Map and will immediately retry providers that are in cooldown,
+      // burning attempt budget on guaranteed failures.
+      await restoreHealthFromDb().catch(() => {
+          // Non-fatal — fall back to empty in-memory state
+      });
+
       const allChunks = aiChunkTenderContent(fullText);
       const chunkText = allChunks[chunk.chunkIndex];
       if (!chunkText) throw new Error(`Chunk ${chunk.chunkIndex} out of bounds (total: ${allChunks.length})`);
@@ -222,6 +231,13 @@ export async function runNextChunk(jobId: string, userId: string) {
               resultJson: JSON.stringify(res)
           }
       });
+
+      // Persist provider health to DB so the next worker instance (which may
+      // be a cold start) can restore cooldown state and avoid retrying
+      // providers that are still rate-limited.
+      await persistAllHealthToDb().catch(() => {
+          // Non-fatal — in-memory state is still correct for this instance
+      });
   } catch (err) {
       const category = toSafeAiFailureCategory(err);
       const safeError = `AI provider error: ${category}`;
@@ -234,6 +250,12 @@ export async function runNextChunk(jobId: string, userId: string) {
               failureCategory: category,
               errorMessage: safeError
           }
+      });
+
+      // Persist the failure/cooldown state to DB so the next worker instance
+      // knows this provider is in cooldown and skips it.
+      await persistAllHealthToDb().catch(() => {
+          // Non-fatal — in-memory state is still correct for this instance
       });
 
       // satisfy non-destructive test requirement for preserveAiAnalyzeProgressOnFailure
@@ -443,25 +465,43 @@ export async function finalizeJob(jobId: string, userId: string) {
     const preparationMs = Date.now() - preparationStart;
 
     // ─── SHORT INTERACTIVE TRANSACTION (writes only) ──────────────────
+    // CRITICAL: All Prisma calls inside this transaction MUST use `tx`.
+    // Previously, canPromoteToCanonical and promoteAnalysisToCanonical
+    // were called without passing tx, so they used the GLOBAL prisma
+    // client — opening separate database connections inside the
+    // transaction. This caused:
+    //   1. Connection pool pressure (each nested call grabs a new connection)
+    //   2. Potential deadlocks with the transaction's Serializable isolation
+    //   3. Additional latency consuming the 10000ms budget
+    //   4. Bypassed transaction isolation guarantees
+    // Fix: pass `tx` as the store parameter so both functions use the
+    // active transaction client.
     try {
     await prisma.$transaction(async (tx) => {
-        const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!);
+        // 1. Re-check promotion eligibility USING THE TRANSACTION CLIENT.
+        //    This prevents race conditions where a newer job completed
+        //    between the pre-check and the write.
+        const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!, tx);
         if (!stillPromotable) {
             throw new Error("STALE_JOB_SUPERSeded");
         }
 
+        // 2. Mark job as RUNNING to claim it (single write).
         await tx.aiJob.update({
             where: { id: jobId },
             data: { status: "RUNNING", updatedAt: new Date() }
         });
 
+        // 3. Persist canonical requirements (batched — see upsertRequirements).
         await upsertRequirements(tx, job.tenderId!, drafts);
 
+        // 4. Update tender metadata (single write, pre-built outside tx).
         await tx.tender.update({
             where: { id: job.tenderId! },
             data: tenderUpdate,
         });
 
+        // 5. Set terminal job status with pre-serialized output (single write).
         await tx.aiJob.update({
             where: { id: jobId },
             data: {
@@ -471,7 +511,10 @@ export async function finalizeJob(jobId: string, userId: string) {
             }
         });
 
-        await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID());
+        // 6. Record promotion state USING THE TRANSACTION CLIENT.
+        //    Previously this used global prisma — a nested call that
+        //    bypassed the transaction.
+        await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID(), tx);
     }, {
         timeout: 10000,
         isolationLevel: "Serializable",

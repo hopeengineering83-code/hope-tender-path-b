@@ -108,17 +108,28 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
   assert.equal(canExportWithAnalysisState(d.state), true);
 });
 
-test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED (0===0)", () => {
+test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED only after promotion", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED", analysisInputHash: null }),
+    job: makeJob({ status: "SUCCEEDED", analysisInputHash: null, promotedAt: new Date() }),
     chunks: [],
   }));
   assert.equal(d.state, "AI_SUCCEEDED");
 });
 
+test("derive: SUCCEEDED without promotedAt fails closed and blocks export", () => {
+  const d = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "SUCCEEDED", promotedAt: null }),
+    chunks: [chunk("SUCCEEDED"), chunk("SUCCEEDED")],
+  }));
+  assert.equal(d.state, "FAILED");
+  assert.equal(d.analysisSource, "NONE");
+  assert.equal(d.canonicalJobId, null);
+  assert.equal(canExportWithAnalysisState(d.state), false);
+});
+
 test("derive: SUCCEEDED but a chunk still pending → PARTIAL_NEEDS_RESUME", () => {
   const d = deriveAnalysisStateDetail(makeInput({
-    job: makeJob({ status: "SUCCEEDED" }),
+    job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
     chunks: [chunk("SUCCEEDED"), chunk("QUEUED")],
   }));
   assert.equal(d.state, "PARTIAL_NEEDS_RESUME");

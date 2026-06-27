@@ -46,7 +46,7 @@ export async function GET() {
     });
   } catch (error) {
     logger.error("ai-provider-health GET failed", { detail: error });
-    return err("Provider-health lookup failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Provider-health lookup failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", correlationId: require("crypto").randomUUID().slice(0, 8) });
   }
 }
 
@@ -71,6 +71,6 @@ export async function POST(req: Request) {
     return err("Unsupported POST body — pass { reset: true } to clear cooldowns.", 400, { code: "UNSUPPORTED_BODY" });
   } catch (error) {
     logger.error("ai-provider-health POST failed", { detail: error });
-    return err("Provider-health reset failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Provider-health reset failed.", 500, { code: "AI_PROVIDER_HEALTH_RUNTIME_ERROR", correlationId: require("crypto").randomUUID().slice(0, 8) });
   }
 }

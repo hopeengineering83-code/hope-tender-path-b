@@ -488,8 +488,11 @@ describe("analyzeWithAI — partial jobs remain resumable", () => {
       path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
       "utf-8",
     );
+    // After the streaming supersession fix, the status is computed via
+    // streamTerminalStatus which includes the SUPERSEDED case. The partial
+    // check is now: aiMeta.isPartial ? "PARTIAL_SUCCESS" : (superseded ? "SUPERSEDED" : "SUCCEEDED")
     const partialStatusCount = (
-      src.match(/status: aiMeta\.isPartial \? "PARTIAL_SUCCESS" : "SUCCEEDED"/g) ?? []
+      src.match(/aiMeta\.isPartial \? "PARTIAL_SUCCESS"/g) ?? []
     ).length;
     assert.ok(
       partialStatusCount >= 2,

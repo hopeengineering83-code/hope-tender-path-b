@@ -228,6 +228,8 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         const finalize = await finalizeAnalysisJob(result.jobId, ctx.userId);
         clearInterval(heartbeat);
         const finalizeCode = "code" in finalize ? (finalize as { code?: string }).code ?? null : null;
+        const finalizeRetryable = "retryable" in finalize ? (finalize as { retryable?: boolean }).retryable : undefined;
+        const finalizeCorrelationId = "correlationId" in finalize ? (finalize as { correlationId?: string }).correlationId : undefined;
         const terminalStatus = resolveAnalyzeTerminalStatus(result, finalize);
         await recordStep(ctx.jobId, {
           stepName: terminalStatus === "SUCCEEDED" ? "analyze.complete" : "analyze.finalize_blocked",
@@ -236,7 +238,19 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
             : `Analysis NOT promoted (${finalizeCode ?? finalize.status}). Generation/export stay blocked.`,
           status: terminalStatus === "FAILED" ? "FAILED" : "SUCCEEDED",
         });
-        return { terminalStatus, output: { ...baseOutput, finalizeStatus: finalize.status, finalizeCode } };
+        return {
+          terminalStatus,
+          output: {
+            ...baseOutput,
+            finalizeStatus: finalize.status,
+            finalizeCode,
+            ...(finalizeRetryable !== undefined ? { retryable: finalizeRetryable } : {}),
+            ...(finalizeCorrelationId ? { correlationId: finalizeCorrelationId } : {}),
+          },
+          ...(finalizeCode ? { code: finalizeCode } : {}),
+          ...(finalizeRetryable !== undefined ? { retryable: finalizeRetryable } : {}),
+          ...(finalizeCorrelationId ? { correlationId: finalizeCorrelationId } : {}),
+        };
       }
 
       // ── Partial / fallback / provider-exhausted / source-grounding gaps ──

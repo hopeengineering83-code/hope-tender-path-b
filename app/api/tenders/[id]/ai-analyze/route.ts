@@ -599,6 +599,7 @@ async function handleStreamingAnalyze(
                 f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
             ) ? "ocr" : "text";
 
+            let streamPromoSuperseded = false;
             if (aiMeta.isPartial) {
               // Non-destructive: stage partial result without touching canonical tender data.
               if (analysisJob) {
@@ -627,7 +628,6 @@ async function handleStreamingAnalyze(
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
               // AiJob was created between the outer canPromoteToCanonical check above
               // and this write. If superseded, the tx returns without any writes.
-              let streamPromoSuperseded = false;
               await prisma.$transaction(async (tx) => {
                 // Serialize all promotion attempts for this tender. The advisory
                 // lock prevents a concurrent run from inserting a higher-version
@@ -665,20 +665,26 @@ async function handleStreamingAnalyze(
                   where: { id },
                   data: canonicalTenderData,
                 });
+                if (analysisJob) {
+                  await promoteAnalysisToCanonical(analysisJob.id, runId, tx);
+                }
               });
-              if (!streamPromoSuperseded && analysisJob) {
-                await promoteAnalysisToCanonical(analysisJob.id, runId);
-              }
             }
 
             if (analysisJob) {
               analysisJobId = analysisJob.id;
+              const streamTerminalStatus = streamPromoSuperseded
+                ? "SUPERSEDED"
+                : aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED";
               await prisma.aiJob.update({
                 where: { id: analysisJob.id },
                 data: {
-                  status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                  status: streamTerminalStatus,
                   finishedAt: new Date(),
-                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
+                  errorMessage: streamPromoSuperseded
+                    ? "Superseded by a newer AI Analyze job. Not promoted to canonical."
+                    : null,
+                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null, superseded: streamPromoSuperseded }),
                 },
               }).catch(() => {});
 
