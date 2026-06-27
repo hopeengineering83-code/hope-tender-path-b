@@ -525,9 +525,14 @@ export type ZaiConfigurationResult = {
 };
 
 const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
-const ZAI_CODING_PLAN_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+// Z.ai support confirmed: Coding Plan keys use the SAME endpoint as General API
+// (api.z.ai). The open.bigmodel.cn endpoint is a DIFFERENT platform (Zhipu AI)
+// that does NOT accept Z.ai Coding Plan keys. Both plans share the same URL.
+const ZAI_CODING_PLAN_BASE_URL = "https://api.z.ai/api/paas/v4";
 const ZAI_GENERAL_MODELS = new Set(["glm-4-flash", "glm-4-flashx"]);
-const ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
+// Z.ai support confirmed: the Coding Plan model is "glm-coding" (NOT glm-4-coding).
+// Source: https://z.ai — Coding Plan subscription includes only "glm-coding".
+const ZAI_CODING_PLAN_MODELS = new Set(["glm-coding", "glm-4-coding", "glm-4v-coding"]);
 
 function zaiPlanTypeForBaseUrl(baseUrl: string): ZaiPlanType {
   const normalized = baseUrl.replace(/\/+$/, "").toLowerCase();
@@ -554,7 +559,7 @@ export function resolveZaiConfiguration(
   //   - General API → glm-4-flash (entry.defaults)
   //   - Coding Plan → glm-4-coding (plan-specific default)
   const registryDefault = entry.defaults[slot];
-  const planDefault = planType === "coding-plan" ? "glm-4-coding" : registryDefault;
+  const planDefault = planType === "coding-plan" ? "glm-coding" : registryDefault;
   const model = (specific && specific.length > 0
     ? specific
     : slot !== "proposalModel" && proposal && proposal.length > 0
@@ -569,8 +574,15 @@ export function resolveZaiConfiguration(
   if (!keyPresent) return { valid: false, reason: "API_KEY_MISSING", safeMessage: "Z.ai API key is not configured.", baseUrl, model, planType, useCase };
   if (planType === "unknown") return { valid: false, reason: "BASE_URL_MISSING", safeMessage: "Z.ai base URL is not a supported General or Coding Plan endpoint.", baseUrl, model, planType, useCase };
   if (!general && !coding) return { valid: false, reason: "MODEL_UNSUPPORTED", safeMessage: "Z.ai model is not in the supported allowlist for AI Analyze.", baseUrl, model, planType, useCase };
-  if (planType === "general" && !general) return { valid: false, reason: "MODEL_ENDPOINT_MISMATCH", safeMessage: "Z.ai Coding Plan model cannot be used with the General endpoint.", baseUrl, model, planType, useCase };
-  if (planType === "coding-plan" && !coding) return { valid: false, reason: "MODEL_ENDPOINT_MISMATCH", safeMessage: "Z.ai General model cannot be used with the Coding Plan endpoint.", baseUrl, model, planType, useCase };
+  // Z.ai support confirmed: both General API and Coding Plan use the SAME
+  // endpoint (api.z.ai). The plan type is determined by which API key the
+  // user has, NOT by the endpoint URL. Since we can't distinguish plan type
+  // by URL (they're identical), we accept ANY valid Z.ai model on the
+  // api.z.ai endpoint. If the key doesn't support the model, the API will
+  // return HTTP 400 code 1211 and the chain will fall through to the next
+  // provider.
+  // (The old code rejected coding models on the general endpoint — this was
+  // WRONG because both plans share the same URL.)
 
   return { valid: true, reason: "OK", safeMessage: "Z.ai configuration is valid.", baseUrl, model, planType, useCase };
 }
