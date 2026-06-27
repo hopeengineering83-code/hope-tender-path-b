@@ -24,6 +24,7 @@ import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
+import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
 import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
@@ -297,6 +298,11 @@ export async function executeAnalysis(
     }
   }
 
+  // Restore durable provider health before selection so cold starts respect cooldowns.
+  await restoreHealthFromDb().catch((err) => {
+    logger.warn("[orchestrator] Provider health restore failed before durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
+  });
+
   // Execute analysis through AI system
   let analysisMeta: AnalysisWithMeta | null = null;
   let analysisProvider: string | null = null;
@@ -340,6 +346,11 @@ export async function executeAnalysis(
       chunkProviders,
       chunkResults: previousChunkResults,
     };
+  } finally {
+    // Best-effort only: health persistence must never change AI Analyze outcome.
+    await persistAllHealthToDb().catch((err) => {
+      logger.warn("[orchestrator] Provider health persistence failed after durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
+    });
   }
 
   // Phase: Merging (implicit in analyzeWithAI)

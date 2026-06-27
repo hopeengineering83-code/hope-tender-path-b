@@ -55,6 +55,7 @@ export async function POST(req: Request) {
     resultCode?: string;
     error?: string;
     retryable?: boolean;
+    correlationId?: string;
     retryScheduled?: boolean;
   };
   const processedJobs: WorkerJobResult[] = [];
@@ -136,6 +137,7 @@ export async function POST(req: Request) {
           terminalStatus: result.terminalStatus,
           resultCode: result.code,
           retryable: result.terminalStatus === "FAILED" ? Boolean(result.retryable) : undefined,
+          correlationId: result.correlationId,
           retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
         });
       } else {
@@ -198,6 +200,7 @@ export async function POST(req: Request) {
     resultCode: worst.resultCode ?? "UNKNOWN",
     jobId: worst.jobId,
     retryable: Boolean(worst.retryable),
+    correlationId: worst.correlationId ?? null,
     retryScheduled: Boolean(worst.retryScheduled),
     workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
   });
