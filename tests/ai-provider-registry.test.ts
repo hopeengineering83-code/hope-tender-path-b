@@ -106,14 +106,14 @@ describe("6. Z.ai general endpoint + configured model", () => {
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
     assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
   });
-  it("Coding Plan endpoint returns glm-4-coding as default", () => {
+  it("Coding Plan endpoint returns glm-coding as default", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
     process.env.ZAI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
-    // When using the Coding Plan endpoint, the resolver returns the Coding
-    // Plan default model (glm-4-coding) — NOT glm-4-flash (which would fail).
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-coding");
+    // Z.ai support confirmed: Coding Plan model is "glm-coding" (not glm-4-coding).
+    // The resolver returns the Coding Plan default model.
+    assert.equal(getProviderModel("zai", "proposal"), "glm-coding");
     delete process.env.ZAI_BASE_URL;
   });
   it("Coding Plan endpoint + explicit glm-4-coding override is accepted", () => {
