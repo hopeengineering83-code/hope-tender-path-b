@@ -24,7 +24,7 @@ import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
-import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
+import { restoreHealthFromDbBounded, persistAllHealthToDbBounded } from "../ai-provider-health-db";
 import { logger } from "../observability";
 
 export type AnalysisOrchestrationOptions = {
@@ -298,10 +298,12 @@ export async function executeAnalysis(
     }
   }
 
-  // Restore durable provider health before selection so cold starts respect cooldowns.
-  await restoreHealthFromDb().catch((err) => {
-    logger.warn("[orchestrator] Provider health restore failed before durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
-  });
+  // Restore durable provider health before starting the analysis deadline so a
+  // slow ProviderHealthSnapshot read cannot consume the worker's AI budget.
+  const healthRestore = await restoreHealthFromDbBounded(2_000);
+  if (healthRestore.warning) {
+    logger.warn("[orchestrator] Provider health restore warning before durable AI Analyze", { warning: healthRestore.warning });
+  }
 
   // Execute analysis through AI system
   let analysisMeta: AnalysisWithMeta | null = null;
@@ -347,8 +349,9 @@ export async function executeAnalysis(
       chunkResults: previousChunkResults,
     };
   } finally {
-    // Best-effort only: health persistence must never change AI Analyze outcome.
-    await persistAllHealthToDb().catch((err) => {
+    // Best-effort only and after job output/status persistence: provider-health
+    // persistence must never delay or change the AI Analyze terminal outcome.
+    void persistAllHealthToDbBounded(1_500).catch((err) => {
       logger.warn("[orchestrator] Provider health persistence failed after durable AI Analyze", { error: err instanceof Error ? err.message : String(err) });
     });
   }

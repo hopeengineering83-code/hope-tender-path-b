@@ -665,10 +665,10 @@ async function handleStreamingAnalyze(
                   where: { id },
                   data: canonicalTenderData,
                 });
+                if (analysisJob) {
+                  await promoteAnalysisToCanonical(analysisJob.id, runId, tx);
+                }
               });
-              if (!streamPromoSuperseded && analysisJob) {
-                await promoteAnalysisToCanonical(analysisJob.id, runId);
-              }
             }
 
             if (analysisJob) {

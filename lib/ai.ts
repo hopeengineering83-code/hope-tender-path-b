@@ -2138,6 +2138,11 @@ export async function analyzeOneChunkWithRetry(
   onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
   deadlineAt?: number,
 ): Promise<AIAnalysisResult> {
+  // Fail fast if the shared deadline has already been reached — don't start
+  // a chunk attempt that can't finish within budget.
+  if (typeof deadlineAt === "number" && Date.now() + ERROR_HANDLING_RESERVE_MS >= deadlineAt) {
+    throw new Error("AI_ANALYSIS_DEADLINE_REACHED_BEFORE_CHUNK_ATTEMPT");
+  }
   try {
     return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt);
   } catch (err) {

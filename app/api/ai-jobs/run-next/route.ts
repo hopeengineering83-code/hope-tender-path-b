@@ -6,6 +6,7 @@ import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-hand
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
+import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -69,6 +70,10 @@ export async function POST(req: Request) {
   // drives their own job. Best-effort — never block the claim loop.
   if (isAutomatedCaller) {
     try {
+      // Restore DB-backed provider cooldowns before retry eligibility checks;
+      // otherwise a cold-start worker can re-arm jobs using empty in-memory health.
+      const healthRestore = await restoreHealthFromDbBounded(2_000);
+      if (healthRestore.warning) console.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
       const due = await findJobsDueForRetry(10);
       for (const job of due) {
         await rearmJobForRetry(job.jobId).catch((err: unknown) => {

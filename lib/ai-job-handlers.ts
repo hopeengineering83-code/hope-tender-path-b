@@ -247,6 +247,9 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
             ...(finalizeRetryable !== undefined ? { retryable: finalizeRetryable } : {}),
             ...(finalizeCorrelationId ? { correlationId: finalizeCorrelationId } : {}),
           },
+          ...(finalizeCode ? { code: finalizeCode } : {}),
+          ...(finalizeRetryable !== undefined ? { retryable: finalizeRetryable } : {}),
+          ...(finalizeCorrelationId ? { correlationId: finalizeCorrelationId } : {}),
         };
       }
 
