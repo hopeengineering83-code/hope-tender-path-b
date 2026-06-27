@@ -25,6 +25,7 @@ import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-g
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
+import { isCriticalField } from "../../../../../lib/engine/tender-policy-registry";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
@@ -584,17 +585,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // above checks their content but only blocks at POOR/UNSAFE severity; this
   // explicit gate blocks regardless of overall analysis quality so the generator
   // never produces documents without a known deadline or submission endpoint.
+  //
+  // Field criticality is sourced from the single tender-policy registry — this
+  // route does NOT keep its own critical-field list (Manual Override & Evidence
+  // Policy point 7). This is a fast, targeted pre-check; the registry-backed
+  // completeness gate further below is the full enforcing authority.
   {
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("planOnly") !== "true") {
       const explicitScope = hasExplicitSubmissionScope(tender);
+      const policyCtx = { submissionMethod: tender.submissionMethod };
       const missingCritical: string[] = [];
-      if (!tender.deadline) missingCritical.push("Submission deadline is not set.");
-      if (!tender.submissionMethod) missingCritical.push("Submission method is not set.");
+      if (isCriticalField("deadline", policyCtx) && !tender.deadline) {
+        missingCritical.push("Submission deadline is not set.");
+      }
+      if (isCriticalField("submissionMethod", policyCtx) && !tender.submissionMethod) {
+        missingCritical.push("Submission method is not set.");
+      }
       // Only require submissionEmails when the method clearly indicates email
       // delivery — not when "email" appears in a prohibition phrase like
       // "no email submissions" or "hard copy only; email not accepted".
       if (
+        isCriticalField("submissionEndpoint", policyCtx) &&
         tender.submissionMethod &&
         /email/i.test(tender.submissionMethod) &&
         !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&

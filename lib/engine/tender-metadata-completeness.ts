@@ -48,6 +48,13 @@ export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bwith\s+consultant'?s\s+assistance\b/i,
 ];
 
+// Criticality classification here is kept in lock-step with the canonical
+// tender-policy registry (lib/engine/tender-policy-registry.ts), which imports
+// this module's submission-method predicates. The always-critical set enforced
+// at runtime below — clientName, title, submissionMethod, submissionEndpoint,
+// deadline, requiredDocuments, plus submissionAddress when the method is
+// physical — is exactly the registry's set. evaluationCriteria and reference
+// are non-critical in both (Manual Override & Evidence Policy point 7).
 export type CriticalMetadataField =
   | "clientName"
   | "title"
