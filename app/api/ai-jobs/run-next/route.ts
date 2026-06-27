@@ -157,15 +157,17 @@ export async function POST(req: Request) {
         });
       }
     } catch (error) {
+      const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      await failJob(claimed.id, message);
+      console.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
       processedJobs.push({
         jobId: claimed.id,
         jobType: claimed.jobType,
         status: "FAILED",
         terminalStatus: "FAILED",
         resultCode: "JOB_EXECUTION_FAILED",
-        error: message.slice(0, 200),
+        correlationId,
         retryable: true,
       });
     }

@@ -269,125 +269,73 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    // Comprehensive ordered deletion in a transaction to avoid P2003
-    // foreign-key errors. The Prisma schema declares onDelete: Cascade on
-    // all child models, but production databases may have schema drift
-    // (missing cascade constraints) that causes P2003 on the parent delete.
-    //
-    // We explicitly delete ALL 16 child models that have a tenderId FK,
-    // plus their nested children, in dependency order. Each delete is
-    // wrapped in .catch() with logging so a missing table (schema drift)
-    // doesn't abort the entire transaction — the parent delete will still
-    // succeed if the cascade constraint IS present.
+    // Explicit ordered deletion in a transaction to avoid P2003 foreign-key
+    // errors when the database has schema drift (e.g., SubmissionPlanState
+    // constraint present but cascade not applied).
     await prisma.$transaction(async (tx) => {
-      // ── Layer 1: GeneratedDocument and its children ──────────────
+      // 1. Delete generated-document children first
       const generatedDocs = await tx.generatedDocument.findMany({
         where: { tenderId: id },
         select: { id: true },
       });
       if (generatedDocs.length > 0) {
         const docIds = generatedDocs.map((d: { id: string }) => d.id);
-        // Delete document children first (reviews, comments, evidence)
-        await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => {
-          console.error(`[tender-delete] documentReview cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-        });
-        await tx.documentComment.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => {
-          console.error(`[tender-delete] documentComment cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+        await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch((cleanupErr) => {
+          console.error(`[tender-delete] Failed to delete document reviews for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
         await tx.generatedDocument.deleteMany({ where: { tenderId: id } });
       }
 
-      // ── Layer 2: ProposalVersion (child of Tender, may have its own children) ──
-      await tx.proposalVersion.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] proposalVersion cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-
-      // ── Layer 3: ExportPackage ───────────────────────────────────
-      await tx.exportPackage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] exportPackage cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-
-      // ── Layer 4: AI jobs and their children ──────────────────────
+      // 2. Delete AI job children (chunks, retry states, steps)
       const aiJobs = await tx.aiJob.findMany({
         where: { tenderId: id },
         select: { id: true },
       });
       if (aiJobs.length > 0) {
         const jobIds = aiJobs.map((j: { id: string }) => j.id);
-        await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => {
-          console.error(`[tender-delete] aiAnalyzeChunk cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+        await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: { in: jobIds } } }).catch((cleanupErr) => {
+          console.error(`[tender-delete] Failed to delete AI chunks for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
-        await tx.aiAnalyzeRetryState.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => {
-          console.error(`[tender-delete] aiAnalyzeRetryState cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+        await tx.aiAnalyzeRetryState.deleteMany({ where: { jobId: { in: jobIds } } }).catch((cleanupErr) => {
+          console.error(`[tender-delete] Failed to delete AI retry states for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
-        await tx.aiJobStep.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => {
-          console.error(`[tender-delete] aiJobStep cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+        await tx.aiJobStep.deleteMany({ where: { jobId: { in: jobIds } } }).catch((cleanupErr) => {
+          console.error(`[tender-delete] Failed to delete AI job steps for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
         await tx.aiJob.deleteMany({ where: { tenderId: id } });
       }
 
-      // ── Layer 5: ComplianceMatrix (references TenderRequirement) ──
-      // Must delete before TenderRequirement
-      await tx.complianceMatrix.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] complianceMatrix cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      // 3. Delete submission plan state (the table that caused P2003)
+      await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch((cleanupErr) => {
+        console.error(`[tender-delete] Failed to delete submission plan state for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
       });
 
-      // ── Layer 6: PricingWorkbook and CostLine ────────────────────
-      const pricingWorkbooks = await tx.pricingWorkbook.findMany({
-        where: { tenderId: id },
-        select: { id: true },
-      });
-      if (pricingWorkbooks.length > 0) {
-        const workbookIds = pricingWorkbooks.map((w: { id: string }) => w.id);
-        await tx.costLine.deleteMany({ where: { workbookId: { in: workbookIds } } }).catch((e: unknown) => {
-          console.error(`[tender-delete] costLine cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-        });
-        await tx.pricingWorkbook.deleteMany({ where: { tenderId: id } });
-      }
-
-      // ── Layer 7: Remaining tender children ───────────────────────
+      // 4. Delete remaining children
       await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
       await tx.tenderFile.deleteMany({ where: { tenderId: id } });
       await tx.complianceGap.deleteMany({ where: { tenderId: id } });
-      await tx.tenderExpertMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] tenderExpertMatch cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      await tx.pricingWorkbook.deleteMany({ where: { tenderId: id } }).catch((cleanupErr) => {
+        console.error(`[tender-delete] Failed to delete pricing workbooks for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
       });
-      await tx.tenderProjectMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] tenderProjectMatch cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch((cleanupErr) => {
+        console.error(`[tender-delete] Failed to delete tender shares for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
       });
-      await tx.matchScoreBreakdown.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] matchScoreBreakdown cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      await tx.evaluatorObjection.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] evaluatorObjection cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      await tx.sectionEvidenceMap.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] sectionEvidenceMap cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      await tx.tenderMetadataOverride.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] tenderMetadataOverride cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] submissionPlanState cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] tenderShare cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => {
-        console.error(`[tender-delete] tenderCopilotMessage cleanup failed for tender ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch((cleanupErr) => {
+        console.error(`[tender-delete] Failed to delete copilot messages for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
       });
 
-      // ── Layer 8: AI analysis checkpoints (raw SQL — table may not exist) ──
+      // 5. Delete AI analysis checkpoints if the table exists
       try {
         await tx.$executeRawUnsafe('DELETE FROM "AiAnalysisCheckpoint" WHERE "tenderId" = $1', id);
       } catch (cleanupErr) {
+        // Table may not exist — log but continue (safe no-op)
         console.warn(`[tender-delete] AiAnalysisCheckpoint table not cleaned for tender ${id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
       }
 
-      // ── Layer 9: Finally delete the tender itself ────────────────
+      // 6. Finally delete the tender itself
       await tx.tender.delete({ where: { id } });
     }, {
-      timeout: 30000,
+      timeout: 15000,
       isolationLevel: "Serializable",
     });
 
@@ -401,10 +349,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true });
   } catch (error) {
-    const correlationId = require("crypto").randomUUID().slice(0, 8);
-    logger.error("Tender deletion failed", { detail: error, tenderId: id, correlationId });
+    logger.error("Tender deletion failed", { detail: error, tenderId: id });
     return NextResponse.json(
-      { error: "Failed to delete tender", code: "TENDER_DELETE_FAILED", correlationId },
+      { error: "Failed to delete tender", detail: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }

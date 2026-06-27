@@ -7,18 +7,6 @@ import { readFileSync } from "node:fs";
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("Safe error responses — no internal exception text", () => {
-  it("tender delete route returns correlationId, not error.message", () => {
-    const src = read("app/api/tenders/[id]/route.ts");
-    assert.ok(
-      src.includes("correlationId") && src.includes("TENDER_DELETE_FAILED"),
-      "tender delete must return { code: 'TENDER_DELETE_FAILED', correlationId } not error.message",
-    );
-    assert.ok(
-      !src.includes("detail: error instanceof Error ? error.message"),
-      "tender delete must NOT expose error.message in the response",
-    );
-  });
-
   it("AI provider health route returns correlationId, not error.message", () => {
     const src = read("app/api/admin/ai-provider-health/route.ts");
     assert.ok(

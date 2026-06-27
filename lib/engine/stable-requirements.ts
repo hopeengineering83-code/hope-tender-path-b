@@ -24,15 +24,10 @@ export async function upsertRequirements(
   }
 
   // ─── BATCH PERSISTENCE ─────────────────────────────────────────────
-  // Previously this loop did individual update/create calls for each
-  // requirement — 50+ sequential database round-trips inside the
-  // interactive transaction for large tenders. This consumed the
-  // 10000ms transaction budget and caused AI_ANALYSIS_PERSISTENCE_FAILED.
-  //
-  // Fix: split into two batches:
-  //   1. Batch all updates (using a single Promise.all of tx.update calls)
-  //   2. Batch all creates (using a single tx.createMany call)
-  // This reduces the number of sequential round-trips from O(N) to O(2).
+  // Split into two phases to reduce transaction budget consumption:
+  //   1. Updates: dispatched via Promise.all (still individual UPDATE
+  //      statements, but dispatched concurrently through the tx client)
+  //   2. Creates: batched into a single createMany call (one INSERT)
   const processedIds = new Set<string>();
   const created: string[] = [];
   const updated: string[] = [];
@@ -93,11 +88,8 @@ export async function upsertRequirements(
     }
   }
 
-  // Batch 1: updates in parallel (each is a separate write but all use tx).
-  // Using Promise.all so the writes are dispatched together rather than
-  // sequentially. Prisma's transaction client serializes these internally
-  // via the shared connection, but the parallel dispatch reduces the
-  // event-loop overhead.
+  // Phase 1: updates. Each is a separate UPDATE statement but dispatched
+  // via Promise.all so they are queued together.
   if (toUpdate.length > 0) {
     await Promise.all(
       toUpdate.map(({ id, data }) =>

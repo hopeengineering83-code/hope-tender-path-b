@@ -673,12 +673,18 @@ async function handleStreamingAnalyze(
 
             if (analysisJob) {
               analysisJobId = analysisJob.id;
+              const streamTerminalStatus = streamPromoSuperseded
+                ? "SUPERSEDED"
+                : aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED";
               await prisma.aiJob.update({
                 where: { id: analysisJob.id },
                 data: {
-                  status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                  status: streamTerminalStatus,
                   finishedAt: new Date(),
-                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
+                  errorMessage: streamPromoSuperseded
+                    ? "Superseded by a newer AI Analyze job. Not promoted to canonical."
+                    : null,
+                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null, superseded: streamPromoSuperseded }),
                 },
               }).catch(() => {});
 
