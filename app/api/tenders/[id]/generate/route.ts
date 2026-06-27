@@ -344,6 +344,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     hasProcuringEntity: !!(tender.procuringEntityName || tender.clientName),
     hasSubmissionMethod: !!tender.submissionMethod,
     hasSubmissionEmails: !!tender.submissionEmails,
+    hasSubmissionAddress: !!tender.submissionAddress,
     hasEvaluationMethodology: !!tender.evaluationMethodology,
     buildsSubmissionPlan: true,
   });

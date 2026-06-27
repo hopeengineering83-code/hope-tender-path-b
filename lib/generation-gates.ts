@@ -16,6 +16,9 @@ export function checkGenerationGates(input: {
   hasProcuringEntity: boolean;
   hasSubmissionMethod: boolean;
   hasSubmissionEmails: boolean;
+  /** A physical / sealed-envelope tender's submission endpoint is an address,
+   *  not an email. The endpoint is satisfied by an email OR an address. */
+  hasSubmissionAddress?: boolean;
   hasEvaluationMethodology: boolean;
   buildsSubmissionPlan: boolean;
 }): GenerationGateStatus {
@@ -50,11 +53,20 @@ export function checkGenerationGates(input: {
     recommendations.push("Review tender document manually or retry analysis");
   }
 
-  // Gate 4: Submission Plan
-  const submissionPlanOk = input.hasSubmissionMethod && input.hasSubmissionEmails;
+  // Gate 4: Submission Plan — needs a method AND a usable endpoint. The
+  // endpoint is an email OR a submission address: a physical / sealed-envelope
+  // tender is submitted to an address and legitimately has no email, so we must
+  // not block it merely because submissionEmails is empty (consistent with the
+  // canonical resolver and the metadata-completeness gate).
+  const hasEndpoint = input.hasSubmissionEmails || input.hasSubmissionAddress === true;
+  const submissionPlanOk = input.hasSubmissionMethod && hasEndpoint;
   if (!submissionPlanOk) {
-    blockers.push("Submission method and/or email not extracted - required for submission plan");
-    recommendations.push("Manually confirm submission method and contact details");
+    if (!input.hasSubmissionMethod) {
+      blockers.push("Submission method not extracted - required for submission plan");
+    } else {
+      blockers.push("Submission endpoint not extracted - an email address or a physical submission address is required for the submission plan");
+    }
+    recommendations.push("Manually confirm the submission method and a submission endpoint (email or address)");
   }
 
   // Gate 5: Evaluation Methodology (for scoring/evaluation guidance)
