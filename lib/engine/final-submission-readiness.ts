@@ -52,6 +52,7 @@ import {
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
+import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
@@ -401,6 +402,20 @@ export async function getFinalSubmissionReadiness(
       clientContactPhone: true,
       // Contamination flag — set by AI Analyze when client name is polluted
       metadataContaminated: true,
+      // Per-field source-evidence columns + manual overrides — consumed by the
+      // canonical field-state resolver so the export/ZIP gate enforces EXACTLY
+      // the same field decisions as the generate gate (single source of truth).
+      clientNameSourcePage: true,
+      clientNameSourceQuote: true,
+      submissionMethodSourcePage: true,
+      submissionMethodSourceQuote: true,
+      submissionAddressSourcePage: true,
+      submissionAddressSourceQuote: true,
+      submissionEmailSourcePage: true,
+      contactDetailsSourceJson: true,
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true, reason: true, overriddenBy: true, createdAt: true },
+      },
       budget: true,
       currency: true,
       validityDays: true,
@@ -661,6 +676,64 @@ export async function getFinalSubmissionReadiness(
       title: `Tender metadata is incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
       recommendedAction: "Fill the missing critical tender metadata fields before final proposal generation.",
     });
+  }
+  // ── Canonical field-state gate (single source of truth) ───────────────────
+  // Route the export/ZIP decision through the SAME resolver the generate gate
+  // uses, so a field that is critical-and-blocking for generation is also
+  // blocking for export (and vice versa). This closes the prior gap where the
+  // export gate ran a separate metadata-criticality path and ignored manual
+  // overrides + per-field source evidence entirely.
+  const canonicalExportState = resolveCanonicalFieldState({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      procuringEntityName: tender.procuringEntityName,
+      deadline: tender.deadline ?? null,
+      currency: tender.currency,
+      country: tender.country,
+      submissionMethod: tender.submissionMethod,
+      submissionAddress: tender.submissionAddress,
+      submissionEmails: tender.submissionEmails,
+      submissionEmailSubject: tender.submissionEmailSubject,
+      clientContactName: tender.clientContactName,
+      clientContactEmail: tender.clientContactEmail,
+      metadataContaminated: tender.metadataContaminated === true,
+      clientNameSourcePage: tender.clientNameSourcePage ?? null,
+      clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+      submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
+      submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+      submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
+      submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+      submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+      contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+    },
+    overrides: (tender.metadataOverrides ?? []).map((o) => ({
+      field: o.field,
+      fieldState: o.fieldState,
+      overrideValue: o.overrideValue ?? null,
+      reason: o.reason ?? null,
+      overriddenBy: o.overriddenBy ?? null,
+      createdAt: o.createdAt ?? null,
+    })),
+    hasExtractedRequirements: tender.requirements.length > 0,
+    submissionMethodContext: tender.submissionMethod ?? undefined,
+  });
+  if (canonicalExportState.hasExportBlocker) {
+    const blockingFields = canonicalExportState.fields
+      .filter((f) => f.criticality !== "non-critical" && f.blockerReason)
+      .map((f) => f.label);
+    // Only emit when the completeness gate did not already cover it, so we do
+    // not double-count the same missing-metadata condition.
+    if (!metadata.blockingForGeneration && blockingFields.length > 0) {
+      tenderLevelBlockers.push({
+        category: "METADATA_INCOMPLETE_FOR_FINAL_GENERATION",
+        severity: "HIGH",
+        title: `Critical tender metadata is unusable for export: ${blockingFields.join(", ")}.`,
+        recommendedAction: "Resolve the flagged critical field(s) — provide a valid value or confirm them — before final export. Not Applicable is not permitted for critical fields.",
+      });
+    }
   }
   // Client name gate — an empty/whitespace-only clientName (and no
   // procuringEntityName fallback) must block export so a proposal is

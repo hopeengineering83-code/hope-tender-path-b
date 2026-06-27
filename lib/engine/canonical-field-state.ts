@@ -52,7 +52,16 @@ export type CanonicalFieldState = {
   overrideState: PolicyFieldState | null;
   isManuallyConfirmed: boolean;
   criticality: "always-critical" | "conditionally-critical" | "non-critical";
+  /** Hard gate blocker — blocks generation/export when set. */
   blockerReason: string | null;
+  /**
+   * Soft traceability warning. A valid value that is not yet linked to a
+   * source page + quote sets this WITHOUT blocking any gate. Grounding is a
+   * quality signal, never a hard generation/export gate (CLAUDE.md blocks on
+   * missing/invalid/contaminated critical fields, not on a missing quote).
+   */
+  evidenceReviewNeeded: boolean;
+  warningReason: string | null;
   generationEligible: boolean;
   exportEligible: boolean;
   zipEligible: boolean;
@@ -228,11 +237,17 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // Determine status
     let status: CanonicalFieldStatus;
     let blockerReason: string | null = null;
+    let evidenceReviewNeeded = false;
+    let warningReason: string | null = null;
 
     if (override?.fieldState === "NOT_APPLICABLE") {
-      if (NEVER_NOT_APPLICABLE.has(fieldKey)) {
+      // Not Applicable is never permitted on a critical field (always- OR
+      // conditionally-critical), and never on a never-N/A field (deadline).
+      // This mirrors the registry's allowedOverrideStates (Policy F1) so a
+      // user cannot dismiss a required field by marking it N/A.
+      if (NEVER_NOT_APPLICABLE.has(fieldKey) || isCritical) {
         status = "BLOCKED";
-        blockerReason = `Field "${label}" is always-critical and cannot be marked Not Applicable.`;
+        blockerReason = `Field "${label}" is critical and cannot be marked Not Applicable. Provide a value or confirm it.`;
       } else {
         status = "NOT_APPLICABLE";
       }
@@ -257,8 +272,16 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";
     } else {
+      // Valid value, but no stored page+quote evidence. This is a TRACEABILITY
+      // warning ("review evidence"), NOT a hard gate blocker. A clean,
+      // fully-populated tender whose title/deadline have no source-evidence
+      // columns at all must still be allowed to generate and export. Grounding
+      // drives the grounded metric and the review prompt — never the block.
       status = "EXTRACTED_UNVERIFIED";
-      blockerReason = isCritical ? `Field "${label}" has a value but source evidence is incomplete (needs page + quote).` : null;
+      if (isCritical) {
+        evidenceReviewNeeded = true;
+        warningReason = `Field "${label}" has a value but is not yet linked to a source page + quote. Confirm the evidence for full traceability.`;
+      }
     }
 
     // Special handling for requiredDocuments
@@ -308,6 +331,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       isManuallyConfirmed,
       criticality,
       blockerReason,
+      evidenceReviewNeeded,
+      warningReason,
       generationEligible,
       exportEligible,
       zipEligible,

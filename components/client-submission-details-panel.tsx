@@ -473,6 +473,20 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
   const [message, setMessage] = useState("");
   // Which row has its source evidence expanded
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  // Inline editor state (replaces window.prompt). editingKey identifies the row
+  // currently being edited; editValue holds the in-progress input value.
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  function startEditing(row: Row) {
+    setError("");
+    setEditValue(row.value ?? "");
+    setEditingKey(row.key);
+  }
+  function cancelEditing() {
+    setEditingKey(null);
+    setEditValue("");
+  }
 
   async function load() {
     setLoading(true);
@@ -508,7 +522,7 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
 
   useEffect(() => { void load(); }, [tenderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function save(row: Row, action: string) {
+  async function save(row: Row, action: string, editedValue?: string) {
     // VIEW_SOURCE is client-only; no save needed
     if (action === "VIEW_SOURCE") {
       setExpandedSource(expandedSource === row.key ? null : row.key);
@@ -520,9 +534,11 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
     let reason = "Confirmed from Client & Submission Details panel.";
 
     if (action === "EDIT_MANUALLY") {
-      const v = window.prompt(`Enter value for "${row.label}"`, row.value ?? "")?.trim();
+      // The value comes from the inline editor (a real <input>, with a native
+      // date picker for the deadline) — never from window.prompt.
+      const v = (editedValue ?? "").trim();
       if (!v) return;
-      // Validate that deadline manually entered is in unambiguous format
+      // Validate that a manually entered deadline is in unambiguous format.
       if (row.field === "deadline" && isAmbiguousDate(v)) {
         setError(
           `Deadline format is ambiguous — day and month order cannot be determined from "${v}". ` +
@@ -706,6 +722,51 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
                       </p>
                     )}
 
+                    {/* Inline editor — replaces window.prompt. Uses a native
+                        date picker for the deadline so the value cannot be an
+                        ambiguous free-text date. */}
+                    {editingKey === row.key && (
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <input
+                          type={row.field === "deadline" ? "date" : "text"}
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          autoFocus
+                          aria-label={`Enter value for ${row.label}`}
+                          placeholder={row.field === "deadline" ? "YYYY-MM-DD" : `Enter ${row.label}`}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") cancelEditing();
+                            if (e.key === "Enter" && row.field !== "deadline") {
+                              const v = editValue.trim();
+                              setEditingKey(null);
+                              void save(row, "EDIT_MANUALLY", v);
+                            }
+                          }}
+                          className="min-h-[44px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const v = editValue.trim();
+                              setEditingKey(null);
+                              void save(row, "EDIT_MANUALLY", v);
+                            }}
+                            className="min-h-[44px] rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditing}
+                            className="min-h-[44px] rounded-lg border border-slate-300 px-4 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Source evidence (expanded) */}
                     {showSource && (
                       <SourceEvidence source={row.source} />
@@ -729,16 +790,19 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => void save(row, "EDIT_MANUALLY")}
+                      onClick={() => startEditing(row)}
                       disabled={isSaving}
-                      className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
                       {isSaving ? "Saving…" : primaryLabel}
                     </button>
                     <OverflowMenu
                       row={row}
                       canMarkNA={canMarkNA}
-                      onAction={(action) => void save(row, action)}
+                      onAction={(action) => {
+                        if (action === "EDIT_MANUALLY") startEditing(row);
+                        else void save(row, action);
+                      }}
                       saving={isSaving}
                     />
                   </div>

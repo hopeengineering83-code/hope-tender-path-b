@@ -34,6 +34,14 @@
 //   - generated-document quality gate (rejects "Bid-Team to confirm")
 
 import { DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS } from "./detection-patterns";
+// Submission-method classification lives in the neutral submission-method-policy
+// module so the policy registry, the canonical field-state resolver, and this
+// completeness gate all share ONE definition (no duplicated regex that could
+// drift between gates).
+import {
+  isPhysicalSubmissionMethod,
+  isEmailSubmissionMethod,
+} from "./submission-method-policy";
 
 export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bbid[\s-]?team\s+to\s+confirm\b/i,
@@ -274,23 +282,9 @@ export function stripMetadataPlaceholders(value: string): string {
   return out.replace(/\s{2,}/g, " ").replace(/\s*[,;:.]\s*[,;:.]/g, ".").trim();
 }
 
-/**
- * Returns true when the submission method indicates a physical / sealed
- * envelope delivery, meaning a submission address is required.
- */
-export function isPhysicalSubmissionMethod(method?: string | null): boolean {
-  if (!method) return false;
-  return /sealed\s*envelope|hard\s*copy|physical\s*deliver|hand\s*deliver|in\s*person|drop[\s-]?off|courier|registered\s*mail|post|by\s*hand/i.test(method);
-}
-
-/**
- * Returns true when the submission method is email-based, meaning the
- * exact email subject line (if the tender specifies one) is required.
- */
-export function isEmailSubmissionMethod(method?: string | null): boolean {
-  if (!method) return false;
-  return /\bemail\b|\be-?mail\b/i.test(method) && !/portal|online|upload/i.test(method);
-}
+// Re-exported to preserve the public import surface used by existing
+// callers/tests (they import these predicates from this module).
+export { isPhysicalSubmissionMethod, isEmailSubmissionMethod };
 
 export function assessTenderMetadataCompleteness(
   input: MetadataCompletenessInput,
