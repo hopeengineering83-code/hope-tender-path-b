@@ -2138,6 +2138,11 @@ export async function analyzeOneChunkWithRetry(
   onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
   deadlineAt?: number,
 ): Promise<AIAnalysisResult> {
+  // Fail fast if the shared deadline has already been reached — don't start
+  // a chunk attempt that can't finish within budget.
+  if (typeof deadlineAt === "number" && Date.now() + ERROR_HANDLING_RESERVE_MS >= deadlineAt) {
+    throw new Error("AI_ANALYSIS_DEADLINE_REACHED_BEFORE_CHUNK_ATTEMPT");
+  }
   try {
     return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt);
   } catch (err) {
@@ -2210,7 +2215,7 @@ export async function analyzeWithAI(
     let chunkProvider: string | null = null;
     try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
     try {
-      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt, opts?.deadlineAt);
+      const result = await analyzeOneChunkWithRetry(chunks[0], 0, 1, (p) => { chunkProvider = p; }, opts?.onProviderAttempt, opts?.deadlineAt);
       const chunkResults = [{ index: 0, result, provider: chunkProvider }];
       try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
       return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };

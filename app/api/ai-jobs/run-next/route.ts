@@ -6,6 +6,7 @@ import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-hand
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
+import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -55,6 +56,7 @@ export async function POST(req: Request) {
     resultCode?: string;
     error?: string;
     retryable?: boolean;
+    correlationId?: string;
     retryScheduled?: boolean;
   };
   const processedJobs: WorkerJobResult[] = [];
@@ -68,6 +70,10 @@ export async function POST(req: Request) {
   // drives their own job. Best-effort — never block the claim loop.
   if (isAutomatedCaller) {
     try {
+      // Restore DB-backed provider cooldowns before retry eligibility checks;
+      // otherwise a cold-start worker can re-arm jobs using empty in-memory health.
+      const healthRestore = await restoreHealthFromDbBounded(2_000);
+      if (healthRestore.warning) console.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
       const due = await findJobsDueForRetry(10);
       for (const job of due) {
         await rearmJobForRetry(job.jobId).catch((err: unknown) => {
@@ -136,6 +142,7 @@ export async function POST(req: Request) {
           terminalStatus: result.terminalStatus,
           resultCode: result.code,
           retryable: result.terminalStatus === "FAILED" ? Boolean(result.retryable) : undefined,
+          correlationId: result.correlationId,
           retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
         });
       } else {
@@ -150,15 +157,17 @@ export async function POST(req: Request) {
         });
       }
     } catch (error) {
+      const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      await failJob(claimed.id, message);
+      console.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
       processedJobs.push({
         jobId: claimed.id,
         jobType: claimed.jobType,
         status: "FAILED",
         terminalStatus: "FAILED",
         resultCode: "JOB_EXECUTION_FAILED",
-        error: message.slice(0, 200),
+        correlationId,
         retryable: true,
       });
     }
@@ -198,6 +207,7 @@ export async function POST(req: Request) {
     resultCode: worst.resultCode ?? "UNKNOWN",
     jobId: worst.jobId,
     retryable: Boolean(worst.retryable),
+    correlationId: worst.correlationId ?? null,
     retryScheduled: Boolean(worst.retryScheduled),
     workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
   });

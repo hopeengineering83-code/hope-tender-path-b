@@ -106,40 +106,25 @@ describe("6. Z.ai general endpoint + configured model", () => {
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
     assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
   });
-  it("Coding Plan endpoint returns glm-4-coding as default", () => {
+  it("Coding Plan model glm-coding is accepted as valid override", () => {
+    // Z.ai support confirmed: both plans use the SAME endpoint (api.z.ai).
+    // The Coding Plan model is "glm-coding". The resolver accepts it.
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
-    process.env.ZAI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
-    // When using the Coding Plan endpoint, the resolver returns the Coding
-    // Plan default model (glm-4-coding) — NOT glm-4-flash (which would fail).
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-coding");
     delete process.env.ZAI_BASE_URL;
+    process.env.ZAI_PROPOSAL_MODEL = "glm-coding";
+    assert.equal(getProviderModel("zai", "proposal"), "glm-coding");
+    delete process.env.ZAI_PROPOSAL_MODEL;
   });
-  it("Coding Plan endpoint + explicit glm-4-coding override is accepted", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
+  it("open.bigmodel.cn is NOT a valid Z.ai endpoint (different platform)", () => {
+    delete process.env.ZAI_BASE_URL;
     process.env.ZAI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4-coding";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-coding");
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_BASE_URL;
-  });
-  it("General endpoint + Coding Plan model returns the model but isProviderConfigured returns false", () => {
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    delete process.env.ZAI_BASE_URL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4-coding";
-    // getProviderModel returns whatever the env says (no guard at that layer)
-    // but isProviderConfigured returns false because of the mismatch.
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-coding");
-    // The provider is NOT configured because the model/endpoint mismatch
-    // means it would fail with HTTP 400 code 1211.
+    // Z.ai support confirmed: open.bigmodel.cn is Zhipu AI, not Z.ai.
+    // isProviderConfigured must return false for this endpoint.
     assert.equal(isProviderConfigured("zai"), false,
-      "Coding Plan model on General endpoint must be skipped (not configured)");
-    delete process.env.ZAI_PROPOSAL_MODEL;
+      "open.bigmodel.cn is NOT a valid Z.ai endpoint — must be skipped");
+    delete process.env.ZAI_BASE_URL;
   });
   it("accepts a valid explicit Z.ai model override (glm-4-flash)", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;

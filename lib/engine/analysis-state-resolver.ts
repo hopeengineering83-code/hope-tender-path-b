@@ -212,8 +212,16 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     state = "SUPERSEDED";
     analysisSource = "AI";
   } else if (job.status === "SUCCEEDED") {
-    // SUCCEEDED with no chunk rows is a valid single-shot success (0 === 0).
-    if (totalChunks === 0 || succeededChunks === totalChunks) {
+    // A terminal SUCCEEDED row is not sufficient by itself: canonical promotion
+    // is the durable unlock signal for generation/export. If a finalizer or
+    // legacy synchronous path failed after analysis but before setting
+    // promotedAt, fail closed instead of treating an unpromoted run as usable.
+    if (!job.promotedAt) {
+      state = "FAILED";
+      analysisSource = "NONE";
+    } else if (totalChunks === 0 || succeededChunks === totalChunks) {
+      // SUCCEEDED with no chunk rows is a valid single-shot success (0 === 0),
+      // but only after canonical promotion has been recorded.
       // Check if sections were detected but no requirements extracted — block generation.
       if (sectionsDetectedButNoRequirements && requirementsExtracted === 0) {
         state = "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED";
