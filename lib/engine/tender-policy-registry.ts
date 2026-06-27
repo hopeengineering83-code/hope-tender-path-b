@@ -138,6 +138,8 @@ export const NON_CRITICAL_FIELDS: ReadonlySet<string> = new Set([
  * requirements").
  */
 export type TenderPolicyContext = {
+  /** True only when the tender explicitly requires an email subject line (evidence-backed, not inferred from "email" in method). */
+  requiresEmailSubjectExplicitlyStated?: boolean;
   submissionMethod?: string | null;
 };
 
@@ -157,7 +159,9 @@ export function isConditionallyCriticalField(
     return isPhysicalSubmissionMethod(ctx.submissionMethod);
   }
   if (field === "submissionEmailSubject") {
-    return isEmailSubmissionMethod(ctx.submissionMethod);
+    // Email subject is critical ONLY when the tender explicitly requires it.
+    // Do NOT infer it from the word "email" alone in the submission method.
+    return Boolean(ctx.requiresEmailSubjectExplicitlyStated) && isEmailSubmissionMethod(ctx.submissionMethod);
   }
   return false;
 }

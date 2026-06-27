@@ -1,9 +1,9 @@
 /**
  * Neutral submission-method classification module.
  *
- * Extracted from tender-metadata-completeness.ts to break a circular
- * import: tender-policy-registry.ts imports submission-method helpers
- * from tender-metadata-completeness.ts, and if completeness imported
+ * Extracted from the completeness module to break a circular
+ * import: the policy registry imports submission-method helpers
+ * from the completeness module, and if completeness imported
  * the registry it would create a cycle.
  *
  * Both the policy registry and the completeness/resolver logic import

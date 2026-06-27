@@ -24,6 +24,7 @@ import { validateTenderBeforeGeneration, validateTenderBeforeExport } from "../.
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveCanonicalFieldState } from "../../../../../lib/engine/canonical-field-state";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isCriticalField } from "../../../../../lib/engine/tender-policy-registry";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
@@ -594,14 +595,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("planOnly") !== "true") {
       const explicitScope = hasExplicitSubmissionScope(tender);
+      // Use canonical field-state resolver instead of raw column checks.
+      // A valid manual override must NOT fail just because the raw DB column is blank.
+      const overrides = await prisma.tenderMetadataOverride.findMany({
+        where: { tenderId: id },
+      }).catch(() => []);
+      const canonicalState = resolveCanonicalFieldState({
+        tender: {
+          ...tender,
+          submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
+          clientContactEmail: (tender as any).clientContactEmail ?? null,
+          clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
+          clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+          submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
+          submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+          submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
+          submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+          submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
+          contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+        } as any,
+        overrides: overrides as any[],
+        hasExtractedRequirements: tender.requirements.length > 0,
+        submissionMethodContext: tender.submissionMethod ?? undefined,
+      });
       const policyCtx = { submissionMethod: tender.submissionMethod };
-      const missingCritical: string[] = [];
-      if (isCriticalField("deadline", policyCtx) && !tender.deadline) {
-        missingCritical.push("Submission deadline is not set.");
-      }
-      if (isCriticalField("submissionMethod", policyCtx) && !tender.submissionMethod) {
-        missingCritical.push("Submission method is not set.");
-      }
+      const missingCritical: string[] = canonicalState.fields
+        .filter(f => f.criticality !== "non-critical" && f.blockerReason)
+        .map(f => f.blockerReason!);
       // Only require submissionEmails when the method clearly indicates email
       // delivery — not when "email" appears in a prohibition phrase like
       // "no email submissions" or "hard copy only; email not accepted".

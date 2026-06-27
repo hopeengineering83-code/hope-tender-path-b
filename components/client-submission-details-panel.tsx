@@ -294,7 +294,10 @@ function buildRows(tender: TenderPayload, overrides: Override[]): Row[] {
       o?.fieldState === "USER_EDITED" && o.overrideValue ? o.overrideValue : stored;
 
     const source = sourceForField(tender, field);
-    const hasSource = !!(source?.page != null || source?.quote);
+    // Grounded requires BOTH page AND quote (not just one).
+    // Policy: valid value + resolved source file + page + quote = grounded.
+    // Page OR quote alone = unverified.
+    const hasSource = !!(source?.page != null && source?.page > 0 && source?.quote && source.quote.trim().length > 5);
     const chipStatus = resolveChipStatus(o, effectiveValue, criticalFlag === "1", hasSource);
 
     return {
@@ -393,9 +396,11 @@ function OverflowMenu({
       <button
         type="button"
         aria-label={`More actions for ${row.label}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         disabled={saving}
-        className="min-h-[36px] min-w-[36px] rounded border border-slate-300 bg-white px-2 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+        className="min-h-[44px] min-w-[44px] rounded border border-slate-300 bg-white px-2 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
       >
         ⋮
       </button>
@@ -403,7 +408,7 @@ function OverflowMenu({
         <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-slate-200 bg-white shadow-lg text-xs">
           <button
             type="button"
-            className="w-full text-left px-3 py-2 hover:bg-slate-50"
+            className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
             onClick={() => { onAction("EDIT_MANUALLY"); setOpen(false); }}
           >
             Edit value manually
@@ -411,7 +416,7 @@ function OverflowMenu({
           {!isDeadline && canMarkNA && (
             <button
               type="button"
-              className="w-full text-left px-3 py-2 hover:bg-slate-50"
+              className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
               onClick={() => { onAction("MARK_NOT_APPLICABLE"); setOpen(false); }}
             >
               Mark not applicable
@@ -420,7 +425,7 @@ function OverflowMenu({
           {!isDeadline && (
             <button
               type="button"
-              className="w-full text-left px-3 py-2 hover:bg-slate-50"
+              className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
               onClick={() => { onAction("MARK_NOT_FOUND"); setOpen(false); }}
             >
               Record not found in tender
@@ -429,7 +434,7 @@ function OverflowMenu({
           {isDeadline && (
             <button
               type="button"
-              className="w-full text-left px-3 py-2 hover:bg-slate-50"
+              className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
               onClick={() => { onAction("MARK_DEADLINE_NOT_STATED"); setOpen(false); }}
             >
               Record deadline not stated in tender
@@ -437,7 +442,7 @@ function OverflowMenu({
           )}
           <button
             type="button"
-            className="w-full text-left px-3 py-2 hover:bg-slate-50"
+            className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
             onClick={() => { onAction("RETRY_ON_NEXT_ANALYZE"); setOpen(false); }}
           >
             Retry on next AI Analyze
