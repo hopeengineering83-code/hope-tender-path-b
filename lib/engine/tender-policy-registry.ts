@@ -28,7 +28,7 @@
 // SCHEMA SAFETY: this module introduces no schema change. It only classifies
 // fields the schema already stores.
 
-import { isPhysicalSubmissionMethod, isEmailSubmissionMethod } from "./tender-metadata-completeness";
+import { isPhysicalSubmissionMethod, isEmailSubmissionMethod } from "./submission-method-policy";
 
 // ─── Override-state vocabulary (mirrors metadata-override.ts) ─────────────────
 
