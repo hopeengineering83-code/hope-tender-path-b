@@ -93,4 +93,14 @@ describe("production AI Analyze persistence blocker fix", () => {
     assert.ok(restoreAt > 0, "run-next must restore provider health before retry lookup");
     assert.ok(dueAt > restoreAt, "retry due-job lookup must happen after health restore");
   });
+  it("synchronous AI Analyze promotion helpers stay inside their transactions", () => {
+    const route = read("app/api/tenders/[id]/ai-analyze/route.ts");
+    assert.match(route, /promoteAnalysisToCanonical\(analysisJob\.id, runId, tx\)/);
+    assert.match(route, /promoteAnalysisToCanonical\(analysisJob\.id, nsRunId, tx\)/);
+    assert.doesNotMatch(route, /promoteAnalysisToCanonical\(analysisJob\.id, runId\);/);
+    assert.doesNotMatch(route, /promoteAnalysisToCanonical\(analysisJob\.id, nsRunId\);/);
+    assert.match(route, /streamPromotedToCanonical \? "SUCCEEDED" : "FAILED"/);
+    assert.match(route, /nsPromotedToCanonical \? "SUCCEEDED" : "FAILED"/);
+  });
+
 });

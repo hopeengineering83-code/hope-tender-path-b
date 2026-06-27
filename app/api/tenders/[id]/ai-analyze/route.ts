@@ -599,6 +599,7 @@ async function handleStreamingAnalyze(
                 f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
             ) ? "ocr" : "text";
 
+            let streamPromotedToCanonical = false;
             if (aiMeta.isPartial) {
               // Non-destructive: stage partial result without touching canonical tender data.
               if (analysisJob) {
@@ -627,7 +628,6 @@ async function handleStreamingAnalyze(
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
               // AiJob was created between the outer canPromoteToCanonical check above
               // and this write. If superseded, the tx returns without any writes.
-              let streamPromoSuperseded = false;
               await prisma.$transaction(async (tx) => {
                 // Serialize all promotion attempts for this tender. The advisory
                 // lock prevents a concurrent run from inserting a higher-version
@@ -642,7 +642,7 @@ async function handleStreamingAnalyze(
                     where: { tenderId: id, jobType: "AI_ANALYZE", id: { not: analysisJob.id }, analysisVersion: { gt: currentVer.analysisVersion } },
                     select: { id: true },
                   });
-                  if (newerExists) { streamPromoSuperseded = true; return; }
+                  if (newerExists) return;
                 }
                 await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
                 for (const req of aiResult.requirements) {
@@ -665,19 +665,22 @@ async function handleStreamingAnalyze(
                   where: { id },
                   data: canonicalTenderData,
                 });
+                if (analysisJob) {
+                  await promoteAnalysisToCanonical(analysisJob.id, runId, tx);
+                  streamPromotedToCanonical = true;
+                }
               });
-              if (!streamPromoSuperseded && analysisJob) {
-                await promoteAnalysisToCanonical(analysisJob.id, runId);
-              }
             }
 
             if (analysisJob) {
               analysisJobId = analysisJob.id;
+              const terminalStatus = aiMeta.isPartial ? "PARTIAL_SUCCESS" : (streamPromotedToCanonical ? "SUCCEEDED" : "FAILED");
               await prisma.aiJob.update({
                 where: { id: analysisJob.id },
                 data: {
-                  status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                  status: terminalStatus,
                   finishedAt: new Date(),
+                  errorMessage: terminalStatus === "FAILED" ? "Analysis completed but was not promoted to canonical; generation/export remain blocked." : null,
                   output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
                 },
               }).catch(() => {});
@@ -1280,6 +1283,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
         ) ? "ocr" : "text";
 
+        let nsPromotedToCanonical = false;
         if (aiMeta.isPartial) {
           // Non-destructive: stage partial result without touching canonical tender data.
           if (analysisJob) {
@@ -1304,7 +1308,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.
-          let nsPromoSuperseded = false;
           await prisma.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
             if (analysisJob) {
@@ -1316,7 +1319,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 where: { tenderId: id, jobType: "AI_ANALYZE", id: { not: analysisJob.id }, analysisVersion: { gt: currentVer.analysisVersion } },
                 select: { id: true },
               });
-              if (newerExists) { nsPromoSuperseded = true; return; }
+              if (newerExists) return;
             }
             await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
             for (const req of aiResult.requirements) {
@@ -1345,20 +1348,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               where: { id },
               data: canonicalTenderDataNonStream,
             });
+            if (analysisJob) {
+              await promoteAnalysisToCanonical(analysisJob.id, nsRunId, tx);
+              nsPromotedToCanonical = true;
+            }
           });
-          if (!nsPromoSuperseded && analysisJob) {
-            await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
-          }
         }
 
-        // Update the AiJob to SUCCEEDED (or PARTIAL_SUCCESS) with chunk metadata.
-        // PARTIAL_SUCCESS = some chunks succeeded, some failed/skipped due to deadline.
+        // Update the AiJob to SUCCEEDED only after canonical promotion. A full
+        // analysis that was superseded or otherwise not promoted must fail
+        // closed so generation/export remain blocked.
         if (analysisJob) {
           analysisJobId = analysisJob.id;
+          const terminalStatus = aiMeta.isPartial ? "PARTIAL_SUCCESS" : (nsPromotedToCanonical ? "SUCCEEDED" : "FAILED");
           await prisma.aiJob.update({
             where: { id: analysisJob.id },
             data: {
-              status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+              status: terminalStatus,
+              errorMessage: terminalStatus === "FAILED" ? "Analysis completed but was not promoted to canonical; generation/export remain blocked." : null,
               finishedAt: new Date(),
               output: JSON.stringify({
                 isPartial: aiMeta.isPartial,

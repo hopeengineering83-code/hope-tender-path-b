@@ -489,8 +489,10 @@ describe("analyzeWithAI — partial jobs remain resumable", () => {
       "utf-8",
     );
     const partialStatusCount = (
-      src.match(/status: aiMeta\.isPartial \? "PARTIAL_SUCCESS" : "SUCCEEDED"/g) ?? []
+      src.match(/status: terminalStatus/g) ?? []
     ).length;
+    assert.match(src, /terminalStatus = aiMeta\.isPartial \? "PARTIAL_SUCCESS" : \(streamPromotedToCanonical \? "SUCCEEDED" : "FAILED"\)/);
+    assert.match(src, /terminalStatus = aiMeta\.isPartial \? "PARTIAL_SUCCESS" : \(nsPromotedToCanonical \? "SUCCEEDED" : "FAILED"\)/);
     assert.ok(
       partialStatusCount >= 2,
       "both streaming and non-streaming paths must mark partial jobs as PARTIAL_SUCCESS (found in output JSON)",
