@@ -9,7 +9,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { resolveCanonicalFieldState, type CanonicalResolverInput } from "../lib/engine/canonical-field-state";
+import { resolveCanonicalFieldState, canonicalToClientChip, type CanonicalResolverInput } from "../lib/engine/canonical-field-state";
 
 type TenderInput = CanonicalResolverInput["tender"];
 
@@ -118,5 +118,56 @@ describe("canonical resolver — behavioral gate decisions", () => {
     const r = resolve(cleanTender());
     assert.equal(field(r, "clientName").isGrounded, true);
     assert.ok(r.groundedFields >= 1);
+  });
+});
+
+describe("canonical resolver — extended panel fields + chip mapping", () => {
+  it("evaluates the extended non-critical panel fields without adding gate blockers", () => {
+    const r = resolve(cleanTender({
+      legalClientName: "Republic of Kenya — Ministry of Health",
+      donorAgency: "World Bank",
+      implementingAgency: "County Health Department",
+      clientCity: "Nairobi",
+      clientWebsite: "https://health.go.ke",
+    }));
+    // All extended fields present and non-critical
+    for (const key of ["legalClientName", "donorAgency", "implementingAgency", "clientCity", "clientWebsite"]) {
+      assert.equal(field(r, key).criticality, "non-critical", `${key} must be non-critical`);
+    }
+    // And they did not introduce any generation/export blocker
+    assert.equal(r.hasGenerationBlocker, false);
+    assert.equal(r.hasExportBlocker, false);
+  });
+
+  it("reads page+quote evidence from contactDetailsSourceJson for extended fields", () => {
+    const r = resolve(cleanTender({
+      legalClientName: "Republic of Kenya — Ministry of Health",
+      contactDetailsSourceJson: JSON.stringify({
+        legalClientName: { page: 2, quote: "The legal entity is the Republic of Kenya — Ministry of Health." },
+      }),
+    }));
+    const f = field(r, "legalClientName");
+    assert.equal(f.sourcePage, 2);
+    assert.equal(f.isGrounded, true, "legalClientName must be grounded from contactDetailsSourceJson");
+    assert.equal(canonicalToClientChip(f), "EXTRACTED_GROUNDED");
+  });
+
+  it("maps canonical statuses to the panel chip vocabulary", () => {
+    const clean = resolve(cleanTender());
+    assert.equal(canonicalToClientChip(field(clean, "clientName")), "EXTRACTED_GROUNDED");
+    assert.equal(canonicalToClientChip(field(clean, "title")), "EXTRACTED_NO_EVIDENCE"); // valid, ungrounded
+
+    const placeholder = resolve(cleanTender({ clientName: "Bid-Team to confirm" }));
+    assert.equal(canonicalToClientChip(field(placeholder, "clientName")), "INVALID_VALUE");
+
+    const naCritical = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
+      overrides: [{ field: "clientName", fieldState: "NOT_APPLICABLE", overrideValue: null, reason: "x", overriddenBy: "u", createdAt: new Date() }],
+    });
+    assert.equal(canonicalToClientChip(field(naCritical, "clientName")), "BLOCKED");
+
+    const confirmed = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
+      overrides: [{ field: "clientName", fieldState: "USER_CONFIRMED", overrideValue: "Nairobi County", reason: "ok", overriddenBy: "u", createdAt: new Date() }],
+    });
+    assert.equal(canonicalToClientChip(field(confirmed, "clientName")), "MANUALLY_CONFIRMED");
   });
 });

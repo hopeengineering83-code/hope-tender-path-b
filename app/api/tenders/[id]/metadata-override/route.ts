@@ -16,6 +16,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { VALID_FIELD_STATES, KNOWN_METADATA_FIELDS, type MetadataFieldState } from "../../../../../lib/engine/metadata-override";
+import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../../lib/engine/canonical-field-state";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -34,7 +35,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const tender = await prisma.tender.findFirst({
     where: { id, userId: actor.id },
-    select: { id: true },
+    select: {
+      id: true, title: true, reference: true, clientName: true, procuringEntityName: true,
+      deadline: true, currency: true, country: true, submissionMethod: true,
+      submissionAddress: true, submissionEmails: true, submissionEmailSubject: true,
+      clientContactName: true, clientContactEmail: true, clientContactTitle: true,
+      clientContactPhone: true, clientCity: true, clientAddress: true, clientWebsite: true,
+      clientRepresentative: true, legalClientName: true, donorAgency: true, implementingAgency: true,
+      preBidChannel: true, preBidMeetingDate: true, preBidMeetingLocation: true,
+      evaluationMethodology: true, metadataContaminated: true,
+      clientNameSourcePage: true, clientNameSourceQuote: true,
+      submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
+      submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
+      submissionEmailSourcePage: true, contactDetailsSourceJson: true,
+      requirements: { select: { id: true }, take: 1 },
+    },
   });
   if (!tender) return err("Tender not found", 404, "TENDER_NOT_FOUND");
 
@@ -55,7 +70,68 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     throw lookupErr;
   }
 
-  return NextResponse.json({ ok: true, overrides });
+  // Server-derived canonical field states — the SINGLE source of truth for the
+  // Client & Submission Details panel chips. The panel renders these directly
+  // instead of recomputing status from raw values client-side.
+  let fieldStates: Record<string, {
+    status: string; isGrounded: boolean; criticality: string;
+    sourcePage: number | null; sourceQuote: string | null; value: string | null;
+  }> = {};
+  try {
+    const pbDate = tender.preBidMeetingDate instanceof Date
+      ? tender.preBidMeetingDate.toISOString().split("T")[0]
+      : (tender.preBidMeetingDate ?? null);
+    const resolved = resolveCanonicalFieldState({
+      tender: {
+        id: tender.id, title: tender.title, reference: tender.reference,
+        clientName: tender.clientName, procuringEntityName: tender.procuringEntityName,
+        deadline: tender.deadline ?? null, currency: tender.currency, country: tender.country,
+        submissionMethod: tender.submissionMethod, submissionAddress: tender.submissionAddress,
+        submissionEmails: tender.submissionEmails, submissionEmailSubject: tender.submissionEmailSubject,
+        clientContactName: tender.clientContactName, clientContactEmail: tender.clientContactEmail,
+        metadataContaminated: tender.metadataContaminated === true,
+        clientNameSourcePage: tender.clientNameSourcePage ?? null,
+        clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+        submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
+        submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+        submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
+        submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+        submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+        evaluationMethodology: tender.evaluationMethodology ?? null,
+        legalClientName: tender.legalClientName ?? null, donorAgency: tender.donorAgency ?? null,
+        implementingAgency: tender.implementingAgency ?? null,
+        clientContactTitle: tender.clientContactTitle ?? null,
+        clientContactPhone: tender.clientContactPhone ?? null,
+        clientCity: tender.clientCity ?? null, clientAddress: tender.clientAddress ?? null,
+        clientWebsite: tender.clientWebsite ?? null, clientRepresentative: tender.clientRepresentative ?? null,
+        preBidChannel: tender.preBidChannel ?? null, preBidMeetingDate: pbDate,
+        preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
+      },
+      overrides: overrides.map((o) => ({
+        field: o.field, fieldState: o.fieldState, overrideValue: o.overrideValue ?? null,
+        reason: o.reason ?? null, overriddenBy: o.overriddenBy ?? null, createdAt: o.createdAt ?? null,
+      })),
+      hasExtractedRequirements: tender.requirements.length > 0,
+      submissionMethodContext: tender.submissionMethod ?? undefined,
+    });
+    for (const f of resolved.fields) {
+      fieldStates[f.fieldKey] = {
+        status: canonicalToClientChip(f),
+        isGrounded: f.isGrounded,
+        criticality: f.criticality,
+        sourcePage: f.sourcePage,
+        sourceQuote: f.sourceQuote,
+        value: f.effectiveValue,
+      };
+    }
+  } catch {
+    // Resolver is best-effort for the panel; on any failure the panel falls
+    // back to its local rendering. Never block the overrides response.
+    fieldStates = {};
+  }
+
+  return NextResponse.json({ ok: true, overrides, fieldStates });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {

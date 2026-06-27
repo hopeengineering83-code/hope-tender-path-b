@@ -45,6 +45,8 @@ export type CanonicalFieldStatus =
 export type CanonicalFieldState = {
   fieldKey: string;
   label: string;
+  /** The resolved canonical status for this field. */
+  status: CanonicalFieldStatus;
   rawValue: string | null;
   effectiveValue: string | null;
   isValid: boolean;
@@ -116,6 +118,23 @@ export type CanonicalResolverInput = {
     submissionAddressSourceQuote: string | null;
     submissionEmailSourcePage: number | null;
     contactDetailsSourceJson: any;
+    // Extended client/submission fields surfaced in the Client & Submission
+    // Details panel. Optional so existing gate call sites (which only need the
+    // critical fields) keep compiling. All non-critical → never change gate
+    // blocking; they let the resolver be the single status source for the panel.
+    evaluationMethodology?: string | null;
+    legalClientName?: string | null;
+    donorAgency?: string | null;
+    implementingAgency?: string | null;
+    clientContactTitle?: string | null;
+    clientContactPhone?: string | null;
+    clientCity?: string | null;
+    clientAddress?: string | null;
+    clientWebsite?: string | null;
+    clientRepresentative?: string | null;
+    preBidChannel?: string | null;
+    preBidMeetingDate?: string | null;
+    preBidMeetingLocation?: string | null;
   };
   overrides: Array<{
     field: string;
@@ -131,15 +150,22 @@ export type CanonicalResolverInput = {
 
 // ─── Resolver ──────────────────────────────────────────────────────────────
 
+// Core fields the GATES key off + extended fields the Client & Submission
+// Details panel renders. Extended fields are all non-critical.
 const FIELDS_TO_EVALUATE = [
   "clientName", "procuringEntityName", "title", "reference", "deadline",
   "currency", "country", "submissionMethod", "submissionAddress",
   "submissionEmails", "submissionEmailSubject", "clientContactName",
   "clientContactEmail", "requiredDocuments",
+  // Extended (panel) fields — non-critical:
+  "evaluationCriteria", "legalClientName", "donorAgency", "implementingAgency",
+  "clientContactTitle", "clientContactPhone", "clientCity", "clientAddress",
+  "clientWebsite", "clientRepresentative", "preBidChannel",
+  "preBidMeetingDate", "preBidMeetingLocation",
 ] as const;
 
 function getRawValue(tender: CanonicalResolverInput["tender"], field: string): string | null {
-  const map: Record<string, string | null> = {
+  const map: Record<string, string | null | undefined> = {
     clientName: tender.clientName,
     procuringEntityName: tender.procuringEntityName,
     title: tender.title,
@@ -154,18 +180,68 @@ function getRawValue(tender: CanonicalResolverInput["tender"], field: string): s
     clientContactName: tender.clientContactName,
     clientContactEmail: tender.clientContactEmail,
     requiredDocuments: null, // Derived from extracted requirements
+    // Extended panel fields
+    evaluationCriteria: tender.evaluationMethodology ?? null,
+    legalClientName: tender.legalClientName ?? null,
+    donorAgency: tender.donorAgency ?? null,
+    implementingAgency: tender.implementingAgency ?? null,
+    clientContactTitle: tender.clientContactTitle ?? null,
+    clientContactPhone: tender.clientContactPhone ?? null,
+    clientCity: tender.clientCity ?? null,
+    clientAddress: tender.clientAddress ?? null,
+    clientWebsite: tender.clientWebsite ?? null,
+    clientRepresentative: tender.clientRepresentative ?? null,
+    preBidChannel: tender.preBidChannel ?? null,
+    preBidMeetingDate: tender.preBidMeetingDate ?? null,
+    preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
   };
   return map[field] ?? null;
 }
 
-function getSourceEvidence(tender: CanonicalResolverInput["tender"], field: string) {
-  const evidenceMap: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {
+/** Parse the stored contactDetailsSourceJson (string or object) into a map of
+ *  field → { page, quote }. Tolerant of malformed JSON. */
+function parseContactDetailsSource(raw: unknown): Record<string, { page: number | null; quote: string | null }> {
+  if (!raw) return {};
+  let obj: any = raw;
+  if (typeof raw === "string") {
+    try { obj = JSON.parse(raw); } catch { return {}; }
+  }
+  if (!obj || typeof obj !== "object") return {};
+  const out: Record<string, { page: number | null; quote: string | null }> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (v && typeof v === "object") {
+      const e = v as Record<string, unknown>;
+      out[k] = {
+        page: typeof e.page === "number" && e.page > 0 ? e.page : null,
+        quote: typeof e.quote === "string" ? e.quote : null,
+      };
+    }
+  }
+  return out;
+}
+
+// Maps a panel field key to its key inside contactDetailsSourceJson.
+const CONTACT_EVIDENCE_KEY: Record<string, string> = {
+  reference: "procurementReferenceNumber",
+  // others share the same key name
+};
+
+function getSourceEvidence(
+  tender: CanonicalResolverInput["tender"],
+  field: string,
+  contactDetails: Record<string, { page: number | null; quote: string | null }>,
+) {
+  const dedicated: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {
     clientName: { page: tender.clientNameSourcePage, quote: tender.clientNameSourceQuote, fileId: null },
     submissionMethod: { page: tender.submissionMethodSourcePage, quote: tender.submissionMethodSourceQuote, fileId: null },
     submissionAddress: { page: tender.submissionAddressSourcePage, quote: tender.submissionAddressSourceQuote, fileId: null },
     submissionEmails: { page: tender.submissionEmailSourcePage, quote: null, fileId: null },
   };
-  return evidenceMap[field] ?? { page: null, quote: null, fileId: null };
+  if (dedicated[field]) return dedicated[field];
+  // Fall back to the structured contactDetailsSource map for the extended fields.
+  const ce = contactDetails[CONTACT_EVIDENCE_KEY[field] ?? field];
+  if (ce) return { page: ce.page, quote: ce.quote, fileId: null };
+  return { page: null, quote: null, fileId: null };
 }
 
 function validateValue(field: string, value: string): { valid: boolean; reason: string | null } {
@@ -193,6 +269,7 @@ function isGroundedEvidence(evidence: { page: number | null; quote: string | nul
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
   const { tender, overrides, hasExtractedRequirements } = input;
   const overrideMap = new Map(overrides.map(o => [o.field, o]));
+  const contactDetails = parseContactDetailsSource(tender.contactDetailsSourceJson);
   const fields: CanonicalFieldState[] = [];
   let hasGenerationBlocker = false;
   let hasExportBlocker = false;
@@ -204,7 +281,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
   for (const fieldKey of FIELDS_TO_EVALUATE) {
     const rawValue = getRawValue(tender, fieldKey);
     const override = overrideMap.get(fieldKey);
-    const evidence = getSourceEvidence(tender, fieldKey);
+    const evidence = getSourceEvidence(tender, fieldKey, contactDetails);
     const label = fieldDisplayLabel(fieldKey);
     const isCritical = ALWAYS_CRITICAL_FIELDS.has(fieldKey) || isCriticalField(fieldKey, { submissionMethod: tender.submissionMethod ?? undefined });
     const criticality: CanonicalFieldState["criticality"] = ALWAYS_CRITICAL_FIELDS.has(fieldKey)
@@ -323,6 +400,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     fields.push({
       fieldKey,
       label,
+      status,
       rawValue,
       effectiveValue: effectiveStr || null,
       isValid: validation.valid,
@@ -358,4 +436,43 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     groundedFields: groundedCount,
     blockedFields: blockedCount,
   };
+}
+
+// ─── Client & Submission Details panel chip vocabulary ─────────────────────
+//
+// The panel renders a small set of human-readable chips. This mapper is the
+// SINGLE place the resolver's canonical status is translated to those chips,
+// so the panel never re-derives status from raw values client-side.
+
+export type ClientChipStatus =
+  | "EXTRACTED_GROUNDED"
+  | "EXTRACTED_NO_EVIDENCE"
+  | "MANUAL_OVERRIDE"
+  | "MANUALLY_CONFIRMED"
+  | "NOT_STATED"
+  | "NOT_APPLICABLE"
+  | "RETRY_ON_ANALYZE"
+  | "INVALID_VALUE"
+  | "BLOCKED"
+  | "NOT_DETECTED";
+
+export function canonicalToClientChip(state: CanonicalFieldState): ClientChipStatus {
+  // A user "Retry on next AI Analyze" override is stored as MISSING.
+  if (state.overrideState === "MISSING") return "RETRY_ON_ANALYZE";
+  switch (state.status) {
+    case "EXTRACTED_AND_GROUNDED": return "EXTRACTED_GROUNDED";
+    case "EXTRACTED_UNVERIFIED": return "EXTRACTED_NO_EVIDENCE";
+    case "MANUAL_OVERRIDE": return "MANUAL_OVERRIDE";
+    case "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED": return "MANUAL_OVERRIDE";
+    case "MANUAL_CONFIRMED": return "MANUALLY_CONFIRMED";
+    case "NOT_STATED": return "NOT_STATED";
+    case "NOT_APPLICABLE": return "NOT_APPLICABLE";
+    case "AMBIGUOUS_DATE":
+    case "GENERIC_FIELD_LABEL":
+    case "INTERNAL_PLACEHOLDER":
+    case "INVALID_FORMAT": return "INVALID_VALUE";
+    case "BLOCKED": return "BLOCKED";
+    case "INVALID": return "NOT_DETECTED";
+    default: return "NOT_DETECTED";
+  }
 }

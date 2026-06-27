@@ -75,6 +75,8 @@ type ChipStatus =
   | "NOT_STATED"
   | "NOT_APPLICABLE"
   | "RETRY_ON_ANALYZE"
+  | "INVALID_VALUE"
+  | "BLOCKED"
   | "NOT_DETECTED";
 
 const CHIP: Record<ChipStatus, { label: string; classes: string }> = {
@@ -85,6 +87,8 @@ const CHIP: Record<ChipStatus, { label: string; classes: string }> = {
   NOT_STATED:            { label: "Not stated in tender",        classes: "bg-amber-50 text-amber-700 border-amber-200" },
   NOT_APPLICABLE:        { label: "Not applicable",              classes: "bg-slate-50 text-slate-600 border-slate-200" },
   RETRY_ON_ANALYZE:      { label: "Retry on next AI Analyze",    classes: "bg-purple-50 text-purple-700 border-purple-200" },
+  INVALID_VALUE:         { label: "Invalid extracted value",     classes: "bg-red-50 text-red-700 border-red-200" },
+  BLOCKED:               { label: "Blocked — resolve to proceed", classes: "bg-red-50 text-red-700 border-red-200" },
   NOT_DETECTED:          { label: "Not detected",                classes: "bg-slate-50 text-slate-500 border-slate-200" },
 };
 
@@ -275,7 +279,21 @@ function sourceForField(tender: TenderPayload, field: string): SourceInfo | null
   return null;
 }
 
-function buildRows(tender: TenderPayload, overrides: Override[]): Row[] {
+/** Server-computed field state (canonical resolver output, mapped to chips). */
+type ServerFieldState = {
+  status: string;
+  isGrounded: boolean;
+  criticality: string;
+  sourcePage: number | null;
+  sourceQuote: string | null;
+  value: string | null;
+};
+
+function buildRows(
+  tender: TenderPayload,
+  overrides: Override[],
+  fieldStates: Record<string, ServerFieldState>,
+): Row[] {
   const byField = new Map(overrides.map((o) => [o.field, o]));
   return SPECS.map(([key, field, label, group, criticalFlag, keys]) => {
     const o = byField.get(field);
@@ -294,11 +312,17 @@ function buildRows(tender: TenderPayload, overrides: Override[]): Row[] {
       o?.fieldState === "USER_EDITED" && o.overrideValue ? o.overrideValue : stored;
 
     const source = sourceForField(tender, field);
+
+    // Status is SERVER-DERIVED: the canonical resolver is the single source of
+    // truth (lib/engine/canonical-field-state.ts). The local resolveChipStatus
+    // is only a graceful fallback for the rare case the server omitted this
+    // field (e.g. the resolver endpoint errored) so the panel still renders.
     // Grounded requires BOTH page AND quote (not just one).
-    // Policy: valid value + resolved source file + page + quote = grounded.
-    // Page OR quote alone = unverified.
     const hasSource = !!(source?.page != null && source?.page > 0 && source?.quote && source.quote.trim().length > 5);
-    const chipStatus = resolveChipStatus(o, effectiveValue, criticalFlag === "1", hasSource);
+    const server = fieldStates[field];
+    const chipStatus: ChipStatus = server
+      ? (server.status as ChipStatus)
+      : resolveChipStatus(o, effectiveValue, criticalFlag === "1", hasSource);
 
     return {
       key,
@@ -500,12 +524,14 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
       if (!tenderRes.ok) throw new Error((tenderData as { error?: string }).error ?? "Failed to load tender");
       const overrideJson = (await overrideRes.json().catch(() => ({}))) as {
         overrides?: Override[];
+        fieldStates?: Record<string, ServerFieldState>;
       };
       setTender(tenderData);
       setRows(
         buildRows(
           tenderData,
           overrideRes.ok && Array.isArray(overrideJson.overrides) ? overrideJson.overrides : [],
+          overrideRes.ok && overrideJson.fieldStates ? overrideJson.fieldStates : {},
         ),
       );
       setMessage(
