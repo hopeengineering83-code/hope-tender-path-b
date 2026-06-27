@@ -295,6 +295,6 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     logger.error("reassess route failed", { detail: error });
-    return err("Bulk reassessment failed.", 500, { code: "REASSESS_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Bulk reassessment failed.", 500, { code: "REASSESS_RUNTIME_ERROR", correlationId: require("crypto").randomUUID().slice(0, 8) });
   }
 }

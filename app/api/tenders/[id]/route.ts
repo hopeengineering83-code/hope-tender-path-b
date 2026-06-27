@@ -349,9 +349,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true });
   } catch (error) {
-    logger.error("Tender deletion failed", { detail: error, tenderId: id });
+    const correlationId = require("crypto").randomUUID().slice(0, 8);
+    logger.error("Tender deletion failed", { detail: error, tenderId: id, correlationId });
     return NextResponse.json(
-      { error: "Failed to delete tender", detail: error instanceof Error ? error.message : "Unknown error" },
+      { error: "Failed to delete tender", code: "TENDER_DELETE_FAILED", correlationId },
       { status: 500 }
     );
   }

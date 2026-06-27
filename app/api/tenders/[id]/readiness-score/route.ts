@@ -81,6 +81,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
   } catch (error) {
     logger.error("readiness-score route failed", { detail: error });
-    return err("Readiness-score route failed.", 500, { code: "READINESS_SCORE_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Readiness-score route failed.", 500, { code: "READINESS_SCORE_RUNTIME_ERROR", correlationId: require("crypto").randomUUID().slice(0, 8) });
   }
 }
