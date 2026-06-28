@@ -373,7 +373,7 @@ export async function getTenderReleaseSnapshot(
       clientWebsite: tender.clientWebsite,
       clientRepresentative: tender.clientRepresentative,
       preBidChannel: tender.preBidChannel,
-      preBidMeetingDate: tender.preBidMeetingDate,
+      preBidMeetingDate: tender.preBidMeetingDate?.toISOString() ?? null,
       preBidMeetingLocation: tender.preBidMeetingLocation,
     },
     overrides: ((tender.metadataOverrides ?? []) as _OverrideRow[]).map((o) => ({
