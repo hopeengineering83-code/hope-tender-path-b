@@ -92,7 +92,7 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
   );
 
   // 10. Verify the field status changed
-  const deadlineField3 = snapshot3.metadata.fields.find((f) => f.field === "deadline");
+  const deadlineField3 = snapshot3.metadata.fields.find((f) => f.fieldKey === "deadline");
   assert(deadlineField3, "Deadline field must still exist");
   assert.equal(
     deadlineField3.status,

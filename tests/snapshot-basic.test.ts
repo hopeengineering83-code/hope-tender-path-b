@@ -26,10 +26,10 @@ test("snapshot type has required fields", () => {
     snapshotRevision: "abc123",
     generatedAt: new Date().toISOString(),
     extraction: {
-      extractedPages: 8,
-      totalPages: 10,
-      ocrUsed: false,
-      confidence: 85,
+      activeFileCount: 1,
+      files: [],
+      overallOk: true,
+      blocker: null,
     },
     analysis: {
       state: "AI_SUCCEEDED",
