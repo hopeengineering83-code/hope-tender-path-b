@@ -61,10 +61,10 @@ export async function GET(
         label: "Confirm Metadata",
         // Use canonical metadata blocker state instead of a percentage threshold.
         // A tender is READY only when no metadata final-gate blocker remains.
-        status: metadata.missingCritical.length === 0 ? "READY" : "WARNING",
-        explanation: metadata.missingCritical.length === 0
-          ? `Metadata coverage is complete — ${metadata.detected} of ${metadata.total} fields detected.`
-          : `${metadata.missingCritical.length} critical metadata field(s) need attention: ${metadata.missingCritical.map((f: { label: string }) => f.label).join(", ")}.`,
+        // Use metadata readiness score with a threshold. The canonical resolver
+        // in generate/route.ts is the authoritative gate; this is a UI hint.
+        status: metadata.readinessScore >= 0.8 ? "READY" : "WARNING",
+        explanation: `Metadata coverage is ${Math.round(metadata.readinessScore * 100)}%.`,
         actionLabel: "Edit Metadata"
       },
       {

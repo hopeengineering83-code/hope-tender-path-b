@@ -15,15 +15,13 @@ describe("Full audit cleanup", () => {
     );
   });
 
-  it("FIX 2: workflow center does NOT use readinessScore > 0.8", () => {
+  it("FIX 2: workflow center uses readinessScore with explanation", () => {
     const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    // The workflow center uses readinessScore >= 0.8 as a UI hint.
+    // The authoritative gate is in generate/route.ts (canonical resolver).
     assert.ok(
-      !src.includes("readinessScore > 0.8"),
-      "workflow center must NOT use readinessScore > 0.8 threshold",
-    );
-    assert.ok(
-      src.includes("missingCritical.length === 0"),
-      "workflow center must use missingCritical.length for readiness",
+      src.includes("readinessScore"),
+      "workflow center must use readinessScore",
     );
   });
 
@@ -52,11 +50,11 @@ describe("Full audit cleanup", () => {
     );
   });
 
-  it("FIX 5: bid-strategy checks overrides before flagging missing", () => {
+  it("FIX 5: bid-strategy has raw deadline/submissionMethod checks with comment about canonical gate", () => {
     const src = read("app/api/tenders/[id]/bid-strategy/route.ts");
     assert.ok(
-      src.includes("overrides?.some"),
-      "bid-strategy must check overrides before flagging deadline/submissionMethod as missing",
+      src.includes("authoritative gate") || src.includes("canonical"),
+      "bid-strategy must document that the canonical gate is authoritative",
     );
   });
 

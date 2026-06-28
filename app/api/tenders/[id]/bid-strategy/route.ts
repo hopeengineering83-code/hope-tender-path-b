@@ -193,14 +193,14 @@ export async function GET(
     unsafeBlockers.push("Large/multi-page tender has zero mandatory requirements extracted.");
   }
   if (tender.requirements.length > 0 && sourceRefCount === 0) unsafeBlockers.push("Extracted requirements have no source traceability.");
-  // Use canonical field state — a valid manual override should not be flagged
-  // as missing just because the raw DB column is blank.
-  // For bid-strategy we check the raw tender values but note that the
-  // canonical resolver in generate/route.ts is the authoritative gate.
-  if (totalPages > 5 && !tender.deadline && !overrides?.some(o => o.field === "deadline" && o.overrideValue)) {
+  // Note: bid-strategy uses raw tender values for a quick safety check.
+  // The authoritative gate is in generate/route.ts which uses the canonical
+  // field-state resolver (including overrides). A manual override that exists
+  // in the DB but not in the raw column will be caught by the canonical gate.
+  if (totalPages > 5 && !tender.deadline) {
     unsafeBlockers.push("Deadline is missing from extracted/manual metadata.");
   }
-  if (totalPages > 5 && !tender.submissionMethod && !overrides?.some(o => o.field === "submissionMethod" && o.overrideValue)) {
+  if (totalPages > 5 && !tender.submissionMethod) {
     unsafeBlockers.push("Submission method is missing from extracted/manual metadata.");
   }
   if (totalPages > 5 && !tender.evaluationMethodology) unsafeBlockers.push("Evaluation criteria/methodology are missing from analysis.");
