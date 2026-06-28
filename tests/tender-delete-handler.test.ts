@@ -7,13 +7,15 @@
  * Catches bugs the PGlite integration tests can't:
  *  - Wrong field names in where clauses
  *  - Wrong call ordering at the TypeScript level
- *  - SET LOCAL GUC is called with the correct tenderId
+ *  - The deletion-context GUC is set via parameterized set_config (no
+ *    $executeRawUnsafe, tenderId passed as a bind parameter)
  *  - Error handling paths (P2021, P2025, generic errors)
- *  - UUID validation before SQL interpolation
+ *  - UUID validation as defense in depth
  */
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { executeTenderDeletion } from "../lib/tender/delete-tender";
 import { Prisma } from "@prisma/client";
 
@@ -55,6 +57,18 @@ function createMockTx(config: {
           return 0;
         };
       }
+      if (propName === "$executeRaw") {
+        // Tagged-template form: (strings, ...values). The interpolated values
+        // are sent as bind parameters — they never appear in the SQL text.
+        return async (strings: TemplateStringsArray, ...values: any[]) => {
+          calls.push({
+            model: "$executeRaw",
+            method: "execute",
+            args: { sql: Array.from(strings).join("?"), values },
+          });
+          return 0;
+        };
+      }
       return makeModel(propName);
     },
   });
@@ -66,24 +80,61 @@ const VALID_UUID = "12345678-1234-4123-8123-123456789012";
 
 describe("executeTenderDeletion — handler-level unit tests", () => {
 
-  it("sets transaction-local GUC context before any deletes", async () => {
+  it("sets transaction-local GUC context before any deletes (parameterized set_config)", async () => {
     const { tx, calls } = createMockTx({});
     await executeTenderDeletion(tx, VALID_UUID, "corr-1");
 
-    const gucCall = calls.find((c) => c.model === "$executeRawUnsafe");
-    assert.ok(gucCall, "SET LOCAL GUC must be called");
-    assert.ok(gucCall.args.sql.includes("SET LOCAL app.tender_deletion_context"),
-      `GUC SQL must set app.tender_deletion_context, got: ${gucCall.args.sql}`);
-    assert.ok(gucCall.args.sql.includes(VALID_UUID),
-      "GUC SQL must contain the tenderId (SET LOCAL does not support parameterization)");
-    // Also verify the GUC name is correct
+    const gucCall = calls.find((c) => c.model === "$executeRaw");
+    assert.ok(gucCall, "GUC must be set via parameterized $executeRaw");
+    assert.ok(gucCall.args.sql.includes("set_config"),
+      `GUC SQL must use set_config(...), got: ${gucCall.args.sql}`);
     assert.ok(gucCall.args.sql.includes("app.tender_deletion_context"),
       "GUC must set app.tender_deletion_context");
+    assert.ok(gucCall.args.sql.includes("true"),
+      "set_config must use is_local => true (transaction-local scope)");
+    // The tenderId must be a BOUND PARAMETER — never interpolated into the text.
+    assert.ok(!gucCall.args.sql.includes(VALID_UUID),
+      "tenderId must NOT appear in the SQL text — it must be parameterized");
+    assert.deepEqual(gucCall.args.values, [VALID_UUID],
+      "tenderId must be passed as a bind parameter to set_config");
 
     // GUC must be the FIRST call (before any deletes)
     const firstCall = calls[0];
-    assert.equal(firstCall.model, "$executeRawUnsafe",
-      "SET LOCAL must be the first operation in the transaction");
+    assert.equal(firstCall.model, "$executeRaw",
+      "set_config must be the first operation in the transaction");
+  });
+
+  it("uses NO unsafe raw SQL for the GUC (no $executeRawUnsafe; tenderId never interpolated)", async () => {
+    const { tx, calls } = createMockTx({});
+    await executeTenderDeletion(tx, VALID_UUID, "corr-1");
+
+    // The deletion handler must NEVER reach for the unsafe raw escape hatch.
+    const unsafe = calls.filter((c) => c.model === "$executeRawUnsafe");
+    assert.equal(unsafe.length, 0,
+      "$executeRawUnsafe must not be used — the GUC is parameterized via set_config");
+
+    // The GUC must be set via parameterized $executeRaw with the tenderId bound,
+    // and no recorded SQL text may contain the raw tenderId value.
+    const guc = calls.find((c) => c.model === "$executeRaw");
+    assert.ok(guc, "GUC must be set via parameterized $executeRaw");
+    assert.deepEqual(guc.args.values, [VALID_UUID],
+      "tenderId must be a bind parameter, not interpolated");
+    for (const c of calls) {
+      if (c.args && typeof c.args.sql === "string") {
+        assert.ok(!c.args.sql.includes(VALID_UUID),
+          `No raw SQL may contain the tenderId value (found in ${c.model})`);
+      }
+    }
+  });
+
+  it("source: delete-tender.ts uses parameterized set_config, never $executeRawUnsafe for the GUC", () => {
+    const src = readFileSync(new URL("../lib/tender/delete-tender.ts", import.meta.url), "utf8");
+    assert.ok(src.includes("set_config('app.tender_deletion_context'"),
+      "delete-tender.ts must set the GUC via set_config('app.tender_deletion_context', ...)");
+    assert.ok(!src.includes("$executeRawUnsafe"),
+      "delete-tender.ts must NOT use $executeRawUnsafe anywhere");
+    assert.ok(!src.includes("SET LOCAL app.tender_deletion_context"),
+      "delete-tender.ts must NOT use the un-parameterizable SET LOCAL utility statement for the GUC");
   });
 
   it("explicitly deletes TenderRequirement (not deferred to cascade)", async () => {
@@ -95,12 +146,12 @@ describe("executeTenderDeletion — handler-level unit tests", () => {
     assert.equal(reqDelete.args.where.tenderId, VALID_UUID);
   });
 
-  it("rejects invalid tenderId format (prevents SQL injection in SET LOCAL)", async () => {
+  it("rejects invalid tenderId format (defense in depth, even though set_config is parameterized)", async () => {
     const { tx } = createMockTx({});
     await assert.rejects(
       executeTenderDeletion(tx, "not-a-uuid'; DROP TABLE--", "corr-1"),
       /Invalid tenderId format/,
-      "Must reject non-UUID tenderId before interpolating into SET LOCAL",
+      "Must reject non-UUID tenderId before setting the deletion-context GUC",
     );
   });
 

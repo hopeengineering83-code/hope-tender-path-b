@@ -8,10 +8,11 @@
  *
  * Security properties:
  * - The GUC is set AFTER ownership verification (requireRole + findFirst)
- * - SET LOCAL only lasts for the current transaction
+ * - set_config(..., is_local => true) only lasts for the current transaction
  * - Only the specific tenderId is authorized
  * - Direct deletion outside this function remains blocked by the trigger
- * - tenderId is validated as a UUID before interpolation (no SQL injection)
+ * - tenderId is passed as a BOUND PARAMETER (no string interpolation, no
+ *   unsafe raw query) and is also validated as a UUID as defense in depth
  */
 
 import { Prisma } from "@prisma/client";
@@ -48,12 +49,21 @@ export async function executeTenderDeletion(
     }
   };
 
-  // Set transaction-local deletion context
+  // Set transaction-local deletion context.
+  //
+  // The `SET LOCAL` utility statement cannot be parameterized (Postgres parses
+  // it via the simple protocol), which previously forced a raw, interpolated
+  // unsafe-raw call. The `set_config(name, value, is_local)` *function*
+  // is an ordinary expression, so the tenderId is sent as a real bind
+  // parameter ($1) — never concatenated into the SQL text. `is_local => true`
+  // gives the exact same transaction-local scope as `SET LOCAL`, and the
+  // trigger continues to read it via current_setting('app.tender_deletion_context').
+  // UUID validation is retained as defense in depth.
   logPhase("SET_CONTEXT", "TransactionGUC");
   if (!UUID_RE.test(tenderId)) {
     throw new Error(`Invalid tenderId format (expected UUID): ${tenderId}`);
   }
-  await tx.$executeRawUnsafe(`SET LOCAL app.tender_deletion_context = '${tenderId}'`);
+  await tx.$executeRaw`SELECT set_config('app.tender_deletion_context', ${tenderId}, true)`;
 
   // Layer 1: GeneratedDocument + nested children
   const generatedDocs = await tx.generatedDocument.findMany({ where: { tenderId }, select: { id: true } });

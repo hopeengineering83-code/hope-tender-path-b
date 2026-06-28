@@ -172,8 +172,10 @@ EXECUTE FUNCTION guard_canonical_requirement_set_delete();
 async function simulateDeleteTransaction(pg: PGlite, tenderId: string) {
   await pg.exec("BEGIN");
   try {
-    // Set transaction-local deletion context (recognized by trigger)
-    await pg.query(`SET LOCAL app.tender_deletion_context = '${tenderId}'`);
+    // Set transaction-local deletion context (recognized by trigger).
+    // Mirrors the handler: parameterized set_config(..., is_local => true),
+    // tenderId passed as a bind parameter — never string-interpolated.
+    await pg.query(`SELECT set_config('app.tender_deletion_context', $1, true)`, [tenderId]);
 
     // Scalar orphans
     await pg.query(`DELETE FROM "FallbackApprovalRecord" WHERE "tenderId" = $1`, [tenderId]);
@@ -315,7 +317,7 @@ describe("Tender delete — PostgreSQL integration (PGlite)", () => {
     // Force a failure mid-transaction
     await pg.exec("BEGIN");
     try {
-      await pg.query(`SET LOCAL app.tender_deletion_context = '${tid}'`);
+      await pg.query(`SELECT set_config('app.tender_deletion_context', $1, true)`, [tid]);
       await pg.query(`DELETE FROM "FallbackApprovalRecord" WHERE "tenderId" = $1`, [tid]);
       // Force error: non-existent table
       await pg.query(`DELETE FROM "NonExistentTable" WHERE x = 1`);
@@ -379,14 +381,14 @@ describe("Tender delete — PostgreSQL integration (PGlite)", () => {
 
     // Set GUC in a transaction, then commit
     await pg.exec("BEGIN");
-    await pg.query(`SET LOCAL app.tender_deletion_context = '${tid}'`);
+    await pg.query(`SELECT set_config('app.tender_deletion_context', $1, true)`, [tid]);
     await pg.exec("COMMIT");
 
     // GUC should NOT persist after commit — direct delete must be blocked
     await assert.rejects(
       pg.query(`DELETE FROM "TenderRequirement" WHERE "tenderId" = $1`, [tid]),
       /Refusing to delete the final canonical/,
-      "GUC must not persist after COMMIT — SET LOCAL is transaction-local"
+      "GUC must not persist after COMMIT — set_config(is_local => true) is transaction-local"
     );
 
     await simulateDeleteTransaction(pg, tid);
@@ -400,7 +402,7 @@ describe("Tender delete — PostgreSQL integration (PGlite)", () => {
 
     // Set GUC to a DIFFERENT tenderId — must NOT authorize this tender's deletion
     await pg.exec("BEGIN");
-    await pg.query(`SET LOCAL app.tender_deletion_context = '${other}'`);
+    await pg.query(`SELECT set_config('app.tender_deletion_context', $1, true)`, [other]);
     await assert.rejects(
       pg.query(`DELETE FROM "TenderRequirement" WHERE "tenderId" = $1`, [tid]),
       /Refusing to delete the final canonical/,
