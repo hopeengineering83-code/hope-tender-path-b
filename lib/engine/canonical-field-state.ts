@@ -46,9 +46,18 @@ export type CanonicalFieldStatus =
   | "AMBIGUOUS_DATE"           // Date format ambiguous
   | "GENERIC_FIELD_LABEL"      // Value is a field heading
   | "INTERNAL_PLACEHOLDER"     // Contains TBD/N/A/etc
+  | "PORTAL_CONTAMINATION"     // Entity name polluted by portal/navigation text
   | "INVALID_FORMAT"           // Format validation failed
   | "INVALID"                  // No value, no override
   | "BLOCKED";                 // Field is blocked from all gates
+
+// Entity-identity fields whose value can be contaminated by scraped portal
+// navigation / unrelated-tender text (mirrors the Metadata Truth panel and the
+// export gate's contamination handling).
+const ENTITY_IDENTITY_FIELDS: ReadonlySet<string> = new Set([
+  "clientName",
+  "procuringEntityName",
+]);
 
 export type CanonicalFieldState = {
   fieldKey: string;
@@ -341,6 +350,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         blockerReason = `Field "${label}" is critical but not stated in tender. All gates remain blocked.`;
       }
+    } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr && !override) {
+      // Contamination takes priority over validity (matches the Metadata Truth
+      // panel): a client/procuring name polluted by portal navigation or
+      // unrelated-tender text must be corrected before generation/export.
+      status = "PORTAL_CONTAMINATION";
+      blockerReason = `Field "${label}" appears contaminated by tender-portal navigation or unrelated-tender text. Correct it before generating documents.`;
     } else if (!effectiveStr) {
       status = "INVALID";
       blockerReason = isCritical ? `Missing critical field: ${label}.` : null;
@@ -461,6 +476,7 @@ export type ClientChipStatus =
   | "NOT_APPLICABLE"
   | "RETRY_ON_ANALYZE"
   | "INVALID_VALUE"
+  | "CONTAMINATED"
   | "BLOCKED"
   | "NOT_DETECTED";
 
@@ -475,6 +491,7 @@ export function canonicalToClientChip(state: CanonicalFieldState): ClientChipSta
     case "MANUAL_CONFIRMED": return "MANUALLY_CONFIRMED";
     case "NOT_STATED": return "NOT_STATED";
     case "NOT_APPLICABLE": return "NOT_APPLICABLE";
+    case "PORTAL_CONTAMINATION": return "CONTAMINATED";
     case "AMBIGUOUS_DATE":
     case "GENERIC_FIELD_LABEL":
     case "INTERNAL_PLACEHOLDER":

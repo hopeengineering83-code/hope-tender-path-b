@@ -53,6 +53,30 @@ function resolve(tender: TenderInput, opts: Partial<Omit<CanonicalResolverInput,
 
 const field = (r: ReturnType<typeof resolve>, key: string) => r.fields.find((f) => f.fieldKey === key)!;
 
+describe("canonical resolver — contamination parity with the Metadata Truth panel", () => {
+  it("flags a contaminated client name as PORTAL_CONTAMINATION and blocks", () => {
+    const r = resolve(cleanTender({ metadataContaminated: true }));
+    const f = field(r, "clientName");
+    assert.equal(f.status, "PORTAL_CONTAMINATION");
+    assert.notEqual(f.blockerReason, null);
+    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(canonicalToClientChip(f), "CONTAMINATED");
+  });
+
+  it("does not flag contamination once the user has overridden the field", () => {
+    const r = resolve(cleanTender({ metadataContaminated: true }), {
+      overrides: [{ field: "clientName", fieldState: "USER_EDITED", overrideValue: "Ministry of Health", reason: "corrected", overriddenBy: "u", createdAt: new Date() }],
+    });
+    assert.notEqual(field(r, "clientName").status, "PORTAL_CONTAMINATION");
+  });
+
+  it("does not flag non-entity fields as contaminated", () => {
+    const r = resolve(cleanTender({ metadataContaminated: true }));
+    assert.notEqual(field(r, "title").status, "PORTAL_CONTAMINATION");
+    assert.notEqual(field(r, "deadline").status, "PORTAL_CONTAMINATION");
+  });
+});
+
 describe("canonical resolver — behavioral gate decisions", () => {
   // ─── REGRESSION: the bug this work fixed ───────────────────────────────────
   it("does NOT block a clean, fully-populated tender (title/deadline ungrounded is allowed)", () => {

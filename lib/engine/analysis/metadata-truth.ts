@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import { assessTenderMetadataCompleteness } from "../tender-metadata-completeness";
+import { assessTenderMetadataCompleteness, looksLikeMetadataPlaceholder } from "../tender-metadata-completeness";
 import {
   containsMetadataPlaceholder,
   isValidClientName,
@@ -163,8 +163,11 @@ function resolveFieldStatus(
   // Generic field-label check — catches "Number", "Title", "Client Name" etc.
   if (isGenericFieldLabel(strVal)) return "GENERIC_FIELD_LABEL";
 
-  // Placeholder check — catches TBD, N/A, "Bid-Team to confirm" etc.
-  if (containsMetadataPlaceholder(strVal)) return "INTERNAL_PLACEHOLDER";
+  // Placeholder check — catches TBD, N/A, "Bid-Team to confirm" etc. Consults
+  // BOTH the validators' set and the export/completeness gate's broader set
+  // (e.g. "not available", "to be provided") so the Metadata Truth panel never
+  // disagrees with the Client & Submission panel or the export gate.
+  if (containsMetadataPlaceholder(strVal) || looksLikeMetadataPlaceholder(strVal)) return "INTERNAL_PLACEHOLDER";
 
   // Field-specific format validation
   if (key === "deadline") {
