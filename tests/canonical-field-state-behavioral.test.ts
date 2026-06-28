@@ -138,6 +138,14 @@ describe("canonical resolver — behavioral gate decisions", () => {
     assert.equal(r.hasGenerationBlocker, true);
   });
 
+  it("does NOT block when clientName is empty but procuringEntityName is set (back-fill window)", () => {
+    const r = resolve(cleanTender({ clientName: null }));
+    // procuringEntityName is still set in cleanTender → clientName falls back to it
+    assert.equal(field(r, "clientName").effectiveValue, "Ministry of Health, Republic of Kenya");
+    assert.notEqual(field(r, "clientName").status, "INVALID");
+    assert.equal(r.hasGenerationBlocker, false, "a tender with a procuring entity must not be blocked as missing client");
+  });
+
   it("does NOT block on a missing NON-critical field (reference)", () => {
     const r = resolve(cleanTender({ reference: null }));
     assert.equal(r.hasGenerationBlocker, false);

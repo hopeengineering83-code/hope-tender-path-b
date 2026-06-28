@@ -183,7 +183,11 @@ const FIELDS_TO_EVALUATE = [
 
 function getRawValue(tender: CanonicalResolverInput["tender"], field: string): string | null {
   const map: Record<string, string | null | undefined> = {
-    clientName: tender.clientName,
+    // Fall back to the AI-extracted procuring-entity name when clientName has
+    // not been back-filled yet — otherwise a tender that HAS a procuring entity
+    // would be wrongly blocked as "missing client name". Matches the completeness
+    // gate and the Metadata Truth panel, which both use clientName || procuringEntityName.
+    clientName: tender.clientName ?? tender.procuringEntityName,
     procuringEntityName: tender.procuringEntityName,
     title: tender.title,
     reference: tender.reference,
