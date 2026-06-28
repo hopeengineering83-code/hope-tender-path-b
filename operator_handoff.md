@@ -76,7 +76,7 @@ Never claim a fix is complete unless the stated tests passed.
 - **Mode:** coordination setup
 - **Branch / PR:** `claude/operator-handoff-protocol` / no PR opened
 - **Scope:** created the shared cross-agent handoff protocol
-- **Files changed:** `operator_handoff.md`, `AGENTS.md`, `CLAUDE.md`
+- **Files changed:** `AGENTS.md`, `operator_handoff.md`
 - **Tests:** not applicable; documentation-only change
 - **CI / deployment:** not checked; no PR, merge, or manual deployment created
 - **Known risk:** Vercel may independently detect a branch commit; inspect Vercel before assuming no preview exists
