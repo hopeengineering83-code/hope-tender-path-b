@@ -1277,7 +1277,7 @@ async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEF
 async function generateWithZai(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 4000,
+  maxTokens = 8000,
   useCase: AiUseCase = "proposal",
   wantJson = false,
 ): Promise<string | null> {
@@ -1307,7 +1307,7 @@ async function generateWithZai(
 async function generateWithCerebras(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 4000,
+  maxTokens = 8000,
   useCase: AiUseCase = "proposal",
   wantJson = false,
 ): Promise<string | null> {
