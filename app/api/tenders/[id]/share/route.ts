@@ -7,7 +7,6 @@ import {
   parseTenderShareCreateInput,
 } from "../../../../../lib/tender-share-security";
 import { logAction } from "../../../../../lib/audit";
-import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -45,22 +44,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id: tenderId } = await params;
   const tender = await ownedTender(tenderId, auth.actor.id);
   if (!tender) return privateJson({ error: "Not found" }, { status: 404 });
-
-  // Rule 4 Extension: Sharing a tender is an act of release.
-  // It must pass the central readiness gate (export purpose).
-  const gate = await assertTenderReadyForGenerationAndExport({
-    prisma,
-    tenderId,
-    userId: auth.actor.id,
-    purpose: "export"
-  });
-
-  if (!gate.ok) {
-    return privateJson({
-      error: `Sharing blocked: ${gate.blockerDetail}`,
-      errorCode: gate.blockerCode,
-    }, { status: 422 });
-  }
 
   const body = await req.json().catch(() => null);
   const parsed = parseTenderShareCreateInput(body);

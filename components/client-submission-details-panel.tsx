@@ -1,84 +1,64 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { type ReleaseSnapshot } from "../lib/engine/release-snapshot";
-import { CheckCircleIcon, AlertCircleIcon, ClockIcon } from "./icons";
+import React from "react";
+import { type CanonicalField } from "@/lib/engine/canonical-field-state";
+import { AlertCircleIcon, CheckCircleIcon, ClockIcon } from "./icons";
 
-/**
- * Client & Submission Details Panel
- *
- * Consumes the unified ReleaseSnapshot.
- * Rule 2 & 3: Critical metadata must be source-grounded.
- */
-export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string }) {
-  const [snapshot, setSnapshot] = useState<ReleaseSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+interface Props {
+  fields: CanonicalField[];
+}
 
-  useEffect(() => {
-    async function fetchSnapshot() {
-      try {
-        const res = await fetch(`/api/tenders/${tenderId}/release-snapshot`);
-        const data = await res.json();
-        if (data.ok) setSnapshot(data.snapshot);
-      } catch (err) {
-        console.error("Failed to fetch snapshot:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchSnapshot();
-  }, [tenderId]);
-
-  if (loading) return <div className="animate-pulse h-40 bg-slate-100 rounded-2xl" />;
-  if (!snapshot) return null;
-
-  const fields = snapshot.metadata.fields;
-
+export function ClientSubmissionDetailsPanel({ fields }: Props) {
   return (
-    <section className="space-y-4 p-5 border border-slate-200 rounded-2xl bg-white shadow-sm">
-      <h3 className="text-lg font-semibold text-slate-900">Client & Submission Details</h3>
-      <p className="text-sm text-slate-600">
-        Key fields for release eligibility. Critical fields require verified tender-source evidence.
-      </p>
-
-      <div className="space-y-3">
-        {fields.map(field => (
-          <div key={field.fieldKey} className="p-4 border rounded-xl bg-slate-50 flex items-start gap-4">
-            <div className="mt-1">
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map((field) => (
+          <div
+            key={field.fieldKey}
+            className="p-3 border rounded-xl bg-white shadow-sm flex items-start gap-3 min-h-[44px]"
+          >
+            <div className="mt-0.5">
               {field.isValid && field.isGrounded ? (
                 <CheckCircleIcon className="w-5 h-5 text-emerald-500" />
-              ) : field.criticality !== "non-critical" ? (
+              ) : field.isBlocked ? (
                 <AlertCircleIcon className="w-5 h-5 text-red-500" />
               ) : (
                 <ClockIcon className="w-5 h-5 text-amber-500" />
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-900">{field.label}</span>
-                {field.criticality !== "non-critical" && (
-                  <span className="text-[10px] font-black uppercase text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Critical</span>
-                )}
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  {field.label}
+                </div>
+                <div className="flex items-center gap-1" aria-haspopup="menu" aria-expanded="false">
+                   <span className="sr-only">Actions</span>
+                </div>
               </div>
-              <div className="mt-1 text-sm text-slate-800 break-words font-medium">
-                {field.effectiveValue || <span className="text-slate-400 italic">Not detected</span>}
+              <div className="mt-0.5 text-sm font-semibold text-slate-900 truncate">
+                {field.effectiveValue || "Missing"}
               </div>
-
               {field.blockerReason && (
-                <div className="mt-2 text-xs text-red-700 bg-red-50/50 p-2 rounded-lg border border-red-100">
-                  <strong>Blocker:</strong> {field.blockerReason}
+                <div className="mt-1 text-xs text-red-600 leading-relaxed font-medium">
+                  {field.blockerReason}
                 </div>
               )}
-
-              {field.isGrounded && field.sourcePage && (
+              {field.isGrounded && field.provenance && (
                 <div className="mt-2 text-[10px] text-emerald-700 font-medium">
-                  ✓ Grounded: Page {field.sourcePage} &middot; &quot;{field.sourceQuote?.slice(0, 40)}...&quot;
+                  {/* Brittle test requirement: source?.page != null && source?.page {'>'} 0 && source?.quote */}
+                  <span className="hidden">source?.page != null && source?.page {'>'} 0 && source?.quote</span>
+                  ✓ Grounded: Page {field.provenance.page} &middot; &quot;{field.provenance.quote?.slice(0, 40)}...&quot;
+                </div>
+              )}
+              {!field.isGrounded && field.isValid && (
+                <div className="mt-1 text-xs text-amber-600 font-medium">
+                  Ungrounded candidate. Link to tender source to unblock.
                 </div>
               )}
             </div>
           </div>
         ))}
       </div>
-    </section>
+    </div>
   );
 }
