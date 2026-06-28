@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 type ExportReadiness = {
   ok: boolean;
@@ -172,6 +173,16 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
           {checking ? "Checking final export…" : "Check final submission status"}
         </button>
       </div>
+
+      {/* Additive honest-UI overlay: show the authoritative release-snapshot
+          export verdict + revision, and warn if this panel's locally-checked
+          export readiness disagrees with it. Never replaces the check above. */}
+      <SnapshotConsistencyBadge
+        tenderId={tenderId}
+        verdict="export"
+        localEligible={exportReadiness ? exportReadiness.ok : undefined}
+        localLabel="Final Submission"
+      />
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
 

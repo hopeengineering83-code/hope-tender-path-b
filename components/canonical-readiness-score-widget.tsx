@@ -13,6 +13,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 type ReadinessSeverity = "READY" | "PARTIAL" | "BLOCKED";
 
@@ -157,6 +158,12 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
       <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white">
         <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.min(100, Math.max(0, data.score))}%` }} />
       </div>
+
+      {/* Additive honest-UI overlay: surface the authoritative release-snapshot
+          export verdict + revision alongside this score so both are seen to
+          read the same generation of truth. Read-only (a 0–100 score is not a
+          boolean verdict, so no mismatch warning is asserted here). */}
+      <SnapshotConsistencyBadge tenderId={tenderId} verdict="export" />
 
       {data.capReason && (
         <p className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
