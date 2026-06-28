@@ -277,51 +277,56 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       const generatedDocs = await tx.generatedDocument.findMany({ where: { tenderId: id }, select: { id: true } });
       if (generatedDocs.length > 0) {
         const docIds = generatedDocs.map((d: { id: string }) => d.id);
-        await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => console.error(`[tender-delete] documentReview: ${e instanceof Error ? e.message : String(e)}`));
-        await tx.documentComment.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => console.error(`[tender-delete] documentComment: ${e instanceof Error ? e.message : String(e)}`));
+        await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => { console.error(`[tender-delete] documentReview: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+        await tx.documentComment.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => { console.error(`[tender-delete] documentComment: ${e instanceof Error ? e.message : String(e)}`); throw e; });
         await tx.generatedDocument.deleteMany({ where: { tenderId: id } });
       }
       // Layer 2: ProposalVersion
-      await tx.proposalVersion.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] proposalVersion: ${e instanceof Error ? e.message : String(e)}`));
+      await tx.proposalVersion.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] proposalVersion: ${e instanceof Error ? e.message : String(e)}`); throw e; });
       // Layer 3: ExportPackage
-      await tx.exportPackage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] exportPackage: ${e instanceof Error ? e.message : String(e)}`));
+      await tx.exportPackage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] exportPackage: ${e instanceof Error ? e.message : String(e)}`); throw e; });
       // Layer 4: AI jobs + children
       const aiJobs = await tx.aiJob.findMany({ where: { tenderId: id }, select: { id: true } });
       if (aiJobs.length > 0) {
         const jobIds = aiJobs.map((j: { id: string }) => j.id);
-        await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => console.error(`[tender-delete] aiAnalyzeChunk: ${e instanceof Error ? e.message : String(e)}`));
-        await tx.aiAnalyzeRetryState.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => console.error(`[tender-delete] aiAnalyzeRetryState: ${e instanceof Error ? e.message : String(e)}`));
-        await tx.aiJobStep.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => console.error(`[tender-delete] aiJobStep: ${e instanceof Error ? e.message : String(e)}`));
+        await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => { console.error(`[tender-delete] aiAnalyzeChunk: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+        await tx.aiAnalyzeRetryState.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => { console.error(`[tender-delete] aiAnalyzeRetryState: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+        await tx.aiJobStep.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => { console.error(`[tender-delete] aiJobStep: ${e instanceof Error ? e.message : String(e)}`); throw e; });
         await tx.aiJob.deleteMany({ where: { tenderId: id } });
       }
       // Layer 5: ComplianceMatrix (FK to TenderRequirement — delete before TenderRequirement)
-      await tx.complianceMatrix.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] complianceMatrix: ${e instanceof Error ? e.message : String(e)}`));
+      await tx.complianceMatrix.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] complianceMatrix: ${e instanceof Error ? e.message : String(e)}`); throw e; });
       // Layer 6: PricingWorkbook + CostLine
       const pricingWorkbooks = await tx.pricingWorkbook.findMany({ where: { tenderId: id }, select: { id: true } });
       if (pricingWorkbooks.length > 0) {
         const workbookIds = pricingWorkbooks.map((w: { id: string }) => w.id);
-        await tx.costLine.deleteMany({ where: { workbookId: { in: workbookIds } } }).catch((e: unknown) => console.error(`[tender-delete] costLine: ${e instanceof Error ? e.message : String(e)}`));
+        await tx.costLine.deleteMany({ where: { workbookId: { in: workbookIds } } }).catch((e: unknown) => { console.error(`[tender-delete] costLine: ${e instanceof Error ? e.message : String(e)}`); throw e; });
         await tx.pricingWorkbook.deleteMany({ where: { tenderId: id } });
       }
       // Layer 7: All remaining tender children
       await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
       await tx.tenderFile.deleteMany({ where: { tenderId: id } });
       await tx.complianceGap.deleteMany({ where: { tenderId: id } });
-      await tx.tenderExpertMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderExpertMatch: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.tenderProjectMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderProjectMatch: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.matchScoreBreakdown.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] matchScoreBreakdown: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.evaluatorObjection.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] evaluatorObjection: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.sectionEvidenceMap.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] sectionEvidenceMap: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.tenderMetadataOverride.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderMetadataOverride: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] submissionPlanState: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderShare: ${e instanceof Error ? e.message : String(e)}`));
-      await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderCopilotMessage: ${e instanceof Error ? e.message : String(e)}`));
-      // Layer 7.5: AiUsageRecord — has tenderId but NO FK constraint in DB.
-      // The Prisma schema declares onDelete: SetNull, but the migration that
-      // created the table (20260620160000) NEVER created the FK constraint.
-      // This causes Prisma to fail when trying to SET NULL on a non-existent
-      // FK during Tender delete. Fix: explicitly delete (or null) the records.
-      await tx.aiUsageRecord.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] aiUsageRecord: ${e instanceof Error ? e.message : String(e)}`));
+      await tx.tenderExpertMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderExpertMatch: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.tenderProjectMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderProjectMatch: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.matchScoreBreakdown.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] matchScoreBreakdown: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.evaluatorObjection.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] evaluatorObjection: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.sectionEvidenceMap.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] sectionEvidenceMap: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.tenderMetadataOverride.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderMetadataOverride: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] submissionPlanState: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderShare: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderCopilotMessage: ${e instanceof Error ? e.message : String(e)}`); throw e; });
+      // Layer 7.5: AiUsageRecord — use raw SQL to SET NULL.
+      // The Prisma schema declares onDelete: SetNull, but the DB may not have
+      // the FK constraint (migration 20260620160000 never created it).
+      // Using raw SQL UPDATE avoids any FK constraint issues entirely.
+      // If the table doesn't exist, this is a safe no-op (logged, not fatal).
+      try {
+        await tx.$executeRawUnsafe('UPDATE "AiUsageRecord" SET "tenderId" = NULL WHERE "tenderId" = $1', id);
+      } catch (e: unknown) {
+        // Table may not exist or may not have tenderId column — safe to continue
+        console.warn(`[tender-delete] AiUsageRecord SET NULL failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+      }
 
       // Layer 8: AiAnalysisCheckpoint (raw SQL — table may not exist)
       try { await tx.$executeRawUnsafe('DELETE FROM "AiAnalysisCheckpoint" WHERE "tenderId" = $1', id); } catch (e: unknown) { console.warn(`[tender-delete] AiAnalysisCheckpoint: ${e instanceof Error ? e.message : String(e)}`); }
