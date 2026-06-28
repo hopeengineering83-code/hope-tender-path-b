@@ -13,6 +13,16 @@ import { prisma } from "../lib/prisma";
 test("unified snapshot: manually entered ungrounded deadline is BLOCKED identically across all panels", async () => {
   // 1. Create a test user and tender
   const userId = `test-user-${Date.now()}`;
+
+  // Create user first (required by foreign key constraint)
+  await prisma.user.create({
+    data: {
+      id: userId,
+      email: `${userId}@example.test`,
+      name: "Test User",
+    },
+  });
+
   const tenderData = {
     userId,
     title: "Test Tender for Snapshot Unification",
@@ -102,4 +112,5 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
 
   // Cleanup
   await prisma.tender.delete({ where: { id: tender.id } });
+  await prisma.user.delete({ where: { id: userId } });
 });
