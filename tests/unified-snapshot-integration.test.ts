@@ -41,7 +41,7 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
       fieldState: "USER_EDITED",  // Manual entry, ungrounded
       overrideValue: "2024-12-31",
       reason: null,  // No source evidence linked
-      overriddenBy: "test@example.com",
+      overriddenBy: userId,
     },
   });
 
