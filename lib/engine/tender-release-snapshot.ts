@@ -289,7 +289,7 @@ export async function getTenderReleaseSnapshot(
   };
 
   // Analysis state — canonical state machine.
-  const analysisDetail = await resolveTenderAnalysisState(prisma as never, tenderId, userId);
+  const analysisDetail = await resolveTenderAnalysisState(prisma, tenderId, userId);
 
   // Content hash — same computation as the generation gate.
   const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");

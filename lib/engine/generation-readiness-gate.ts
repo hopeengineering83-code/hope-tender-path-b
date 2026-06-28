@@ -413,7 +413,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
 
     // C/D — canonical analysis state + the latest eligible job's hash.
     const [analysis, latestJob] = await Promise.all([
-      resolveTenderAnalysisState(prisma as never, tenderId, userId),
+      resolveTenderAnalysisState(prisma, tenderId, userId),
       prisma.aiJob.findFirst({
         where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE, tender: { userId } },
         orderBy: { createdAt: "desc" },

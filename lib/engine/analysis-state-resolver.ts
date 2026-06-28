@@ -16,6 +16,7 @@
 // unit-testable without a database.
 
 import { prisma } from "@/lib/prisma";
+import type { PrismaClient } from "@prisma/client";
 
 export const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
@@ -327,7 +328,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
  * and #802 (modular). It uses #802's DB signature but #797's richer state logic.
  */
 export async function resolveTenderAnalysisState(
-  prismaClient: typeof prisma,
+  prismaClient: PrismaClient | typeof prisma,
   tenderId: string,
   userId?: string
 ): Promise<TenderAnalysisStateDetail> {
