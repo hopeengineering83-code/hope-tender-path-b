@@ -3,6 +3,7 @@ import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedD
 import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
 import { detectAnalysisSource } from "@/lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
+import { SnapshotConsistencyBadge } from "@/components/snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
 
 type GeneratedDocLike = {
@@ -231,6 +232,10 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
             One proposal-management view for canonical generation readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>
+          {/* Additive honest-UI overlay: authoritative release-snapshot export
+              verdict + revision (read-only) so this executive view is seen to
+              read the same generation of truth as every other panel. */}
+          <SnapshotConsistencyBadge tenderId={tender.id} verdict="export" />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {tender.bidOutcome && (

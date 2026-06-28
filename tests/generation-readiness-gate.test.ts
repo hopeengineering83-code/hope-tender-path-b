@@ -37,7 +37,7 @@ function ready(overrides: Partial<GenerationReadinessInput> = {}): GenerationRea
     requirementCount: 1,
     requirements: [groundedMandatory()],
     submissionPlanDocumentCount: 4,
-    isLegacyAnalyzed: false,
+    criticalMetadataOk: true,
     ...overrides,
   };
 }
@@ -88,7 +88,7 @@ test("7. content-hash mismatch blocks generation", () => {
 // 8. Missing promotedAt (no canonical job) blocks generation.
 test("8. missing canonical promotion blocks generation", () => {
   const r = evaluateGenerationReadiness(ready({ canonicalJobId: null }));
-  assert.equal(r.blockerCode, "ANALYSIS_NO_PROMOTED_JOB");
+  assert.equal(r.blockerCode, "LEGACY_ANALYSIS_BLOCKED");
 });
 
 // 9. Missing chunk blocks generation (succeeded < expected totalChunks).
@@ -156,8 +156,8 @@ test("16. unapproved regex fallback blocks generation", () => {
   assert.equal(r.blockerCode, "FALLBACK_UNAPPROVED");
 });
 
-// 17. Fallback approval from a previous hash blocks generation (hash moved).
-test("17. approved fallback from a previous hash blocks generation", () => {
+// 17. HUMAN_APPROVED_FALLBACK is now always blocked — even when hash matched.
+test("17. HUMAN_APPROVED_FALLBACK blocks regardless of hash (fallback no longer allowed)", () => {
   const r = evaluateGenerationReadiness(ready({
     analysisState: "HUMAN_APPROVED_FALLBACK",
     canonicalJobId: "job-old",
@@ -165,34 +165,35 @@ test("17. approved fallback from a previous hash blocks generation", () => {
     currentContentHash: "hash-new",
     fallbackApprovalBound: false,
   }));
-  assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
+  assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
 });
 
-// 17b. Fallback whose hash matches but with no bound approval record blocks.
-test("17b. fallback with matching hash but NO bound approval record blocks", () => {
+// 17b. HUMAN_APPROVED_FALLBACK blocked regardless of approval binding.
+test("17b. HUMAN_APPROVED_FALLBACK blocks even with fallbackApprovalBound=false", () => {
   const r = evaluateGenerationReadiness(ready({
     analysisState: "HUMAN_APPROVED_FALLBACK",
     fallbackApprovalBound: false,
   }));
-  assert.equal(r.blockerCode, "FALLBACK_UNAPPROVED");
+  assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
 });
 
-// 18. Exact approved fallback bound to current job/hash passes when all else passes.
-test("18. human-approved fallback bound to current hash passes when all else is ready", () => {
+// 18. HUMAN_APPROVED_FALLBACK is now always blocked — no bound approval can override it.
+test("18. HUMAN_APPROVED_FALLBACK blocked even when fallbackApprovalBound=true", () => {
   const r = evaluateGenerationReadiness(ready({
     analysisState: "HUMAN_APPROVED_FALLBACK",
     fallbackApprovalBound: true,
   }));
-  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.ok, false);
+  assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
 });
 
-test("18b. bound approved fallback STILL blocks when no plan documents exist", () => {
+test("18b. HUMAN_APPROVED_FALLBACK blocks before submission-plan check", () => {
   const r = evaluateGenerationReadiness(ready({
     analysisState: "HUMAN_APPROVED_FALLBACK",
     fallbackApprovalBound: true,
     submissionPlanDocumentCount: 0,
   }));
-  assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+  assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
 });
 
 // 19. Background PROPOSAL_GENERATION purpose is gated the same way.
@@ -250,23 +251,22 @@ test("zero chunk rows (single-shot success) is acceptable", () => {
   assert.equal(r.ok, true, JSON.stringify(r));
 });
 
-// Legacy-analyzed tenders (no promoted job but has analysis).
-test("legacy-analyzed tender (no job, has requirements) passes gate", () => {
+// Legacy-analyzed tenders (no promoted job) are now always blocked.
+test("legacy-analyzed tender (no job, has requirements) is now blocked", () => {
   const r = evaluateGenerationReadiness(ready({
     canonicalJobId: null,
     latestJobHash: null,
-    isLegacyAnalyzed: true,
   }));
-  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.ok, false);
+  assert.equal(r.blockerCode, "LEGACY_ANALYSIS_BLOCKED");
 });
 
-test("tender without job AND without requirements still blocks", () => {
+test("tender without job AND without requirements blocks with LEGACY_ANALYSIS_BLOCKED", () => {
   const r = evaluateGenerationReadiness(ready({
     canonicalJobId: null,
     latestJobHash: null,
     requirementCount: 0,
     requirements: [],
-    isLegacyAnalyzed: false,
   }));
-  assert.equal(r.blockerCode, "ANALYSIS_NO_PROMOTED_JOB");
+  assert.equal(r.blockerCode, "LEGACY_ANALYSIS_BLOCKED");
 });

@@ -1,123 +1,29 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import type { CanonicalFieldState, CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
 
-type Override = { field: string; fieldState: string; overrideValue: string | null };
-type SourceInfo = {
-  page: number | null;
-  quote: string | null;
-  fileName: string | null;
-  label?: string | null;
-};
-type Row = {
-  key: string;
-  field: string;
-  label: string;
-  group: string;
-  critical: boolean;
-  value: string | null;
-  status: string;
-  source: SourceInfo | null;
-};
-
-type TenderPayload = Record<string, unknown> & {
-  files?: Array<{ id: string; originalFileName?: string | null; fileName?: string | null }>;
-  requirements?: Array<{
-    sourceTenderFileId?: string | null;
-    sourcePageNumber?: number | null;
-    sourceExactQuote?: string | null;
-    sourceSectionHeading?: string | null;
-    title?: string | null;
-  }>;
-  metadataContaminated?: boolean | null;
+const STATUS_BADGE: Record<CanonicalFieldStatus, { label: string; classes: string }> = {
+  EXTRACTED_AND_GROUNDED:              { label: "Extracted and grounded",             classes: "bg-emerald-100 text-emerald-700" },
+  EXTRACTED_UNVERIFIED:                { label: "Extracted — review evidence",         classes: "bg-blue-100 text-blue-700" },
+  MANUAL_OVERRIDE:                     { label: "Candidate value (non-critical)",      classes: "bg-indigo-100 text-indigo-700" },
+  MANUAL_OVERRIDE_CONFIRMATION_REQUIRED: { label: "Candidate — blocked (critical)",   classes: "bg-orange-100 text-orange-700" },
+  MANUAL_CONFIRMED:                    { label: "Confirmed — needs source",            classes: "bg-amber-100 text-amber-700" },
+  NOT_STATED:                          { label: "Not stated in tender",                classes: "bg-slate-100 text-slate-600" },
+  NOT_APPLICABLE:                      { label: "Not applicable",                      classes: "bg-slate-100 text-slate-500" },
+  AMBIGUOUS_DATE:                      { label: "Date ambiguous — confirm",            classes: "bg-orange-100 text-orange-700" },
+  GENERIC_FIELD_LABEL:                 { label: "Invalid extracted value",             classes: "bg-red-100 text-red-700" },
+  INTERNAL_PLACEHOLDER:                { label: "Placeholder detected",                classes: "bg-red-100 text-red-700" },
+  PORTAL_CONTAMINATION:                { label: "Contaminated — review",               classes: "bg-red-100 text-red-700" },
+  INVALID_FORMAT:                      { label: "Invalid format",                      classes: "bg-red-100 text-red-700" },
+  SOURCE_CONFLICT:                     { label: "Source conflict — resolve",            classes: "bg-red-100 text-red-700" },
+  INVALID:                             { label: "Not detected",                        classes: "bg-slate-100 text-slate-500" },
+  BLOCKED:                             { label: "Blocked",                             classes: "bg-red-200 text-red-800" },
 };
 
-// ─── Field spec: [uniqueKey, fieldKey, userLabel, group, isCritical, dataPaths] ─
-
-const SPECS = [
-  ["title",              "title",               "Tender title",                    "Tender",     "1", "title"],
-  ["evaluationCriteria", "evaluationCriteria",  "Evaluation criteria / scoring",   "Tender",     "",  "evaluationMethodology"],
-  ["requiredDocuments",  "requiredDocuments",   "Required documents / forms",      "Tender",     "1", "exactFileNaming,exactFileOrder"],
-  ["procuringEntityName","clientName",          "Procuring entity / client name",  "Client",     "1", "procuringEntityName,clientName"],
-  ["legalClientName",    "legalClientName",     "Legal client name",               "Client",     "",  "legalClientName"],
-  ["donorAgency",        "donorAgency",         "Donor / funding agency",          "Client",     "",  "donorAgency"],
-  ["implementingAgency", "implementingAgency",  "Implementing agency",             "Client",     "",  "implementingAgency"],
-  ["reference",          "reference",           "Reference number",                "Client",     "",  "reference"],
-  ["country",            "country",             "Country",                         "Client",     "",  "country"],
-  ["clientCity",         "clientCity",          "City / location",                 "Client",     "",  "clientCity"],
-  ["clientAddress",      "clientAddress",       "Client address",                  "Client",     "",  "clientAddress"],
-  ["clientWebsite",      "clientWebsite",       "Client website / portal",         "Client",     "",  "clientWebsite"],
-  ["clientContactName",  "clientContactName",   "Contact person",                  "Client",     "",  "clientContactName"],
-  ["clientContactTitle", "clientContactTitle",  "Contact title",                   "Client",     "",  "clientContactTitle"],
-  ["clientContactEmail", "clientContactEmail",  "Contact email",                   "Client",     "",  "clientContactEmail"],
-  ["clientContactPhone", "clientContactPhone",  "Contact phone",                   "Client",     "",  "clientContactPhone"],
-  ["clientRepresentative","clientRepresentative","Client representative",           "Client",     "",  "clientRepresentative"],
-  ["submissionMethod",   "submissionMethod",    "Submission method",               "Submission", "1", "submissionMethod"],
-  ["deadline",           "deadline",            "Submission deadline",             "Submission", "1", "deadline"],
-  ["submissionAddress",  "submissionAddress",   "Submission address / portal",     "Submission", "1", "submissionAddress"],
-  ["submissionEmails",   "submissionEmails",    "Submission email(s)",             "Submission", "1", "submissionEmails"],
-  ["submissionEmailSubject","submissionEmailSubject","Submission email subject",   "Submission", "",  "submissionEmailSubject"],
-  ["preBidChannel",      "preBidChannel",       "Pre-bid channel",                 "Pre-bid",    "",  "preBidChannel"],
-  ["preBidMeetingDate",  "preBidMeetingDate",   "Pre-bid meeting date",            "Pre-bid",    "",  "preBidMeetingDate"],
-  ["preBidMeetingLocation","preBidMeetingLocation","Pre-bid meeting location",     "Pre-bid",    "",  "preBidMeetingLocation"],
-] as const;
-
-// Fields that may NEVER be marked Not Applicable
-const NEVER_NOT_APPLICABLE = new Set(["deadline"]);
-
-// ─── Status chip config ───────────────────────────────────────────────────────
-
-type ChipStatus =
-  | "EXTRACTED_GROUNDED"
-  | "EXTRACTED_NO_EVIDENCE"
-  | "MANUAL_OVERRIDE"
-  | "MANUALLY_CONFIRMED"
-  | "NOT_STATED"
-  | "NOT_APPLICABLE"
-  | "RETRY_ON_ANALYZE"
-  | "INVALID_VALUE"
-  | "CONTAMINATED"
-  | "BLOCKED"
-  | "NOT_DETECTED";
-
-const CHIP: Record<ChipStatus, { label: string; classes: string }> = {
-  EXTRACTED_GROUNDED:    { label: "Extracted and grounded",     classes: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  EXTRACTED_NO_EVIDENCE: { label: "Extracted — review evidence", classes: "bg-blue-50 text-blue-700 border-blue-200" },
-  MANUAL_OVERRIDE:       { label: "Manual override",             classes: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  MANUALLY_CONFIRMED:    { label: "Manually confirmed",          classes: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  NOT_STATED:            { label: "Not stated in tender",        classes: "bg-amber-50 text-amber-700 border-amber-200" },
-  NOT_APPLICABLE:        { label: "Not applicable",              classes: "bg-slate-50 text-slate-600 border-slate-200" },
-  RETRY_ON_ANALYZE:      { label: "Retry on next AI Analyze",    classes: "bg-purple-50 text-purple-700 border-purple-200" },
-  INVALID_VALUE:         { label: "Invalid extracted value",     classes: "bg-red-50 text-red-700 border-red-200" },
-  CONTAMINATED:          { label: "Contaminated — review",       classes: "bg-red-50 text-red-700 border-red-200" },
-  BLOCKED:               { label: "Blocked — resolve to proceed", classes: "bg-red-50 text-red-700 border-red-200" },
-  NOT_DETECTED:          { label: "Not detected",                classes: "bg-slate-50 text-slate-500 border-slate-200" },
-};
-
-// ─── Utility functions ────────────────────────────────────────────────────────
-
-function pick(tender: Record<string, unknown>, keys: string): string | null {
-  for (const key of keys.split(",")) {
-    const value = tender[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (value != null && typeof value !== "object") return String(value);
-  }
-  return null;
-}
-
-/** Format a date value as "12 Dec 2026". Returns null when not parseable. */
-function formatDateUnambiguous(value: unknown): string | null {
-  if (!value) return null;
-  try {
-    const d = value instanceof Date ? value : new Date(String(value));
-    if (isNaN(d.getTime())) return null;
-    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  } catch {
-    return null;
-  }
-}
-
-/** Returns true when a date string is ambiguous (day and month both ≤ 12). */
+// A manually entered deadline must be in an unambiguous format. Mirrors the
+// server-side date guard so the user gets immediate feedback before saving.
 function isAmbiguousDate(value: string): boolean {
   if (/^\d{4}-\d{2}-\d{2}/.test(value)) return false; // ISO is unambiguous
   const m = value.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.]\d{2,4}$/);
@@ -125,284 +31,23 @@ function isAmbiguousDate(value: string): boolean {
   return false;
 }
 
-function resolveChipStatus(
-  override: Override | undefined,
-  value: string | null,
-  critical: boolean,
-  hasSource: boolean,
-): ChipStatus {
-  if (override?.fieldState === "USER_EDITED") return "MANUAL_OVERRIDE";
-  if (override?.fieldState === "NOT_APPLICABLE") return "NOT_APPLICABLE";
-  if (override?.fieldState === "IGNORED_WITH_REASON") return "NOT_STATED";
-  if (override?.fieldState === "MISSING") return "RETRY_ON_ANALYZE";
-  if (override?.fieldState === "USER_CONFIRMED") {
-    return value ? (hasSource ? "EXTRACTED_GROUNDED" : "MANUALLY_CONFIRMED") : "NOT_DETECTED";
-  }
-  if (value) return hasSource ? "EXTRACTED_GROUNDED" : "EXTRACTED_NO_EVIDENCE";
-  return critical ? "NOT_DETECTED" : "NOT_DETECTED";
-}
-
-/** Context-specific primary action label for each state. */
-function primaryActionLabel(field: string, status: ChipStatus): string {
-  if (field === "deadline") {
-    if (status === "NOT_DETECTED" || status === "EXTRACTED_NO_EVIDENCE") return "Set or correct deadline";
-    return "Correct deadline";
-  }
-  if (status === "EXTRACTED_NO_EVIDENCE" || status === "EXTRACTED_GROUNDED") return "Review source";
-  if (status === "NOT_DETECTED") return "Enter value";
-  if (status === "MANUAL_OVERRIDE") return "Edit value";
-  return "Resolve field";
-}
-
-function parseJsonObject(value: unknown): Record<string, unknown> {
-  if (typeof value !== "string" || !value.trim()) return {};
-  try {
-    const p = JSON.parse(value);
-    return p && typeof p === "object" && !Array.isArray(p) ? (p as Record<string, unknown>) : {};
-  } catch { return {}; }
-}
-
-function parseJsonArray(value: unknown): Array<Record<string, unknown>> {
-  if (typeof value !== "string" || !value.trim()) return [];
-  try {
-    const p = JSON.parse(value);
-    return Array.isArray(p)
-      ? (p.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>>)
-      : [];
-  } catch { return []; }
-}
-
-function num(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-function str(v: unknown): string | null {
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-function normalizeQuote(v: unknown): string | null {
-  const q = str(v);
-  return q ? q.replace(/\s+/g, " ").trim() : null;
-}
-
-function fileNameFor(tender: TenderPayload, fileId: unknown): string | null {
-  const id = str(fileId);
-  if (!id) return null;
-  const file = tender.files?.find((f) => f.id === id);
-  return file?.originalFileName ?? file?.fileName ?? null;
-}
-
-function sourceFromObject(tender: TenderPayload, raw: unknown): SourceInfo | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const item = raw as Record<string, unknown>;
-  const page = num(item.page) ?? num(item.sourcePage) ?? num(item.sourcePageNumber);
-  const quote = normalizeQuote(item.quote ?? item.sourceQuote ?? item.sourceExactQuote ?? item.snippet);
-  const fileName =
-    fileNameFor(tender, item.sourceTenderFileId ?? item.tenderFileId ?? item.fileId)
-    ?? str(item.fileName);
-  if (page == null && !quote && !fileName) return null;
-  return {
-    page,
-    quote,
-    fileName,
-    label: str(item.sectionHeading ?? item.sourceSectionHeading ?? item.section),
-  };
-}
-
-function sourceForField(tender: TenderPayload, field: string): SourceInfo | null {
-  const contactSources = parseJsonObject(tender.contactDetailsSourceJson);
-
-  if (field === "clientName") {
-    const structured = sourceFromObject(tender, contactSources.clientName ?? contactSources.procuringEntityName);
-    if (structured) return structured;
-    const page = num(tender.clientNameSourcePage);
-    const quote = normalizeQuote(tender.clientNameSourceQuote);
-    return page != null || quote ? { page, quote, fileName: null } : null;
-  }
-  if (field === "submissionEmails") {
-    const page = num(tender.submissionEmailSourcePage);
-    const contactEmailSource = sourceFromObject(tender, contactSources.clientContactEmail);
-    return page != null ? { page, quote: contactEmailSource?.quote ?? null, fileName: contactEmailSource?.fileName ?? null } : contactEmailSource;
-  }
-  if (field === "submissionMethod") {
-    const page = num(tender.submissionMethodSourcePage);
-    const quote = normalizeQuote(tender.submissionMethodSourceQuote);
-    if (page != null || quote) return { page, quote, fileName: null };
-    return sourceFromObject(tender, contactSources.submissionMethod);
-  }
-  if (field === "submissionAddress") {
-    const page = num(tender.submissionAddressSourcePage);
-    const quote = normalizeQuote(tender.submissionAddressSourceQuote);
-    if (page != null || quote) return { page, quote, fileName: null };
-    return sourceFromObject(tender, contactSources.submissionAddress);
-  }
-  if (field === "evaluationCriteria") {
-    const first = parseJsonArray(tender.evaluationCriteriaSourceJson).find(
-      (item) => item.sourcePage || item.sourcePageNumber || item.sourceQuote || item.quote,
-    );
-    const source = sourceFromObject(tender, first);
-    return source ? { ...source, label: source.label ?? "Evaluation criteria" } : null;
-  }
-  if (field === "requiredDocuments") {
-    const req = tender.requirements?.find(
-      (r) => r.sourcePageNumber || r.sourceExactQuote || r.sourceTenderFileId,
-    );
-    if (!req) return null;
-    return {
-      page: req.sourcePageNumber ?? null,
-      quote: normalizeQuote(req.sourceExactQuote),
-      fileName: fileNameFor(tender, req.sourceTenderFileId),
-      label: req.sourceSectionHeading ?? req.title ?? "Requirement source",
-    };
-  }
-
-  // All other fields: check contactDetailsSourceJson blob
-  const contactFieldMap: Record<string, string> = {
-    procuringEntityName:   "procuringEntityName",
-    legalClientName:       "legalClientName",
-    donorAgency:           "donorAgency",
-    implementingAgency:    "implementingAgency",
-    reference:             "procurementReferenceNumber",
-    country:               "country",
-    clientCity:            "clientCity",
-    clientAddress:         "clientAddress",
-    clientWebsite:         "clientWebsite",
-    clientContactName:     "clientContactName",
-    clientContactTitle:    "clientContactTitle",
-    clientContactEmail:    "clientContactEmail",
-    clientContactPhone:    "clientContactPhone",
-    clientRepresentative:  "clientRepresentative",
-    submissionEmailSubject:"submissionEmailSubject",
-    preBidChannel:         "preBidChannel",
-    preBidMeetingDate:     "preBidMeetingDate",
-    preBidMeetingLocation: "preBidMeetingLocation",
-  };
-  const contactKey = contactFieldMap[field];
-  if (contactKey) return sourceFromObject(tender, contactSources[contactKey]);
-
-  return null;
-}
-
-/** Server-computed field state (canonical resolver output, mapped to chips). */
-type ServerFieldState = {
-  status: string;
-  isGrounded: boolean;
-  criticality: string;
-  sourcePage: number | null;
-  sourceQuote: string | null;
-  value: string | null;
+// Maps a server-permitted action token to the override fieldState the
+// metadata-override API expects. The DISPLAY status is never computed here —
+// it always comes from the canonical snapshot. These actions only WRITE intent.
+const ACTION_FIELD_STATE: Record<string, { fieldState: string; reason: string }> = {
+  confirm:        { fieldState: "USER_CONFIRMED",      reason: "Confirmed from Client & Submission Details panel." },
+  not_applicable: { fieldState: "NOT_APPLICABLE",      reason: "Marked not applicable by user." },
+  not_stated:     { fieldState: "IGNORED_WITH_REASON", reason: "User confirmed this detail was not found in the tender." },
 };
 
-function buildRows(
-  tender: TenderPayload,
-  overrides: Override[],
-  fieldStates: Record<string, ServerFieldState>,
-): Row[] {
-  const byField = new Map(overrides.map((o) => [o.field, o]));
-  return SPECS.map(([key, field, label, group, criticalFlag, keys]) => {
-    const o = byField.get(field);
-
-    // Prefer override value when user has edited
-    const rawStored = pick(tender, keys);
-    let stored: string | null = rawStored;
-
-    // Format ISO dates as "12 Dec 2026"
-    if (field === "deadline" && stored) {
-      const formatted = formatDateUnambiguous(stored);
-      if (formatted) stored = formatted;
-    }
-
-    const effectiveValue =
-      o?.fieldState === "USER_EDITED" && o.overrideValue ? o.overrideValue : stored;
-
-    const source = sourceForField(tender, field);
-
-    // Status is SERVER-DERIVED: the canonical resolver is the single source of
-    // truth (lib/engine/canonical-field-state.ts). The local resolveChipStatus
-    // is only a graceful fallback for the rare case the server omitted this
-    // field (e.g. the resolver endpoint errored) so the panel still renders.
-    // Grounded requires BOTH page AND quote (not just one).
-    const hasSource = !!(source?.page != null && source?.page > 0 && source?.quote && source.quote.trim().length > 5);
-    const server = fieldStates[field];
-    const chipStatus: ChipStatus = server
-      ? (server.status as ChipStatus)
-      : resolveChipStatus(o, effectiveValue, criticalFlag === "1", hasSource);
-
-    return {
-      key,
-      field,
-      label,
-      group,
-      critical: criticalFlag === "1",
-      value: effectiveValue,
-      status: chipStatus,
-      source,
-    };
-  });
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-/** Structured evidence display for an extracted field. */
-function SourceEvidence({ source }: { source: SourceInfo | null }) {
-  if (!source) {
-    return (
-      <p className="mt-1 text-[11px] text-slate-500">
-        No structured page/quote evidence is stored for this value. Re-run AI Analyze if
-        source evidence is required.
-      </p>
-    );
-  }
-  const shortQuote = source.quote ? source.quote.slice(0, 200) : null;
-  const hasEvidence = source.page != null || shortQuote || source.fileName;
-
-  if (!hasEvidence) {
-    return (
-      <p className="mt-1 text-[11px] text-slate-500">
-        No structured page/quote evidence is stored for this value.
-      </p>
-    );
-  }
-
-  return (
-    <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
-      <p className="font-semibold text-slate-700 mb-1">Source evidence</p>
-      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-        {source.page != null && (
-          <span>Page <strong>{source.page}</strong></span>
-        )}
-        {source.fileName && (
-          <span>• {source.fileName}</span>
-        )}
-        {source.label && (
-          <span>• {source.label}</span>
-        )}
-      </div>
-      {shortQuote ? (
-        <details className="mt-1.5">
-          <summary className="cursor-pointer text-blue-700 hover:text-blue-900 text-[11px]">
-            View source quote
-          </summary>
-          <blockquote className="mt-1 border-l-2 border-slate-300 pl-2 italic text-slate-600">
-            &ldquo;{source.quote}&rdquo;
-          </blockquote>
-        </details>
-      ) : (
-        <p className="mt-1 text-slate-400 text-[11px]">Source quote not recorded.</p>
-      )}
-    </div>
-  );
-}
-
-/** Overflow action menu for secondary actions. */
-function OverflowMenu({
-  row,
-  canMarkNA,
-  onAction,
+function FieldActionMenu({
+  field,
   saving,
+  onAction,
 }: {
-  row: Row;
-  canMarkNA: boolean;
-  onAction: (action: string) => void;
+  field: CanonicalFieldState;
   saving: boolean;
+  onAction: (action: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -415,13 +60,21 @@ function OverflowMenu({
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  const isDeadline = row.field === "deadline";
+  const canEdit = field.permittedActions.includes("edit");
+  const canConfirm = field.permittedActions.includes("confirm");
+  const canNotApplicable = field.permittedActions.includes("not_applicable");
+  const canNotStated = field.permittedActions.includes("not_stated");
+  const canReviewSource = field.permittedActions.includes("review_source");
+
+  if (!canEdit && !canConfirm && !canNotApplicable && !canNotStated && !canReviewSource) {
+    return null;
+  }
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative shrink-0">
       <button
         type="button"
-        aria-label={`More actions for ${row.label}`}
+        aria-label={`More actions for ${field.label}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
@@ -431,55 +84,55 @@ function OverflowMenu({
         ⋮
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-slate-200 bg-white shadow-lg text-xs">
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
-            onClick={() => { onAction("EDIT_MANUALLY"); setOpen(false); }}
-          >
-            Edit value manually
-          </button>
-          {!isDeadline && canMarkNA && (
+        <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-slate-200 bg-white shadow-lg text-xs">
+          {canEdit && (
             <button
               type="button"
+              role="menuitem"
               className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
-              onClick={() => { onAction("MARK_NOT_APPLICABLE"); setOpen(false); }}
+              onClick={() => { onAction("edit"); setOpen(false); }}
+            >
+              Edit value manually
+            </button>
+          )}
+          {canConfirm && (
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
+              onClick={() => { onAction("confirm"); setOpen(false); }}
+            >
+              Confirm value
+            </button>
+          )}
+          {canNotApplicable && (
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
+              onClick={() => { onAction("not_applicable"); setOpen(false); }}
             >
               Mark not applicable
             </button>
           )}
-          {!isDeadline && (
+          {canNotStated && (
             <button
               type="button"
+              role="menuitem"
               className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
-              onClick={() => { onAction("MARK_NOT_FOUND"); setOpen(false); }}
+              onClick={() => { onAction("not_stated"); setOpen(false); }}
             >
               Record not found in tender
             </button>
           )}
-          {isDeadline && (
+          {canReviewSource && (
             <button
               type="button"
-              className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
-              onClick={() => { onAction("MARK_DEADLINE_NOT_STATED"); setOpen(false); }}
+              role="menuitem"
+              className="w-full text-left px-3 py-2 text-blue-700 hover:bg-blue-50 min-h-[44px] flex items-center"
+              onClick={() => { onAction("review_source"); setOpen(false); }}
             >
-              Record deadline not stated in tender
-            </button>
-          )}
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 hover:bg-slate-50 min-h-[44px] flex items-center"
-            onClick={() => { onAction("RETRY_ON_NEXT_ANALYZE"); setOpen(false); }}
-          >
-            Retry on next AI Analyze
-          </button>
-          {row.source && (
-            <button
-              type="button"
-              className="w-full text-left px-3 py-2 text-blue-700 hover:bg-blue-50"
-              onClick={() => { onAction("VIEW_SOURCE"); setOpen(false); }}
-            >
-              View source evidence
+              View source page &amp; quote
             </button>
           )}
         </div>
@@ -488,59 +141,27 @@ function OverflowMenu({
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────────
-
 export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string }) {
-  const [rows, setRows] = useState<Row[]>([]);
-  const [tender, setTender] = useState<TenderPayload | null>(null);
+  const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  // Which row has its source evidence expanded
-  const [expandedSource, setExpandedSource] = useState<string | null>(null);
-  // Inline editor state (replaces window.prompt). editingKey identifies the row
-  // currently being edited; editValue holds the in-progress input value.
-  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-
-  function startEditing(row: Row) {
-    setError("");
-    setEditValue(row.value ?? "");
-    setEditingKey(row.key);
-  }
-  function cancelEditing() {
-    setEditingKey(null);
-    setEditValue("");
-  }
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const [tenderRes, overrideRes] = await Promise.all([
-        fetch(`/api/tenders/${tenderId}`, { cache: "no-store" }),
-        fetch(`/api/tenders/${tenderId}/metadata-override`, { cache: "no-store" }),
-      ]);
-      const tenderData = (await tenderRes.json()) as TenderPayload;
-      if (!tenderRes.ok) throw new Error((tenderData as { error?: string }).error ?? "Failed to load tender");
-      const overrideJson = (await overrideRes.json().catch(() => ({}))) as {
-        overrides?: Override[];
-        fieldStates?: Record<string, ServerFieldState>;
-      };
-      setTender(tenderData);
-      setRows(
-        buildRows(
-          tenderData,
-          overrideRes.ok && Array.isArray(overrideJson.overrides) ? overrideJson.overrides : [],
-          overrideRes.ok && overrideJson.fieldStates ? overrideJson.fieldStates : {},
-        ),
-      );
-      setMessage(
-        overrideRes.ok
-          ? ""
-          : "Manual resolution storage is not available; extracted values are still visible.",
-      );
+      const res = await fetch(`/api/tenders/${tenderId}/workflow-center`, { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as { snapshot?: TenderReleaseSnapshot } | null;
+      if (!res.ok || !json?.snapshot) {
+        throw new Error("Failed to load snapshot");
+      }
+      setSnapshot(json.snapshot);
+      setSnapshotRevision(json.snapshot.snapshotRevision);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load client details");
     } finally {
@@ -548,26 +169,28 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
     }
   }
 
-  useEffect(() => { void load(); }, [tenderId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenderId]);
 
-  async function save(row: Row, action: string, editedValue?: string) {
-    // VIEW_SOURCE is client-only; no save needed
-    if (action === "VIEW_SOURCE") {
-      setExpandedSource(expandedSource === row.key ? null : row.key);
+  // Writes the user's intent through the canonical override API, then re-reads
+  // the snapshot so every panel shows the same server-resolved truth. The panel
+  // never classifies the field itself — it only records intent and re-fetches.
+  async function save(field: CanonicalFieldState, action: string, editedValue?: string) {
+    if (action === "review_source") {
+      setExpandedSource(expandedSource === field.fieldKey ? null : field.fieldKey);
       return;
     }
 
-    let fieldState = "USER_CONFIRMED";
+    let fieldState: string;
     let overrideValue: string | null = null;
-    let reason = "Confirmed from Client & Submission Details panel.";
+    let reason: string;
 
-    if (action === "EDIT_MANUALLY") {
-      // The value comes from the inline editor (a real <input>, with a native
-      // date picker for the deadline) — never from window.prompt.
+    if (action === "edit") {
       const v = (editedValue ?? "").trim();
       if (!v) return;
-      // Validate that a manually entered deadline is in unambiguous format.
-      if (row.field === "deadline" && isAmbiguousDate(v)) {
+      if (field.fieldKey === "deadline" && isAmbiguousDate(v)) {
         setError(
           `Deadline format is ambiguous — day and month order cannot be determined from "${v}". ` +
           `Enter an unambiguous date, e.g. "15 Dec 2026" or "2026-12-15".`,
@@ -577,46 +200,25 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
       fieldState = "USER_EDITED";
       overrideValue = v;
       reason = "Manual value entered by user.";
-    }
-    if (action === "IGNORE_FOR_THIS_TENDER") {
-      fieldState = "IGNORED_WITH_REASON";
-      reason = "Ignored for this tender by user.";
-    }
-    if (action === "MARK_NOT_APPLICABLE") {
-      fieldState = "NOT_APPLICABLE";
-      reason = "Marked not applicable by user.";
-    }
-    if (action === "MARK_DEADLINE_NOT_STATED") {
-      fieldState = "IGNORED_WITH_REASON";
-      reason = "Deadline not stated in the tender document. This remains a final-package blocker.";
-    }
-    if (action === "MARK_NOT_FOUND") {
-      fieldState = "IGNORED_WITH_REASON";
-      reason = "User confirmed this detail was not found in the tender.";
-    }
-    if (action === "RETRY_ON_NEXT_ANALYZE") {
-      fieldState = "MISSING";
-      reason = "Retry requested for next AI Analyze.";
+    } else {
+      const mapped = ACTION_FIELD_STATE[action];
+      if (!mapped) return;
+      fieldState = mapped.fieldState;
+      reason = mapped.reason;
     }
 
-    setSaving(row.key);
+    setSaving(field.fieldKey);
     setError("");
     try {
       const res = await fetch(`/api/tenders/${tenderId}/metadata-override`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          field: row.field,
-          fieldState,
-          overrideValue,
-          previousValue: row.value,
-          reason,
-        }),
+        body: JSON.stringify({ field: field.fieldKey, fieldState, overrideValue, reason }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "Failed to save");
-      setMessage(`${row.label} updated.`);
-      // Refresh without browser reload
+      setEditing(null);
+      setEditValue("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
@@ -625,221 +227,164 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
     }
   }
 
-  const blockerCount = rows.filter(
-    (r) => r.critical && (r.status === "NOT_DETECTED" || r.status === "RETRY_ON_ANALYZE"),
-  ).length;
+  if (loading) {
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="text-sm text-slate-500">Loading client details…</div>
+      </section>
+    );
+  }
+
+  if (error && !snapshot) {
+    return (
+      <section className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm sm:p-5">
+        <div className="text-sm text-red-700">{error || "Failed to load client details"}</div>
+      </section>
+    );
+  }
+
+  if (!snapshot) {
+    return (
+      <section className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm sm:p-5">
+        <div className="text-sm text-red-700">Failed to load client details</div>
+      </section>
+    );
+  }
+
+  const { metadata } = snapshot;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-3">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Client &amp; Submission Details</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-slate-900">Client &amp; Submission Details</h2>
+            {snapshotRevision && (
+              <span className="text-[10px] text-slate-400 font-mono ml-3">rev: {snapshotRevision.slice(0, 8)}</span>
+            )}
+          </div>
           <p className="mt-1 text-xs leading-5 text-slate-600">
-            Key fields extracted from the tender document. Missing optional details do not stop
-            document generation. Critical fields are marked and must be resolved before final
-            packaging.
+            Key fields extracted from the tender document. Critical fields must be resolved before final packaging.
           </p>
         </div>
         <button
           type="button"
-          onClick={load}
-          disabled={loading}
-          className="min-h-[40px] rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          onClick={() => void load()}
+          className="min-h-[44px] rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
         >
-          {loading ? "Refreshing…" : "Refresh"}
+          Refresh
         </button>
       </div>
 
-      {/* Contamination warning */}
-      {tender?.metadataContaminated === true && (
-        <div
-          className="mt-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800"
-          role="alert"
-        >
-          <span className="font-semibold block mb-1">⚠ Client metadata contaminated</span>
-          The extracted client / procuring entity details appear to contain portal navigation text,
-          headers, or unrelated tender information.{" "}
-          <strong>Final document generation and export are blocked</strong> until the correct value
-          is entered manually.
+      {metadata.hasGenerationBlocker && (
+        <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-700">
+          Critical fields are blocked. Resolve these before proceeding.
         </div>
       )}
 
-      {/* Critical blockers summary */}
-      {blockerCount > 0 && (
-        <div
-          className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
-          role="alert"
-        >
-          <span className="font-semibold">
-            {blockerCount === 1
-              ? "One critical detail needs action before final packaging."
-              : `${blockerCount} critical details need action before final packaging.`}
-          </span>{" "}
-          Resolve each critical field below to unblock generation and export.
-        </div>
-      )}
-
-      {/* Status / error messages */}
-      {message && !error && (
-        <p className="mt-3 rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700">
-          {message}
-        </p>
-      )}
       {error && (
-        <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           {error}
-        </p>
+        </div>
       )}
 
-      {/* Field rows */}
-      {loading ? (
-        <p className="mt-4 text-sm text-slate-500">Loading client details…</p>
-      ) : (
-        <div className="mt-4 space-y-2">
-          {rows.map((row) => {
-            const chip = CHIP[row.status as ChipStatus] ?? CHIP.NOT_DETECTED;
-            const isSaving = saving === row.key;
-            const canMarkNA = !NEVER_NOT_APPLICABLE.has(row.field);
-            const showSource = expandedSource === row.key;
+      <div className="space-y-1">
+        {metadata.fields.map((field) => {
+          const badge = STATUS_BADGE[field.status] ?? STATUS_BADGE.INVALID;
+          const isCritical = field.criticality === "always-critical";
+          // Grounding is shown from the canonical evidence: a field counts as
+          // sourced only when it has BOTH a real page AND a usable quote.
+          const source = { page: field.sourcePage, quote: field.sourceQuote };
+          const hasSource = !!(source?.page != null && source?.page > 0 && source?.quote && source.quote.trim().length > 5);
+          const isEditing = editing === field.fieldKey;
+          const isExpanded = expandedSource === field.fieldKey;
 
-            // Context-specific primary action
-            const primaryLabel = primaryActionLabel(row.field, row.status as ChipStatus);
-
-            return (
-              <div
-                key={row.key}
-                className="rounded-xl border border-slate-100 bg-slate-50/60 p-3"
-              >
-                {/* Field header row */}
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    {/* Labels */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="text-sm font-medium text-slate-900">{row.label}</p>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                        {row.group}
+          return (
+            <div
+              key={field.fieldKey}
+              className="border-b border-slate-50 py-2 last:border-0"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-700">{field.label}</span>
+                    {isCritical && (
+                      <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700">
+                        Critical
                       </span>
-                      {row.critical && (
-                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">
-                          Critical
-                        </span>
-                      )}
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${chip.classes}`}
-                        aria-label={`Status: ${chip.label}`}
+                    )}
+                    {hasSource && (
+                      <span className="rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600" title={`Page ${source.page}`}>
+                        sourced
+                      </span>
+                    )}
+                  </div>
+                  {field.blockerReason && (
+                    <p className="mt-0.5 text-[10px] text-red-600">{field.blockerReason}</p>
+                  )}
+                  {isEditing ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        placeholder={field.fieldKey === "deadline" ? "e.g. 2026-12-15" : "Enter value"}
+                        className="min-h-[44px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={saving === field.fieldKey}
+                        onClick={() => void save(field, "edit", editValue)}
+                        className="min-h-[44px] rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                       >
-                        {chip.label}
-                      </span>
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setEditing(null); setEditValue(""); }}
+                        className="min-h-[44px] rounded-lg border border-slate-300 px-4 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
                     </div>
-
-                    {/* Value display */}
-                    {row.value ? (
-                      <p className="mt-1 break-words text-sm text-slate-800">{row.value}</p>
-                    ) : row.status === "NOT_STATED" ? (
-                      <p className="mt-1 text-xs italic text-amber-700">
-                        Not stated in this tender document.
+                  ) : (
+                    field.effectiveValue && (
+                      <p className="mt-0.5 text-[10px] text-slate-500 truncate" title={field.effectiveValue}>
+                        {field.effectiveValue.length > 80 ? field.effectiveValue.slice(0, 80) + "…" : field.effectiveValue}
                       </p>
-                    ) : row.status === "NOT_APPLICABLE" ? (
-                      <p className="mt-1 text-xs italic text-slate-500">Not applicable.</p>
-                    ) : (
-                      <p className="mt-1 text-xs italic text-slate-500">
-                        {row.field === "requiredDocuments"
-                          ? "No structured list of required documents was extracted. Review detected pages or enter manually."
-                          : "No value detected in the tender document."}
-                      </p>
-                    )}
-
-                    {/* Inline editor — replaces window.prompt. Uses a native
-                        date picker for the deadline so the value cannot be an
-                        ambiguous free-text date. */}
-                    {editingKey === row.key && (
-                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <input
-                          type={row.field === "deadline" ? "date" : "text"}
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          autoFocus
-                          aria-label={`Enter value for ${row.label}`}
-                          placeholder={row.field === "deadline" ? "YYYY-MM-DD" : `Enter ${row.label}`}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") cancelEditing();
-                            if (e.key === "Enter" && row.field !== "deadline") {
-                              const v = editValue.trim();
-                              setEditingKey(null);
-                              void save(row, "EDIT_MANUALLY", v);
-                            }
-                          }}
-                          className="min-h-[44px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <div className="flex gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const v = editValue.trim();
-                              setEditingKey(null);
-                              void save(row, "EDIT_MANUALLY", v);
-                            }}
-                            className="min-h-[44px] rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700"
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelEditing}
-                            className="min-h-[44px] rounded-lg border border-slate-300 px-4 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Source evidence (expanded) */}
-                    {showSource && (
-                      <SourceEvidence source={row.source} />
-                    )}
-                    {/* Source evidence for extracted-grounded rows (collapsed by default) */}
-                    {!showSource &&
-                      (row.status === "EXTRACTED_GROUNDED" ||
-                        row.status === "EXTRACTED_NO_EVIDENCE") &&
-                      row.source && (
-                        <button
-                          type="button"
-                          onClick={() => setExpandedSource(row.key)}
-                          className="mt-1 text-[11px] text-blue-700 hover:underline"
-                        >
-                          View source evidence
-                        </button>
-                      )}
-                  </div>
-
-                  {/* Actions: primary button + overflow menu */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => startEditing(row)}
-                      disabled={isSaving}
-                      className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      {isSaving ? "Saving…" : primaryLabel}
-                    </button>
-                    <OverflowMenu
-                      row={row}
-                      canMarkNA={canMarkNA}
-                      onAction={(action) => {
-                        if (action === "EDIT_MANUALLY") startEditing(row);
-                        else void save(row, action);
-                      }}
-                      saving={isSaving}
-                    />
-                  </div>
+                    )
+                  )}
+                  {isExpanded && hasSource && (
+                    <div className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-600">
+                      <span className="font-semibold">Page {source.page}:</span> “{source.quote}”
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`rounded px-1.5 py-0.5 font-bold text-[9px] whitespace-nowrap ${badge.classes}`}
+                    title={field.blockerReason ?? undefined}
+                  >
+                    {badge.label}
+                  </span>
+                  <FieldActionMenu
+                    field={field}
+                    saving={saving === field.fieldKey}
+                    onAction={(action) => {
+                      if (action === "edit") {
+                        setEditing(field.fieldKey);
+                        setEditValue(field.effectiveValue ?? "");
+                      } else {
+                        void save(field, action);
+                      }
+                    }}
+                  />
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

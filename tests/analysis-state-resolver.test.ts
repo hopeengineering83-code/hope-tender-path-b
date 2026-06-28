@@ -46,10 +46,12 @@ function makeInput(overrides: Partial<DeriveAnalysisStateInput> = {}): DeriveAna
 
 // ─── Helper-function tests ────────────────────────────────────────────────
 
-test("AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK unblock export; others block", () => {
+test("AI_SUCCEEDED is the ONLY state that unblocks export; all others including HUMAN_APPROVED_FALLBACK block", () => {
   assert.equal(canExportWithAnalysisState("AI_SUCCEEDED"), true);
-  assert.equal(canExportWithAnalysisState("HUMAN_APPROVED_FALLBACK"), true);
+  // HUMAN_APPROVED_FALLBACK is now explicitly blocked — regex-fallback results
+  // cannot authorize generation or export. Re-run AI Analyze to obtain AI_SUCCEEDED.
   const blocked: AnalysisState[] = [
+    "HUMAN_APPROVED_FALLBACK",
     "NOT_STARTED", "QUEUED", "RUNNING", "PARTIAL_NEEDS_RESUME",
     "REGEX_FALLBACK_UNAPPROVED", "FAILED", "SUPERSEDED",
   ];
@@ -176,7 +178,7 @@ test("derive: FAILED + FALLBACK_DRAFT not promoted → REGEX_FALLBACK_UNAPPROVED
   assert.equal(d.resumable, true);
 });
 
-test("derive: FAILED + FALLBACK_DRAFT promoted → HUMAN_APPROVED_FALLBACK", () => {
+test("derive: FAILED + FALLBACK_DRAFT promoted → HUMAN_APPROVED_FALLBACK (now blocked for export)", () => {
   const d = deriveAnalysisStateDetail(makeInput({
     job: makeJob({
       status: "FAILED",
@@ -186,7 +188,8 @@ test("derive: FAILED + FALLBACK_DRAFT promoted → HUMAN_APPROVED_FALLBACK", () 
   }));
   assert.equal(d.state, "HUMAN_APPROVED_FALLBACK");
   assert.equal(d.analysisSource, "REGEX_FALLBACK");
-  assert.equal(canExportWithAnalysisState(d.state), true);
+  // HUMAN_APPROVED_FALLBACK is now blocked — regex-fallback cannot authorize export.
+  assert.equal(canExportWithAnalysisState(d.state), false);
 });
 
 test("derive: FAILED + PARTIAL_AI staged → PARTIAL_NEEDS_RESUME", () => {

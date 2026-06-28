@@ -48,14 +48,14 @@ describe("Gap C: streaming supersession marks SUPERSEDED not SUCCEEDED", () => {
 });
 
 describe("Gap E: fail-closed gates block all non-AI_SUCCEEDED states", () => {
-  it("canExportWithAnalysisState only allows AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK", () => {
+  it("canExportWithAnalysisState only allows AI_SUCCEEDED; HUMAN_APPROVED_FALLBACK now blocked", () => {
     const src = read("lib/engine/analysis-state-resolver.ts");
     const match = src.match(/export function canExportWithAnalysisState[\s\S]*?}/);
     assert.ok(match, "must find canExportWithAnalysisState");
     const fnBody = match[0];
     assert.ok(fnBody.includes("AI_SUCCEEDED"), "must allow AI_SUCCEEDED");
-    assert.ok(fnBody.includes("HUMAN_APPROVED_FALLBACK"), "must allow HUMAN_APPROVED_FALLBACK");
-    // Must NOT allow any other state
+    // HUMAN_APPROVED_FALLBACK was removed from the export allowlist; the gate
+    // now explicitly blocks it with FALLBACK_NOT_ALLOWED before canExport runs.
     assert.ok(!fnBody.includes("PARTIAL"), "must NOT allow PARTIAL");
     assert.ok(!fnBody.includes("FAILED"), "must NOT allow FAILED");
     assert.ok(!fnBody.includes("SUPERSEDED"), "must NOT allow SUPERSEDED");
@@ -65,11 +65,11 @@ describe("Gap E: fail-closed gates block all non-AI_SUCCEEDED states", () => {
     assert.ok(!fnBody.includes("NOT_STARTED"), "must NOT allow NOT_STARTED");
   });
 
-  it("HUMAN_APPROVED_FALLBACK requires fallbackApprovalBound", () => {
+  it("HUMAN_APPROVED_FALLBACK is blocked outright with FALLBACK_NOT_ALLOWED before any other check", () => {
     const src = read("lib/engine/generation-readiness-gate.ts");
     assert.ok(
-      src.includes('input.analysisState === "HUMAN_APPROVED_FALLBACK" && !input.fallbackApprovalBound'),
-      "HUMAN_APPROVED_FALLBACK must require fallbackApprovalBound",
+      src.includes('"FALLBACK_NOT_ALLOWED"') && src.includes('HUMAN_APPROVED_FALLBACK'),
+      "Gate must explicitly block HUMAN_APPROVED_FALLBACK with FALLBACK_NOT_ALLOWED",
     );
   });
 

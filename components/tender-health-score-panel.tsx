@@ -13,6 +13,7 @@ import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
 import { CanonicalStatusBadge, CanonicalStatusIcon } from "./canonical-status-badge";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleKey } from "../lib/engine/canonical-readiness-state";
 
@@ -293,6 +294,10 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
             <CanonicalStatusBadge status={healthState} size="sm" />
           </div>
           <p className="mt-1 text-sm text-slate-600">Composite score across {dimensions.length} quality dimensions. Canonical icon/state comes from the shared readiness payload; numeric score cannot override blockers.</p>
+          {/* Additive honest-UI overlay: authoritative release-snapshot
+              generation verdict + revision, read-only (a 0–100 score is not a
+              boolean verdict, so no mismatch warning is asserted here). */}
+          <SnapshotConsistencyBadge tenderId={tenderId} verdict="generation" />
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Raw points</p>
