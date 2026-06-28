@@ -110,20 +110,23 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
         setSnapshot(json.snapshot);
         setSnapshotRevision(json.snapshot.snapshotRevision);
         // Extract overrides from metadata fields in snapshot
-        const snapshotOverrides = json.snapshot.metadata.fields
+        const snapshotOverrides: Override[] = json.snapshot.metadata.fields
           .filter(f => f.blockerReason && f.status.includes("MANUAL"))
-          .map(f => ({
-            id: f.fieldKey,
-            tenderId,
-            field: f.fieldKey,
-            fieldState: f.status === "MANUAL_CONFIRMED" ? "USER_CONFIRMED" : "USER_EDITED",
-            overrideValue: f.effectiveValue,
-            reason: f.blockerReason,
-            previousValue: null,
-            overriddenBy: "",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }));
+          .map(f => {
+            const fieldState: FieldState = f.status === "MANUAL_CONFIRMED" ? "USER_CONFIRMED" : "USER_EDITED";
+            return {
+              id: f.fieldKey,
+              tenderId,
+              field: f.fieldKey,
+              fieldState,
+              overrideValue: f.effectiveValue,
+              reason: f.blockerReason,
+              previousValue: null,
+              overriddenBy: "",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          });
         setOverrides(snapshotOverrides);
         // Convert metadata snapshot to report format for display
         const metadataReport: MetadataReport = {
