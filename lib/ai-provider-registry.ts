@@ -111,6 +111,9 @@ const STANDARD_CAPS: ProviderOutputCaps = { analysis: 4000, proposal: 16000, fas
 // 8000 tokens is sufficient for a complete analysis JSON while still being
 // within free-tier limits for Z.ai GLM and Cerebras.
 const CONSERVATIVE_CAPS: ProviderOutputCaps = { analysis: 8000, proposal: 4000, fast: 1200 };
+// Hobby-safe caps: 2x proposal depth vs conservative, still fits 45s timeout.
+// GLM-4-Flash generates 8K tokens in ~20-25s, well within the 45s Tier 1 budget.
+const HOBBY_SAFE_CAPS: ProviderOutputCaps = { analysis: 8000, proposal: 8000, fast: 1200 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 // FIX: Z.ai and Cerebras need longer timeouts for AI Analyze. The analysis
@@ -143,7 +146,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
       analysisModel: "glm-4-flash",
       fastModel: "glm-4-flash",
     },
-    outputCaps: CONSERVATIVE_CAPS,
+    outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout for analysis — the large AI Analyze prompt needs
     // more than the 20s default. Z.ai glm-4-flash can take 15-40s on
     // a full tender analysis JSON response.
@@ -171,7 +174,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
       analysisModel: "gpt-oss-120b",
       fastModel: "gpt-oss-120b",
     },
-    outputCaps: CONSERVATIVE_CAPS,
+    outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout — same rationale as Z.ai.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
