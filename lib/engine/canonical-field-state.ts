@@ -25,6 +25,13 @@ import {
 } from "./metadata-validators";
 import { isPhysicalSubmissionMethod, isEmailSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { isGroundedEvidence as isGroundedSourceEvidence } from "./evidence-grounding";
+// The export/completeness gate's placeholder set is broader than the validators'
+// (e.g. "not available", "to be provided", mid-text "TBA", "fill in here"). The
+// resolver consults it too so the Client & Submission panel never shows a value
+// as valid that the export gate would reject as a placeholder. (We do NOT widen
+// the global containsMetadataPlaceholder, because sanitize-stored-metadata nulls
+// fields on it and mid-text matches would risk dropping legitimate values.)
+import { looksLikeMetadataPlaceholder } from "./tender-metadata-completeness";
 
 // ─── Canonical field-state vocabulary ──────────────────────────────────────
 
@@ -247,7 +254,7 @@ function getSourceEvidence(
 
 function validateValue(field: string, value: string): { valid: boolean; reason: string | null } {
   if (!value || value.trim().length === 0) return { valid: false, reason: "No value detected." };
-  if (containsMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
+  if (containsMetadataPlaceholder(value) || looksLikeMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
   if (isGenericFieldLabel(value)) return { valid: false, reason: "Value is a field heading, not real data." };
   if (field === "clientName" || field === "procuringEntityName") {
     if (!isValidClientName(value)) return { valid: false, reason: "Client name is too short or generic." };

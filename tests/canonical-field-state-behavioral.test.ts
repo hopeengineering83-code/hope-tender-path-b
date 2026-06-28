@@ -152,6 +152,19 @@ describe("canonical resolver — extended panel fields + chip mapping", () => {
     assert.equal(canonicalToClientChip(f), "EXTRACTED_GROUNDED");
   });
 
+  it("flags the export gate's broader placeholders so the panel matches export (no contradiction)", () => {
+    // These are placeholders to the completeness/export gate but were NOT caught
+    // by the resolver's validators before — the panel would show them valid while
+    // export blocked them.
+    for (const v of ["not available", "to be provided", "fill in here"]) {
+      const r = resolve(cleanTender({ clientName: v }));
+      assert.equal(field(r, "clientName").isValid, false, `"${v}" must be invalid in the resolver`);
+      assert.equal(r.hasGenerationBlocker, true, `"${v}" must block (clientName critical)`);
+    }
+    // A legitimate value is still valid.
+    assert.equal(field(resolve(cleanTender()), "clientName").isValid, true);
+  });
+
   it("maps canonical statuses to the panel chip vocabulary", () => {
     const clean = resolve(cleanTender());
     assert.equal(canonicalToClientChip(field(clean, "clientName")), "EXTRACTED_GROUNDED");
