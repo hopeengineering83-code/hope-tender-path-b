@@ -139,55 +139,33 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
           const badgeCfg = STATUS_BADGE[f.status] ?? STATUS_BADGE.INVALID;
           return (
             <div
-              key={f.field}
+              key={f.fieldKey}
               className="py-1.5 border-b border-slate-50 last:border-0"
             >
               <div className="flex items-start justify-between gap-2 text-xs">
                 <div className="min-w-0 flex-1">
                   <span className="font-medium text-slate-700">{f.label}</span>
-                  {f.isCritical && (
+                  {f.criticality === "always-critical" && (
                     <span className="ml-1.5 text-[9px] font-bold uppercase text-red-500">Critical</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {f.value && (
+                  {f.effectiveValue && (
                     <span
                       className="text-slate-400 truncate max-w-[160px] hidden sm:inline"
-                      title={f.value}
+                      title={f.effectiveValue}
                     >
-                      {f.value.length > 50 ? f.value.slice(0, 50) + "…" : f.value}
+                      {f.effectiveValue.length > 50 ? f.effectiveValue.slice(0, 50) + "…" : f.effectiveValue}
                     </span>
                   )}
                   <span
                     className={`rounded px-1.5 py-0.5 font-bold text-[9px] whitespace-nowrap ${badgeCfg.classes}`}
-                    title={f.blockerReason}
+                    title={f.blockerReason ?? undefined}
                   >
                     {badgeCfg.label}
                   </span>
                 </div>
               </div>
-
-              {/* Manual-override audit record. A manual override is valid but
-                  ungrounded — show who set it, when, why, and what it replaced
-                  (Manual Override & Evidence Policy point 3). */}
-              {f.override && (
-                <div className="mt-1 ml-2 pl-2 border-l-2 border-indigo-100 text-[10px] text-slate-500 space-y-0.5">
-                  <p>
-                    <span className="font-semibold text-indigo-600">Manual override · ungrounded.</span>{" "}
-                    Not backed by tender-source evidence.
-                  </p>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {f.override.actor && <span>By: {f.override.actor}</span>}
-                    {f.override.timestamp && (
-                      <span>At: {new Date(f.override.timestamp).toLocaleString()}</span>
-                    )}
-                  </div>
-                  {f.override.reason && <p>Reason: {f.override.reason}</p>}
-                  {f.override.previousValue && (
-                    <p className="text-slate-400">Previous value: {f.override.previousValue}</p>
-                  )}
-                </div>
-              )}
             </div>
           );
         })}

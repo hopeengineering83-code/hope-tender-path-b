@@ -39,7 +39,7 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
   assert(snapshot, "Snapshot must exist");
 
   // 4. Verify the snapshot has the deadline field
-  const deadlineField = snapshot.metadata.fields.find((f) => f.field === "deadline");
+  const deadlineField = snapshot.metadata.fields.find((f) => f.fieldKey === "deadline");
   assert(deadlineField, "Deadline field must be in snapshot");
 
   // 5. Verify that the deadline is BLOCKED because it's critical and ungrounded
