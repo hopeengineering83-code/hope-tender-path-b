@@ -14,21 +14,12 @@ import {
   fieldDisplayLabel,
 } from "../tender-policy-registry";
 import { isGroundedEvidence as isGroundedSourceEvidence } from "../evidence-grounding";
-
-export type MetadataFactStatus =
-  | "EXTRACTED_AND_GROUNDED"   // Valid value + tender-source evidence (page + quote) present
-  | "EXTRACTED_UNVERIFIED"     // Valid value present; no source evidence yet
-  | "MANUAL_OVERRIDE"          // User entered a value (valid but ungrounded)
-  | "MANUAL_CONFIRMED"         // User explicitly confirmed a value after review
-  | "NOT_FOUND_CONFIRMED"      // User confirmed field is genuinely absent (audited absence)
-  | "NOT_APPLICABLE"           // Field does not apply to this tender (audited absence)
-  | "AMBIGUOUS_SOURCE_TEXT"    // Value exists but cannot be trusted (short, ambiguous, etc.)
-  | "AMBIGUOUS_DATE"           // Date format is ambiguous — must be confirmed via date picker
-  | "GENERIC_FIELD_LABEL"      // Extracted value is a field heading, not real data
-  | "INTERNAL_PLACEHOLDER"     // Contains TBD / N/A / "Bid-Team to confirm" etc.
-  | "PORTAL_CONTAMINATION"     // Client name is contaminated by portal/navigation text
-  | "INVALID_FORMAT"           // Format validation failed (e.g., reference has no digit)
-  | "INVALID";                 // Default / error state (no value, no override)
+// MetadataFactStatus is now the canonical shared type. Both this panel and the
+// Client & Submission Details panel use CanonicalFieldStatus, which is re-exported
+// here under the legacy name for backward compatibility. No per-panel status
+// enum divergence is permitted.
+import type { MetadataFactStatus } from "../canonical-field-state";
+export type { MetadataFactStatus };
 
 /**
  * User-facing display labels. Resolved through the canonical registry so the
@@ -45,13 +36,15 @@ export const FIELD_DISPLAY_LABELS: Record<string, string> = Object.fromEntries(
 
 /** Blocker reasons shown to the user when a field prevents generation/export. */
 const BLOCKER_REASONS: Partial<Record<MetadataFactStatus, string>> = {
-  INVALID:               "No value detected. Manual input required.",
-  GENERIC_FIELD_LABEL:   "Extracted value is a field heading, not real data. Re-run AI Analyze or enter manually.",
+  INVALID:               "No value detected. Record a candidate value or resolve from a tender source.",
+  GENERIC_FIELD_LABEL:   "Extracted value is a field heading, not real data. Re-run AI Analyze or enter a value.",
   INTERNAL_PLACEHOLDER:  "Value contains a placeholder (TBD / N/A / Bid-Team to confirm). Replace with the actual value.",
   PORTAL_CONTAMINATION:  "Client name is contaminated by portal navigation text. Manually enter the correct procuring entity name.",
   AMBIGUOUS_DATE:        "Date format is ambiguous — day and month order cannot be determined. Use the date picker to set the confirmed date.",
-  INVALID_FORMAT:        "Value does not pass format validation. Re-run AI Analyze or enter manually.",
-  AMBIGUOUS_SOURCE_TEXT: "Extracted value is too short or structurally suspicious. Confirm via manual review.",
+  INVALID_FORMAT:        "Value does not pass format validation. Re-run AI Analyze or enter a value.",
+  MANUAL_OVERRIDE_CONFIRMATION_REQUIRED: "Candidate value entered. Critical fields remain blocked until linked to an active tender source.",
+  MANUAL_CONFIRMED:      "Manually confirmed but not source-grounded. Link to an active tender source to unblock generation.",
+  SOURCE_CONFLICT:       "Multiple contradictory source values detected. Resolve the conflict before generating.",
 };
 
 /**
@@ -150,7 +143,8 @@ function resolveFieldStatus(
     if (key === "deadline" && isAmbiguousDateString(val)) return "AMBIGUOUS_DATE";
     return "MANUAL_OVERRIDE";
   }
-  if (overrideFieldState === "IGNORED_WITH_REASON") return "NOT_FOUND_CONFIRMED";
+  // NOT_STATED (canonical) = IGNORED_WITH_REASON override = audited field absence.
+  if (overrideFieldState === "IGNORED_WITH_REASON") return "NOT_STATED";
 
   // Contamination only applies to clientName
   if (isContaminated && key === "clientName") return "PORTAL_CONTAMINATION";
@@ -187,11 +181,15 @@ function resolveFieldStatus(
   }
 
   if (key === "clientName") {
-    if (!isValidClientName(strVal)) return "AMBIGUOUS_SOURCE_TEXT";
+    // A short/ambiguous client name maps to EXTRACTED_UNVERIFIED (valid but not
+    // fully trusted) — AMBIGUOUS_SOURCE_TEXT is removed from the shared vocab.
+    if (!isValidClientName(strVal)) return "EXTRACTED_UNVERIFIED";
   }
 
-  // Length heuristic: very short values are suspicious for most fields
-  if (strVal.length < 3) return "AMBIGUOUS_SOURCE_TEXT";
+  // Length heuristic: very short values are suspicious for most fields.
+  // Map to EXTRACTED_UNVERIFIED (valid but review recommended) to stay within
+  // the shared canonical vocabulary.
+  if (strVal.length < 3) return "EXTRACTED_UNVERIFIED";
 
   // Clean, valid value but no evidence yet. The caller upgrades this to
   // EXTRACTED_AND_GROUNDED only when tender-source evidence exists.
@@ -201,13 +199,14 @@ function resolveFieldStatus(
 /**
  * Returns true when the field has a VALID, real value (Policy point 5:
  * audited-absence states do NOT count as valid). Manual overrides and
- * confirmations count; NOT_APPLICABLE / NOT_FOUND_CONFIRMED do not.
+ * confirmations count; NOT_APPLICABLE / NOT_STATED do not.
  */
 function isValidValueStatus(status: MetadataFactStatus): boolean {
   return (
     status === "EXTRACTED_AND_GROUNDED" ||
     status === "EXTRACTED_UNVERIFIED" ||
     status === "MANUAL_OVERRIDE" ||
+    status === "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" ||
     status === "MANUAL_CONFIRMED"
   );
 }
@@ -221,13 +220,13 @@ function hasAnyValue(status: MetadataFactStatus): boolean {
     status !== "INVALID" &&
     status !== "INVALID_FORMAT" &&
     status !== "NOT_APPLICABLE" &&
-    status !== "NOT_FOUND_CONFIRMED"
+    status !== "NOT_STATED"
   );
 }
 
 /** Returns true when the status represents a user-confirmed field. */
 function isConfirmedStatus(status: MetadataFactStatus): boolean {
-  return status === "MANUAL_CONFIRMED" || status === "NOT_FOUND_CONFIRMED";
+  return status === "MANUAL_CONFIRMED" || status === "NOT_STATED";
 }
 
 /**

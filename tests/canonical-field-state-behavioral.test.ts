@@ -124,12 +124,15 @@ describe("canonical resolver — behavioral gate decisions", () => {
     assert.equal(r.hasGenerationBlocker, true, "N/A cannot dismiss an always-critical field");
   });
 
-  it("does NOT block when a missing critical field is resolved by a valid USER_EDITED override", () => {
+  it("USER_EDITED on a critical field is a candidate — sets MANUAL_OVERRIDE_CONFIRMATION_REQUIRED and blocks generation", () => {
+    // USER_EDITED is never sufficient to unblock a critical field. The value is
+    // a candidate until linked to an active tender source (page + quote).
     const r = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
       overrides: [{ field: "clientName", fieldState: "USER_EDITED", overrideValue: "Nairobi City County", reason: "entered", overriddenBy: "u", createdAt: new Date() }],
     });
-    assert.equal(field(r, "clientName").blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, false);
+    assert.equal(field(r, "clientName").status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED");
+    assert.notEqual(field(r, "clientName").blockerReason, null, "USER_EDITED on critical field must have blockerReason");
+    assert.equal(r.hasGenerationBlocker, true, "USER_EDITED on critical field must block generation");
   });
 
   it("blocks requiredDocuments when there are no extracted requirements", () => {

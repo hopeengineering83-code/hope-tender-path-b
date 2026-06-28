@@ -381,7 +381,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Metadata Completion</h3>
           <p className="mt-0.5 text-xs text-slate-500">
-            Missing tender metadata fields. Fill manually, mark Not Applicable, or ignore with reason to unblock generation.
+            Missing tender metadata fields. Record a candidate value or resolve from a tender source. Critical fields remain blocked until source-grounded.
           </p>
         </div>
         <button

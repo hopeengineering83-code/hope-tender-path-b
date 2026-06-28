@@ -423,10 +423,12 @@ export async function resolveTenderAnalysisState(
 
 /**
  * Check if an analysis state unblocks generation/export.
- * Only AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK allow export.
+ * Only AI_SUCCEEDED is accepted. HUMAN_APPROVED_FALLBACK is explicitly
+ * blocked — regex/fallback analysis is not a sufficient basis for creating
+ * output GeneratedDocument rows, exporting, or building a Final ZIP.
  */
 export function canExportWithAnalysisState(state: AnalysisState): boolean {
-  return state === "AI_SUCCEEDED" || state === "HUMAN_APPROVED_FALLBACK";
+  return state === "AI_SUCCEEDED";
 }
 
 /**

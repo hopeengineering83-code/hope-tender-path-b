@@ -5,20 +5,25 @@ import type { MetadataTruthSummary, MetadataFactStatus } from "../lib/engine/ana
 
 // ─── Status badge config ────────────────────────────────────────────────────
 
+// Single controlled vocabulary shared with canonical-field-state.ts. Panels
+// must never map statuses independently — add new statuses here and in the
+// canonical type.
 const STATUS_BADGE: Record<MetadataFactStatus, { label: string; classes: string }> = {
-  EXTRACTED_AND_GROUNDED:  { label: "Extracted and grounded",     classes: "bg-emerald-100 text-emerald-700" },
-  EXTRACTED_UNVERIFIED:    { label: "Extracted — review evidence", classes: "bg-blue-100 text-blue-700" },
-  MANUAL_OVERRIDE:         { label: "Manual override",             classes: "bg-indigo-100 text-indigo-700" },
-  MANUAL_CONFIRMED:        { label: "Manually confirmed",          classes: "bg-emerald-100 text-emerald-700" },
-  NOT_FOUND_CONFIRMED:     { label: "Not stated in tender",        classes: "bg-slate-100 text-slate-600" },
-  NOT_APPLICABLE:          { label: "Not applicable",              classes: "bg-slate-100 text-slate-500" },
-  AMBIGUOUS_SOURCE_TEXT:   { label: "Extracted — review needed",   classes: "bg-amber-100 text-amber-700" },
-  AMBIGUOUS_DATE:          { label: "Date ambiguous — confirm",    classes: "bg-orange-100 text-orange-700" },
-  GENERIC_FIELD_LABEL:     { label: "Invalid extracted value",     classes: "bg-red-100 text-red-700" },
-  INTERNAL_PLACEHOLDER:    { label: "Placeholder detected",        classes: "bg-red-100 text-red-700" },
-  PORTAL_CONTAMINATION:    { label: "Contaminated — review",       classes: "bg-red-100 text-red-700" },
-  INVALID_FORMAT:          { label: "Invalid format",              classes: "bg-red-100 text-red-700" },
-  INVALID:                 { label: "Not detected",                classes: "bg-slate-100 text-slate-500" },
+  EXTRACTED_AND_GROUNDED:              { label: "Extracted and grounded",             classes: "bg-emerald-100 text-emerald-700" },
+  EXTRACTED_UNVERIFIED:                { label: "Extracted — review evidence",         classes: "bg-blue-100 text-blue-700" },
+  MANUAL_OVERRIDE:                     { label: "Candidate value (non-critical)",      classes: "bg-indigo-100 text-indigo-700" },
+  MANUAL_OVERRIDE_CONFIRMATION_REQUIRED: { label: "Candidate — blocked (critical)",   classes: "bg-orange-100 text-orange-700" },
+  MANUAL_CONFIRMED:                    { label: "Confirmed — needs source",            classes: "bg-amber-100 text-amber-700" },
+  NOT_STATED:                          { label: "Not stated in tender",                classes: "bg-slate-100 text-slate-600" },
+  NOT_APPLICABLE:                      { label: "Not applicable",                      classes: "bg-slate-100 text-slate-500" },
+  AMBIGUOUS_DATE:                      { label: "Date ambiguous — confirm",            classes: "bg-orange-100 text-orange-700" },
+  GENERIC_FIELD_LABEL:                 { label: "Invalid extracted value",             classes: "bg-red-100 text-red-700" },
+  INTERNAL_PLACEHOLDER:                { label: "Placeholder detected",                classes: "bg-red-100 text-red-700" },
+  PORTAL_CONTAMINATION:                { label: "Contaminated — review",               classes: "bg-red-100 text-red-700" },
+  INVALID_FORMAT:                      { label: "Invalid format",                      classes: "bg-red-100 text-red-700" },
+  SOURCE_CONFLICT:                     { label: "Source conflict — resolve",            classes: "bg-red-100 text-red-700" },
+  INVALID:                             { label: "Not detected",                        classes: "bg-slate-100 text-slate-500" },
+  BLOCKED:                             { label: "Blocked",                             classes: "bg-red-200 text-red-800" },
 };
 
 // ─── Metric card ─────────────────────────────────────────────────────────────

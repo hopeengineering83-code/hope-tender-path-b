@@ -676,7 +676,7 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
               ? "One critical detail needs action before final packaging."
               : `${blockerCount} critical details need action before final packaging.`}
           </span>{" "}
-          Resolve each critical field below to unblock generation and export.
+          Record a candidate value or resolve from an active tender source. Critical fields remain blocked until source-grounded.
         </div>
       )}
 

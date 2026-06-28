@@ -35,6 +35,33 @@ import {
 } from "./tender-analysis-content";
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
+import { resolveCanonicalFieldState } from "./canonical-field-state";
+
+// Local type stubs for Prisma query result shapes — avoids implicit `any` when
+// @prisma/client types are not yet generated in the current environment.
+type _TenderFileRow = {
+  id: string;
+  originalFileName: string;
+  extractedText: string | null;
+  extractionScore: number | null;
+  classification: string | null;
+  createdAt: Date;
+  deletionStatus: string | null;
+};
+type _RequirementRow = {
+  priority: string | null;
+  sourceTenderFileId: string | null;
+  sourcePageNumber: number | null;
+  sourceExactQuote: string | null;
+};
+type _MetadataOverrideRow = {
+  field: string;
+  fieldState: string;
+  overrideValue: string | null;
+  reason: string | null;
+  overriddenBy: string | null;
+  createdAt: Date;
+};
 
 export type GenerationPurpose =
   | "generate"
@@ -56,9 +83,12 @@ export type GenerationBlockerCode =
   | "ANALYSIS_NO_PROMOTED_JOB"
   | "ANALYSIS_HASH_MISMATCH"
   | "FALLBACK_UNAPPROVED"
+  | "FALLBACK_NOT_ALLOWED"
+  | "LEGACY_ANALYSIS_BLOCKED"
   | "CHUNKS_INCOMPLETE"
   | "REQUIREMENTS_MISSING"
   | "REQUIREMENT_SOURCE_UNGROUNDED"
+  | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
   | "GATE_INTERNAL_ERROR";
 
@@ -104,17 +134,18 @@ export interface GenerationReadinessInput {
   canonicalJobId: string | null; // latest job's id when promoted, else null
   latestJobHash: string | null; // analysisInputHash of the latest eligible job
   currentContentHash: string; // recomputed immediately before authorization
-  // I — regex-fallback approval bound to exact (tenderId, jobId, contentHash)
+  // I — regex-fallback approval (only consulted for legacy-compatible states; HUMAN_APPROVED_FALLBACK is now blocked)
   fallbackApprovalBound: boolean;
   // E — chunk integrity for the CURRENT content hash
   currentHashChunks: ReadinessChunkRow[];
   // F — requirement source grounding
   requirementCount: number;
   requirements: ReadinessRequirement[];
+  // G — critical metadata: no critical field may be invalid, placeholder, contaminated,
+  //     or a manual candidate without active tender-source evidence
+  criticalMetadataOk: boolean;
   // H — submission/build plan: count of non-superseded GeneratedDocument rows
   submissionPlanDocumentCount: number;
-  // Legacy analysis detection: tender was analyzed outside the AI job system
-  isLegacyAnalyzed: boolean;
 }
 
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
@@ -150,42 +181,37 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // D — Eligible AI Analyze job: state must be export-eligible
-  //     (AI_SUCCEEDED or HUMAN_APPROVED_FALLBACK). Everything else — NOT_STARTED,
-  //     QUEUED, RUNNING, PARTIAL_NEEDS_RESUME, FAILED, SUPERSEDED, and
-  //     REGEX_FALLBACK_UNAPPROVED — fails closed here.
+  // D — Eligible AI Analyze job: ONLY AI_SUCCEEDED is accepted.
+  //     HUMAN_APPROVED_FALLBACK is explicitly blocked — a regex fallback is not
+  //     a sufficient basis for generating or exporting tender documents. Re-run
+  //     AI Analyze to obtain a promoted AI_SUCCEEDED result.
+  //     Everything else (NOT_STARTED, QUEUED, RUNNING, PARTIAL_NEEDS_RESUME,
+  //     FAILED, SUPERSEDED, REGEX_FALLBACK_UNAPPROVED) also fails closed.
+  if (input.analysisState === "HUMAN_APPROVED_FALLBACK") {
+    return fail("FALLBACK_NOT_ALLOWED", "Analysis used a regex fallback. Regex-fallback and human-approved-fallback results cannot authorize generation or export. Re-run AI Analyze to obtain a promoted AI_SUCCEEDED result.");
+  }
   if (!canExportWithAnalysisState(input.analysisState)) {
     if (input.analysisState === "REGEX_FALLBACK_UNAPPROVED") {
-      return fail("FALLBACK_UNAPPROVED", "Latest analysis used the regex fallback and has not been human-approved. Re-run AI Analyze or approve the fallback before generating/exporting.");
+      return fail("FALLBACK_UNAPPROVED", "Latest analysis used the regex fallback and has not been approved. Re-run AI Analyze before generating or exporting.");
     }
     return fail("ANALYSIS_NOT_READY", `AI Analyze is not in an export-ready state (current: ${input.analysisState}). Run/complete AI Analyze before generating or exporting.`);
   }
 
-  // D — canonical promotion is mandatory (a SUCCEEDED job without promotion
-  //     cannot authorize final generation/export). Legacy-analyzed tenders (no
-  //     promoted job but has analysis) are allowed to proceed as a special case.
-  if (!input.canonicalJobId && !input.isLegacyAnalyzed) {
-    return fail("ANALYSIS_NO_PROMOTED_JOB", "The latest AI Analyze result has not been canonically promoted. Promotion is required before generation/export.");
+  // D — canonical promotion is mandatory. Legacy-analyzed tenders (no AI job
+  //     system, analyzed from notes) must re-run AI Analyze in the current
+  //     system to obtain a promoted result before generating or exporting.
+  if (!input.canonicalJobId) {
+    return fail("LEGACY_ANALYSIS_BLOCKED", "No promoted AI Analyze job found. Tenders analyzed before the current AI job system must re-run AI Analyze before generating or exporting.");
   }
 
   // C — Current content hash must equal the eligible job's analysisInputHash.
   //     Any change to active tender-file content or analyzed inputs invalidates
   //     the prior analysis (and, by extension, any prior fallback approval).
-  //     For legacy-analyzed tenders with no job, skip hash-binding validation.
-  if (!input.isLegacyAnalyzed) {
-    if (!input.latestJobHash) {
-      return fail("ANALYSIS_HASH_MISMATCH", "The eligible AI Analyze job has no recorded content hash; analysis cannot be trusted for generation/export.");
-    }
-    if (input.latestJobHash !== input.currentContentHash) {
-      return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender.");
-    }
+  if (!input.latestJobHash) {
+    return fail("ANALYSIS_HASH_MISMATCH", "The eligible AI Analyze job has no recorded content hash; analysis cannot be trusted for generation/export.");
   }
-
-  // I — Regex-fallback approval must be bound to the exact current job + hash.
-  //     A tender-wide ComplianceGap alone never authorizes; only a
-  //     FallbackApprovalRecord matching (tenderId, jobId, contentHash) counts.
-  if (input.analysisState === "HUMAN_APPROVED_FALLBACK" && !input.fallbackApprovalBound) {
-    return fail("FALLBACK_UNAPPROVED", "The current analysis is a regex fallback without a durable approval bound to this exact job and content hash. Re-approve the fallback for the current analysis before generating/exporting.");
+  if (input.latestJobHash !== input.currentContentHash) {
+    return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender.");
   }
 
   // E — Chunk integrity for the current content hash. Zero chunk rows is a valid
@@ -200,6 +226,15 @@ export function evaluateGenerationReadiness(
     if (hasBadChunk || (expected > 0 && succeeded < expected) || succeeded < input.currentHashChunks.length) {
       return fail("CHUNKS_INCOMPLETE", `AI Analyze chunks are incomplete for the current tender content (${succeeded}/${expected || input.currentHashChunks.length} succeeded). Resume or re-run AI Analyze.`);
     }
+  }
+
+  // G — Critical metadata: every critical field (clientName, title, deadline,
+  //     submissionMethod, submissionEndpoint, requiredDocuments) must be valid,
+  //     non-placeholder, non-contaminated, and either source-grounded or
+  //     source-confirmed. Manual candidates (USER_EDITED) and ungrounded
+  //     USER_CONFIRMED values are not sufficient for critical fields.
+  if (!input.criticalMetadataOk) {
+    return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, contaminated, or a manual candidate without active tender-source evidence. Resolve all critical fields before generating or exporting.");
   }
 
   // F — Requirement and source grounding.
@@ -250,7 +285,7 @@ export async function resolveCurrentAnalysisBinding(
     },
   });
   if (!tender) return { jobId: null, contentHash: null };
-  const activeFiles = tender.files.filter((f) => f.deletionStatus === "ACTIVE");
+  const activeFiles = (tender.files as _TenderFileRow[]).filter((f) => f.deletionStatus === "ACTIVE");
   const company = await prisma.company.findUnique({
     where: { userId },
     select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
@@ -292,13 +327,35 @@ export async function assertTenderReadyForGenerationAndExport(args: {
   const { prisma, tenderId, userId, purpose } = args;
   try {
     // A — ownership + load the inputs needed to recompute the content hash.
+    // Also load the metadata fields required for the canonical field-state resolver.
     const tender = await prisma.tender.findFirst({
       where: { id: tenderId, userId },
       select: {
         id: true,
         title: true,
+        reference: true,
         description: true,
         intakeSummary: true,
+        clientName: true,
+        procuringEntityName: true,
+        deadline: true,
+        currency: true,
+        country: true,
+        submissionMethod: true,
+        submissionAddress: true,
+        submissionEmails: true,
+        submissionEmailSubject: true,
+        clientContactName: true,
+        clientContactEmail: true,
+        metadataContaminated: true,
+        clientNameSourcePage: true,
+        clientNameSourceQuote: true,
+        submissionMethodSourcePage: true,
+        submissionMethodSourceQuote: true,
+        submissionAddressSourcePage: true,
+        submissionAddressSourceQuote: true,
+        submissionEmailSourcePage: true,
+        contactDetailsSourceJson: true,
         files: {
           select: {
             id: true,
@@ -310,13 +367,23 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             deletionStatus: true,
           },
         },
+        metadataOverrides: {
+          select: {
+            field: true,
+            fieldState: true,
+            overrideValue: true,
+            reason: true,
+            overriddenBy: true,
+            createdAt: true,
+          },
+        },
       },
     });
     if (!tender) {
       return { ok: false, blockerCode: "OWNERSHIP_TENDER_NOT_FOUND", blockerDetail: "Tender does not exist or does not belong to the requesting user.", purpose };
     }
 
-    const activeFiles = tender.files.filter((f) => f.deletionStatus === "ACTIVE");
+    const activeFiles = (tender.files as _TenderFileRow[]).filter((f) => f.deletionStatus === "ACTIVE");
 
     // B — per-file extraction quality + weak-extraction override lookup.
     const extractionFiles = await Promise.all(
@@ -354,12 +421,6 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       }),
     ]);
 
-    // I — fallback approval binding (only meaningful when the state is a fallback).
-    const fallbackApprovalBound =
-      analysis.state === "HUMAN_APPROVED_FALLBACK" && analysis.canonicalJobId
-        ? await hasBoundFallbackApproval(prisma, { tenderId, jobId: analysis.canonicalJobId, contentHash: currentContentHash })
-        : false;
-
     // E — chunk integrity for the CURRENT content hash only.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
       where: { tenderId, contentHash: currentContentHash, tender: { userId } },
@@ -372,7 +433,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       select: { priority: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true },
     });
     const activeFileIds = new Set(activeFiles.map((f) => f.id));
-    const mappedRequirements: ReadinessRequirement[] = requirements.map((r) => ({
+    const mappedRequirements: ReadinessRequirement[] = (requirements as _RequirementRow[]).map((r) => ({
       priority: r.priority,
       sourceTenderFileId: r.sourceTenderFileId,
       sourcePageNumber: r.sourcePageNumber,
@@ -380,15 +441,39 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
     }));
 
+    // G — canonical field-state resolver: every critical field must pass validation
+    //     before generation/export is authorized. No parallel metadata check needed —
+    //     this is the single authoritative source of critical field validity.
+    const fieldStates = resolveCanonicalFieldState({
+      tender: {
+        ...tender,
+        deadline: tender.deadline ?? null,
+        clientNameSourcePage: tender.clientNameSourcePage ?? null,
+        clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+        submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
+        submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+        submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
+        submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+        submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+        metadataContaminated: tender.metadataContaminated ?? false,
+      },
+      overrides: ((tender.metadataOverrides ?? []) as _MetadataOverrideRow[]).map((o) => ({
+        field: o.field,
+        fieldState: o.fieldState,
+        overrideValue: o.overrideValue,
+        reason: o.reason,
+        overriddenBy: o.overriddenBy,
+        createdAt: o.createdAt,
+      })),
+      hasExtractedRequirements: requirements.length > 0,
+      submissionMethodContext: tender.submissionMethod ?? undefined,
+    });
+
     // H — real submission-plan signal: non-superseded GeneratedDocument rows.
     const submissionPlanDocumentCount = await prisma.generatedDocument.count({
       where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     });
-
-    // Legacy analysis detection: tender has analysis (requirements exist) but no
-    // promoted job. These are tenders analyzed outside the current AI job system.
-    const isLegacyAnalyzed =
-      !analysis.canonicalJobId && requirements.length > 0;
 
     return evaluateGenerationReadiness({
       purpose,
@@ -399,12 +484,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       canonicalJobId: analysis.canonicalJobId,
       latestJobHash: latestJob?.analysisInputHash ?? null,
       currentContentHash,
-      fallbackApprovalBound,
+      fallbackApprovalBound: false, // HUMAN_APPROVED_FALLBACK is now blocked before this is checked
       currentHashChunks,
       requirementCount: requirements.length,
       requirements: mappedRequirements,
+      criticalMetadataOk: !fieldStates.hasGenerationBlocker,
       submissionPlanDocumentCount,
-      isLegacyAnalyzed,
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.

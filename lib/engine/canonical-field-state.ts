@@ -38,9 +38,9 @@ import { looksLikeMetadataPlaceholder } from "./tender-metadata-completeness";
 export type CanonicalFieldStatus =
   | "EXTRACTED_AND_GROUNDED"   // Valid value + tender-source evidence (file + page + quote)
   | "EXTRACTED_UNVERIFIED"     // Valid value; missing or incomplete source evidence
-  | "MANUAL_OVERRIDE"          // User entered a value (valid but ungrounded)
-  | "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" // User entered value, needs confirmation
-  | "MANUAL_CONFIRMED"         // User explicitly confirmed a value
+  | "MANUAL_OVERRIDE"          // User entered a candidate value (ungrounded; non-critical only)
+  | "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" // User entered value on critical field — blocked until source-grounded
+  | "MANUAL_CONFIRMED"         // User confirmed a value; blocks generation on critical fields unless source-grounded
   | "NOT_STATED"               // Audited absence — field not stated in tender
   | "NOT_APPLICABLE"           // Field does not apply
   | "AMBIGUOUS_DATE"           // Date format ambiguous
@@ -48,8 +48,20 @@ export type CanonicalFieldStatus =
   | "INTERNAL_PLACEHOLDER"     // Contains TBD/N/A/etc
   | "PORTAL_CONTAMINATION"     // Entity name polluted by portal/navigation text
   | "INVALID_FORMAT"           // Format validation failed
+  | "SOURCE_CONFLICT"          // Multiple contradictory source values detected
   | "INVALID"                  // No value, no override
   | "BLOCKED";                 // Field is blocked from all gates
+
+/**
+ * Shared metadata status type. Both the Client & Submission Details panel
+ * and the Metadata Truth panel use this single vocabulary — no per-panel
+ * status enum divergence is permitted.
+ *
+ * Migration note: metadata-truth.ts previously defined its own
+ * MetadataFactStatus. That type is now an alias of CanonicalFieldStatus so
+ * all panels always use the same controlled vocabulary.
+ */
+export type MetadataFactStatus = CanonicalFieldStatus;
 
 // Entity-identity fields whose value can be contaminated by scraped portal
 // navigation / unrelated-tender text (mirrors the Metadata Truth panel and the
@@ -268,7 +280,11 @@ function getSourceEvidence(
 function validateValue(field: string, value: string): { valid: boolean; reason: string | null } {
   if (!value || value.trim().length === 0) return { valid: false, reason: "No value detected." };
   if (containsMetadataPlaceholder(value) || looksLikeMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
-  if (isGenericFieldLabel(value)) return { valid: false, reason: "Value is a field heading, not real data." };
+  // submissionMethod values like "Email", "Portal", "Physical" are single-word
+  // designators — a valid submission method; do not reject them as field labels.
+  if (field !== "submissionMethod" && isGenericFieldLabel(value)) {
+    return { valid: false, reason: "Value is a field heading, not real data." };
+  }
   if (field === "clientName" || field === "procuringEntityName") {
     if (!isValidClientName(value)) return { valid: false, reason: "Client name is too short or generic." };
   }
@@ -345,14 +361,14 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       // user cannot dismiss a required field by marking it N/A.
       if (NEVER_NOT_APPLICABLE.has(fieldKey) || isCritical) {
         status = "BLOCKED";
-        blockerReason = `Field "${label}" is critical and cannot be marked Not Applicable. Provide a value or confirm it.`;
+        blockerReason = `Field "${label}" is critical. Not Applicable cannot unblock it. Record a candidate value or resolve from an active tender source.`;
       } else {
         status = "NOT_APPLICABLE";
       }
     } else if (override?.fieldState === "IGNORED_WITH_REASON") {
       status = "NOT_STATED";
       if (isCritical) {
-        blockerReason = `Field "${label}" is critical but not stated in tender. All gates remain blocked.`;
+        blockerReason = `Field "${label}" is critical. Not Stated cannot unblock it. Critical fields remain blocked until source-grounded.`;
       }
     } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr && !override) {
       // Contamination takes priority over validity (matches the Metadata Truth
@@ -370,9 +386,19 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         : "INVALID_FORMAT";
       blockerReason = validation.reason;
     } else if (override?.fieldState === "USER_CONFIRMED") {
+      // USER_CONFIRMED without active tender-source evidence remains blocked for
+      // critical fields. A human confirmation may resolve a field candidate but
+      // cannot substitute for real source proof when generation is at stake.
       status = "MANUAL_CONFIRMED";
+      if (isCritical && !isGroundedEvidence(evidence)) {
+        blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+      }
     } else if (override?.fieldState === "USER_EDITED") {
+      // USER_EDITED is always a candidate — never unlocks a critical field.
       status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
+      if (isCritical) {
+        blockerReason = `Field "${label}" has a candidate value. Critical fields remain blocked until linked to an active tender source.`;
+      }
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";
     } else {
@@ -403,8 +429,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // its raw text passes format validation (it is polluted by portal text).
     // Mirrors the Metadata Truth panel, which excludes PORTAL_CONTAMINATION from
     // the valid/grounded metrics.
+    // A MANUAL_OVERRIDE_CONFIRMATION_REQUIRED value is a candidate — it has
+    // a valid format but is not usable for the generation gate until confirmed
+    // against an active tender source, so isValid = false.
     const contaminated = status === "PORTAL_CONTAMINATION";
-    const effectiveValid = validation.valid && !contaminated;
+    const candidateUnconfirmed = status === "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED";
+    const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed;
     const effectiveGrounded = isGrounded && !contaminated;
 
     // Determine gate eligibility
