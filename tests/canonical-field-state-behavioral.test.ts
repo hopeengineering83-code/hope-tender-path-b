@@ -53,6 +53,36 @@ function resolve(tender: TenderInput, opts: Partial<Omit<CanonicalResolverInput,
 
 const field = (r: ReturnType<typeof resolve>, key: string) => r.fields.find((f) => f.fieldKey === key)!;
 
+describe("canonical resolver — contamination parity with the Metadata Truth panel", () => {
+  it("flags a contaminated client name as PORTAL_CONTAMINATION and blocks", () => {
+    const r = resolve(cleanTender({ metadataContaminated: true }));
+    const f = field(r, "clientName");
+    assert.equal(f.status, "PORTAL_CONTAMINATION");
+    assert.notEqual(f.blockerReason, null);
+    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(canonicalToClientChip(f), "CONTAMINATED");
+    // A contaminated field must NOT count as valid or grounded, even though its
+    // raw text passes format validation and has source evidence (cleanTender
+    // sets clientName page+quote). Mirrors the Metadata Truth panel.
+    assert.equal(f.isValid, false, "contaminated field must not be valid");
+    assert.equal(f.isGrounded, false, "contaminated field must not be grounded");
+    assert.equal(field(resolve(cleanTender()), "clientName").isGrounded, true, "(control) a clean clientName IS grounded");
+  });
+
+  it("does not flag contamination once the user has overridden the field", () => {
+    const r = resolve(cleanTender({ metadataContaminated: true }), {
+      overrides: [{ field: "clientName", fieldState: "USER_EDITED", overrideValue: "Ministry of Health", reason: "corrected", overriddenBy: "u", createdAt: new Date() }],
+    });
+    assert.notEqual(field(r, "clientName").status, "PORTAL_CONTAMINATION");
+  });
+
+  it("does not flag non-entity fields as contaminated", () => {
+    const r = resolve(cleanTender({ metadataContaminated: true }));
+    assert.notEqual(field(r, "title").status, "PORTAL_CONTAMINATION");
+    assert.notEqual(field(r, "deadline").status, "PORTAL_CONTAMINATION");
+  });
+});
+
 describe("canonical resolver — behavioral gate decisions", () => {
   // ─── REGRESSION: the bug this work fixed ───────────────────────────────────
   it("does NOT block a clean, fully-populated tender (title/deadline ungrounded is allowed)", () => {
@@ -108,6 +138,14 @@ describe("canonical resolver — behavioral gate decisions", () => {
     assert.equal(r.hasGenerationBlocker, true);
   });
 
+  it("does NOT block when clientName is empty but procuringEntityName is set (back-fill window)", () => {
+    const r = resolve(cleanTender({ clientName: null }));
+    // procuringEntityName is still set in cleanTender → clientName falls back to it
+    assert.equal(field(r, "clientName").effectiveValue, "Ministry of Health, Republic of Kenya");
+    assert.notEqual(field(r, "clientName").status, "INVALID");
+    assert.equal(r.hasGenerationBlocker, false, "a tender with a procuring entity must not be blocked as missing client");
+  });
+
   it("does NOT block on a missing NON-critical field (reference)", () => {
     const r = resolve(cleanTender({ reference: null }));
     assert.equal(r.hasGenerationBlocker, false);
@@ -150,6 +188,19 @@ describe("canonical resolver — extended panel fields + chip mapping", () => {
     assert.equal(f.sourcePage, 2);
     assert.equal(f.isGrounded, true, "legalClientName must be grounded from contactDetailsSourceJson");
     assert.equal(canonicalToClientChip(f), "EXTRACTED_GROUNDED");
+  });
+
+  it("flags the export gate's broader placeholders so the panel matches export (no contradiction)", () => {
+    // These are placeholders to the completeness/export gate but were NOT caught
+    // by the resolver's validators before — the panel would show them valid while
+    // export blocked them.
+    for (const v of ["not available", "to be provided", "fill in here"]) {
+      const r = resolve(cleanTender({ clientName: v }));
+      assert.equal(field(r, "clientName").isValid, false, `"${v}" must be invalid in the resolver`);
+      assert.equal(r.hasGenerationBlocker, true, `"${v}" must block (clientName critical)`);
+    }
+    // A legitimate value is still valid.
+    assert.equal(field(resolve(cleanTender()), "clientName").isValid, true);
   });
 
   it("maps canonical statuses to the panel chip vocabulary", () => {

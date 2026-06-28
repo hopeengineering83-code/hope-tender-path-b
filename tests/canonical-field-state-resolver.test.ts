@@ -36,11 +36,18 @@ describe("Canonical field-state resolver", () => {
     assert.ok(src.includes("isManuallyConfirmed"), "must have isManuallyConfirmed");
   });
 
-  it("grounded requires BOTH page AND quote (not just one)", () => {
+  it("grounded requires BOTH page AND quote (not just one) — via the shared predicate", () => {
     const src = read("lib/engine/canonical-field-state.ts");
+    // Grounding now delegates to the shared lib/engine/evidence-grounding module
+    // so this resolver and the Metadata Truth resolver apply an identical rule.
     assert.ok(
-      src.includes("evidence.page != null") && src.includes("evidence.quote != null"),
-      "isGroundedEvidence must check both page AND quote",
+      src.includes('from "./evidence-grounding"'),
+      "must import the shared grounding predicate",
+    );
+    const shared = read("lib/engine/evidence-grounding.ts");
+    assert.ok(
+      shared.includes("page > 0") && shared.includes("MIN_GROUNDING_QUOTE_LENGTH"),
+      "shared predicate must require page > 0 AND a non-trivial quote",
     );
   });
 

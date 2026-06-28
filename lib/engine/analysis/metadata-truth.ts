@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import { assessTenderMetadataCompleteness } from "../tender-metadata-completeness";
+import { assessTenderMetadataCompleteness, looksLikeMetadataPlaceholder } from "../tender-metadata-completeness";
 import {
   containsMetadataPlaceholder,
   isValidClientName,
@@ -13,6 +13,7 @@ import {
   isCriticalField,
   fieldDisplayLabel,
 } from "../tender-policy-registry";
+import { isGroundedEvidence as isGroundedSourceEvidence } from "../evidence-grounding";
 
 export type MetadataFactStatus =
   | "EXTRACTED_AND_GROUNDED"   // Valid value + tender-source evidence (page + quote) present
@@ -162,8 +163,11 @@ function resolveFieldStatus(
   // Generic field-label check — catches "Number", "Title", "Client Name" etc.
   if (isGenericFieldLabel(strVal)) return "GENERIC_FIELD_LABEL";
 
-  // Placeholder check — catches TBD, N/A, "Bid-Team to confirm" etc.
-  if (containsMetadataPlaceholder(strVal)) return "INTERNAL_PLACEHOLDER";
+  // Placeholder check — catches TBD, N/A, "Bid-Team to confirm" etc. Consults
+  // BOTH the validators' set and the export/completeness gate's broader set
+  // (e.g. "not available", "to be provided") so the Metadata Truth panel never
+  // disagrees with the Client & Submission panel or the export gate.
+  if (containsMetadataPlaceholder(strVal) || looksLikeMetadataPlaceholder(strVal)) return "INTERNAL_PLACEHOLDER";
 
   // Field-specific format validation
   if (key === "deadline") {
@@ -233,9 +237,10 @@ function isConfirmedStatus(status: MetadataFactStatus): boolean {
  */
 function hasGroundingEvidence(ev: FieldEvidence | undefined): boolean {
   if (!ev) return false;
-  const hasPage = typeof ev.page === "number" && Number.isFinite(ev.page);
-  const hasQuote = typeof ev.quote === "string" && ev.quote.trim().length > 0;
-  return hasPage && hasQuote;
+  // Use the shared grounding predicate so the Metadata Truth panel and the
+  // Client & Submission panel / gates apply IDENTICAL grounding (page > 0 AND a
+  // non-trivial quote) and can never contradict each other.
+  return isGroundedSourceEvidence(ev.page, ev.quote);
 }
 
 /** Safely parse a JSON object of per-field { page, quote } evidence. */

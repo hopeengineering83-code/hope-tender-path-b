@@ -17,6 +17,7 @@ import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { VALID_FIELD_STATES, KNOWN_METADATA_FIELDS, type MetadataFieldState } from "../../../../../lib/engine/metadata-override";
 import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../../lib/engine/canonical-field-state";
+import { isCriticalField, canBeNotApplicable } from "../../../../../lib/engine/tender-policy-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -230,12 +231,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return false;
   }
 
-  // Always-critical fields that can NEVER be NOT_APPLICABLE
-  const ALWAYS_CRITICAL_FIELDS = new Set([
-    "clientName", "procuringEntityName", "title", "reference",
-    "submissionMethod", "submissionEndpoint", "submissionEmails",
-    "submissionAddress", "deadline", "requiredDocuments",
-  ]);
+  // Criticality is decided by the canonical policy registry — NOT a local list
+  // (single source of truth). A field is critical here exactly when the
+  // generation/export gates treat it as critical, including method-conditional
+  // fields (submissionAddress for physical methods, submissionEmails for email).
+  // This keeps the override API's N/A rejection in lock-step with the gates: a
+  // user cannot mark `reference` N/A here while the gates treat it as N/A-able,
+  // and cannot mark `submissionEmails` N/A on an email tender.
+  const policyCtx = { submissionMethod: tenderData?.submissionMethod ?? null };
+  const isAlwaysOrConditionallyCritical = (f: string): boolean =>
+    !canBeNotApplicable(f) || isCriticalField(f, policyCtx);
 
   // ─── Validate by fieldState ──────────────────────────────────────
   if (fieldState === "USER_EDITED") {
@@ -288,9 +293,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (fieldState === "NOT_APPLICABLE") {
-    if (ALWAYS_CRITICAL_FIELDS.has(field)) {
+    if (isAlwaysOrConditionallyCritical(field)) {
       return err(
-        `Field "${field}" is always-critical and cannot be marked Not Applicable.`,
+        `Field "${field}" is critical for this tender and cannot be marked Not Applicable. Provide a value or confirm it.`,
         400,
         "NOT_APPLICABLE_REJECTED",
       );
@@ -304,11 +309,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!reason || reason.trim().length < 5) {
       return err("Not stated / ignored requires a non-empty reason (at least 5 characters).", 400, "REASON_REQUIRED");
     }
-    // For always-critical fields, this is an audited absence — does NOT unblock gates
-    if (ALWAYS_CRITICAL_FIELDS.has(field)) {
-      // Allow recording but it will not resolve the field for generation/export
-      // The canonical resolver must enforce this.
-    }
+    // For critical fields IGNORED_WITH_REASON is an audited absence that is
+    // recorded but does NOT unblock generation/export — the canonical resolver
+    // enforces that (it produces NOT_STATED with a blockerReason for critical
+    // fields). No special handling needed here.
   }
 
   // ─── Required documents cannot be satisfied by a string override ───

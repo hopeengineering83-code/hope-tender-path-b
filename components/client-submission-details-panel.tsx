@@ -76,6 +76,7 @@ type ChipStatus =
   | "NOT_APPLICABLE"
   | "RETRY_ON_ANALYZE"
   | "INVALID_VALUE"
+  | "CONTAMINATED"
   | "BLOCKED"
   | "NOT_DETECTED";
 
@@ -88,6 +89,7 @@ const CHIP: Record<ChipStatus, { label: string; classes: string }> = {
   NOT_APPLICABLE:        { label: "Not applicable",              classes: "bg-slate-50 text-slate-600 border-slate-200" },
   RETRY_ON_ANALYZE:      { label: "Retry on next AI Analyze",    classes: "bg-purple-50 text-purple-700 border-purple-200" },
   INVALID_VALUE:         { label: "Invalid extracted value",     classes: "bg-red-50 text-red-700 border-red-200" },
+  CONTAMINATED:          { label: "Contaminated — review",       classes: "bg-red-50 text-red-700 border-red-200" },
   BLOCKED:               { label: "Blocked — resolve to proceed", classes: "bg-red-50 text-red-700 border-red-200" },
   NOT_DETECTED:          { label: "Not detected",                classes: "bg-slate-50 text-slate-500 border-slate-200" },
 };

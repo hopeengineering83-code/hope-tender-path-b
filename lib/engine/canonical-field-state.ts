@@ -24,6 +24,14 @@ import {
   isAmbiguousDateString,
 } from "./metadata-validators";
 import { isPhysicalSubmissionMethod, isEmailSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
+import { isGroundedEvidence as isGroundedSourceEvidence } from "./evidence-grounding";
+// The export/completeness gate's placeholder set is broader than the validators'
+// (e.g. "not available", "to be provided", mid-text "TBA", "fill in here"). The
+// resolver consults it too so the Client & Submission panel never shows a value
+// as valid that the export gate would reject as a placeholder. (We do NOT widen
+// the global containsMetadataPlaceholder, because sanitize-stored-metadata nulls
+// fields on it and mid-text matches would risk dropping legitimate values.)
+import { looksLikeMetadataPlaceholder } from "./tender-metadata-completeness";
 
 // ─── Canonical field-state vocabulary ──────────────────────────────────────
 
@@ -38,9 +46,18 @@ export type CanonicalFieldStatus =
   | "AMBIGUOUS_DATE"           // Date format ambiguous
   | "GENERIC_FIELD_LABEL"      // Value is a field heading
   | "INTERNAL_PLACEHOLDER"     // Contains TBD/N/A/etc
+  | "PORTAL_CONTAMINATION"     // Entity name polluted by portal/navigation text
   | "INVALID_FORMAT"           // Format validation failed
   | "INVALID"                  // No value, no override
   | "BLOCKED";                 // Field is blocked from all gates
+
+// Entity-identity fields whose value can be contaminated by scraped portal
+// navigation / unrelated-tender text (mirrors the Metadata Truth panel and the
+// export gate's contamination handling).
+const ENTITY_IDENTITY_FIELDS: ReadonlySet<string> = new Set([
+  "clientName",
+  "procuringEntityName",
+]);
 
 export type CanonicalFieldState = {
   fieldKey: string;
@@ -166,7 +183,11 @@ const FIELDS_TO_EVALUATE = [
 
 function getRawValue(tender: CanonicalResolverInput["tender"], field: string): string | null {
   const map: Record<string, string | null | undefined> = {
-    clientName: tender.clientName,
+    // Fall back to the AI-extracted procuring-entity name when clientName has
+    // not been back-filled yet — otherwise a tender that HAS a procuring entity
+    // would be wrongly blocked as "missing client name". Matches the completeness
+    // gate and the Metadata Truth panel, which both use clientName || procuringEntityName.
+    clientName: tender.clientName ?? tender.procuringEntityName,
     procuringEntityName: tender.procuringEntityName,
     title: tender.title,
     reference: tender.reference,
@@ -246,7 +267,7 @@ function getSourceEvidence(
 
 function validateValue(field: string, value: string): { valid: boolean; reason: string | null } {
   if (!value || value.trim().length === 0) return { valid: false, reason: "No value detected." };
-  if (containsMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
+  if (containsMetadataPlaceholder(value) || looksLikeMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
   if (isGenericFieldLabel(value)) return { valid: false, reason: "Value is a field heading, not real data." };
   if (field === "clientName" || field === "procuringEntityName") {
     if (!isValidClientName(value)) return { valid: false, reason: "Client name is too short or generic." };
@@ -261,9 +282,9 @@ function validateValue(field: string, value: string): { valid: boolean; reason: 
 }
 
 function isGroundedEvidence(evidence: { page: number | null; quote: string | null; fileId: string | null }): boolean {
-  // Grounded requires: page AND quote (fileId is ideal but not always available)
-  return evidence.page != null && evidence.page > 0 &&
-    evidence.quote != null && evidence.quote.trim().length > 5;
+  // Grounded requires page AND a non-trivial quote — via the shared predicate so
+  // this resolver and the Metadata Truth resolver can never disagree.
+  return isGroundedSourceEvidence(evidence.page, evidence.quote);
 }
 
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
@@ -333,6 +354,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         blockerReason = `Field "${label}" is critical but not stated in tender. All gates remain blocked.`;
       }
+    } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr && !override) {
+      // Contamination takes priority over validity (matches the Metadata Truth
+      // panel): a client/procuring name polluted by portal navigation or
+      // unrelated-tender text must be corrected before generation/export.
+      status = "PORTAL_CONTAMINATION";
+      blockerReason = `Field "${label}" appears contaminated by tender-portal navigation or unrelated-tender text. Correct it before generating documents.`;
     } else if (!effectiveStr) {
       status = "INVALID";
       blockerReason = isCritical ? `Missing critical field: ${label}.` : null;
@@ -372,6 +399,14 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       }
     }
 
+    // A contaminated value is NOT valid and NOT grounded, regardless of whether
+    // its raw text passes format validation (it is polluted by portal text).
+    // Mirrors the Metadata Truth panel, which excludes PORTAL_CONTAMINATION from
+    // the valid/grounded metrics.
+    const contaminated = status === "PORTAL_CONTAMINATION";
+    const effectiveValid = validation.valid && !contaminated;
+    const effectiveGrounded = isGrounded && !contaminated;
+
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;
     const generationEligible = !isBlocked || (!isCritical && status !== "BLOCKED");
@@ -384,14 +419,14 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       hasZipBlocker = true;
     }
 
-    if (validation.valid) validCount++;
-    if (isGrounded) groundedCount++;
+    if (effectiveValid) validCount++;
+    if (effectiveGrounded) groundedCount++;
     if (isBlocked) blockedCount++;
 
     // Permitted actions
     const permittedActions: string[] = [];
-    if (!effectiveStr || !validation.valid) permittedActions.push("edit");
-    if (validation.valid && !isGrounded && !override) permittedActions.push("confirm");
+    if (!effectiveStr || !effectiveValid) permittedActions.push("edit");
+    if (effectiveValid && !effectiveGrounded && !override) permittedActions.push("confirm");
     if (override && override.fieldState === "USER_EDITED") permittedActions.push("confirm");
     if (!NEVER_NOT_APPLICABLE.has(fieldKey) && !isCritical) permittedActions.push("not_applicable");
     if (effectiveStr && !override) permittedActions.push("not_stated");
@@ -403,8 +438,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       status,
       rawValue,
       effectiveValue: effectiveStr || null,
-      isValid: validation.valid,
-      isGrounded,
+      isValid: effectiveValid,
+      isGrounded: effectiveGrounded,
       overrideState,
       isManuallyConfirmed,
       criticality,
@@ -419,7 +454,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       sourcePage: evidence.page,
       sourceQuote: evidence.quote,
       extractionMethod: null,
-      confidence: isGrounded ? 0.8 : 0,
+      confidence: effectiveGrounded ? 0.8 : 0,
       overriddenBy: override?.overriddenBy ?? null,
       overrideReason: override?.reason ?? null,
       overrideTimestamp: override?.createdAt ?? null,
@@ -453,6 +488,7 @@ export type ClientChipStatus =
   | "NOT_APPLICABLE"
   | "RETRY_ON_ANALYZE"
   | "INVALID_VALUE"
+  | "CONTAMINATED"
   | "BLOCKED"
   | "NOT_DETECTED";
 
@@ -467,6 +503,7 @@ export function canonicalToClientChip(state: CanonicalFieldState): ClientChipSta
     case "MANUAL_CONFIRMED": return "MANUALLY_CONFIRMED";
     case "NOT_STATED": return "NOT_STATED";
     case "NOT_APPLICABLE": return "NOT_APPLICABLE";
+    case "PORTAL_CONTAMINATION": return "CONTAMINATED";
     case "AMBIGUOUS_DATE":
     case "GENERIC_FIELD_LABEL":
     case "INTERNAL_PLACEHOLDER":
