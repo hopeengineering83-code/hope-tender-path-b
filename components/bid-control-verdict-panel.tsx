@@ -3,6 +3,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 import { BidDecisionForm } from "./bid-decision-form";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";
 
@@ -151,6 +152,16 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <p className="text-[10px] text-slate-400">{statusText(tender.status)}</p>
         </div>
       </div>
+
+      {/* Additive honest-UI overlay: warn if this panel's strict full-proposal
+          verdict disagrees with the authoritative release-snapshot generation
+          verdict. Read-and-compare only; never replaces the logic above. */}
+      <SnapshotConsistencyBadge
+        tenderId={tenderId}
+        verdict="generation"
+        localEligible={fullProposalReady}
+        localLabel="Bid Control"
+      />
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
         <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation.">

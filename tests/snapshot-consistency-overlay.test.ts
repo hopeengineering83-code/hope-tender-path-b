@@ -50,10 +50,13 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
     );
   });
 
-  it("is mounted in the readiness panels that independently fetch readiness", () => {
+  it("is mounted across all readiness/verdict panels for full coverage", () => {
     for (const panel of [
       "components/final-submission-control-center.tsx",
       "components/canonical-readiness-score-widget.tsx",
+      "components/bid-control-verdict-panel.tsx",
+      "components/tender-health-score-panel.tsx",
+      "app/dashboard/tenders/[id]/executive-snapshot.tsx",
     ]) {
       const src = read(panel);
       assert.ok(
@@ -61,6 +64,14 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
         `${panel} must mount the additive SnapshotConsistencyBadge overlay`,
       );
     }
+  });
+
+  it("bid-control-verdict-panel compares its strict full-proposal verdict to the snapshot", () => {
+    const bid = read("components/bid-control-verdict-panel.tsx");
+    assert.ok(
+      bid.includes("localEligible={fullProposalReady}"),
+      "bid-control-verdict-panel must pass its strict full-proposal verdict so a disagreement is surfaced",
+    );
   });
 
   it("does NOT remove the panels' own readiness fetches (overlay is additive, not a replacement)", () => {
