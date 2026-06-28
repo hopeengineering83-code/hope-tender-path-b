@@ -26,14 +26,21 @@ describe("Metadata override API — server-side validation (P0)", () => {
     assert.ok(src.includes("INVALID_OVERRIDE_VALUE"), "must reject with INVALID_OVERRIDE_VALUE");
   });
 
-  it("rejects NOT_APPLICABLE for always-critical fields", () => {
-    assert.ok(src.includes("ALWAYS_CRITICAL_FIELDS"), "must have always-critical field set");
+  it("rejects NOT_APPLICABLE for critical fields via the canonical registry (single source of truth)", () => {
     assert.ok(src.includes("NOT_APPLICABLE_REJECTED"), "must reject NOT_APPLICABLE for critical fields");
-    // Check that always-critical set includes deadline, clientName, title, submissionMethod
-    assert.ok(src.includes('"deadline"'), "deadline must be always-critical");
-    assert.ok(src.includes('"clientName"'), "clientName must be always-critical");
-    assert.ok(src.includes('"title"'), "title must be always-critical");
-    assert.ok(src.includes('"submissionMethod"'), "submissionMethod must be always-critical");
+    // Criticality must come from the registry, not a local hard-coded list, so
+    // the override API stays in lock-step with the generation/export gates
+    // (e.g. `reference` is N/A-able, `submissionEmails` is critical only for
+    // email methods).
+    assert.ok(src.includes("tender-policy-registry"), "must import from the canonical registry");
+    assert.ok(
+      src.includes("isCriticalField") && src.includes("canBeNotApplicable"),
+      "must derive criticality from the registry's isCriticalField/canBeNotApplicable",
+    );
+    assert.ok(
+      !src.includes("const ALWAYS_CRITICAL_FIELDS = new Set"),
+      "must NOT re-declare a local hard-coded always-critical set",
+    );
   });
 
   it("validates deadline format (YYYY-MM-DD or ISO datetime)", () => {
