@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 
 type Override = { field: string; fieldState: string; overrideValue: string | null };
 type SourceInfo = {
@@ -491,6 +492,8 @@ function OverflowMenu({
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string }) {
+  const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [rows, setRows] = useState<Row[]>([]);
   const [tender, setTender] = useState<TenderPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -518,29 +521,29 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
     setLoading(true);
     setError("");
     try {
-      const [tenderRes, overrideRes] = await Promise.all([
-        fetch(`/api/tenders/${tenderId}`, { cache: "no-store" }),
-        fetch(`/api/tenders/${tenderId}/metadata-override`, { cache: "no-store" }),
-      ]);
-      const tenderData = (await tenderRes.json()) as TenderPayload;
-      if (!tenderRes.ok) throw new Error((tenderData as { error?: string }).error ?? "Failed to load tender");
-      const overrideJson = (await overrideRes.json().catch(() => ({}))) as {
-        overrides?: Override[];
-        fieldStates?: Record<string, ServerFieldState>;
-      };
+      const res = await fetch(`/api/tenders/${tenderId}/workflow-center`, { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as { snapshot?: TenderReleaseSnapshot } | null;
+      if (!res.ok || !json?.snapshot) {
+        throw new Error("Failed to load snapshot");
+      }
+      const snapshotData = json.snapshot;
+      setSnapshot(snapshotData);
+      setSnapshotRevision(snapshotData.snapshotRevision);
+
+      // Extract tender data and overrides from snapshot
+      const overrides = snapshotData.metadata.fields
+        .filter(f => f.blockerReason)
+        .map(f => ({
+          field: f.fieldKey,
+          fieldState: f.status.includes("CONFIRMED") ? "USER_CONFIRMED" : f.status.includes("EDITED") ? "USER_EDITED" : "AI_EXTRACTED",
+          overrideValue: f.effectiveValue,
+        }));
+
+      // Use placeholder tender data since we mainly need the fields
+      const tenderData: TenderPayload = {};
       setTender(tenderData);
-      setRows(
-        buildRows(
-          tenderData,
-          overrideRes.ok && Array.isArray(overrideJson.overrides) ? overrideJson.overrides : [],
-          overrideRes.ok && overrideJson.fieldStates ? overrideJson.fieldStates : {},
-        ),
-      );
-      setMessage(
-        overrideRes.ok
-          ? ""
-          : "Manual resolution storage is not available; extracted values are still visible.",
-      );
+      setRows(buildRows(tenderData, overrides, {}));
+      setMessage("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load client details");
     } finally {
@@ -634,7 +637,12 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
       {/* Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Client &amp; Submission Details</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-slate-900">Client &amp; Submission Details</h2>
+            {snapshotRevision && (
+              <span className="text-[10px] text-slate-400 font-mono ml-3">rev: {snapshotRevision.slice(0, 8)}</span>
+            )}
+          </div>
           <p className="mt-1 text-xs leading-5 text-slate-600">
             Key fields extracted from the tender document. Missing optional details do not stop
             document generation. Critical fields are marked and must be resolved before final

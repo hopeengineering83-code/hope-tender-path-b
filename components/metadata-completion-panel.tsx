@@ -6,8 +6,11 @@
 //   - "Set value" → opens an inline input (date picker for deadline)
 //   - "Mark not applicable" → requires a short reason (blocked for deadline)
 //   - "Record not found" → for non-critical fields only
+//
+// Reads from unified release-snapshot endpoint to ensure consistency with other panels.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 
 // User-facing field labels (never expose raw DB column names to users)
 const FIELD_LABELS: Record<string, string> = {
@@ -86,6 +89,8 @@ const FIELD_STATE_BADGE: Record<FieldState, { label: string; classes: string }> 
 type InlineAction = "FILL" | "NOT_APPLICABLE" | "IGNORE" | null;
 
 export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
+  const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [overrides, setOverrides] = useState<Override[]>([]);
   const [report, setReport] = useState<MetadataReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,22 +104,41 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const [overrideRes, reportRes] = await Promise.all([
-        fetch(`/api/tenders/${tenderId}/metadata-override`),
-        fetch(`/api/tenders/${tenderId}/generation-readiness`),
-      ]);
-      const overrideJson = await overrideRes.json().catch(() => ({})) as { ok?: boolean; overrides?: Override[] };
-      if (overrideRes.ok && overrideJson.overrides) {
-        setOverrides(overrideJson.overrides);
-      }
-      // generation-readiness includes metadata completeness details
-      if (reportRes.ok) {
-        const reportJson = await reportRes.json().catch(() => null) as {
-          metadata?: MetadataReport;
-          metadataReport?: MetadataReport;
-        } | null;
-        if (reportJson?.metadata) setReport(reportJson.metadata);
-        else if (reportJson?.metadataReport) setReport(reportJson.metadataReport);
+      const res = await fetch(`/api/tenders/${tenderId}/workflow-center`);
+      const json = await res.json().catch(() => null) as { snapshot?: TenderReleaseSnapshot } | null;
+      if (res.ok && json?.snapshot) {
+        setSnapshot(json.snapshot);
+        setSnapshotRevision(json.snapshot.snapshotRevision);
+        // Extract overrides from metadata fields in snapshot
+        const snapshotOverrides = json.snapshot.metadata.fields
+          .filter(f => f.blockerReason && f.status.includes("MANUAL"))
+          .map(f => ({
+            id: f.fieldKey,
+            tenderId,
+            field: f.fieldKey,
+            fieldState: f.status === "MANUAL_CONFIRMED" ? "USER_CONFIRMED" : "USER_EDITED",
+            overrideValue: f.effectiveValue,
+            reason: f.blockerReason,
+            previousValue: null,
+            overriddenBy: "",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }));
+        setOverrides(snapshotOverrides);
+        // Convert metadata snapshot to report format for display
+        const metadataReport: MetadataReport = {
+          missingCritical: [],
+          missingNonCritical: [],
+          notApplicableFields: [],
+          invalidFields: [],
+          blockingForGeneration: json.snapshot.metadata.hasGenerationBlocker,
+          overallRatio: json.snapshot.metadata.totalFields > 0
+            ? (json.snapshot.metadata.validFields / json.snapshot.metadata.totalFields)
+            : 0,
+        };
+        setReport(metadataReport);
+      } else {
+        setError(json ? "Failed to load snapshot" : "Invalid response");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load metadata");
@@ -377,9 +401,14 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
   return (
     <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="metadata-completion-panel">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Metadata Completion</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-900">Metadata Completion</h3>
+            {snapshotRevision && (
+              <span className="text-[10px] text-slate-400 font-mono ml-3">rev: {snapshotRevision.slice(0, 8)}</span>
+            )}
+          </div>
           <p className="mt-0.5 text-xs text-slate-500">
             Missing tender metadata fields. Record a candidate value or resolve from a tender source. Critical fields remain blocked until source-grounded.
           </p>
