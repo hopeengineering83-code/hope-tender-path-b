@@ -20,6 +20,7 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
       id: userId,
       email: `${userId}@example.test`,
       name: "Test User",
+      passwordHash: "test-hash",
     },
   });
 
