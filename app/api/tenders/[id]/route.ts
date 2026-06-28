@@ -316,6 +316,13 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] submissionPlanState: ${e instanceof Error ? e.message : String(e)}`));
       await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderShare: ${e instanceof Error ? e.message : String(e)}`));
       await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] tenderCopilotMessage: ${e instanceof Error ? e.message : String(e)}`));
+      // Layer 7.5: AiUsageRecord — has tenderId but NO FK constraint in DB.
+      // The Prisma schema declares onDelete: SetNull, but the migration that
+      // created the table (20260620160000) NEVER created the FK constraint.
+      // This causes Prisma to fail when trying to SET NULL on a non-existent
+      // FK during Tender delete. Fix: explicitly delete (or null) the records.
+      await tx.aiUsageRecord.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => console.error(`[tender-delete] aiUsageRecord: ${e instanceof Error ? e.message : String(e)}`));
+
       // Layer 8: AiAnalysisCheckpoint (raw SQL — table may not exist)
       try { await tx.$executeRawUnsafe('DELETE FROM "AiAnalysisCheckpoint" WHERE "tenderId" = $1', id); } catch (e: unknown) { console.warn(`[tender-delete] AiAnalysisCheckpoint: ${e instanceof Error ? e.message : String(e)}`); }
       // Layer 9: Finally delete the tender
