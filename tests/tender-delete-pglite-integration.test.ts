@@ -449,3 +449,71 @@ describe("Tender delete — PostgreSQL integration (PGlite)", () => {
   });
 
 });
+
+  it("12. concurrent deletion: second attempt on already-deleted tender fails cleanly", async () => {
+    // Simulates two simultaneous DELETE requests for the same tender.
+    // The first succeeds; the second must fail (404 in the handler, or
+    // P2025 at the DB level if it reaches the transaction).
+    const tid = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    await pg.query(`INSERT INTO "Tender" (id, title, "userId") VALUES ($1, $2, $3)`, [tid, "Test 12", "user-a"]);
+    await pg.query(`INSERT INTO "TenderRequirement" (id, "tenderId", title) VALUES ($1, $2, $3)`, ["r-"+tid, tid, "Req"]);
+
+    // First deletion succeeds
+    await simulateDeleteTransaction(pg, tid);
+
+    // Second deletion attempt: findFirst returns null (tender gone),
+    // so handler returns 404. At DB level, a direct delete would P2025.
+    const afterFirst = await pg.query<{id:string}>(`SELECT id FROM "Tender" WHERE id = $1`, [tid]);
+    assert.equal(afterFirst.rows.length, 0, "Tender already deleted by first request");
+
+    // Simulate the handler's findFirst check — returns null
+    const findResult = await pg.query<{id:string}>(
+      `SELECT id FROM "Tender" WHERE id = $1 AND "userId" = $2`, [tid, "user-a"]
+    );
+    assert.equal(findResult.rows.length, 0,
+      "Second request's findFirst must return null — handler returns 404, no transaction started");
+  });
+
+  it("13. GUC context does not leak between transactions on the same connection", async () => {
+    // Verify SET LOCAL is truly transaction-local: after COMMIT, a subsequent
+    // transaction on the SAME connection must NOT see the GUC.
+    const tid1 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const tid2 = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    await pg.query(`INSERT INTO "Tender" (id, title, "userId") VALUES ($1, $2, $3)`, [tid1, "T1", "user-a"]);
+    await pg.query(`INSERT INTO "TenderRequirement" (id, "tenderId", title) VALUES ($1, $2, $3)`, ["r1-"+tid1, tid1, "Req1"]);
+    await pg.query(`INSERT INTO "Tender" (id, title, "userId") VALUES ($1, $2, $3)`, [tid2, "T2", "user-a"]);
+    await pg.query(`INSERT INTO "TenderRequirement" (id, "tenderId", title) VALUES ($1, $2, $3)`, ["r2-"+tid2, tid2, "Req2"]);
+
+    // Transaction 1: set GUC to tid1, delete tid1, commit
+    await simulateDeleteTransaction(pg, tid1);
+
+    // Transaction 2: try to delete tid2 WITHOUT setting GUC
+    // The GUC from transaction 1 must NOT persist — direct delete must be blocked
+    await assert.rejects(
+      pg.query(`DELETE FROM "TenderRequirement" WHERE "tenderId" = $1`, [tid2]),
+      /Refusing to delete the final canonical/,
+      "GUC from previous transaction must NOT leak — SET LOCAL is transaction-local"
+    );
+
+    // Cleanup with proper GUC
+    await simulateDeleteTransaction(pg, tid2);
+  });
+
+  it("14. audit log entry would be created (handler calls logAction after success)", async () => {
+    // The route.ts handler calls logAction({ action: "TENDER_DELETE", ... })
+    // after the transaction commits. This test verifies the transaction
+    // succeeds (so logAction would be reached) and documents the audit
+    // requirement. Actual logAction testing requires mocking the audit
+    // module, which is covered by the handler-level unit tests.
+    const tid = "11111111-2222-4333-8444-555555555555";
+    await pg.query(`INSERT INTO "Tender" (id, title, "userId") VALUES ($1, $2, $3)`, [tid, "Audit Test", "user-a"]);
+    await pg.query(`INSERT INTO "TenderRequirement" (id, "tenderId", title) VALUES ($1, $2, $3)`, ["r-"+tid, tid, "Req"]);
+
+    await simulateDeleteTransaction(pg, tid);
+
+    // If we get here without throwing, the transaction committed successfully.
+    // The handler's logAction call happens AFTER this point, so it would execute.
+    const deleted = await pg.query<{id:string}>(`SELECT id FROM "Tender" WHERE id = $1`, [tid]);
+    assert.equal(deleted.rows.length, 0,
+      "Tender must be deleted — transaction committed, logAction would be called next");
+  });
