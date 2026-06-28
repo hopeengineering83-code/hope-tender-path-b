@@ -395,6 +395,14 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       }
     }
 
+    // A contaminated value is NOT valid and NOT grounded, regardless of whether
+    // its raw text passes format validation (it is polluted by portal text).
+    // Mirrors the Metadata Truth panel, which excludes PORTAL_CONTAMINATION from
+    // the valid/grounded metrics.
+    const contaminated = status === "PORTAL_CONTAMINATION";
+    const effectiveValid = validation.valid && !contaminated;
+    const effectiveGrounded = isGrounded && !contaminated;
+
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;
     const generationEligible = !isBlocked || (!isCritical && status !== "BLOCKED");
@@ -407,14 +415,14 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       hasZipBlocker = true;
     }
 
-    if (validation.valid) validCount++;
-    if (isGrounded) groundedCount++;
+    if (effectiveValid) validCount++;
+    if (effectiveGrounded) groundedCount++;
     if (isBlocked) blockedCount++;
 
     // Permitted actions
     const permittedActions: string[] = [];
-    if (!effectiveStr || !validation.valid) permittedActions.push("edit");
-    if (validation.valid && !isGrounded && !override) permittedActions.push("confirm");
+    if (!effectiveStr || !effectiveValid) permittedActions.push("edit");
+    if (effectiveValid && !effectiveGrounded && !override) permittedActions.push("confirm");
     if (override && override.fieldState === "USER_EDITED") permittedActions.push("confirm");
     if (!NEVER_NOT_APPLICABLE.has(fieldKey) && !isCritical) permittedActions.push("not_applicable");
     if (effectiveStr && !override) permittedActions.push("not_stated");
@@ -426,8 +434,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       status,
       rawValue,
       effectiveValue: effectiveStr || null,
-      isValid: validation.valid,
-      isGrounded,
+      isValid: effectiveValid,
+      isGrounded: effectiveGrounded,
       overrideState,
       isManuallyConfirmed,
       criticality,
@@ -442,7 +450,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       sourcePage: evidence.page,
       sourceQuote: evidence.quote,
       extractionMethod: null,
-      confidence: isGrounded ? 0.8 : 0,
+      confidence: effectiveGrounded ? 0.8 : 0,
       overriddenBy: override?.overriddenBy ?? null,
       overrideReason: override?.reason ?? null,
       overrideTimestamp: override?.createdAt ?? null,

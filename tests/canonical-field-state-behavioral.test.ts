@@ -61,6 +61,12 @@ describe("canonical resolver — contamination parity with the Metadata Truth pa
     assert.notEqual(f.blockerReason, null);
     assert.equal(r.hasGenerationBlocker, true);
     assert.equal(canonicalToClientChip(f), "CONTAMINATED");
+    // A contaminated field must NOT count as valid or grounded, even though its
+    // raw text passes format validation and has source evidence (cleanTender
+    // sets clientName page+quote). Mirrors the Metadata Truth panel.
+    assert.equal(f.isValid, false, "contaminated field must not be valid");
+    assert.equal(f.isGrounded, false, "contaminated field must not be grounded");
+    assert.equal(field(resolve(cleanTender()), "clientName").isGrounded, true, "(control) a clean clientName IS grounded");
   });
 
   it("does not flag contamination once the user has overridden the field", () => {

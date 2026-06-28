@@ -204,12 +204,19 @@ const TABLE_GOOD_THRESHOLD = 300; // chars above which a TABLE_HEAVY page counts
 // that the text is NOT only headers/footers/noise, so a page whose MEANINGFUL
 // content (after stripping these) is below the density threshold must not count
 // as perfectly extracted, even if its raw character count clears the threshold.
+// NOTE: the footer/copyright patterns are bounded to SHORT lines (a footer
+// phrase plus a little surrounding text). A long content line that merely
+// begins with "Confidential …" or "Copyright assignment shall …" is real
+// content and must NOT be stripped, so we cap the trailing length instead of
+// using a greedy `.*$`.
 const NOISE_LINE_PATTERNS: RegExp[] = [
   /^\s*page\s+\d+(?:\s+of\s+\d+)?\s*$/i,        // "Page 3 of 40"
   /^\s*[-–—]?\s*\d{1,4}\s*[-–—]?\s*$/,          // standalone page numbers / "- 5 -"
   /^\s*\d+\s*\/\s*\d+\s*$/,                      // "1 / 10"
-  /^\s*(?:confidential|proprietary|copyright|all\s+rights\s+reserved)\b.*$/i,
-  /^\s*©.*$/,                                    // copyright lines
+  /^\s*(?:confidential|proprietary)\b.{0,30}$/i,                 // short "Confidential" footer
+  /^\s*(?:copyright|©|\(c\))\b.{0,40}$/i,                        // short copyright footer
+  /^\s*all\s+rights\s+reserved\b.{0,20}$/i,                      // "All rights reserved." footer
+  /^\s*©.{0,60}$/,                               // © copyright line (bounded)
   /^\s*[_=*•\-–—]{3,}\s*$/,                // separator rules
 ];
 
