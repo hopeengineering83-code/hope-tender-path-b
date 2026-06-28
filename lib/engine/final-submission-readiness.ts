@@ -718,7 +718,6 @@ export async function getFinalSubmissionReadiness(
       createdAt: o.createdAt ?? null,
     })),
     hasExtractedRequirements: tender.requirements.length > 0,
-    submissionMethodContext: tender.submissionMethod ?? undefined,
   });
   if (canonicalExportState.hasExportBlocker) {
     const blockingFields = canonicalExportState.fields

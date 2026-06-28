@@ -155,7 +155,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} />
 
-      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
+      {canonicalReadiness && <ExecutiveSnapshot snapshot={canonicalReadiness} />}
       <TenderWorkflowActionCenter tenderId={tender.id} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />

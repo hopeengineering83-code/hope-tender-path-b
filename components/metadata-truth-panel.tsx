@@ -5,20 +5,21 @@ import type { MetadataTruthSummary, MetadataFactStatus } from "../lib/engine/ana
 
 // ─── Status badge config ────────────────────────────────────────────────────
 
-const STATUS_BADGE: Record<MetadataFactStatus, { label: string; classes: string }> = {
+const STATUS_BADGE: Record<string, { label: string; classes: string }> = {
   EXTRACTED_AND_GROUNDED:  { label: "Extracted and grounded",     classes: "bg-emerald-100 text-emerald-700" },
+  MANUALLY_CONFIRMED_GROUNDED: { label: "Confirmed and grounded", classes: "bg-emerald-100 text-emerald-700" },
   EXTRACTED_UNVERIFIED:    { label: "Extracted — review evidence", classes: "bg-blue-100 text-blue-700" },
-  MANUAL_OVERRIDE:         { label: "Manual override",             classes: "bg-indigo-100 text-indigo-700" },
-  MANUAL_CONFIRMED:        { label: "Manually confirmed",          classes: "bg-emerald-100 text-emerald-700" },
-  NOT_FOUND_CONFIRMED:     { label: "Not stated in tender",        classes: "bg-slate-100 text-slate-600" },
+  MANUAL_OVERRIDE:         { label: "Manual candidate",             classes: "bg-amber-100 text-amber-700" },
+  MANUALLY_CONFIRMED_UNGROUNDED: { label: "Confirmed — ungrounded", classes: "bg-amber-100 text-amber-700" },
+  NOT_STATED:              { label: "Not stated in tender",        classes: "bg-slate-100 text-slate-600" },
   NOT_APPLICABLE:          { label: "Not applicable",              classes: "bg-slate-100 text-slate-500" },
-  AMBIGUOUS_SOURCE_TEXT:   { label: "Extracted — review needed",   classes: "bg-amber-100 text-amber-700" },
   AMBIGUOUS_DATE:          { label: "Date ambiguous — confirm",    classes: "bg-orange-100 text-orange-700" },
   GENERIC_FIELD_LABEL:     { label: "Invalid extracted value",     classes: "bg-red-100 text-red-700" },
   INTERNAL_PLACEHOLDER:    { label: "Placeholder detected",        classes: "bg-red-100 text-red-700" },
   PORTAL_CONTAMINATION:    { label: "Contaminated — review",       classes: "bg-red-100 text-red-700" },
   INVALID_FORMAT:          { label: "Invalid format",              classes: "bg-red-100 text-red-700" },
   INVALID:                 { label: "Not detected",                classes: "bg-slate-100 text-slate-500" },
+  BLOCKED:                 { label: "Blocked — resolve evidence",   classes: "bg-red-100 text-red-700" },
 };
 
 // ─── Metric card ─────────────────────────────────────────────────────────────
@@ -72,44 +73,29 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
 
   const { counts } = data;
 
-  // These are different concepts — the spec requires them shown separately
   const metrics = [
     {
       label: "Metadata fields detected",
       numerator: counts.detected,
       denominator: counts.total,
-      tooltip:
-        "Number of fields where any value was found in the extracted tender text or set via manual override. Does not indicate the value is valid or grounded.",
-    },
-    {
-      label: "Valid metadata values",
-      numerator: counts.valid,
-      denominator: counts.total,
-      tooltip:
-        "Fields with a value that passes format and content validation (not a placeholder, field label, or invalid format).",
+      tooltip: "Fields where any valid value exists.",
     },
     {
       label: "Fields with evidence",
       numerator: counts.grounded,
       denominator: counts.total,
-      tooltip:
-        "Valid fields linked to a source page and/or verbatim quote from the tender document. A field is only grounded when both value and evidence exist.",
+      tooltip: "Fields linked to verified tender-source evidence.",
     },
     {
       label: "Fields manually confirmed",
       numerator: counts.confirmed,
       denominator: counts.total,
-      tooltip:
-        "Fields explicitly confirmed by a human reviewer. A manual override alone does not count as confirmed.",
+      tooltip: "Fields explicitly confirmed by a human.",
     },
   ];
 
   const criticalEntries = Object.entries(data.fields).filter(([, f]) => f.isCritical);
-  const hasBlockers = criticalEntries.some(([, f]) => {
-    const s = f.status;
-    return s === "INVALID" || s === "GENERIC_FIELD_LABEL" || s === "INTERNAL_PLACEHOLDER" ||
-      s === "PORTAL_CONTAMINATION" || s === "AMBIGUOUS_DATE" || s === "INVALID_FORMAT";
-  });
+  const hasBlockers = criticalEntries.some(([, f]) => f.blockerReason);
 
   return (
     <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
@@ -118,12 +104,11 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
       </h2>
       {hasBlockers && (
         <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Extraction quality is sufficient for AI Analyze. Final generation and final packaging
-          remain blocked until critical metadata and source evidence are resolved.
+          Rule 3: Critical metadata remain blocked until source-grounded. Manual candidates and ungrounded confirmations do not unlock release.
         </p>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {metrics.map((m) => (
           <MetricCard key={m.label} {...m} />
         ))}
@@ -155,21 +140,21 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
                   )}
                   <span
                     className={`rounded px-1.5 py-0.5 font-bold text-[9px] whitespace-nowrap ${badgeCfg.classes}`}
-                    title={f.blockerReason}
+                    title={f.blockerReason || undefined}
                   >
                     {badgeCfg.label}
                   </span>
                 </div>
               </div>
 
-              {/* Manual-override audit record. A manual override is valid but
-                  ungrounded — show who set it, when, why, and what it replaced
-                  (Manual Override & Evidence Policy point 3). */}
+              {f.blockerReason && (
+                 <p className="mt-1 text-[10px] text-red-600 font-medium">{f.blockerReason}</p>
+              )}
+
               {f.override && (
                 <div className="mt-1 ml-2 pl-2 border-l-2 border-indigo-100 text-[10px] text-slate-500 space-y-0.5">
                   <p>
-                    <span className="font-semibold text-indigo-600">Manual override · ungrounded.</span>{" "}
-                    Not backed by tender-source evidence.
+                    <span className="font-semibold text-indigo-600">Manual entry · ungrounded.</span>
                   </p>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                     {f.override.actor && <span>By: {f.override.actor}</span>}
@@ -178,9 +163,6 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
                     )}
                   </div>
                   {f.override.reason && <p>Reason: {f.override.reason}</p>}
-                  {f.override.previousValue && (
-                    <p className="text-slate-400">Previous value: {f.override.previousValue}</p>
-                  )}
                 </div>
               )}
             </div>
