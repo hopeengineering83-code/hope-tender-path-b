@@ -496,7 +496,11 @@ export async function getTenderReleaseSnapshot(
     analysisState: analysisDetail.state,
     analysisJobId: analysisDetail.canonicalJobId,
     requirementCount: allReqs.length,
-    overrideCount: tender.metadataOverrides.length,
+    overrides: (tender.metadataOverrides ?? []).map((o) => ({
+      field: o.field,
+      fieldState: o.fieldState,
+      overrideValue: o.overrideValue,
+    })),
     documentCount: buildPlanCount,
   });
   const snapshotRevision = createHash("sha256").update(revisionInput).digest("hex").slice(0, 16);
