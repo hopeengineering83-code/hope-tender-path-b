@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -9,6 +10,8 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { getLatestAnalyzeCheckpointProgress } from "../../../../lib/ai-analyze-checkpoints";
 import { detectMetadataContamination } from "../../../../lib/engine/tender-metadata-completeness";
 import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
+import { Prisma } from "@prisma/client";
+import { executeTenderDeletion } from "../../../../lib/tender/delete-tender";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -259,86 +262,63 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  // Generate correlationId up front so it's available for both success and error logs/responses.
+  const correlationId = crypto.randomUUID().slice(0, 8);
+
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
-  const { id } = await params;
-  const existing = await prisma.tender.findFirst({ where: { id, userId: actor.id } });
+  const { id: tenderId } = await params;
+  const existing = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  logger.info(`[tender-delete] Starting deletion`, { tenderId, correlationId, userId: actor.id, title: existing.title });
+
   try {
-    // Comprehensive ordered deletion of ALL 16 child models + nested children.
-    // The Prisma schema declares onDelete: Cascade, but production DB may have
-    // schema drift (missing cascade constraints) causing P2003 on parent delete.
-    await prisma.$transaction(async (tx) => {
-      // Layer 1: GeneratedDocument children (DocumentReview, DocumentComment)
-      const generatedDocs = await tx.generatedDocument.findMany({ where: { tenderId: id }, select: { id: true } });
-      if (generatedDocs.length > 0) {
-        const docIds = generatedDocs.map((d: { id: string }) => d.id);
-        await tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => { console.error(`[tender-delete] documentReview: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-        await tx.documentComment.deleteMany({ where: { documentId: { in: docIds } } }).catch((e: unknown) => { console.error(`[tender-delete] documentComment: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-        await tx.generatedDocument.deleteMany({ where: { tenderId: id } });
-      }
-      // Layer 2: ProposalVersion
-      await tx.proposalVersion.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] proposalVersion: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      // Layer 3: ExportPackage
-      await tx.exportPackage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] exportPackage: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      // Layer 4: AI jobs + children
-      const aiJobs = await tx.aiJob.findMany({ where: { tenderId: id }, select: { id: true } });
-      if (aiJobs.length > 0) {
-        const jobIds = aiJobs.map((j: { id: string }) => j.id);
-        await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => { console.error(`[tender-delete] aiAnalyzeChunk: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-        await tx.aiAnalyzeRetryState.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => { console.error(`[tender-delete] aiAnalyzeRetryState: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-        await tx.aiJobStep.deleteMany({ where: { jobId: { in: jobIds } } }).catch((e: unknown) => { console.error(`[tender-delete] aiJobStep: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-        await tx.aiJob.deleteMany({ where: { tenderId: id } });
-      }
-      // Layer 5: ComplianceMatrix (FK to TenderRequirement — delete before TenderRequirement)
-      await tx.complianceMatrix.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] complianceMatrix: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      // Layer 6: PricingWorkbook + CostLine
-      const pricingWorkbooks = await tx.pricingWorkbook.findMany({ where: { tenderId: id }, select: { id: true } });
-      if (pricingWorkbooks.length > 0) {
-        const workbookIds = pricingWorkbooks.map((w: { id: string }) => w.id);
-        await tx.costLine.deleteMany({ where: { workbookId: { in: workbookIds } } }).catch((e: unknown) => { console.error(`[tender-delete] costLine: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-        await tx.pricingWorkbook.deleteMany({ where: { tenderId: id } });
-      }
-      // Layer 7: All remaining tender children
-      await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-      await tx.tenderFile.deleteMany({ where: { tenderId: id } });
-      await tx.complianceGap.deleteMany({ where: { tenderId: id } });
-      await tx.tenderExpertMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderExpertMatch: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.tenderProjectMatch.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderProjectMatch: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.matchScoreBreakdown.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] matchScoreBreakdown: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.evaluatorObjection.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] evaluatorObjection: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.sectionEvidenceMap.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] sectionEvidenceMap: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.tenderMetadataOverride.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderMetadataOverride: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.submissionPlanState.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] submissionPlanState: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.tenderShare.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderShare: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      await tx.tenderCopilotMessage.deleteMany({ where: { tenderId: id } }).catch((e: unknown) => { console.error(`[tender-delete] tenderCopilotMessage: ${e instanceof Error ? e.message : String(e)}`); throw e; });
-      // Layer 7.5: AiUsageRecord — use raw SQL to SET NULL.
-      // The Prisma schema declares onDelete: SetNull, but the DB may not have
-      // the FK constraint (migration 20260620160000 never created it).
-      // Using raw SQL UPDATE avoids any FK constraint issues entirely.
-      // If the table doesn't exist, this is a safe no-op (logged, not fatal).
-      try {
-        await tx.$executeRawUnsafe('UPDATE "AiUsageRecord" SET "tenderId" = NULL WHERE "tenderId" = $1', id);
-      } catch (e: unknown) {
-        // Table may not exist or may not have tenderId column — safe to continue
-        console.warn(`[tender-delete] AiUsageRecord SET NULL failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
-      }
+    // Comprehensive ordered deletion within a transaction.
+    //
+    // Ordering rationale:
+    //  - Children of GeneratedDocument (DocumentReview, DocumentComment) must die first.
+    //  - ComplianceMatrix must die before TenderRequirement (FK).
+    //  - CostLine must die before PricingWorkbook (FK).
+    //  - AiJobStep / AiAnalyzeChunk / AiAnalyzeRetryState must die before AiJob (FK).
+    //  - FallbackApprovalRecord & ExtractionQualityOverride are scalar-only (no @relation,
+    //    no FK constraint — see migration 20260622193000) so they would survive Tender
+    //    deletion as orphans. We DELETE them here for hygiene (tender-specific operational
+    //    state should not persist after the tender is gone).
+    //  - AiUsageRecord has a SetNull relation. Migration 20260628000000_add_aiusagerecord_tender_fk
+    //    added the FK constraint; typed Prisma updateMany now works without raw SQL.
+    await prisma.$transaction(
+      async (tx) => executeTenderDeletion(tx, tenderId, correlationId),
+      { timeout: 30000, isolationLevel: "Serializable" },
+    );
 
-      // Layer 8: AiAnalysisCheckpoint (raw SQL — table may not exist)
-      try { await tx.$executeRawUnsafe('DELETE FROM "AiAnalysisCheckpoint" WHERE "tenderId" = $1', id); } catch (e: unknown) { console.warn(`[tender-delete] AiAnalysisCheckpoint: ${e instanceof Error ? e.message : String(e)}`); }
-      // Layer 9: Finally delete the tender
-      await tx.tender.delete({ where: { id } });
-    }, { timeout: 30000, isolationLevel: "Serializable" });
+    await logAction({
+      userId: actor.id,
+      action: "TENDER_DELETE",
+      entityType: "Tender",
+      entityId: tenderId,
+      description: `Tender "${existing.title}" permanently deleted`,
+      metadata: { tenderId, title: existing.title, clientName: existing.clientName, correlationId },
+    });
 
-    await logAction({ userId: actor.id, action: "TENDER_DELETE", entityType: "Tender", entityId: id, description: `Tender "${existing.title}" permanently deleted`, metadata: { tenderId: id, title: existing.title, clientName: existing.clientName } });
-    return NextResponse.json({ success: true });
+    logger.info(`[tender-delete] Deletion complete`, { tenderId, correlationId });
+    return NextResponse.json({ success: true, correlationId });
   } catch (error) {
-    const correlationId = require("crypto").randomUUID().slice(0, 8);
-    logger.error("Tender deletion failed", { detail: error, tenderId: id, correlationId });
-    return NextResponse.json({ error: "Failed to delete tender", code: "TENDER_DELETE_FAILED", correlationId }, { status: 500 });
+    const errorClass =
+      error instanceof Prisma.PrismaClientKnownRequestError ? `PrismaError(${error.code})` :
+      error instanceof Error ? error.constructor.name : "UnknownError";
+    // Pass the raw error object to logger — never leak its message/string in the
+    // HTTP response. The response only contains a correlationId the operator can
+    // use to look up this log entry.
+    logger.error("Tender deletion failed", { detail: error, tenderId, correlationId, errorClass });
+
+    return NextResponse.json({
+      error: "Failed to delete tender",
+      code: "TENDER_DELETE_FAILED",
+      correlationId,
+    }, { status: 500 });
   }
 }
