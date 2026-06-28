@@ -199,6 +199,39 @@ const LOW_DENSITY_THRESHOLD = 150; // chars per page below which we flag as low-
 // extracted — only low-density table pages are flagged as TABLE_HEAVY.
 const TABLE_GOOD_THRESHOLD = 300; // chars above which a TABLE_HEAVY page counts as GOOD
 
+// Lines that are pure header / footer / page-number / separator noise — not real
+// tender content. CLAUDE.md's "perfectly extracted page" definition requires
+// that the text is NOT only headers/footers/noise, so a page whose MEANINGFUL
+// content (after stripping these) is below the density threshold must not count
+// as perfectly extracted, even if its raw character count clears the threshold.
+const NOISE_LINE_PATTERNS: RegExp[] = [
+  /^\s*page\s+\d+(?:\s+of\s+\d+)?\s*$/i,        // "Page 3 of 40"
+  /^\s*[-–—]?\s*\d{1,4}\s*[-–—]?\s*$/,          // standalone page numbers / "- 5 -"
+  /^\s*\d+\s*\/\s*\d+\s*$/,                      // "1 / 10"
+  /^\s*(?:confidential|proprietary|copyright|all\s+rights\s+reserved)\b.*$/i,
+  /^\s*©.*$/,                                    // copyright lines
+  /^\s*[_=*•\-–—]{3,}\s*$/,                // separator rules
+];
+
+/**
+ * Character count of a page's MEANINGFUL content — its text with pure
+ * header/footer/page-number/separator lines removed. Used to implement the
+ * "not only headers/footers/noise" criterion for a perfectly-extracted page.
+ */
+export function meaningfulPageCharCount(pageText: string): number {
+  const kept = pageText
+    .split(/\r?\n/)
+    .filter((line) => {
+      const t = line.trim();
+      if (!t) return false;
+      return !NOISE_LINE_PATTERNS.some((rx) => rx.test(t));
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return kept.length;
+}
+
 function classifyPageText(pageText: string): Omit<PageQualityEntry, "page"> {
   const charCount = pageText.replace(/\s+/g, " ").length;
   const isFailure = /\[Extraction failed/i.test(pageText);
@@ -206,7 +239,11 @@ function classifyPageText(pageText: string): Omit<PageQualityEntry, "page"> {
   const isBlank = charCount < 30;
   const isTableHeavy = /\|[\s\S]{0,200}\||\t|\bboq\b|bill of quantities|evaluation.{0,30}criteria|scoring.{0,30}matrix/i.test(pageText);
   const isImageHeavy = /\[Image:/i.test(pageText);
-  const isLowDensity = !isBlank && !isFailure && charCount < LOW_DENSITY_THRESHOLD;
+  // Density is measured on MEANINGFUL content (CLAUDE.md criterion: a perfectly
+  // extracted page is not only headers/footers/noise). A page whose raw count
+  // clears the threshold but whose meaningful content does not is low-density.
+  const meaningfulCount = meaningfulPageCharCount(pageText);
+  const isLowDensity = !isBlank && !isFailure && meaningfulCount < LOW_DENSITY_THRESHOLD;
 
   const hasSubmission = SUBMISSION_SECTION_PATTERN.test(pageText);
   const hasEvaluation = EVALUATION_SECTION_PATTERN.test(pageText);
