@@ -1,14 +1,15 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import type { MetadataTruthSummary, MetadataFactStatus } from "../lib/engine/analysis/metadata-truth";
+import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import type { CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
 
 // ─── Status badge config ────────────────────────────────────────────────────
 
 // Single controlled vocabulary shared with canonical-field-state.ts. Panels
 // must never map statuses independently — add new statuses here and in the
 // canonical type.
-const STATUS_BADGE: Record<MetadataFactStatus, { label: string; classes: string }> = {
+const STATUS_BADGE: Record<CanonicalFieldStatus, { label: string; classes: string }> = {
   EXTRACTED_AND_GROUNDED:              { label: "Extracted and grounded",             classes: "bg-emerald-100 text-emerald-700" },
   EXTRACTED_UNVERIFIED:                { label: "Extracted — review evidence",         classes: "bg-blue-100 text-blue-700" },
   MANUAL_OVERRIDE:                     { label: "Candidate value (non-critical)",      classes: "bg-indigo-100 text-indigo-700" },
@@ -62,65 +63,64 @@ function MetricCard({
 // ─── Main panel ──────────────────────────────────────────────────────────────
 
 export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
-  const [data, setData] = useState<MetadataTruthSummary | null>(null);
+  const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState<string>("");
 
   useEffect(() => {
     fetch(`/api/tenders/${tenderId}/workflow-center`)
       .then((res) => res.json())
-      .then((json: { metadata?: MetadataTruthSummary }) => setData(json.metadata ?? null))
+      .then((json: { snapshot?: TenderReleaseSnapshot }) => {
+        if (json.snapshot) {
+          setSnapshot(json.snapshot);
+          setSnapshotRevision(json.snapshot.snapshotRevision);
+        }
+      })
       .catch(console.error);
   }, [tenderId]);
 
-  if (!data) {
+  if (!snapshot) {
     return <div className="animate-pulse h-32 bg-slate-50 rounded-xl border" />;
   }
 
-  const { counts } = data;
+  const metadata = snapshot.metadata;
+  const fields = metadata.fields;
 
   // These are different concepts — the spec requires them shown separately
   const metrics = [
     {
-      label: "Metadata fields detected",
-      numerator: counts.detected,
-      denominator: counts.total,
-      tooltip:
-        "Number of fields where any value was found in the extracted tender text or set via manual override. Does not indicate the value is valid or grounded.",
-    },
-    {
-      label: "Valid metadata values",
-      numerator: counts.valid,
-      denominator: counts.total,
+      label: "Metadata fields",
+      numerator: metadata.validFields + metadata.groundedFields,
+      denominator: metadata.totalFields,
       tooltip:
         "Fields with a value that passes format and content validation (not a placeholder, field label, or invalid format).",
     },
     {
       label: "Fields with evidence",
-      numerator: counts.grounded,
-      denominator: counts.total,
+      numerator: metadata.groundedFields,
+      denominator: metadata.totalFields,
       tooltip:
         "Valid fields linked to a source page and/or verbatim quote from the tender document. A field is only grounded when both value and evidence exist.",
     },
     {
-      label: "Fields manually confirmed",
-      numerator: counts.confirmed,
-      denominator: counts.total,
+      label: "Blocked fields",
+      numerator: metadata.blockedFields,
+      denominator: metadata.totalFields,
       tooltip:
-        "Fields explicitly confirmed by a human reviewer. A manual override alone does not count as confirmed.",
+        "Fields that block generation or export: missing critical data, invalid format, contaminated, or ungrounded manual edits.",
     },
   ];
 
-  const criticalEntries = Object.entries(data.fields).filter(([, f]) => f.isCritical);
-  const hasBlockers = criticalEntries.some(([, f]) => {
-    const s = f.status;
-    return s === "INVALID" || s === "GENERIC_FIELD_LABEL" || s === "INTERNAL_PLACEHOLDER" ||
-      s === "PORTAL_CONTAMINATION" || s === "AMBIGUOUS_DATE" || s === "INVALID_FORMAT";
-  });
+  const hasGenerationBlockers = metadata.hasGenerationBlocker;
+  const hasBlockers = metadata.blockedFields > 0;
 
   return (
     <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-bold text-slate-900 mb-1 uppercase tracking-wider">
-        Metadata Truth Facts
-      </h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+          Metadata Truth Facts
+        </h2>
+        <span className="text-[10px] text-slate-400 font-mono">rev: {snapshotRevision.slice(0, 8)}</span>
+      </div>
       {hasBlockers && (
         <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           Extraction quality is sufficient for AI Analyze. Final generation and final packaging
@@ -135,11 +135,11 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
       </div>
 
       <div className="mt-5 space-y-1">
-        {Object.entries(data.fields).map(([key, f]) => {
+        {fields.map((f) => {
           const badgeCfg = STATUS_BADGE[f.status] ?? STATUS_BADGE.INVALID;
           return (
             <div
-              key={key}
+              key={f.field}
               className="py-1.5 border-b border-slate-50 last:border-0"
             >
               <div className="flex items-start justify-between gap-2 text-xs">

@@ -2,10 +2,7 @@ import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
-import { resolveTenderAnalysisState } from "../../../../../lib/engine/analysis-state-resolver";
-import { resolveMetadataTruth } from "../../../../../lib/engine/analysis/metadata-truth";
-import { resolvePlanTruth } from "../../../../../lib/engine/analysis/plan-truth";
-import { resolveAuthorityTruth } from "../../../../../lib/engine/analysis/authority-truth";
+import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
 
 export async function GET(
@@ -18,13 +15,14 @@ export async function GET(
 
     const { id: tenderId } = await params;
 
-    const [analysis, metadata, plan, authority, workflow] = await Promise.all([
-      resolveTenderAnalysisState(prisma, tenderId, actor.id),
-      resolveMetadataTruth(prisma, tenderId, actor.id),
-      resolvePlanTruth(prisma, tenderId, actor.id),
-      resolveAuthorityTruth(prisma, tenderId, actor.id),
+    const [snapshot, workflow] = await Promise.all([
+      getTenderReleaseSnapshot(prisma, tenderId, actor.id),
       getCanonicalTenderWorkflowState(prisma, actor.id, tenderId)
     ]);
+
+    if (!snapshot) {
+      return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+    }
 
     const stages = [
       {
@@ -45,29 +43,29 @@ export async function GET(
       {
         stage: 3,
         label: "AI Analyze",
-        status: (analysis.state === "AI_SUCCEEDED" || analysis.state === "HUMAN_APPROVED_FALLBACK") ? "READY" : analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED",
-        explanation: analysis.safeDiagnosticSummary,
-        actionLabel: analysis.nextAction ?? "Run AI Analyze"
+        status: snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED",
+        explanation: snapshot.analysis.blocker ?? "AI Analyze pending or failed.",
+        actionLabel: "Run AI Analyze"
       },
       {
         stage: 4,
         label: "Confirm Requirements",
-        status: (analysis.state === "AI_SUCCEEDED" || analysis.state === "HUMAN_APPROVED_FALLBACK") ? "READY" : "PENDING",
-        explanation: `${analysis.requirementsPersisted} requirements recorded.`,
+        status: snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "PENDING",
+        explanation: `${snapshot.requirements.total} requirements recorded (${snapshot.requirements.groundedMandatory} grounded).`,
         actionLabel: "Review Requirements"
       },
       {
         stage: 5,
         label: "Confirm Metadata",
-        status: metadata.readinessScore > 0.8 ? "READY" : "WARNING",
-        explanation: `Metadata coverage is ${Math.round(metadata.readinessScore * 100)}%.`,
+        status: snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
+        explanation: `Metadata: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
         actionLabel: "Edit Metadata"
       },
       {
         stage: 6,
         label: "Verified Submission Plan",
-        status: plan.isVerified ? "READY" : "BLOCKED",
-        explanation: plan.reason,
+        status: snapshot.buildPlan.valid ? "READY" : "BLOCKED",
+        explanation: snapshot.buildPlan.blocker ?? "Build plan pending.",
         actionLabel: "Build Plan"
       },
       {
@@ -80,32 +78,29 @@ export async function GET(
       {
         stage: 8,
         label: "Generate Documents",
-        status: workflow.readyForGeneration ? "READY" : "BLOCKED",
-        explanation: workflow.reason,
+        status: snapshot.generationEligible ? "READY" : "BLOCKED",
+        explanation: snapshot.generationBlockers.length > 0 ? snapshot.generationBlockers[0] : "Ready for generation.",
         actionLabel: "Generate"
       },
       {
         stage: 9,
         label: "Validate and Approve",
-        status: authority.status === "AUTHORITY_READY" ? "READY" : "PENDING",
-        explanation: authority.reason,
+        status: "PENDING",
+        explanation: "Review and approve generated documents.",
         actionLabel: "Review Documents"
       },
       {
         stage: 10,
         label: "Export ZIP",
-        status: workflow.readyForExport ? "READY" : "BLOCKED",
-        explanation: "Final finalization and download.",
+        status: snapshot.exportEligible ? "READY" : "BLOCKED",
+        explanation: snapshot.exportBlockers.length > 0 ? snapshot.exportBlockers[0] : "Ready for export.",
         actionLabel: "Export"
       }
     ];
 
     return NextResponse.json({
       ok: true,
-      analysis,
-      metadata,
-      plan,
-      authority,
+      snapshot,
       workflow,
       stages
     });
