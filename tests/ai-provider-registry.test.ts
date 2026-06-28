@@ -140,9 +140,9 @@ describe("6. Z.ai general endpoint + configured model", () => {
     assert.ok(!getProviderBaseUrl("zai")!.includes("coding"));
     assert.ok(!getProviderBaseUrl("zai")!.includes("bigmodel"));
   });
-  it("uses conservative output caps (analysis 8000 / proposal 4000 / fast 1200)", () => {
+  it("uses hobby-safe output caps (analysis 8000 / proposal 8000 / fast 1200)", () => {
     assert.equal(getProviderOutputCap("zai", "extraction"), 8000);
-    assert.equal(getProviderOutputCap("zai", "proposal"), 4000);
+    assert.equal(getProviderOutputCap("zai", "proposal"), 8000);
     assert.equal(getProviderOutputCap("zai", "fast"), 1200);
   });
 });
@@ -158,7 +158,7 @@ describe("7. Cerebras endpoint + max_completion_tokens", () => {
     const src = readFileSync("lib/ai.ts", "utf8");
     assert.ok(src.includes('maxTokensParam: "max_completion_tokens"'), "Cerebras must send max_completion_tokens");
     assert.equal(getProviderOutputCap("cerebras", "extraction"), 8000);
-    assert.equal(getProviderOutputCap("cerebras", "proposal"), 4000);
+    assert.equal(getProviderOutputCap("cerebras", "proposal"), 8000);
     assert.equal(getProviderOutputCap("cerebras", "fast"), 1200);
   });
 });
