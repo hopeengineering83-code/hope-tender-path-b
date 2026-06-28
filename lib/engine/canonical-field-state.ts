@@ -24,6 +24,7 @@ import {
   isAmbiguousDateString,
 } from "./metadata-validators";
 import { isPhysicalSubmissionMethod, isEmailSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
+import { isGroundedEvidence as isGroundedSourceEvidence } from "./evidence-grounding";
 
 // ─── Canonical field-state vocabulary ──────────────────────────────────────
 
@@ -261,9 +262,9 @@ function validateValue(field: string, value: string): { valid: boolean; reason: 
 }
 
 function isGroundedEvidence(evidence: { page: number | null; quote: string | null; fileId: string | null }): boolean {
-  // Grounded requires: page AND quote (fileId is ideal but not always available)
-  return evidence.page != null && evidence.page > 0 &&
-    evidence.quote != null && evidence.quote.trim().length > 5;
+  // Grounded requires page AND a non-trivial quote — via the shared predicate so
+  // this resolver and the Metadata Truth resolver can never disagree.
+  return isGroundedSourceEvidence(evidence.page, evidence.quote);
 }
 
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {

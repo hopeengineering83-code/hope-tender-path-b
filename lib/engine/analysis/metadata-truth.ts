@@ -13,6 +13,7 @@ import {
   isCriticalField,
   fieldDisplayLabel,
 } from "../tender-policy-registry";
+import { isGroundedEvidence as isGroundedSourceEvidence } from "../evidence-grounding";
 
 export type MetadataFactStatus =
   | "EXTRACTED_AND_GROUNDED"   // Valid value + tender-source evidence (page + quote) present
@@ -233,9 +234,10 @@ function isConfirmedStatus(status: MetadataFactStatus): boolean {
  */
 function hasGroundingEvidence(ev: FieldEvidence | undefined): boolean {
   if (!ev) return false;
-  const hasPage = typeof ev.page === "number" && Number.isFinite(ev.page);
-  const hasQuote = typeof ev.quote === "string" && ev.quote.trim().length > 0;
-  return hasPage && hasQuote;
+  // Use the shared grounding predicate so the Metadata Truth panel and the
+  // Client & Submission panel / gates apply IDENTICAL grounding (page > 0 AND a
+  // non-trivial quote) and can never contradict each other.
+  return isGroundedSourceEvidence(ev.page, ev.quote);
 }
 
 /** Safely parse a JSON object of per-field { page, quote } evidence. */
