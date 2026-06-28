@@ -6,7 +6,6 @@ import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-hand
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
-import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -48,18 +47,7 @@ export async function POST(req: Request) {
 
   const startTime = Date.now();
   const maxRunMs = 40_000;
-  type WorkerJobResult = {
-    jobId: string;
-    jobType: string;
-    status: string;
-    terminalStatus?: string;
-    resultCode?: string;
-    error?: string;
-    retryable?: boolean;
-    correlationId?: string;
-    retryScheduled?: boolean;
-  };
-  const processedJobs: WorkerJobResult[] = [];
+  const processedJobs: Array<{ jobId: string; jobType: string; status: string; error?: string }> = [];
 
   // Provider-aware retry backstop. When an automated caller (Vercel cron or the
   // worker secret) drives the queue, first re-arm any AI_ANALYZE jobs that
@@ -70,10 +58,6 @@ export async function POST(req: Request) {
   // drives their own job. Best-effort — never block the claim loop.
   if (isAutomatedCaller) {
     try {
-      // Restore DB-backed provider cooldowns before retry eligibility checks;
-      // otherwise a cold-start worker can re-arm jobs using empty in-memory health.
-      const healthRestore = await restoreHealthFromDbBounded(2_000);
-      if (healthRestore.warning) console.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
       const due = await findJobsDueForRetry(10);
       for (const job of due) {
         await rearmJobForRetry(job.jobId).catch((err: unknown) => {
@@ -96,15 +80,7 @@ export async function POST(req: Request) {
     const handler = getHandler(claimed.jobType);
     if (!handler) {
       await failJob(claimed.id, `No handler registered for jobType=${claimed.jobType}`);
-      processedJobs.push({
-        jobId: claimed.id,
-        jobType: claimed.jobType,
-        status: "FAILED",
-        terminalStatus: "FAILED",
-        resultCode: "NO_HANDLER_REGISTERED",
-        error: `No handler registered for jobType=${claimed.jobType}`,
-        retryable: false,
-      });
+      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "No handler" });
       continue;
     }
 
@@ -135,80 +111,27 @@ export async function POST(req: Request) {
             console.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
           });
         }
-        processedJobs.push({
-          jobId: claimed.id,
-          jobType: claimed.jobType,
-          status: result.terminalStatus,
-          terminalStatus: result.terminalStatus,
-          resultCode: result.code,
-          retryable: result.terminalStatus === "FAILED" ? Boolean(result.retryable) : undefined,
-          correlationId: result.correlationId,
-          retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
-        });
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: result.terminalStatus });
       } else {
         await completeJob(claimed.id, result);
-        processedJobs.push({
-          jobId: claimed.id,
-          jobType: claimed.jobType,
-          status: "SUCCEEDED",
-          terminalStatus: "SUCCEEDED",
-          resultCode: "OK",
-          retryable: false,
-        });
+        processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
       }
     } catch (error) {
-      const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
-      await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
-      processedJobs.push({
-        jobId: claimed.id,
-        jobType: claimed.jobType,
-        status: "FAILED",
-        terminalStatus: "FAILED",
-        resultCode: "JOB_EXECUTION_FAILED",
-        correlationId,
-        retryable: true,
-      });
+      await failJob(claimed.id, message);
+      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "Job execution failed" });
     }
 
     if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "AI_ANALYZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {
-    return NextResponse.json({
-      ran: 0,
-      message: "queue empty",
-      processed: false,
-      terminalStatus: null,
-      resultCode: "QUEUE_EMPTY",
-      retryable: false,
-    });
+    return NextResponse.json({ ran: 0, message: "queue empty" });
   }
-
-  const statusPriority: Record<string, number> = {
-    "FAILED": 4,
-    "PARTIAL_SUCCESS": 3,
-    "SUPERSEDED": 2,
-    "SUCCEEDED": 1,
-  };
-  const worst = processedJobs.reduce((worstSoFar, j) => {
-    const pri = statusPriority[j.terminalStatus ?? ""] ?? 0;
-    const worstPri = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
-    return pri > worstPri ? j : worstSoFar;
-  });
 
   return NextResponse.json({
     ran: processedJobs.length,
-    processed: true,
     processedJobs,
     durationMs: Date.now() - startTime,
-    terminalStatus: worst.terminalStatus ?? "UNKNOWN",
-    resultCode: worst.resultCode ?? "UNKNOWN",
-    jobId: worst.jobId,
-    retryable: Boolean(worst.retryable),
-    correlationId: worst.correlationId ?? null,
-    retryScheduled: Boolean(worst.retryScheduled),
-    workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
   });
 }

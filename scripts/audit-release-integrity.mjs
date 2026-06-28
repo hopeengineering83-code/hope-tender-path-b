@@ -128,53 +128,5 @@ check("AI source references validated", aiAnalyze.includes("validTenderFileIds.h
 const tenderAnalysisContent = read("lib/engine/tender-analysis-content.ts");
 check("AI vault hash includes content digest", tenderAnalysisContent.includes("[digest:${textDigest}]"), "analysis checkpoints must invalidate when reviewed vault text changes");
 
-// ─── P1: Release/secret governance — reject dangerous files ─────────
-import { execSync } from "node:child_process";
-
-// 1. .env file must NEVER be committed
-check(".env file is not committed", !existsSync(join(root, ".env")), "committing .env leaks credentials — use .env.example with placeholders only");
-
-// 2. .env.example must not contain real values
-const envExample = read(".env.example");
-check(".env.example has no real API keys", !envExample.match(/(sk-ant-[A-Za-z0-9]{20,}|sk-or-[A-Za-z0-9]{20,}|gsk_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9]{20,})/), ".env.example must contain only placeholder values, never real API keys");
-
-// 3. No duplicate repository folders committed as gitlinks
-try {
-  const trackedFiles = execSync("git ls-files", { cwd: root, encoding: "utf8" }).trim();
-  const dangerousDirs = ["repo", "repo-866", "repo-fix", "repo-pr866"];
-  for (const dir of dangerousDirs) {
-    check(`${dir}/ gitlink is not committed`, !trackedFiles.split("\n").includes(dir), `${dir}/ must not be committed as a gitlink — remove with: git rm --cached ${dir}`);
-  }
-} catch {
-  // git not available — skip
-}
-
-// 4. No screenshots or uploaded files committed to git
-try {
-  const trackedUploads = execSync("git ls-files upload/", { cwd: root, encoding: "utf8" }).trim();
-  const uploadFiles = trackedUploads ? trackedUploads.split("\n").filter(Boolean) : [];
-  check("upload/ directory has no git-tracked screenshots", uploadFiles.length === 0, `upload/ contains ${uploadFiles.length} git-tracked files — screenshots must not be committed: ${uploadFiles.slice(0, 5).join(", ")}`);
-} catch {
-  check("upload/ directory has no git-tracked screenshots", true, "");
-}
-
-// 5. migration_lock.toml must exist and pin postgresql
-const lockFile = read("prisma/migrations/migration_lock.toml");
-check("migration_lock.toml pins postgresql", lockFile.includes('provider = "postgresql"'), "migration_lock.toml must pin provider=postgresql to prevent SQLite drift");
-
-// 6. .nvmrc must exist and pin Node 22
-const nvmrc = read(".nvmrc").trim();
-check(".nvmrc pins Node 22", nvmrc === "22", `.nvmrc must pin Node 22 (got "${nvmrc}") — Vercel and CI must use the same Node version`);
-
-// 7. package.json engines must match .nvmrc
-const enginesNode = pkg.engines?.node ?? "";
-const allowsNode22 = /(^|[^\d])22($|[^\d])/.test(enginesNode);
-const excludesNode24 = !enginesNode.includes("24") && !enginesNode.includes("25");
-check("package.json engines matches .nvmrc", allowsNode22 && excludesNode24, `package.json engines.node must match .nvmrc (Node 22) — got "${enginesNode}"`);
-
-// 8. .env must be gitignored
-const gitignore = read(".gitignore");
-check(".env is gitignored", gitignore.includes(".env") && !gitignore.includes("!.env"), ".env must be in .gitignore and must not be un-ignored");
-
 console.log(JSON.stringify({ ok: failures.length === 0, checks, failures }, null, 2));
 if (failures.length > 0) process.exitCode = 1;

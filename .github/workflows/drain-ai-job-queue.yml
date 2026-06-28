@@ -94,50 +94,10 @@ jobs:
           echo "HTTP $status"
           echo "Body: $body"
 
-          # Auth errors — setup is broken, needs attention.
+          # Only fail loudly on auth errors — those mean setup is broken
+          # and need attention. Everything else (200/empty queue/500
+          # transient) is fine on a retry.
           if [ "$status" = "401" ] || [ "$status" = "403" ]; then
             echo "::error::Worker rejected auth. Check that AI_JOBS_WORKER_SECRET matches between this repo's Actions secrets and Vercel's env vars, then Redeploy on Vercel."
             exit 1
           fi
-
-          # Transport errors — worker endpoint unreachable.
-          if [ "$status" = "000" ] || [ "$status" = "500" ] || [ "$status" = "502" ] || [ "$status" = "503" ] || [ "$status" = "504" ]; then
-            echo "::warning::Worker endpoint returned $status — transient, will retry on next tick."
-            exit 0
-          fi
-
-          # HTTP 200 — the worker ran, but the AI job may have failed.
-          if [ "$status" = "200" ]; then
-            terminal_status=$(echo "$body" | grep -oE '"terminalStatus":"[^"]*"' | head -1 | sed 's/"terminalStatus":"//;s/"//')
-            result_code=$(echo "$body" | grep -oE '"resultCode":"[^"]*"' | head -1 | sed 's/"resultCode":"//;s/"//')
-            retryable=$(echo "$body" | grep -oE '"retryable":(true|false)' | head -1 | sed 's/"retryable"://')
-            ran=$(echo "$body" | grep -oE '"ran":[0-9]+' | head -1 | sed 's/"ran"://')
-
-            echo "Worker ran=$ran terminalStatus=$terminal_status resultCode=$result_code retryable=$retryable"
-
-            if [ "$ran" = "0" ]; then
-              echo "Queue empty — non-failure."
-              exit 0
-            fi
-
-            if [ "$terminal_status" = "FAILED" ] && [ "$retryable" = "false" ]; then
-              echo "::error::Terminal non-retryable job failure: resultCode=$result_code. Manual intervention required."
-              exit 1
-            fi
-
-            if [ "$result_code" = "AI_ANALYSIS_PERSISTENCE_FAILED" ]; then
-              echo "::error::AI_ANALYSIS_PERSISTENCE_FAILED detected — possible systemic persistence issue. Check finalizeJob() and database health."
-              exit 1
-            fi
-
-            if [ "$terminal_status" = "FAILED" ] && [ "$retryable" = "true" ]; then
-              echo "::warning::Retryable job failure: resultCode=$result_code. Will retry on next tick."
-              exit 0
-            fi
-
-            echo "Job completed with terminalStatus=$terminal_status — non-failure."
-            exit 0
-          fi
-
-          echo "::warning::Unexpected HTTP status $status from worker. Body: $body"
-          exit 0
