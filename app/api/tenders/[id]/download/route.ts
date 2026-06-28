@@ -58,7 +58,7 @@ async function readContentOrError(doc: ExportReadyDocument) {
         fileName: doc.exactFileName ?? fileName(doc.name),
         hasStoragePath: Boolean(doc.storagePath),
         hasInlineFileContent: Boolean(doc.fileContent),
-        detail: error instanceof Error ? error.message : String(error),
+        correlationId: require("crypto").randomUUID().slice(0, 8),
       }),
     };
   }
@@ -629,6 +629,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409, { code: "DIRECT_PROPOSAL_EXPORT_DISABLED" });
   } catch (error) {
     logger.error("Tender download route failed", { detail: error });
-    return err("Download route failed.", 500, { code: "DOWNLOAD_ROUTE_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Download route failed.", 500, { code: "DOWNLOAD_ROUTE_RUNTIME_ERROR", correlationId: require("crypto").randomUUID().slice(0, 8) });
   }
 }

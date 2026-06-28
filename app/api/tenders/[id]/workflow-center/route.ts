@@ -59,8 +59,12 @@ export async function GET(
       {
         stage: 5,
         label: "Confirm Metadata",
-        status: metadata.readinessScore > 0.8 ? "READY" : "WARNING",
-        explanation: `Metadata coverage is ${Math.round(metadata.readinessScore * 100)}%.`,
+        // Use canonical metadata blocker state instead of a percentage threshold.
+        // A tender is READY only when no metadata final-gate blocker remains.
+        status: metadata.missingCritical.length === 0 ? "READY" : "WARNING",
+        explanation: metadata.missingCritical.length === 0
+          ? `Metadata coverage is complete — ${metadata.detected} of ${metadata.total} fields detected.`
+          : `${metadata.missingCritical.length} critical metadata field(s) need attention: ${metadata.missingCritical.map((f: { label: string }) => f.label).join(", ")}.`,
         actionLabel: "Edit Metadata"
       },
       {

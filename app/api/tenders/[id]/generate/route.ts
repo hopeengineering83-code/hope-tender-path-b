@@ -630,10 +630,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         isCriticalField("submissionEndpoint", policyCtx) &&
         tender.submissionMethod &&
         /email/i.test(tender.submissionMethod) &&
-        !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
-        !tender.submissionEmails
+        !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod)
       ) {
-        missingCritical.push("Submission email address is missing for email-based submission.");
+        // Check canonical state for submissionEmails — a manual override
+        // should NOT fail just because the raw DB column is blank.
+        const emailField = canonicalState.fields.find(f => f.fieldKey === "submissionEmails");
+        if (emailField && !emailField.isValid) {
+          missingCritical.push("Submission email address is missing for email-based submission.");
+        }
       }
       if (missingCritical.length > 0) {
         return NextResponse.json({

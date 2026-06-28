@@ -487,8 +487,8 @@ export function getProviderModel(
         : entry.env.proposalModel;
 
   // Z.ai uses a dedicated resolver that validates endpoint/model compatibility.
-  // Coding Plan keys (open.bigmodel.cn) only support glm-4-coding/glm-4v-coding.
-  // General API keys (api.z.ai) only support glm-4-flash/glm-4-flashx.
+  // Z.ai support confirmed: BOTH plans use api.z.ai. Coding Plan model is glm-coding.
+  // General API (api.z.ai) supports glm-4-flash, glm-4-flashx, glm-coding.
   // Invalid configurations are skipped before consuming an attempt.
   if (provider === "zai") return resolveZaiConfiguration(useCase, env).model;
 
@@ -506,7 +506,7 @@ export function getProviderModel(
 // ─── Z.ai Configuration Resolver ────────────────────────────────────
 // Z.ai has two distinct API products with different endpoints and models:
 //   1. General API (api.z.ai) — glm-4-flash, glm-4-flashx
-//   2. Coding Plan (open.bigmodel.cn) — glm-4-coding, glm-4v-coding
+//   2. Coding Plan (api.z.ai) — glm-coding (same endpoint, different key)
 // Mixing a Coding Plan key with the General endpoint (or vice versa)
 // produces HTTP 400 code 1211 "Unknown Model". This resolver detects the
 // plan type from the base URL and validates the model/endpoint pairing
