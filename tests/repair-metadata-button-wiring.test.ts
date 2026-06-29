@@ -42,7 +42,7 @@ describe("GenerationActionPanel wires the repair-metadata endpoint", () => {
     // The single-field button label changed when the batch "Repair all" button
     // landed next to it — match the still-present "evaluationMethodology" token
     // and the source-grounded descriptor in the help text.
-    assert.match(source, /Repair evaluationMethodology only/);
+    assert.match(source, /Repair evaluation criteria only/);
     assert.match(source, /source-grounded repair/);
   });
 
