@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { clientLogger } from "@/lib/ui/client-logger";
 
 export function AuthorityReviewTruthPanel({ tenderId }: { tenderId: string }) {
   const [data, setData] = useState<any>(null);

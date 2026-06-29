@@ -3,6 +3,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
+import { clientLogger } from "@/lib/ui/client-logger";
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
@@ -112,6 +113,7 @@ export async function GenerationReadinessPanel({
           </div>
           <div className="flex items-center gap-3">
             <ScoreGauge score={score} />
+            <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Open JSON</Link>
           </div>
         </div>
 
@@ -157,7 +159,7 @@ export async function GenerationReadinessPanel({
       </section>
     );
   } catch (error) {
-    console.error("[GenerationReadinessPanel] render error", {
+    clientLogger.error("[GenerationReadinessPanel] render error", {
       tenderId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       message: error instanceof Error ? error.message : String(error),
