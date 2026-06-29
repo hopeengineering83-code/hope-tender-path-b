@@ -186,13 +186,22 @@ function nextActionForReason(reason: string): string {
 function mandatoryEvidenceCoverageRatio(requirements: Array<{
   priority?: string | null;
   complianceMatrixRows?: Array<{ supportLevel?: string | null }> | null;
+  sourceConfidence?: number | null;
+  sourcePageNumber?: number | null;
+  sourceExactQuote?: string | null;
 }>): number {
   const mandatory = requirements.filter((r) => r.priority === "MANDATORY");
   if (mandatory.length === 0) return 0;
-  const confirmedCovered = mandatory.filter((r) =>
-    (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
-  ).length;
-  return confirmedCovered / mandatory.length;
+  // Evidence coverage requires BOTH:
+  // 1. User confirmation in compliance matrix (FULL/SUBSTANTIAL support), AND
+  // 2. Source grounding (page number OR source quote from AI extraction)
+  // This resolves the contradiction where coverage could show 0% while grounding was 100%.
+  const fullyConfirmedWithSource = mandatory.filter((r) => {
+    const hasMatrixConfirmation = (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel)));
+    const hasSourceGrounding = (r.sourcePageNumber ?? 0) > 0 || ((r.sourceExactQuote ?? "").trim().length > 0);
+    return hasMatrixConfirmation && hasSourceGrounding;
+  }).length;
+  return fullyConfirmedWithSource / mandatory.length;
 }
 
 function severityForReasons(reasons: string[]): FinalReadinessSeverity {
@@ -562,7 +571,14 @@ export async function getFinalSubmissionReadiness(
     pageLimit: tender.pageLimit,
     requirements: tender.requirements,
   });
-  const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
+  // Include PLANNED status documents in the "candidates" for missing-plan detection
+  // so that planned-but-not-yet-generated documents do not count as "missing required".
+  // This prevents the contradiction where docs 0/2 shows both "missing" AND "planned".
+  const allActiveAndPlannedDocs = tender.generatedDocuments.filter((d) =>
+    d.generationStatus !== "SUPERSEDED" &&
+    (d.generationStatus === "PLANNED" || isFinalExportCandidateDocument(d))
+  );
+  const missingPlan = findMissingGeneratedDocuments(plan, allActiveAndPlannedDocs);
   const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
   const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
   const actualNames = finalCandidates.map((d) => (d.exactFileName ?? d.name ?? "").toLowerCase().trim()).filter(Boolean);

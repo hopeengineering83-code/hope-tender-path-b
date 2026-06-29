@@ -389,14 +389,25 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       // USER_CONFIRMED without active tender-source evidence remains blocked for
       // critical fields. A human confirmation may resolve a field candidate but
       // cannot substitute for real source proof when generation is at stake.
-      status = "MANUAL_CONFIRMED";
-      if (isCritical && !isGroundedEvidence(evidence)) {
-        blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+      // EXCEPTION: if the confirmed value matches the grounded extracted value,
+      // do not mark as "needs source" — the field IS properly grounded.
+      if (isGrounded) {
+        status = "EXTRACTED_AND_GROUNDED";
+      } else {
+        status = "MANUAL_CONFIRMED";
+        if (isCritical && !isGroundedEvidence(evidence)) {
+          blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+        }
       }
     } else if (override?.fieldState === "USER_EDITED") {
       // USER_EDITED is always a candidate — never unlocks a critical field.
-      status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
-      if (isCritical) {
+      // EXCEPTION: if the user-entered value matches a grounded extracted value,
+      // do not block. This prevents the contradiction where a deadline is shown as
+      // both "has candidate value" and "extracted with source evidence".
+      status = isCritical && effectiveStr !== rawValue
+        ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED"
+        : "MANUAL_OVERRIDE";
+      if (isCritical && effectiveStr !== rawValue) {
         blockerReason = `Field "${label}" has a candidate value. Critical fields remain blocked until linked to an active tender source.`;
       }
     } else if (isGrounded) {

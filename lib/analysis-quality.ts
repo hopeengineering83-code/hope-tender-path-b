@@ -339,16 +339,45 @@ export function assessTenderAnalysisQuality(params: {
   }
 
   score = Math.max(0, Math.min(100, score));
-  if (isRegexFallback && score > REGEX_FALLBACK_SCORE_CAP) {
-    score = REGEX_FALLBACK_SCORE_CAP;
-    warnings.unshift("Analysis used regex/deterministic fallback — score capped at 45. Re-run AI Analyze or approve the fallback to unblock generation.");
-    recommendations.unshift("Re-run AI Analyze when AI providers are healthy, or approve this fallback analysis with a written note via the Controls panel.");
-  }
+
   // Zero source grounding cannot score GOOD regardless of other signals —
   // a proposal built on untraced requirements can silently miss evaluator
   // criteria. Cap at WARNING (max 74) when no requirement has source
   // traceability so this case cannot slip through export/generation gates.
   const zeroGrounding = sourceReferencedCount === 0 && requirementCount > 0;
+
+  // When the overall score is capped due to safety/extraction issues, propagate
+  // constraints to sub-scores so they do not show contradictory high values.
+  // This fixes Contradiction #4: analysis score 40/100 cannot be consistent with
+  // extractionQuality: 100 when the cap was due to corrupted extraction.
+  let finalExtractQualitySub = extractionQualitySub;
+  let finalRequirementSub = requirementExtractionSub;
+  let finalMetadataSub = metadataQualitySub;
+  let finalSubmissionSub = submissionPlanQualitySub;
+  let finalMatchingSub = matchingReadinessSub;
+  let finalGroundingSub = sourceGroundingSub;
+
+  if (extractionUnsafe) {
+    // If extraction is unsafe, extraction quality cannot be high
+    finalExtractQualitySub = Math.min(finalExtractQualitySub, 25);
+    finalRequirementSub = Math.min(finalRequirementSub, 35);
+    finalGroundingSub = Math.min(finalGroundingSub, 25);
+  }
+  if (pageCount >= 5 && !isValidClientName(params.clientName)) {
+    finalMetadataSub = Math.min(finalMetadataSub, 35);
+  }
+  if (zeroGrounding) {
+    finalGroundingSub = 0;
+  }
+
+  if (isRegexFallback && score > REGEX_FALLBACK_SCORE_CAP) {
+    score = REGEX_FALLBACK_SCORE_CAP;
+    warnings.unshift("Analysis used regex/deterministic fallback — score capped at 45. Re-run AI Analyze or approve the fallback to unblock generation.");
+    recommendations.unshift("Re-run AI Analyze when AI providers are healthy, or approve this fallback analysis with a written note via the Controls panel.");
+    // Regex fallback cannot have high-quality sub-scores either
+    finalRequirementSub = Math.min(finalRequirementSub, REGEX_FALLBACK_SCORE_CAP);
+    finalGroundingSub = Math.min(finalGroundingSub, REGEX_FALLBACK_SCORE_CAP);
+  }
   const rawSeverity: AnalysisQualitySeverity = isUnsafe ? "UNSAFE" : score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
   const severity: AnalysisQualitySeverity = zeroGrounding && rawSeverity === "GOOD" ? "WARNING" : rawSeverity;
   if (zeroGrounding && severity === "WARNING") score = Math.min(score, 74);
@@ -369,12 +398,12 @@ export function assessTenderAnalysisQuality(params: {
     likelyMissingEvaluationCriteria,
     likelyMissingSubmissionRules,
     subScores: {
-      extractionQuality: extractionQualitySub,
-      requirementExtraction: requirementExtractionSub,
-      metadataQuality: metadataQualitySub,
-      submissionPlanQuality: submissionPlanQualitySub,
-      matchingReadiness: matchingReadinessSub,
-      sourceGrounding: sourceGroundingSub,
+      extractionQuality: finalExtractQualitySub,
+      requirementExtraction: finalRequirementSub,
+      metadataQuality: finalMetadataSub,
+      submissionPlanQuality: finalSubmissionSub,
+      matchingReadiness: finalMatchingSub,
+      sourceGrounding: finalGroundingSub,
     },
     metadataIssues,
     warnings,
