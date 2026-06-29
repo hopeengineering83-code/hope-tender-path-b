@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test, describe } from "node:test";
 import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import { prisma } from "../lib/prisma";
 
@@ -10,7 +10,10 @@ import { prisma } from "../lib/prisma";
  * Verification: All panels report the SAME snapshotRevision, field status (BLOCKED),
  * and blocker count for that field.
  */
-test("unified snapshot: manually entered ungrounded deadline is BLOCKED identically across all panels", async () => {
+const dbDescribe = process.env.RUN_DB_INTEGRATION === "true" ? describe : describe.skip;
+
+dbDescribe("unified snapshot integration", () => {
+  test("unified snapshot: manually entered ungrounded deadline is BLOCKED identically across all panels", async () => {
   // 1. Create a test user and tender
   const userId = `test-user-${Date.now()}`;
 
@@ -91,4 +94,5 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
   // Cleanup
   await prisma.tender.delete({ where: { id: tender.id } });
   await prisma.user.delete({ where: { id: userId } });
+});
 });

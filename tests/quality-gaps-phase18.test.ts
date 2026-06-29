@@ -80,11 +80,11 @@ describe("phase 18 — generate route mandatory requirements gate (static audit)
     );
   });
 
-  it("gate uses acceptNoMandatoryReqs bypass parameter", () => {
+  it("gate no longer uses acceptNoMandatoryReqs bypass (removed)", () => {
     const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
     assert.ok(
-      src.includes("acceptNoMandatoryReqs"),
-      "generate route must support acceptNoMandatoryReqs bypass for deliberate override",
+      !src.includes("acceptNoMandatoryReqs"),
+      "generate route must NOT support acceptNoMandatoryReqs bypass — use persisted Build Plan",
     );
   });
 
