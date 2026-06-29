@@ -49,10 +49,15 @@ type _TenderFileRow = {
   deletionStatus: string | null;
 };
 type _RequirementRow = {
+  id: string;
   priority: string | null;
   sourceTenderFileId: string | null;
   sourcePageNumber: number | null;
   sourceExactQuote: string | null;
+  title: string | null;
+  requirementType: string | null;
+  exactFileName: string | null;
+  exactOrder: number | null;
 };
 type _MetadataOverrideRow = {
   field: string;
@@ -90,6 +95,7 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
+  | "BUILD_PLAN_MISSING"
   | "BUILD_PLAN_STALE"
   | "NO_EXPORT_READY_DOCUMENTS"
   | "GATE_INTERNAL_ERROR";
@@ -152,14 +158,17 @@ export interface GenerationReadinessInput {
   //     PLANNED, SUPERSEDED, virtual, or legacy planned rows do NOT count as
   //     generated/export-ready — they only satisfy the plan prerequisite.
   hasValidVirtualSubmissionPlan: boolean;
-  // H2 — Recorded Build Plan staleness. When a BuildPlan has been persisted for
-  //      this tender, it is bound to the content hash of the exact file set/order
-  //      at build time. If the tender's active files have since changed (added,
-  //      removed, renamed, reordered), the recorded plan no longer reflects the
-  //      tender and must be rebuilt before generation/export. Undefined/false
-  //      means either no recorded plan exists (the virtual-plan gate H governs)
-  //      or the recorded plan is still valid.
-  recordedBuildPlanStale?: boolean;
+  // H2 — Recorded (persisted) Build Plan state. A persisted BuildPlan is
+  //      MANDATORY for generation/export: it is bound to the shared content hash
+  //      of the tender's ACTIVE files + requirements + exact naming/order +
+  //      submission instructions at build time.
+  //        - "MISSING": no recorded plan exists → block (must Build Plan first).
+  //        - "STALE":   recorded plan's hash no longer matches the tender's
+  //                     current state (files/requirements/naming changed) → block.
+  //        - "VALID":   recorded plan matches the current state → allowed.
+  //      The async gate always sets this from the database. Left undefined only
+  //      in pure unit tests that are not exercising the plan condition.
+  recordedBuildPlanState?: "MISSING" | "STALE" | "VALID";
   // I — EXPORT/FINAL-ZIP readiness: count of real current generated files with
   //     content, validation, review, and exact-plan reconciliation. Only these
   //     rows satisfy export and final-ZIP gates. PLANNED/SUPERSEDED/virtual/
@@ -282,11 +291,15 @@ export function evaluateGenerationReadiness(
     return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists. Build the submission plan before generating/exporting.");
   }
 
-  // H2 — A recorded Build Plan that no longer matches the tender's current file
-  //      set is stale: the tender content changed after the plan was built, so
-  //      the plan cannot be trusted. Rebuild it before generating/exporting.
-  if (input.recordedBuildPlanStale) {
-    return fail("BUILD_PLAN_STALE", "The recorded submission/build plan is out of date because the tender's files changed (added, removed, renamed, or reordered) after it was built. Rebuild the submission plan before generating/exporting.");
+  // H2 — A persisted Build Plan is mandatory and must match the tender's current
+  //      state. No recorded plan → block (build it first). A recorded plan whose
+  //      shared content hash no longer matches (files/requirements/exact naming
+  //      changed after it was built) is stale → block until rebuilt.
+  if (input.recordedBuildPlanState === "MISSING") {
+    return fail("BUILD_PLAN_MISSING", "No submission/build plan has been recorded for this tender. Build (and persist) the submission plan before generating or exporting.");
+  }
+  if (input.recordedBuildPlanState === "STALE") {
+    return fail("BUILD_PLAN_STALE", "The recorded submission/build plan is out of date because the tender's files, requirements, or exact naming/order changed after it was built. Rebuild the submission plan before generating/exporting.");
   }
 
   // I — EXPORT/FINAL-ZIP readiness: require real current generated files.
@@ -399,6 +412,9 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         submissionEmailSourcePage: true,
         submissionEmailSourceFileId: true,
         contactDetailsSourceJson: true,
+        // Plan-driving fields for the shared Build Plan hash.
+        exactFileNaming: true,
+        exactFileOrder: true,
         files: {
           select: {
             id: true,
@@ -471,9 +487,13 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     });
 
     // F — requirements + source-file activeness resolved against THIS tender.
+    //     Includes the plan-driving fields needed for the shared Build Plan hash.
     const requirements = await prisma.tenderRequirement.findMany({
       where: { tenderId },
-      select: { priority: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true },
+      select: {
+        id: true, priority: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true,
+        title: true, requirementType: true, exactFileName: true, exactOrder: true,
+      },
     });
     const activeFileIds = new Set(activeFiles.map((f) => f.id));
     const mappedRequirements: ReadinessRequirement[] = (requirements as _RequirementRow[]).map((r) => ({
@@ -555,23 +575,33 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       },
     });
 
-    // H2 — recorded Build Plan staleness. When a BuildPlan has been persisted,
-    //      it is bound to the content hash of the exact active-file set/order at
-    //      build time. If the active files changed since, the recorded plan is
-    //      stale and must be rebuilt. No recorded plan → undefined (the virtual
-    //      plan gate H governs); recorded + hash mismatch → stale (block).
+    // H2 — recorded Build Plan state (MANDATORY). A persisted BuildPlan is bound
+    //      to the SINGLE shared content hash over the tender's ACTIVE files +
+    //      requirements + exact naming/order + submission instructions. No
+    //      recorded plan → MISSING (block); recorded hash != current → STALE
+    //      (block); match → VALID. Uses the same helper as the Build Plan route,
+    //      so the recorded plan and this check can never disagree.
     const recordedBuildPlan = await prisma.buildPlan.findUnique({
       where: { tenderId },
       select: { contentHash: true },
     });
-    let recordedBuildPlanStale: boolean | undefined;
-    if (recordedBuildPlan) {
-      const { computeBuildPlanContentHash } = await import("./build-plan-hash");
-      const currentFileHash = computeBuildPlanContentHash(
-        activeFiles.map((f) => ({ id: f.id, originalFileName: f.originalFileName })),
-      );
-      recordedBuildPlanStale = recordedBuildPlan.contentHash !== currentFileHash;
-    }
+    const { computeBuildPlanHash, buildPlanHashInputFromTender } = await import("./build-plan-hash");
+    const currentPlanHash = computeBuildPlanHash(buildPlanHashInputFromTender({
+      exactFileNaming: tender.exactFileNaming,
+      exactFileOrder: tender.exactFileOrder,
+      submissionMethod: tender.submissionMethod,
+      submissionAddress: tender.submissionAddress,
+      submissionEmails: tender.submissionEmails,
+      files: activeFiles.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: "ACTIVE" })),
+      requirements: (requirements as _RequirementRow[]).map((r) => ({
+        id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority,
+        exactFileName: r.exactFileName, exactOrder: r.exactOrder,
+      })),
+    }));
+    const recordedBuildPlanState: "MISSING" | "STALE" | "VALID" =
+      !recordedBuildPlan ? "MISSING"
+        : recordedBuildPlan.contentHash !== currentPlanHash ? "STALE"
+        : "VALID";
 
     return evaluateGenerationReadiness({
       purpose,
@@ -588,7 +618,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirements: mappedRequirements,
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
       hasValidVirtualSubmissionPlan,
-      recordedBuildPlanStale,
+      recordedBuildPlanState,
       exportReadyDocumentCount,
     });
   } catch (err) {

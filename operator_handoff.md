@@ -71,6 +71,22 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-29 UTC — Claude Code (Haiku 4.5) — #919 corrections (mandatory plan, shared hash, real source file, all gates+panels)
+
+- **Mode:** corrective hardening of #919 per Hope's 5-point directive. Keep #919 draft; no merge/deploy.
+- **Branch / PR:** `claude/short-honest-feedback-gaps-vyh8dv` / #919 (draft)
+- **Changes:**
+  1. **Persisted BuildPlan is now MANDATORY.** Pure `evaluateGenerationReadiness` uses `recordedBuildPlanState: MISSING|STALE|VALID`; MISSING and STALE both block (codes `BUILD_PLAN_MISSING`, `BUILD_PLAN_STALE`). The async central gate (`assertTenderReadyForGenerationAndExport`, used by generate/export/download/regenerate/ai-proposal/generate-missing-plan-files) loads the BuildPlan and sets the state from the shared hash.
+  2. **One shared deterministic hash** (`lib/engine/build-plan-hash.ts` → `computeBuildPlanHash` + `buildPlanHashInputFromTender`) used by BOTH the Build Plan route and the gate. Hashes ONLY active files (id + name + per-file content digest), requirements (plan-driving fields), exact file naming/order, and submission instructions. Inputs are sorted by stable id before hashing — DB query order is never hashed. (Removed the old file-only `computeBuildPlanContentHash`.)
+  3. **Actual source-file attribution** (`lib/engine/metadata-source-attribution.ts` → `attributeMetadataSourceFileId`): each metadata field is bound to the active file whose extracted text contains its supporting quote; missing quote / no match / deleted file → null (ungrounded). Removed the earliest-active-file heuristic. Wired into both ai-analyze paths and the analysis job service.
+  4. **Same active-file grounding rule everywhere**: `activeTenderFileIds` now passed into `resolveCanonicalFieldState` at the generation gate, export/Final-ZIP (`final-submission-readiness.ts`), release snapshot (`tender-release-snapshot.ts`), and the dashboard panel (`metadata-override` route) — UI and gate cannot disagree. Added the 4 `sourceFileId` columns to each select.
+  5. **Tests** (`tests/grounding-and-buildplan-enforcement.test.ts`, `tests/metadata-grounding-and-build-plan.test.ts`): no-plan blocks; Build Plan→Generate→Export succeeds; deleted/wrong source file blocks; multi-file metadata uses the correct file; changing files/requirements/exact naming/order invalidates the plan; hash is order-independent.
+- **Files changed:** `lib/engine/build-plan-hash.ts`, `lib/engine/metadata-source-attribution.ts` (new), `lib/engine/generation-readiness-gate.ts`, `lib/engine/canonical-analysis-update.ts`, `lib/ai-jobs/analysis-job-service.ts`, `app/api/tenders/[id]/ai-analyze/route.ts`, `app/api/tenders/[id]/submission-plan/build/route.ts`, `app/api/tenders/[id]/metadata-override/route.ts`, `lib/engine/final-submission-readiness.ts`, `lib/engine/tender-release-snapshot.ts`, `tests/grounding-and-buildplan-enforcement.test.ts`, `tests/metadata-grounding-and-build-plan.test.ts`, `operator_handoff.md`.
+- **Checks run locally:** affected-suite unit tests via node:test/tsx — all pass (incl. 28 new/updated grounding+plan tests; final-submission-readiness 39, generation-readiness-gate 32, gate-safety 23, canonical-readiness-contradictions 28, etc.). Lint: 0 errors on changed files. New pure modules typecheck clean.
+- **Honest constraint:** `prisma generate`, full `tsc`, DB-integration tests, and `build` could NOT be run locally — the egress policy resets the Prisma engine download from binaries.prisma.sh, so the local @prisma/client lacks the BuildPlan model + sourceFileId columns (the only local typecheck errors are this stale-client class, which predates this work). CI regenerates the client and runs migration check, full typecheck, integration tests, and build authoritatively.
+- **Next action:** confirm CI green on #919; mark ready only on Hope's approval.
+- **Merge status:** #919 draft, NOT merged. No Vercel preview created intentionally.
+
 ### 2026-06-29 UTC — Claude Code (Haiku 4.5) — enforcement wiring + #909 merge
 
 - **Mode:** finish the two-gap wiring so #919 actually changes behavior; merge #909

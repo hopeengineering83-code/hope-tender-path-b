@@ -36,12 +36,15 @@ export type CanonicalAnalysisExisting = {
   submissionMethod?: string | null;
   submissionEmails?: string | null;
   notes?: string | null;
-  // Primary ACTIVE tender file the extracted metadata is attributed to. Used to
-  // bind each metadata field's source evidence to a live tender document, so
-  // grounding can later verify the evidence points to a file still active in
-  // THIS tender (not a deleted/superseded/unrelated file). When omitted, the
-  // sourceFileId columns are left untouched.
-  primarySourceFileId?: string | null;
+  // Per-field source file IDs, resolved by the caller from the ACTUAL extraction
+  // evidence (the active file whose extracted text contains the field's
+  // supporting quote — see attributeMetadataSourceFileId). Each is the real
+  // source file id, or null when the quote is missing / not found in any active
+  // file (→ ungrounded). A key left undefined leaves that column untouched.
+  clientNameSourceFileId?: string | null;
+  submissionMethodSourceFileId?: string | null;
+  submissionAddressSourceFileId?: string | null;
+  submissionEmailSourceFileId?: string | null;
 };
 
 export type CanonicalAnalysisUpdate = {
@@ -139,18 +142,14 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
     ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
     ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
-    // Bind each metadata field's source evidence to the primary ACTIVE tender
-    // file so grounding can verify the evidence comes from a live tender
-    // document. Only set when we have a real source page (positive number) and
-    // a known primary file — otherwise the evidence is not file-traceable.
-    ...(existing.primarySourceFileId && typeof aiResult.clientNameSourcePage === "number" && aiResult.clientNameSourcePage > 0
-      ? { clientNameSourceFileId: existing.primarySourceFileId } : {}),
-    ...(existing.primarySourceFileId && typeof aiResult.submissionMethodSourcePage === "number" && aiResult.submissionMethodSourcePage > 0
-      ? { submissionMethodSourceFileId: existing.primarySourceFileId } : {}),
-    ...(existing.primarySourceFileId && typeof aiResult.submissionAddressSourcePage === "number" && aiResult.submissionAddressSourcePage > 0
-      ? { submissionAddressSourceFileId: existing.primarySourceFileId } : {}),
-    ...(existing.primarySourceFileId && typeof aiResult.submissionEmailSourcePage === "number" && aiResult.submissionEmailSourcePage > 0
-      ? { submissionEmailSourceFileId: existing.primarySourceFileId } : {}),
+    // Bind each metadata field's source evidence to the ACTUAL file the caller
+    // resolved from the supporting quote (attributeMetadataSourceFileId). The
+    // value is the real source file id or null (ungrounded); a column is only
+    // written when the caller supplied that key.
+    ...(existing.clientNameSourceFileId !== undefined ? { clientNameSourceFileId: existing.clientNameSourceFileId } : {}),
+    ...(existing.submissionMethodSourceFileId !== undefined ? { submissionMethodSourceFileId: existing.submissionMethodSourceFileId } : {}),
+    ...(existing.submissionAddressSourceFileId !== undefined ? { submissionAddressSourceFileId: existing.submissionAddressSourceFileId } : {}),
+    ...(existing.submissionEmailSourceFileId !== undefined ? { submissionEmailSourceFileId: existing.submissionEmailSourceFileId } : {}),
     ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
     metadataContaminated,
   };

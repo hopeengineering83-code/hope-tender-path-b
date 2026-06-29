@@ -14,6 +14,7 @@ import {
 } from "../ai";
 import { upsertRequirements } from "../engine/stable-requirements";
 import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
+import { attributeMetadataSourceFileId } from "../engine/metadata-source-attribution";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
@@ -424,20 +425,23 @@ export async function finalizeJob(jobId: string, userId: string) {
                 clientName: true, submissionMethod: true, submissionEmails: true, notes: true,
                 files: {
                     where: { deletionStatus: "ACTIVE" },
-                    orderBy: { createdAt: "asc" },
-                    select: { id: true },
+                    select: { id: true, extractedText: true, deletionStatus: true },
                 },
             },
         });
-        // Attribute extracted metadata evidence to the primary (earliest) active
-        // tender file, so grounding can verify it points to a live tender document.
-        const primarySourceFileId = existingTender?.files?.[0]?.id ?? null;
+        // Bind each metadata field's source evidence to the ACTUAL active file
+        // whose extracted text contains the field's supporting quote (or null →
+        // ungrounded). No earliest-file guessing.
+        const attrFiles = existingTender?.files ?? [];
         const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
             clientName: existingTender?.clientName,
             submissionMethod: existingTender?.submissionMethod,
             submissionEmails: existingTender?.submissionEmails,
             notes: existingTender?.notes,
-            primarySourceFileId,
+            clientNameSourceFileId: attributeMetadataSourceFileId(merged.clientNameSourceQuote, attrFiles),
+            submissionMethodSourceFileId: attributeMetadataSourceFileId(merged.submissionMethodSourceQuote, attrFiles),
+            submissionAddressSourceFileId: attributeMetadataSourceFileId(merged.submissionAddressSourceQuote, attrFiles),
+            submissionEmailSourceFileId: null,
         });
 
         tenderUpdate = {

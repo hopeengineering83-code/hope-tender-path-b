@@ -19,7 +19,7 @@ import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engin
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
 import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
-import { computeBuildPlanContentHash } from "../../../../../../lib/engine/build-plan-hash";
+import { computeBuildPlanHash, buildPlanHashInputFromTender } from "../../../../../../lib/engine/build-plan-hash";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -74,6 +74,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
             extractedPages: true,
             ocrPages: true,
             failedPages: true,
+            deletionStatus: true,
           },
         },
         requirements: {
@@ -348,10 +349,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
-    // Persist the BuildPlan bound to the current file state
-    const contentHash = computeBuildPlanContentHash(tender.files.map((f) => ({ id: f.id, originalFileName: f.originalFileName })));
+    // Persist the BuildPlan bound to the current tender state via the SINGLE
+    // shared deterministic hash (same helper the readiness gate uses), so the
+    // recorded plan and the gate's freshness check can never disagree.
+    const contentHash = computeBuildPlanHash(buildPlanHashInputFromTender(tender));
+    const activeFiles = tender.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
     const filesList = JSON.stringify(
-      tender.files.map((f) => ({ fileId: f.id, fileName: f.originalFileName, order: 0 }))
+      activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName }))
     );
     const plannedDocumentsJson = JSON.stringify(
       plannedFiles.map((doc) => ({

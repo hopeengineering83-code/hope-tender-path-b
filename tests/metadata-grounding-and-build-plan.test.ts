@@ -1,204 +1,149 @@
 /**
- * Behavioral tests for two remaining gaps:
- * 1. Metadata grounding stricter contract: TenderFile ID validation
- * 2. Build Plan persistence: bound to content hash and file list
+ * Tests for:
+ * 1. Metadata grounding stricter contract: TenderFile ID validation.
+ * 2. Shared deterministic Build Plan hash: covers ACTIVE files + requirements +
+ *    exact naming/order + submission instructions; changing any of them
+ *    invalidates the plan; database query order does not affect the hash.
  */
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { isGroundedEvidence, isGroundedEvidenceWithFileCheck } from "../lib/engine/evidence-grounding";
-import { computeBuildPlanContentHash, isBuildPlanValid } from "../lib/engine/build-plan-hash";
+import {
+  computeBuildPlanHash,
+  isBuildPlanValid,
+  buildPlanHashInputFromTender,
+  type BuildPlanHashInput,
+} from "../lib/engine/build-plan-hash";
+
+// ─── Gap 1: grounding with TenderFile ID ────────────────────────────────────
 
 describe("Gap 1: Metadata Grounding Stricter Contract", () => {
-  describe("Evidence validation with TenderFile ID", () => {
-    it("should require page, quote, AND valid fileId for full grounding", () => {
-      // Basic check (no fileId validation)
-      const hasBasicGrounding = isGroundedEvidence(5, "This is a meaningful quote");
-      assert.equal(hasBasicGrounding, true);
+  it("requires page, quote, AND a valid active fileId for full grounding", () => {
+    assert.equal(isGroundedEvidence(5, "This is a meaningful quote"), true);
+    const active = new Set(["file-1", "file-2"]);
+    assert.equal(isGroundedEvidenceWithFileCheck(5, "This is a meaningful quote", "file-1", active), true);
+  });
 
-      // Stricter check with fileId validation
-      const activeTenderFileIds = new Set(["file-1", "file-2"]);
-      const hasFullGrounding = isGroundedEvidenceWithFileCheck(
-        5,
-        "This is a meaningful quote",
-        "file-1", // Valid fileId
-        activeTenderFileIds
-      );
-      assert.equal(hasFullGrounding, true);
-    });
+  it("rejects null / inactive / empty fileId", () => {
+    const active = new Set(["file-1"]);
+    assert.equal(isGroundedEvidenceWithFileCheck(5, "This is a meaningful quote", null, active), false);
+    assert.equal(isGroundedEvidenceWithFileCheck(5, "This is a meaningful quote", "file-x", active), false);
+    assert.equal(isGroundedEvidenceWithFileCheck(5, "This is a meaningful quote", "", active), false);
+  });
 
-    it("should reject evidence with null fileId when checking for full grounding", () => {
-      const activeTenderFileIds = new Set(["file-1"]);
-      const result = isGroundedEvidenceWithFileCheck(
-        5,
-        "This is a meaningful quote",
-        null, // Missing fileId
-        activeTenderFileIds
-      );
-      assert.equal(result, false);
-    });
-
-    it("should reject evidence with inactive fileId (not in active set)", () => {
-      const activeTenderFileIds = new Set(["file-1", "file-2"]);
-      const result = isGroundedEvidenceWithFileCheck(
-        5,
-        "This is a meaningful quote",
-        "file-3", // Deleted or inactive file
-        activeTenderFileIds
-      );
-      assert.equal(result, false);
-    });
-
-    it("should reject evidence with empty fileId string", () => {
-      const activeTenderFileIds = new Set(["file-1"]);
-      const result = isGroundedEvidenceWithFileCheck(
-        5,
-        "This is a meaningful quote",
-        "", // Empty string
-        activeTenderFileIds
-      );
-      assert.equal(result, false);
-    });
-
-    it("should reject evidence with insufficient quote length even with valid fileId", () => {
-      const activeTenderFileIds = new Set(["file-1"]);
-      const result = isGroundedEvidenceWithFileCheck(
-        5,
-        "short", // Only 5 chars, needs > 5
-        "file-1",
-        activeTenderFileIds
-      );
-      assert.equal(result, false);
-    });
-
-    it("should reject evidence with zero or missing page number even with valid fileId", () => {
-      const activeTenderFileIds = new Set(["file-1"]);
-      const result = isGroundedEvidenceWithFileCheck(
-        0,
-        "This is a meaningful quote",
-        "file-1",
-        activeTenderFileIds
-      );
-      assert.equal(result, false);
-    });
+  it("rejects short quote / zero page even with a valid fileId", () => {
+    const active = new Set(["file-1"]);
+    assert.equal(isGroundedEvidenceWithFileCheck(5, "short", "file-1", active), false);
+    assert.equal(isGroundedEvidenceWithFileCheck(0, "This is a meaningful quote", "file-1", active), false);
   });
 });
 
-describe("Gap 2: Build Plan Persistence", () => {
-  describe("Content hash computation and validation", () => {
-    it("should compute consistent hash for same file list", () => {
-      const files = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
+// ─── Gap 2: shared deterministic Build Plan hash ────────────────────────────
 
-      const hash1 = computeBuildPlanContentHash(files);
-      const hash2 = computeBuildPlanContentHash(files);
+function baseInput(overrides: Partial<BuildPlanHashInput> = {}): BuildPlanHashInput {
+  return {
+    activeFiles: [
+      { id: "f1", fileName: "RFQ.pdf", extractedText: "Submit by email to client@x.com", deletionStatus: "ACTIVE" },
+      { id: "f2", fileName: "Scope.pdf", extractedText: "Scope of works", deletionStatus: "ACTIVE" },
+    ],
+    requirements: [
+      { id: "r1", title: "Tech proposal", requirementType: "DOCUMENT", priority: "MANDATORY", exactFileName: "Tech.docx", exactOrder: 1 },
+    ],
+    exactFileNaming: "[]",
+    exactFileOrder: "[]",
+    submissionMethod: "Email",
+    submissionAddress: "client@x.com",
+    submissionEmails: "client@x.com",
+    ...overrides,
+  };
+}
 
-      assert.equal(hash1, hash2);
-      assert.equal(hash1.length, 64); // SHA256 hex is 64 chars
+describe("Gap 2: Build Plan hash — deterministic", () => {
+  it("is stable for the same inputs and independent of file/requirement order", () => {
+    const a = computeBuildPlanHash(baseInput());
+    const reordered = baseInput({
+      activeFiles: [
+        { id: "f2", fileName: "Scope.pdf", extractedText: "Scope of works", deletionStatus: "ACTIVE" },
+        { id: "f1", fileName: "RFQ.pdf", extractedText: "Submit by email to client@x.com", deletionStatus: "ACTIVE" },
+      ],
     });
-
-    it("should compute different hash when file is added", () => {
-      const files1 = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
-      const files2 = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
-
-      const hash1 = computeBuildPlanContentHash(files1);
-      const hash2 = computeBuildPlanContentHash(files2);
-
-      assert.notEqual(hash1, hash2);
-    });
-
-    it("should compute different hash when file is removed", () => {
-      const files1 = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
-      const files2 = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
-
-      const hash1 = computeBuildPlanContentHash(files1);
-      const hash2 = computeBuildPlanContentHash(files2);
-
-      assert.notEqual(hash1, hash2);
-    });
-
-    it("should compute different hash when file is renamed", () => {
-      const files1 = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
-      const files2 = [{ id: "file-1", originalFileName: "Tender.pdf" }];
-
-      const hash1 = computeBuildPlanContentHash(files1);
-      const hash2 = computeBuildPlanContentHash(files2);
-
-      assert.notEqual(hash1, hash2);
-    });
-
-    it("should compute different hash when file order changes", () => {
-      const files1 = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
-      const files2 = [
-        { id: "file-2", originalFileName: "Scope.pdf" },
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-      ];
-
-      const hash1 = computeBuildPlanContentHash(files1);
-      const hash2 = computeBuildPlanContentHash(files2);
-
-      assert.notEqual(hash1, hash2);
-    });
+    assert.equal(a, computeBuildPlanHash(reordered), "query/order must not change the hash");
+    assert.equal(a.length, 64);
   });
 
-  describe("Build plan validity checking", () => {
-    it("should validate plan when contentHash matches current files", () => {
-      const files = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
-
-      const recordedHash = computeBuildPlanContentHash(files);
-      const isValid = isBuildPlanValid(recordedHash, files);
-
-      assert.equal(isValid, true);
+  it("excludes non-ACTIVE files from the hash", () => {
+    const withDeleted = baseInput({
+      activeFiles: [
+        { id: "f1", fileName: "RFQ.pdf", extractedText: "Submit by email to client@x.com", deletionStatus: "ACTIVE" },
+        { id: "f2", fileName: "Scope.pdf", extractedText: "Scope of works", deletionStatus: "ACTIVE" },
+        { id: "f3", fileName: "Old.pdf", extractedText: "old", deletionStatus: "DELETED" },
+      ],
     });
+    assert.equal(computeBuildPlanHash(baseInput()), computeBuildPlanHash(withDeleted));
+  });
+});
 
-    it("should invalidate plan when a file is added after plan creation", () => {
-      const filesAtPlanTime = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
-      const recordedHash = computeBuildPlanContentHash(filesAtPlanTime);
+describe("Gap 2: Build Plan hash — change detection (invalidation)", () => {
+  const original = computeBuildPlanHash(baseInput());
 
-      const filesNow = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
-      const isValid = isBuildPlanValid(recordedHash, filesNow);
-
-      assert.equal(isValid, false);
+  it("changes when a file is added", () => {
+    const next = baseInput({
+      activeFiles: [...baseInput().activeFiles, { id: "f3", fileName: "Extra.pdf", extractedText: "extra", deletionStatus: "ACTIVE" }],
     });
+    assert.notEqual(original, computeBuildPlanHash(next));
+  });
 
-    it("should invalidate plan when a file is deleted after plan creation", () => {
-      const filesAtPlanTime = [
-        { id: "file-1", originalFileName: "RFQ.pdf" },
-        { id: "file-2", originalFileName: "Scope.pdf" },
-      ];
-      const recordedHash = computeBuildPlanContentHash(filesAtPlanTime);
+  it("changes when a file is removed", () => {
+    const next = baseInput({ activeFiles: [baseInput().activeFiles[0]] });
+    assert.notEqual(original, computeBuildPlanHash(next));
+  });
 
-      const filesNow = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
-      const isValid = isBuildPlanValid(recordedHash, filesNow);
+  it("changes when a file is renamed", () => {
+    const files = baseInput().activeFiles.map((f) => (f.id === "f1" ? { ...f, fileName: "Tender.pdf" } : f));
+    assert.notEqual(original, computeBuildPlanHash(baseInput({ activeFiles: files })));
+  });
 
-      assert.equal(isValid, false);
+  it("changes when extracted content changes", () => {
+    const files = baseInput().activeFiles.map((f) => (f.id === "f1" ? { ...f, extractedText: "totally different" } : f));
+    assert.notEqual(original, computeBuildPlanHash(baseInput({ activeFiles: files })));
+  });
+
+  it("changes when a requirement changes", () => {
+    const next = baseInput({
+      requirements: [{ id: "r1", title: "Tech proposal", requirementType: "DOCUMENT", priority: "MANDATORY", exactFileName: "Tech.docx", exactOrder: 2 }],
     });
+    assert.notEqual(original, computeBuildPlanHash(next));
+  });
 
-    it("should invalidate plan when a file is renamed after plan creation", () => {
-      const filesAtPlanTime = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
-      const recordedHash = computeBuildPlanContentHash(filesAtPlanTime);
+  it("changes when exact file naming/order changes", () => {
+    assert.notEqual(original, computeBuildPlanHash(baseInput({ exactFileNaming: '["Tech.docx"]' })));
+    assert.notEqual(original, computeBuildPlanHash(baseInput({ exactFileOrder: '["Tech.docx"]' })));
+  });
 
-      const filesNow = [{ id: "file-1", originalFileName: "Tender.pdf" }];
-      const isValid = isBuildPlanValid(recordedHash, filesNow);
+  it("changes when submission instructions change", () => {
+    assert.notEqual(original, computeBuildPlanHash(baseInput({ submissionMethod: "Portal" })));
+    assert.notEqual(original, computeBuildPlanHash(baseInput({ submissionAddress: "other@x.com" })));
+  });
 
-      assert.equal(isValid, false);
-    });
+  it("isBuildPlanValid returns true only for the matching state", () => {
+    const recorded = computeBuildPlanHash(baseInput());
+    assert.equal(isBuildPlanValid(recorded, baseInput()), true);
+    assert.equal(isBuildPlanValid(recorded, baseInput({ submissionMethod: "Portal" })), false);
+  });
+});
+
+describe("buildPlanHashInputFromTender", () => {
+  it("produces the same hash the gate/route would from a tender shape", () => {
+    const tender = {
+      exactFileNaming: "[]",
+      exactFileOrder: "[]",
+      submissionMethod: "Email",
+      submissionAddress: "client@x.com",
+      submissionEmails: "client@x.com",
+      files: baseInput().activeFiles,
+      requirements: baseInput().requirements,
+    };
+    assert.equal(computeBuildPlanHash(buildPlanHashInputFromTender(tender)), computeBuildPlanHash(baseInput()));
   });
 });

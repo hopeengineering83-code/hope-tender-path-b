@@ -13,6 +13,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
+import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -40,17 +41,25 @@ import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-// The primary ACTIVE tender file extracted metadata is attributed to: the
-// earliest-created file whose deletionStatus is ACTIVE. Used to bind metadata
-// source evidence to a live tender document so grounding can verify it. Returns
-// null when no active file exists.
-function primaryActiveSourceFileId(
-  files: Array<{ id: string; createdAt: Date; deletionStatus?: string | null }>,
-): string | null {
-  const active = files
-    .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  return active[0]?.id ?? null;
+// Resolve the per-field metadata source file IDs from the ACTUAL extraction
+// evidence: each field is bound to the active file whose extracted text contains
+// the field's supporting quote (or null → ungrounded). submissionEmail has no
+// quote in the analysis result, so it is left ungrounded.
+function resolveMetadataSourceFileIds(
+  aiResult: AIAnalysisResult,
+  files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
+): {
+  clientNameSourceFileId: string | null;
+  submissionMethodSourceFileId: string | null;
+  submissionAddressSourceFileId: string | null;
+  submissionEmailSourceFileId: string | null;
+} {
+  return {
+    clientNameSourceFileId: attributeMetadataSourceFileId(aiResult.clientNameSourceQuote, files),
+    submissionMethodSourceFileId: attributeMetadataSourceFileId(aiResult.submissionMethodSourceQuote, files),
+    submissionAddressSourceFileId: attributeMetadataSourceFileId(aiResult.submissionAddressSourceQuote, files),
+    submissionEmailSourceFileId: null,
+  };
 }
 
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
@@ -636,7 +645,7 @@ async function handleStreamingAnalyze(
                 submissionMethod: tenderRecord.submissionMethod,
                 submissionEmails: tenderRecord.submissionEmails,
                 notes: tenderRecord.notes,
-                primarySourceFileId: primaryActiveSourceFileId(tenderRecord.files),
+                ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -1321,7 +1330,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             submissionMethod: tenderRecord.submissionMethod,
             submissionEmails: tenderRecord.submissionEmails,
             notes: tenderRecord.notes,
-            primarySourceFileId: primaryActiveSourceFileId(tenderRecord.files),
+            ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.
