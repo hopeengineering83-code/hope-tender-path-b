@@ -351,8 +351,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     // Persist the BuildPlan bound to the current tender state via the SINGLE
     // shared deterministic hash (same helper the readiness gate uses), so the
-    // recorded plan and the gate's freshness check can never disagree.
-    const contentHash = computeBuildPlanHash(buildPlanHashInputFromTender(tender));
+    // recorded plan and the gate's freshness check can never disagree. Map files
+    // to the helper's shape (originalFileName → fileName), exactly as the gate does.
+    const contentHash = computeBuildPlanHash(buildPlanHashInputFromTender({
+      exactFileNaming: tender.exactFileNaming,
+      exactFileOrder: tender.exactFileOrder,
+      submissionMethod: tender.submissionMethod,
+      submissionAddress: tender.submissionAddress,
+      submissionEmails: tender.submissionEmails,
+      files: tender.files.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: f.deletionStatus })),
+      requirements: tender.requirements.map((r) => ({ id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority, exactFileName: r.exactFileName, exactOrder: r.exactOrder })),
+    }));
     const activeFiles = tender.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
     const filesList = JSON.stringify(
       activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName }))
