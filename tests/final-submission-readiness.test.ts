@@ -174,14 +174,27 @@ describe("final-submission-readiness — mandatory evidence coverage truth", () 
     assert.equal(ratio, 0);
   });
 
-  it("confirmed FULL/SUBSTANTIAL complianceMatrix rows increase coverage", () => {
+  it("confirmed FULL/SUBSTANTIAL complianceMatrix rows backed by source grounding increase coverage", () => {
+    // Coverage now requires BOTH user confirmation (FULL/SUBSTANTIAL support) AND
+    // source grounding (page number or quote). FULL + SUBSTANTIAL with grounding
+    // count; PARTIAL (weak support) and OPTIONAL (not mandatory) do not. => 2/3.
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "FULL" }], sourcePageNumber: 3 },
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "SUBSTANTIAL" }], sourceExactQuote: "see clause 4.2" },
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "PARTIAL" }], sourcePageNumber: 5 },
+      { priority: "OPTIONAL", complianceMatrixRows: [{ supportLevel: "FULL" }], sourcePageNumber: 6 },
+    ]);
+    assert.equal(ratio, 2 / 3);
+  });
+
+  it("confirmed FULL/SUBSTANTIAL rows WITHOUT source grounding do not count (grounding required)", () => {
+    // This locks in Contradiction #1's fix: matrix confirmation alone — with no
+    // page number and no quote — cannot be reported as covered evidence.
     const ratio = mandatoryEvidenceCoverageRatio([
       { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "FULL" }] },
       { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "SUBSTANTIAL" }] },
-      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "PARTIAL" }] },
-      { priority: "OPTIONAL", complianceMatrixRows: [{ supportLevel: "FULL" }] },
     ]);
-    assert.equal(ratio, 2 / 3);
+    assert.equal(ratio, 0);
   });
 });
 

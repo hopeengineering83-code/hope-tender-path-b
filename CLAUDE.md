@@ -171,17 +171,3 @@ Every extracted requirement, client detail, submission rule, evaluation criterio
 8. The app does not build an empty submission plan when requirements exist.
 9. The app does not generate documents before extraction, requirements, client details, and submission plan are usable.
 10. Regression tests prove that poor extraction cannot lead to confident AI Analyze, Build Plan, Generate Docs, or Final ZIP.
-
----
-
-## CI Fix Notes
-
-Investigated PR #910 CI failure. Found:
-- All test suites show "ok" status (1187 of 1187)  
-- No "not ok" test lines in logs
-- TAP summary shows "# fail 1" but source is unidentified
-- Tests pass locally (exit code 0)
-- Vercel preview deployed successfully
-- Core contradiction fixes verified
-
-Re-running CI to check if transient.
