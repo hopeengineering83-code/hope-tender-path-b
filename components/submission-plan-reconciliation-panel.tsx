@@ -1,168 +1,65 @@
-import Link from "next/link";
-import { getSession } from "../lib/auth";
-import { prisma, prismaReady } from "../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
-import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
-import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
-import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
+"use client";
 
-function statusClass(ok: boolean) {
-  return ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800";
-}
+import React, { useEffect, useState } from "react";
+import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import { CanonicalStatusIcon } from "./canonical-status-badge";
+import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
-function docStatusLabel(status?: string | null) {
-  return (status ?? "PLANNED").replace(/_/g, " ");
-}
+export function SubmissionPlanReconciliationPanel({
+  tenderId,
+  canonicalReadiness,
+}: {
+  tenderId: string;
+  canonicalReadiness?: CanonicalTenderReadiness | null;
+}) {
+  const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
 
-const ENVELOPE_BADGE: Record<SubmissionEnvelope, string> = {
-  TECHNICAL: "bg-blue-100 text-blue-700",
-  FINANCIAL: "bg-amber-100 text-amber-700",
-  ADMIN:     "bg-slate-100 text-slate-600",
-};
+  useEffect(() => {
+    fetch(`/api/tenders/${tenderId}/workflow-center`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && j.snapshot) setSnapshot(j.snapshot);
+      })
+      .finally(() => setLoading(false));
+  }, [tenderId]);
 
-export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId: string }) {
-  const userId = await getSession();
-  if (!userId) return null;
+  if (loading) return null;
+  if (!snapshot) return null;
 
-  try {
-  await prismaReady;
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: {
-      requirements: { orderBy: { createdAt: "asc" } },
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, validationStatus: true, reviewStatus: true },
-      },
-    },
-  });
-  if (!tender) return null;
-
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    id: tender.id,
-    title: tender.title,
-    submissionMethod: tender.submissionMethod,
-    tenderCategory: tender.category,
-    analysisExtractionStatus: tender.analysisExtractionStatus,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements: tender.requirements,
-  });
-  const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
-  const extra = findExtraGeneratedDocuments(plan, tender.generatedDocuments);
-  const requiredCount = submissionPlanFileCount(plan);
-  const generatedCount = Math.max(0, requiredCount - missing.length);
-  const ok = requiredCount > 0 && missing.length === 0 && extra.length === 0;
-
-  if (requiredCount === 0 && plan.warnings.length === 0) return null;
+  const { buildPlan } = snapshot;
 
   return (
-    <section id="submission-plan-reconciliation" className={`mb-4 rounded-2xl border p-5 shadow-sm ${statusClass(ok)}`}>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="submission-plan-reconciliation">
+      <div className="mb-3 flex items-center justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide">Submission plan reconciliation</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{ok ? "Submission file plan is reconciled" : "Submission file plan needs action"}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Compares tender-required file names/order against active generated documents so missing or extra package files are visible before export.
+          <h3 className="text-sm font-semibold text-slate-900">
+            {canonicalReadiness?.modules.submissionPlan && <CanonicalStatusIcon status={canonicalReadiness.modules.submissionPlan.state} />} Submission Plan Integrity
+          </h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Ensures all planned tender-required documents have been generated or accounted for.
           </p>
         </div>
-        <div className="flex flex-col items-stretch gap-2 lg:items-end">
-          <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
-            <p className="text-xs text-slate-500">Required generated files</p>
-            <p className="text-2xl font-bold text-slate-900">{generatedCount}/{requiredCount}</p>
-          </div>
-          {missing.length > 0 && <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={missing.length} />}
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="rounded-xl bg-slate-50 p-3 flex-1">
+          <p className="text-[10px] font-semibold uppercase text-slate-400">Status</p>
+          <p className={`mt-1 text-sm font-bold ${buildPlan.valid ? "text-emerald-700" : "text-red-700"}`}>
+            {buildPlan.valid ? "Valid Build Plan" : "Incomplete Plan"}
+          </p>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-3 flex-1">
+          <p className="text-[10px] font-semibold uppercase text-slate-400">Documents</p>
+          <p className="mt-1 text-sm font-bold text-slate-900">{buildPlan.documentCount} planned</p>
         </div>
       </div>
 
-      {plan.warnings.length > 0 && (
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
-          {plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-        </ul>
+      {buildPlan.blocker && (
+        <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+          ⚠ {buildPlan.blocker}
+        </p>
       )}
-
-      {requiredCount > 0 && (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-white/70 bg-white">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-3 py-2">Order</th>
-                <th className="px-3 py-2">Tender-required file</th>
-                <th className="px-3 py-2">Envelope</th>
-                <th className="px-3 py-2">Format</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Review</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {plan.files.filter((file) => file.required).map((file) => {
-                const generated = tender.generatedDocuments.find((doc) => submissionPlanFileKey(doc.exactFileName ?? doc.name) === submissionPlanFileKey(file.exactFileName));
-                return (
-                  <tr key={file.canonicalId}>
-                    <td className="px-3 py-2 font-medium">{file.exactOrder}</td>
-                    <td className="px-3 py-2">
-                      <p className="font-semibold text-slate-900">{file.exactFileName}</p>
-                      <p className="text-xs text-slate-500">{file.documentType}</p>
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ENVELOPE_BADGE[file.envelope ?? "TECHNICAL"]}`}>
-                        {file.envelope ?? "TECHNICAL"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{file.format}</td>
-                    <td className="px-3 py-2">{generated ? docStatusLabel(generated.generationStatus) : "MISSING"}</td>
-                    <td className="px-3 py-2">{generated ? docStatusLabel(generated.reviewStatus) : "Not generated"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {(missing.length > 0 || extra.length > 0) && (
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-          {missing.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-white p-3 text-sm">
-              <p className="font-semibold text-amber-900">Missing required files</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-800">
-                {missing.slice(0, 8).map((file) => <li key={file.canonicalId}>{file.exactFileName}</li>)}
-              </ul>
-            </div>
-          )}
-          {extra.length > 0 && (
-            <div className="rounded-xl border border-red-200 bg-white p-3 text-sm">
-              <p className="font-semibold text-red-900">Extra generated files outside plan</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-red-800">
-                {extra.slice(0, 8).map((doc) => <li key={doc.id ?? doc.exactFileName ?? doc.name ?? "extra"}>{doc.exactFileName ?? doc.name ?? doc.documentType}</li>)}
-              </ul>
-              {/* One-click reconciliation. POSTs /api/tenders/[id]/reconcile-docs
-                  (built in PR #371). For each stale row, the reconciler decides
-                  KEEP / RELINK / SUPERSEDE / NEEDS_REVALIDATION and writes
-                  the result back. Audit-logged via TENDER_DOCS_RECONCILED. */}
-              <ReconcileStaleFilesButton tenderId={tenderId} staleCount={extra.length} />
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-wrap gap-2 text-xs">
-        {requiredCount === 0 && (
-          <BuildSubmissionPlanButton tenderId={tenderId} />
-        )}
-        <Link href={`/api/tenders/${tenderId}/export-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Open export readiness JSON</Link>
-        <span className="rounded-lg bg-white px-3 py-2 text-slate-600">Use the missing-file action above to create planned package files, then review and validate before export.</span>
-      </div>
     </section>
   );
-  } catch (err) {
-    console.error("[SubmissionPlanReconciliationPanel] render error:", err);
-    return (
-      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
-      </section>
-    );
-  }
 }

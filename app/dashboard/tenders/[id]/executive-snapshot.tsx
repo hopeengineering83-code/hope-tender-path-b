@@ -175,7 +175,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
       && !hasPlanMismatch
       && !hasStrongEvidenceGap
       && analysisTrustedForGo
-      && (canonicalReadiness ? canonicalReadiness.modules.export.state === "READY" : true)
+      && (canonicalReadiness ? (canonicalReadiness.modules.export.state === "READY") : true)
         ? "GO"
         : "REVIEW";
 
@@ -200,12 +200,11 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
 
   // Belt-and-suspenders: never show green "No major blockers" when evidence
   // rows = 0 and requirements exist, or when no expert/project evidence is
-  // selected and requirements exist. The nextActions check above should catch
-  // these, but this guard prevents edge cases where the conditions slip through.
+  // selected and requirements exist.
   const clearForHumanReview = decision === "GO"
     && nextActions.length === 0
-    && !(hasRequirements && !hasConfirmedEvidenceRows)   // never green with 0 evidence rows
-    && !(hasRequirements && !hasSelectedEvidence);        // never green with 0 selected evidence
+    && !(hasRequirements && !hasConfirmedEvidenceRows)
+    && !(hasRequirements && !hasSelectedEvidence);
 
   return (
     <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm">
@@ -243,20 +242,13 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
       </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness. Use the Canonical Readiness panel for export gating."><p className="text-xs text-slate-400">Workflow Progress</p><p className="mt-1 text-2xl font-bold text-slate-900">{workflowProgress}%</p><p className="text-[10px] text-slate-400">(workflow, not final)</p></div>
-        <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence. Lenient (any link, including PARTIAL): ${evidenceScoreLegacy}%.`}><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p><p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p></div>
+        <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness."><p className="text-xs text-slate-400">Workflow Progress</p><p className="mt-1 text-2xl font-bold text-slate-900">{workflowProgress}%</p><p className="text-[10px] text-slate-400">(workflow, not final)</p></div>
+        <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence.`}><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p><p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Critical / High</p><p className="mt-1 text-2xl font-bold text-slate-900">{unresolvedCritical}/{unresolvedHigh}</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Experts ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongExperts}</p><p className="text-xs text-slate-500">{reviewedExperts}/{selectedExperts.length} reviewed selected</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Projects ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongProjects}</p><p className="text-xs text-slate-500">{reviewedProjects}/{selectedProjects.length} reviewed selected</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Docs</p><p className="mt-1 text-2xl font-bold text-slate-900">{dashboardGeneratedCount}/{dashboardDocTotal}</p><p className="text-xs text-slate-500">{validatedCount} valid · {approvedCount} approved</p></div>
       </div>
-
-      {plannedDocCount > 0 ? (
-        <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
-          <p className="font-semibold text-slate-900">Submission plan reconciliation</p>
-          <p className="mt-1">Planned tender-required files: <strong>{plannedDocCount}</strong> · Missing: <strong>{missingPlannedDocs.length}</strong> · Extra generated: <strong>{extraGeneratedDocs.length}</strong></p>
-        </div>
-      ) : null}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr,1fr]">
         <div className="rounded-xl border border-slate-100 p-4">

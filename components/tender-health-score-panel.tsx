@@ -1,21 +1,15 @@
-// Tender Health Score Panel — server component.
-//
-// Shows a 0-100 composite health score derived from:
-//   extraction quality · AI analysis quality · metadata completeness ·
-//   requirement coverage · submission plan · document readiness · export gates
-//
-// This is the single "trust this bid package" indicator before export.
+"use client";
 
-import { getSession } from "../lib/auth";
-import { prisma, prismaReady } from "../lib/prisma";
+import React from "react";
+import Link from "next/link";
 import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
-import { safeParseJsonArray } from "../lib/safe-json";
+import { safeParseJsonArray } from "../lib/utils/json";
 import { CanonicalStatusBadge, CanonicalStatusIcon } from "./canonical-status-badge";
-import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleKey } from "../lib/engine/canonical-readiness-state";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 type Dimension = {
   label: string;
@@ -27,19 +21,6 @@ type Dimension = {
   actionHref?: string;
 };
 
-function scoreBar(score: number, max: number) {
-  const pct = max === 0 ? 0 : Math.round((score / max) * 100);
-  const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-400" : "bg-red-400";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-2 rounded-full bg-slate-100">
-        <div className={`h-2 rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-      </div>
-      <span className="text-xs font-medium text-slate-600 w-12 text-right">{score}/{max}</span>
-    </div>
-  );
-}
-
 const DIMENSION_MODULE: Record<string, CanonicalModuleKey> = {
   Extraction: "extraction",
   "AI Analysis": "analysis",
@@ -50,227 +31,120 @@ const DIMENSION_MODULE: Record<string, CanonicalModuleKey> = {
   Compliance: "compliance",
 };
 
-export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: { tenderId: string; canonicalReadiness?: CanonicalTenderReadiness | null }) {
-  const userId = await getSession();
-  if (!userId) return null;
+export function TenderHealthScorePanel({
+  tenderId,
+  canonicalReadiness,
+}: {
+  tenderId: string;
+  canonicalReadiness?: CanonicalTenderReadiness | null;
+}) {
+  const [tender, setTender] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
 
-  try {
-  await prismaReady;
+  React.useEffect(() => {
+    fetch(`/api/tenders/${tenderId}/health-score`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.success) setTender(j.tender);
+      })
+      .finally(() => setLoading(false));
+  }, [tenderId]);
 
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    select: {
-      id: true,
-      status: true,
-      analysisSummary: true,
-      analysisExtractionStatus: true,
-      metadataContaminated: true,
-      readinessScore: true,
-      clientName: true,
-      procuringEntityName: true,
-      country: true,
-      clientContactName: true,
-      clientContactEmail: true,
-      submissionAddress: true,
-      submissionEmails: true,
-      submissionMethod: true,
-      deadline: true,
-      currency: true,
-      exactFileNaming: true,
-      metadataOverrides: {
-        select: { field: true, fieldState: true, overrideValue: true },
-      },
-      files: {
-        select: {
-          extractedText: true,
-          originalFileName: true,
-          fileName: true,
-          extractionScore: true,
-          totalPages: true,
-          extractedPages: true,
-          ocrPages: true,
-          failedPages: true,
-        },
-      },
-      requirements: {
-        select: {
-          id: true,
-          priority: true,
-          sourceConfidence: true,
-          sourcePageNumber: true,
-          sourceExactQuote: true,
-        },
-      },
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        select: {
-          id: true,
-          generationStatus: true,
-          validationStatus: true,
-          reviewStatus: true,
-        },
-      },
-      complianceGaps: {
-        where: { isResolved: false },
-        select: { severity: true },
-      },
-    },
-  }).catch(() => null);
-
+  if (loading) return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm animate-pulse">Loading health score…</section>;
   if (!tender) return null;
+
+  const scoreBar = (val: number, max: number) => {
+    const pct = Math.round((val / max) * 100);
+    const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-red-500";
+    return (
+      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className={`absolute left-0 top-0 h-full ${color} transition-all duration-300`} style={{ width: `${pct}%` }} />
+      </div>
+    );
+  };
 
   const dimensions: Dimension[] = [];
 
-  // ── 1. Extraction quality (20 pts) ───────────────────────────────────────
-  const hasFiles = tender.files.length > 0;
-  if (!hasFiles) {
-    dimensions.push({ label: "Extraction", score: 0, max: 20, detail: "No tender files uploaded", status: "FAIL", actionLabel: "Upload files", actionHref: `#tender-files` });
-  } else {
-    const fileScores = tender.files.map((f) => {
-      const q = assessExtractionQuality(f.extractedText, f.originalFileName || f.fileName);
-      const corrupted = f.extractedText ? isExtractionCorrupted(f.extractedText) : false;
-      return { score: Math.min(f.extractionScore ?? q.score, q.score), corrupted };
-    });
-    const avg = Math.round(fileScores.reduce((s, f) => s + f.score, 0) / fileScores.length);
-    const anyCorrupted = fileScores.some((f) => f.corrupted);
-    const dimScore = anyCorrupted ? 0 : Math.round((avg / 100) * 20);
-    const extStatus: Dimension["status"] = anyCorrupted ? "FAIL" : avg >= 70 ? "PASS" : avg >= 45 ? "WARN" : "FAIL";
-    dimensions.push({
-      label: "Extraction",
-      score: dimScore,
-      max: 20,
-      detail: anyCorrupted ? "Extraction corrupted" : `Avg score ${avg}/100`,
-      status: extStatus,
-      ...(extStatus !== "PASS" ? { actionLabel: "Re-extract / Upload clearer scan", actionHref: "#tender-files" } : {}),
-    });
-  }
+  // 1. Extraction
+  const extState = canonicalReadiness?.modules.extraction.state;
+  dimensions.push({
+    label: "Extraction",
+    score: extState === "READY" ? 20 : extState === "WARNING" ? 10 : 0,
+    max: 20,
+    detail: extState === "READY" ? "Ready" : extState || "Blocked",
+    status: extState === "READY" ? "PASS" : extState === "BLOCKED" ? "FAIL" : "WARN",
+    actionLabel: extState !== "READY" ? "Review extraction" : undefined,
+    actionHref: "#tender-files",
+  });
 
-  // ── 2. AI Analysis (15 pts) ──────────────────────────────────────────────
-  const hasAnalysis = Boolean(tender.analysisSummary);
-  const analysisStatus = tender.analysisExtractionStatus ?? "";
-  const analysisScore = !hasAnalysis ? 0
-    : analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" ? 15
-    : analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" ? 10
-    : analysisStatus.includes("CORRUPTED") ? 0
-    : 7;
-  const analysisStatusLabel: Dimension["status"] = analysisScore >= 12 ? "PASS" : analysisScore >= 7 ? "WARN" : "FAIL";
+  // 2. AI Analysis
+  const anaState = canonicalReadiness?.modules.analysis.state;
   dimensions.push({
     label: "AI Analysis",
-    score: analysisScore,
+    score: anaState === "READY" ? 15 : anaState === "WARNING" ? 7 : 0,
     max: 15,
-    detail: !hasAnalysis ? "Not run" : analysisStatus || "Analyzed",
-    status: analysisStatusLabel,
-    ...(analysisStatusLabel !== "PASS" ? { actionLabel: "Run AI Analyze", actionHref: "#ai-analyze-section" } : {}),
+    detail: anaState === "READY" ? "Ready" : anaState || "Blocked",
+    status: anaState === "READY" ? "PASS" : anaState === "BLOCKED" ? "FAIL" : "WARN",
+    actionLabel: anaState !== "READY" ? "Run AI Analyze" : undefined,
+    actionHref: "#ai-analyze-section",
   });
 
-  // ── 3. Metadata completeness (15 pts) ────────────────────────────────────
-  const meta = assessTenderMetadataCompleteness({
-    clientName: (tender.clientName || tender.procuringEntityName) ?? null,
-    country: tender.country ?? null,
-    clientContactName: tender.clientContactName ?? null,
-    clientContactEmail: tender.clientContactEmail ?? null,
-    submissionAddress: tender.submissionAddress ?? null,
-    submissionEmails: tender.submissionEmails ?? null,
-    submissionMethod: tender.submissionMethod ?? null,
-    deadline: tender.deadline ?? null,
-    currency: tender.currency ?? null,
-    hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
-    requirementCount: tender.requirements.length,
-  }, tender.metadataOverrides);
-  const metaScore = meta.blockingForGeneration || tender.metadataContaminated ? 0
-    : Math.round(meta.overallRatio * 15);
-  const metaStatusLabel: Dimension["status"] = ((canonicalReadiness?.modules.metadata.state === "READY") ? "PASS" : (canonicalReadiness?.modules.metadata.state === "BLOCKED" ? "FAIL" : "WARN"));
-  const missingCriticalNames = meta.missingCritical.map((f) => f.field);
-  const notApplicableNames = meta.notApplicableFields.map((f) => f.field);
-  const metaDetail = missingCriticalNames.length > 0
-    ? `Missing: ${missingCriticalNames.slice(0, 3).join(", ")}${missingCriticalNames.length > 3 ? " …" : ""}`
-    : tender.metadataContaminated ? "Contaminated client name"
-    : notApplicableNames.length > 0 ? `${Math.round(meta.overallRatio * 100)}% filled; ignored/not applicable: ${notApplicableNames.slice(0, 2).join(", ")}${notApplicableNames.length > 2 ? " …" : ""}`
-    : `${Math.round(meta.overallRatio * 100)}% filled`;
+  // 3. Metadata
+  const metaState = canonicalReadiness?.modules.metadata.state;
   dimensions.push({
     label: "Metadata",
-    score: metaScore,
+    score: metaState === "READY" ? 15 : metaState === "WARNING" ? 8 : 0,
     max: 15,
-    detail: metaDetail,
-    status: metaStatusLabel,
-    ...(metaStatusLabel !== "PASS" ? { actionLabel: "Edit metadata", actionHref: "#tender-edit-form" } : {}),
+    detail: metaState === "READY" ? "Ready" : metaState || "Blocked",
+    status: metaState === "READY" ? "PASS" : metaState === "BLOCKED" ? "FAIL" : "WARN",
+    actionLabel: metaState !== "READY" ? "Edit metadata" : undefined,
+    actionHref: "#tender-edit-form",
   });
 
-  // ── 4. Requirements (15 pts) ─────────────────────────────────────────────
-  // Count MANDATORY and CRITICAL together as mandatory-type requirements.
-  const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
-  const tracedReqs = mandatoryReqs.filter(
-    (r) => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0,
-  );
-  // Block the requirements dimension when analysis is untrusted (regex fallback / corrupted).
-  const analysisIsTrusted = analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" || analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED";
-  const reqScore = !hasAnalysis ? 0
-    : !analysisIsTrusted ? 0
-    : tender.requirements.length === 0 ? 0
-    : mandatoryReqs.length === 0 ? 10
-    : Math.round((tracedReqs.length / mandatoryReqs.length) * 15);
-  const reqStatusLabel: Dimension["status"] = ((canonicalReadiness?.modules.requirements.state === "READY") ? "PASS" : (canonicalReadiness?.modules.requirements.state === "BLOCKED" ? "FAIL" : "WARN"));
-  const reqDetail = !hasAnalysis ? "Analysis not run"
-    : !analysisIsTrusted ? "Analysis untrusted — re-run AI Analyze"
-    : tender.requirements.length === 0 ? "None extracted"
-    : `${tracedReqs.length}/${mandatoryReqs.length} mandatory/critical traced`;
+  // 4. Requirements
+  const reqState = canonicalReadiness?.modules.requirements.state;
   dimensions.push({
     label: "Requirements",
-    score: reqScore,
+    score: reqState === "READY" ? 15 : reqState === "PARTIAL" ? 7 : 0,
     max: 15,
-    detail: reqDetail,
-    status: reqStatusLabel,
-    ...(reqStatusLabel !== "PASS" ? { actionLabel: "Run AI Analyze to extract", actionHref: "#ai-analyze-section" } : {}),
+    detail: reqState === "READY" ? "Ready" : reqState || "Blocked",
+    status: reqState === "READY" ? "PASS" : reqState === "BLOCKED" ? "FAIL" : "WARN",
+    actionLabel: reqState !== "READY" ? "Review requirements" : undefined,
+    actionHref: "#ai-analyze-section",
   });
 
-  // ── 5. Submission plan (10 pts) ──────────────────────────────────────────
-  const planFiles = safeParseJsonArray(tender.exactFileNaming);
-  const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
+  // 5. Submission Plan
+  const planState = canonicalReadiness?.modules.submissionPlan.state;
   dimensions.push({
     label: "Submission Plan",
-    score: hasPlan ? 10 : 0,
+    score: planState === "READY" ? 10 : 0,
     max: 10,
-    detail: hasPlan ? `${planFiles.length} files planned` : "Not built",
-    status: ((canonicalReadiness?.modules.submissionPlan.state === "READY") ? "PASS" : (canonicalReadiness?.modules.submissionPlan.state === "BLOCKED" ? "FAIL" : "WARN")),
-    ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#ai-analyze-section" } : {}),
+    detail: planState === "READY" ? "Ready" : planState || "Blocked",
+    status: planState === "READY" ? "PASS" : planState === "BLOCKED" ? "FAIL" : "WARN",
+    actionLabel: planState !== "READY" ? "Build plan" : undefined,
+    actionHref: "#ai-analyze-section",
   });
 
-  // ── 6. Document readiness (15 pts) ──────────────────────────────────────
-  // Documents are only trustworthy when the submission plan is also built
-  // (so file names/order are confirmed) and analysis is trusted.
-  const activeDocs = tender.generatedDocuments;
-  const generatedDocs = activeDocs.filter((d) => d.generationStatus === "GENERATED");
-  const validatedDocs = generatedDocs.filter((d) =>
-    d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED",
-  );
-  const hasPlanForDocs = hasPlan;
-  const docScore = activeDocs.length === 0 ? 0
-    : !hasPlanForDocs ? 2
-    : generatedDocs.length === 0 ? 2
-    : Math.round((validatedDocs.length / Math.max(generatedDocs.length, 1)) * 15);
-  const docStatusLabel: Dimension["status"] = ((canonicalReadiness?.modules.documents.state === "READY") ? "PASS" : (canonicalReadiness?.modules.documents.state === "BLOCKED" ? "FAIL" : "WARN"));
-  const docDetail = activeDocs.length === 0 ? "Not generated"
-    : !hasPlanForDocs ? "Build submission plan before generating docs"
-    : `${validatedDocs.length}/${generatedDocs.length} validated`;
+  // 6. Documents
+  const docState = canonicalReadiness?.modules.documents.state;
   dimensions.push({
     label: "Documents",
-    score: docScore,
+    score: docState === "READY" ? 15 : docState === "PARTIAL" ? 7 : 0,
     max: 15,
-    detail: docDetail,
-    status: docStatusLabel,
-    ...(docStatusLabel !== "PASS" ? { actionLabel: activeDocs.length === 0 ? "Generate documents" : !hasPlanForDocs ? "Build submission plan" : "View documents", actionHref: activeDocs.length === 0 ? "#generated-documents" : !hasPlanForDocs ? "#ai-analyze-section" : "#generated-documents" } : {}),
+    detail: docState === "READY" ? "Ready" : docState || "Blocked",
+    status: docState === "READY" ? "PASS" : docState === "BLOCKED" ? "FAIL" : "WARN",
+    actionLabel: docState !== "READY" ? "Generate/View docs" : undefined,
+    actionHref: "#generated-documents",
   });
 
-  // ── 7. Compliance gaps (10 pts) ──────────────────────────────────────────
-  const criticalGaps = tender.complianceGaps.filter((g) => g.severity === "CRITICAL").length;
-  const totalGaps = tender.complianceGaps.length;
-  const gapScore = criticalGaps > 0 ? 0 : totalGaps === 0 ? 10 : 5;
+  // 7. Compliance
+  const compState = canonicalReadiness?.modules.compliance.state;
   dimensions.push({
     label: "Compliance",
-    score: gapScore,
+    score: compState === "READY" ? 10 : 5,
     max: 10,
-    detail: criticalGaps > 0 ? `${criticalGaps} critical gap(s)` : totalGaps === 0 ? "No open gaps" : `${totalGaps} non-critical gap(s)`,
-    status: criticalGaps > 0 ? "FAIL" : totalGaps === 0 ? "PASS" : "WARN",
+    detail: compState === "READY" ? "Ready" : compState || "Gaps exist",
+    status: compState === "READY" ? "PASS" : "WARN",
   });
 
   const totalScore = dimensions.reduce((s, d) => s + d.score, 0);
@@ -294,9 +168,6 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
             <CanonicalStatusBadge status={healthState} size="sm" />
           </div>
           <p className="mt-1 text-sm text-slate-600">Composite score across {dimensions.length} quality dimensions. Canonical icon/state comes from the shared readiness payload; numeric score cannot override blockers.</p>
-          {/* Additive honest-UI overlay: authoritative release-snapshot
-              generation verdict + revision, read-only (a 0–100 score is not a
-              boolean verdict, so no mismatch warning is asserted here). */}
           <SnapshotConsistencyBadge tenderId={tenderId} verdict="generation" />
         </div>
         <div className="text-right">
@@ -329,12 +200,4 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
       )}
     </section>
   );
-  } catch (err) {
-    console.error("[TenderHealthScorePanel] render error:", err);
-    return (
-      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
-      </section>
-    );
-  }
 }

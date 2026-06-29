@@ -53,7 +53,7 @@ describe("GenerationActionPanel surfaces a one-click 'Repair all' batch action",
   });
 
   it("the existing single-field button is preserved alongside the batch action", () => {
-    assert.match(source, /Repair evaluationMethodology only/);
+    assert.match(source, /Repair evaluation criteria only/);
     // Single-field handler still exists.
     assert.match(source, /async function runRepairMetadata\(\)/);
   });

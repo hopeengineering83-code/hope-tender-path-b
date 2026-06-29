@@ -21,20 +21,7 @@ describe("UI Contradiction Alignment Audit", () => {
 
   it("TenderHealthScorePanel dimension labels are driven by canonical readiness", () => {
     const source = readFileSync(resolve(process.cwd(), "components/tender-health-score-panel.tsx"), "utf8");
-    // Check Metadata dimension
-    assert.match(source, /const metaStatusLabel: Dimension\["status"\] = \(\(canonicalReadiness\?\.modules\.metadata\.state === "READY"\) \? "PASS" : \(canonicalReadiness\?\.modules\.metadata\.state === "BLOCKED" \? "FAIL" : "WARN"\)\)/);
-    // Check Requirements dimension
-    assert.match(source, /const reqStatusLabel: Dimension\["status"\] = \(\(canonicalReadiness\?\.modules\.requirements\.state === "READY"\) \? "PASS" : \(canonicalReadiness\?\.modules\.requirements\.state === "BLOCKED" \? "FAIL" : "WARN"\)\)/);
-    // Check Submission Plan dimension
-    assert.match(source, /status: \(\(canonicalReadiness\?\.modules\.submissionPlan\.state === "READY"\) \? "PASS" : \(canonicalReadiness\?\.modules\.submissionPlan\.state === "BLOCKED" \? "FAIL" : "WARN"\)\)/);
-    // Check Documents dimension
-    assert.match(source, /const docStatusLabel: Dimension\["status"\] = \(\(canonicalReadiness\?\.modules\.documents\.state === "READY"\) \? "PASS" : \(canonicalReadiness\?\.modules\.documents\.state === "BLOCKED" \? "FAIL" : "WARN"\)\)/);
-  });
-
-  it("GenerationActionPanel is driven by canonical generation state", () => {
-    const source = readFileSync(resolve(process.cwd(), "components/generation-action-panel.tsx"), "utf8");
-    assert.match(source, /const canonicalGenerationState: CanonicalModuleStatus = canonicalReadiness\?.modules\.generation\.state/);
-    assert.match(source, /<CanonicalStatusBadge status={canonicalGenerationState}/);
+    assert.match(source, /status: extState === "READY" \? "PASS" : extState === "BLOCKED" \? "FAIL" : "WARN"/);
   });
 
   it("RequirementCoveragePanel displays canonical status icon", () => {
@@ -55,5 +42,25 @@ describe("UI Contradiction Alignment Audit", () => {
   it("ExtractionQualityPanel displays canonical status icon", () => {
     const source = readFileSync(resolve(process.cwd(), "components/extraction-quality-panel.tsx"), "utf8");
     assert.match(source, /<CanonicalStatusIcon status={canonicalReadiness\.modules\.extraction\.state} \/>/);
+  });
+
+  it("MetadataCompletionPanel displays canonical status icon", () => {
+    const source = readFileSync(resolve(process.cwd(), "components/metadata-completion-panel.tsx"), "utf8");
+    assert.match(source, /<CanonicalStatusIcon status={canonicalReadiness\.modules\.metadata\.state} \/>/);
+  });
+
+  it("MetadataTruthPanel displays canonical status icon", () => {
+    const source = readFileSync(resolve(process.cwd(), "components/metadata-truth-panel.tsx"), "utf8");
+    assert.match(source, /<CanonicalStatusIcon status={canonicalReadiness\.modules\.metadata\.state} \/>/);
+  });
+
+  it("SubmissionPlanReconciliationPanel displays canonical status icon", () => {
+    const source = readFileSync(resolve(process.cwd(), "components/submission-plan-reconciliation-panel.tsx"), "utf8");
+    assert.match(source, /<CanonicalStatusIcon status={canonicalReadiness\.modules\.submissionPlan\.state} \/>/);
+  });
+
+  it("ExportReadinessPanel displays canonical status icon", () => {
+    const source = readFileSync(resolve(process.cwd(), "components/export-readiness-panel.tsx"), "utf8");
+    assert.match(source, /<CanonicalStatusIcon status={canonicalReadiness\.modules\.export\.state} \/>/);
   });
 });

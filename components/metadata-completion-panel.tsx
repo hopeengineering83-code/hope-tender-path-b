@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from "react";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import type { CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
+import { CanonicalStatusIcon } from "./canonical-status-badge";
+import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
 const STATUS_BADGE: Record<CanonicalFieldStatus, { label: string; classes: string }> = {
   EXTRACTED_AND_GROUNDED:              { label: "Extracted and grounded",             classes: "bg-emerald-100 text-emerald-700" },
@@ -22,7 +24,13 @@ const STATUS_BADGE: Record<CanonicalFieldStatus, { label: string; classes: strin
   BLOCKED:                             { label: "Blocked",                             classes: "bg-red-200 text-red-800" },
 };
 
-export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
+export function MetadataCompletionPanel({
+  tenderId,
+  canonicalReadiness,
+}: {
+  tenderId: string;
+  canonicalReadiness?: CanonicalTenderReadiness | null;
+}) {
   const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -52,7 +60,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
   if (loading) {
     return (
-      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm animate-pulse">
         Loading metadata completion…
       </section>
     );
@@ -60,7 +68,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
   if (error || !snapshot) {
     return (
-      <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+      <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700 shadow-sm">
         Could not load metadata: {error || "Unknown error"}
       </section>
     );
@@ -68,9 +76,6 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
   const { metadata } = snapshot;
 
-  // Derive actions directly from snapshot fields: show only fields that need action
-  // - Blocked fields (hard gate blockers)
-  // - Critical fields that are missing/invalid
   const fieldsNeedingAction = metadata.fields.filter(f => {
     const isCritical = f.criticality === "always-critical";
     const isBlocked = f.blockerReason != null;
@@ -78,12 +83,13 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
     return isBlocked || (isCritical && isMissing);
   });
 
-  // If no fields need action AND no generation blocker, show success
-  // But if hasGenerationBlocker is true, ALWAYS show the panel with blockers
   if (fieldsNeedingAction.length === 0 && !metadata.hasGenerationBlocker) {
     return (
-      <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
-        All critical metadata is present and valid. No additional resolution required.
+      <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700 shadow-sm">
+        <div className="flex items-center gap-2">
+          {canonicalReadiness?.modules.metadata && <CanonicalStatusIcon status={canonicalReadiness.modules.metadata.state} />}
+          <span>All critical metadata is present and valid. No additional resolution required.</span>
+        </div>
       </section>
     );
   }
@@ -93,7 +99,9 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
       <div className="mb-3 flex items-center justify-between">
         <div>
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900">Metadata Completion</h3>
+            <h3 className="text-sm font-semibold text-slate-900">
+              {canonicalReadiness?.modules.metadata && <CanonicalStatusIcon status={canonicalReadiness.modules.metadata.state} />} Metadata Completion
+            </h3>
             {snapshotRevision && (
               <span className="text-[10px] text-slate-400 font-mono ml-3">rev: {snapshotRevision.slice(0, 8)}</span>
             )}

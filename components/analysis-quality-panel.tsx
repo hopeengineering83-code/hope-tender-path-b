@@ -188,14 +188,14 @@ export function AnalysisQualityPanel({ tenderId, canonicalReadiness }: AnalysisQ
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
           <p className="text-xs font-semibold text-amber-800 mb-1">Metadata issues ({quality.metadataIssues.length})</p>
           <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-700">
-            {quality.metadataIssues.map((issue) => <li key={issue}>{issue}</li>)}
+            {quality.metadataIssues.map((issue: string) => <li key={issue}>{issue}</li>)}
           </ul>
         </div>
       )}
 
       {quality.warnings.length > 0 && (
         <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-slate-700">
-          {quality.warnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
+          {quality.warnings.slice(0, 5).map((warning: string) => <li key={warning}>{warning}</li>)}
         </ul>
       )}
     </section>

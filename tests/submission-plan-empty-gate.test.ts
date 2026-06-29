@@ -11,7 +11,7 @@ describe("submission plan empty-state gates", () => {
     assert.match(buildRoute, /SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED/);
     assert.match(buildRoute, /REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN/);
     assert.ok(
-      buildRoute.indexOf("if (plannedFiles.length === 0) {") < buildRoute.indexOf("let created = 0"),
+      buildRoute.indexOf("if (plannedFiles.length === 0) {") < buildRoute.indexOf("const created = 0"),
       "empty plan blocker must run before any GeneratedDocument rows are created",
     );
   });

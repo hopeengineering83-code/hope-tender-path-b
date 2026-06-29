@@ -174,8 +174,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
-        <MetadataTruthPanel tenderId={tender.id} />
-        <MetadataCompletionPanel tenderId={tender.id} />
+        <MetadataTruthPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
+        <MetadataCompletionPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
         <ClientSubmissionDetailsPanel tenderId={tender.id} />
         <ExtractionQualityPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
       </WorkflowStage>
@@ -209,7 +209,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
-        <SubmissionPlanReconciliationPanel tenderId={tender.id} />
+        <SubmissionPlanReconciliationPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
         <AuthorityReviewTruthPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
@@ -219,7 +219,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
         <PricingWorkbookPanel tenderId={tender.id} />
         <FinalPackageManifestPanel tenderId={tender.id} />
-        <ExportReadinessPanel tenderId={tender.id} />
+        <ExportReadinessPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
         <TenderSharePanel tenderId={tender.id} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
