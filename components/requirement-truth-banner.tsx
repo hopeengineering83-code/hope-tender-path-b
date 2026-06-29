@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { clientLogger } from "@/lib/ui/client-logger";
 
 export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
   const [status, setStatus] = useState<string | null>(null);

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
+import { checkAiProviderHealth } from "./ai-provider-health-check";
 
 const CRITICAL_TABLES = [
   "RateLimitBucket",
@@ -31,18 +32,26 @@ async function tableStatus(): Promise<Record<string, boolean>> {
 export async function livenessResponse() {
   const tables = await tableStatus();
   const allCriticalTablesExist = CRITICAL_TABLES.every((name) => tables[name] === true);
+  const aiHealth = checkAiProviderHealth();
+
+  // Healthy requires both DB tables AND at least one AI provider configured.
+  // If no AI providers are configured, the app is "degraded" — it can still
+  // serve pages but can't do AI analysis or generation.
+  const ok = allCriticalTablesExist && aiHealth.healthy;
+  const status = ok ? "healthy" : allCriticalTablesExist ? "degraded" : "unhealthy";
 
   return NextResponse.json(
     {
-      ok: allCriticalTablesExist,
-      status: allCriticalTablesExist ? "healthy" : "degraded",
+      ok,
+      status,
       environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown",
       release: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
       deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
       deploymentUrl: process.env.VERCEL_URL || "unknown",
       tables,
+      aiProviders: aiHealth,
       timestamp: new Date().toISOString(),
     },
-    { status: allCriticalTablesExist ? 200 : 503, headers: { "Cache-Control": "no-store" } },
+    { status: ok ? 200 : 503, headers: { "Cache-Control": "no-store" } },
   );
 }
