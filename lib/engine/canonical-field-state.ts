@@ -303,6 +303,47 @@ function isGroundedEvidence(evidence: { page: number | null; quote: string | nul
   return isGroundedSourceEvidence(evidence.page, evidence.quote);
 }
 
+/**
+ * Normalize a field value for comparison. For date fields, parse and
+ * canonicalize to ISO format (YYYY-MM-DD) so "2026-12-11" and "12/11/2026"
+ * compare equal. For all other fields, trim and lowercase for case-insensitive
+ * comparison.
+ *
+ * This is used by the USER_EDITED / USER_CONFIRMED grounding logic to ensure
+ * a manually confirmed value matches the extracted source value regardless
+ * of formatting differences.
+ */
+function normalizeFieldValue(fieldKey: string, value: string): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "";
+
+  // Date fields — normalize to ISO YYYY-MM-DD
+  const DATE_FIELDS = new Set(["deadline", "preBidMeetingDate"]);
+  if (DATE_FIELDS.has(fieldKey)) {
+    // Try ISO format first: 2026-12-11
+    const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(trimmed);
+    if (isoMatch) {
+      const [, y, m, d] = isoMatch;
+      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
+    // Try D/M/Y or M/D/Y format: 12/11/2026 or 12-11-2026
+    const slashMatch = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/.exec(trimmed);
+    if (slashMatch) {
+      let [, a, b, y] = slashMatch;
+      const year = y.length === 2 ? `20${y}` : y;
+      // Assume D/M/Y (international format) — the app targets Ethiopia/Africa
+      const day = a.padStart(2, "0");
+      const month = b.padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+    // Fallback: return as-is (will likely not match)
+    return trimmed.toLowerCase();
+  }
+
+  // All other fields — case-insensitive trimmed comparison
+  return trimmed.toLowerCase();
+}
+
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
   const { tender, overrides, hasExtractedRequirements } = input;
   const overrideMap = new Map(overrides.map(o => [o.field, o]));
@@ -386,18 +427,50 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         : "INVALID_FORMAT";
       blockerReason = validation.reason;
     } else if (override?.fieldState === "USER_CONFIRMED") {
-      // USER_CONFIRMED without active tender-source evidence remains blocked for
-      // critical fields. A human confirmation may resolve a field candidate but
-      // cannot substitute for real source proof when generation is at stake.
-      status = "MANUAL_CONFIRMED";
-      if (isCritical && !isGroundedEvidence(evidence)) {
-        blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+      // USER_CONFIRMED unblocks a critical field ONLY when the confirmed value
+      // exactly matches the field-specific extracted value that has active
+      // tender-source evidence (valid page + meaningful quote from a current
+      // tender source file). Unrelated, stale, or missing evidence keeps the
+      // field blocked.
+      //
+      // Normalize dates before comparison so "2026-12-11" and "12/11/2026"
+      // are treated as the same value.
+      const normalizedConfirmed = normalizeFieldValue(fieldKey, effectiveStr);
+      const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
+      const confirmedMatchesGroundedSource =
+        validation.valid &&
+        isGroundedEvidence(evidence) &&
+        normalizedConfirmed === normalizedRaw &&
+        normalizedConfirmed !== "";
+      if (confirmedMatchesGroundedSource) {
+        status = "EXTRACTED_AND_GROUNDED";
+      } else {
+        status = "MANUAL_CONFIRMED";
+        if (isCritical && !isGroundedEvidence(evidence)) {
+          blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+        } else if (isCritical && isGroundedEvidence(evidence) && normalizedConfirmed !== normalizedRaw) {
+          blockerReason = `Field "${label}" was manually confirmed with a value that does not match the active tender-source evidence. The confirmed value must exactly match the extracted source value.`;
+        }
       }
     } else if (override?.fieldState === "USER_EDITED") {
-      // USER_EDITED is always a candidate — never unlocks a critical field.
-      status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
-      if (isCritical) {
-        blockerReason = `Field "${label}" has a candidate value. Critical fields remain blocked until linked to an active tender source.`;
+      // USER_EDITED unblocks a critical field ONLY when the edited value
+      // exactly matches the field-specific extracted value with active
+      // tender-source evidence. A user edit of a *different* value is a
+      // candidate, not a grounded fact — it must not unlock generation.
+      const normalizedEdited = normalizeFieldValue(fieldKey, effectiveStr);
+      const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
+      const editedMatchesGroundedSource =
+        validation.valid &&
+        isGroundedEvidence(evidence) &&
+        normalizedEdited === normalizedRaw &&
+        normalizedEdited !== "";
+      if (editedMatchesGroundedSource) {
+        status = "EXTRACTED_AND_GROUNDED";
+      } else {
+        status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
+        if (isCritical) {
+          blockerReason = `Field "${label}" has a candidate value that does not match active tender-source evidence. Critical fields remain blocked until the value exactly matches the grounded source evidence.`;
+        }
       }
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";
