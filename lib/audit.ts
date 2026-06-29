@@ -111,6 +111,7 @@ export type AuditAction =
   | "SUBMISSION_PLAN_ROW_ACTION"
   // Explicit plan and evidence-confirmation workflow actions.
   | "SUBMISSION_PLAN_BUILT"
+  | "SUBMISSION_PLAN_CONFIRMED"
   | "SUBMISSION_PLAN_AUTO_CLASSIFY"
   | "TENDER_PLAN_BUILT"
   | "REQUIREMENT_EVIDENCE_CONFIRMED"

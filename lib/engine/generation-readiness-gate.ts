@@ -90,6 +90,7 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
+  | "REQUIREMENT_EVIDENCE_MISSING"
   | "GATE_INTERNAL_ERROR";
 
 export interface GenerationReadinessResult {
@@ -144,8 +145,11 @@ export interface GenerationReadinessInput {
   // G — critical metadata: no critical field may be invalid, placeholder, contaminated,
   //     or a manual candidate without active tender-source evidence
   criticalMetadataOk: boolean;
-  // H — submission/build plan: count of non-superseded GeneratedDocument rows
-  submissionPlanDocumentCount: number;
+  // H — only a current CONFIRMED persisted plan can authorize release
+  hasConfirmedPersistedPlan: boolean;
+  // I — every mandatory requirement must have current approved evidence
+  hasApprovedRequirementEvidence: boolean;
+  evidenceMissingRequirementIds?: string[];
 }
 
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
@@ -255,10 +259,15 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // H — Build/Submission plan must exist (at least one non-superseded planned or
-  //     generated document). Matches the canonical hasValidSubmissionPlan signal.
-  if (input.submissionPlanDocumentCount < 1) {
-    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists (no planned or generated documents). Build the submission plan before generating/exporting.");
+  // H — Only a current CONFIRMED persisted plan can authorize generation/export.
+  if (!input.hasConfirmedPersistedPlan) {
+    return fail("SUBMISSION_PLAN_MISSING", "No current confirmed persisted submission plan exists. Build and confirm the submission plan before generating/exporting.");
+  }
+
+  // I — Mandatory requirements need current approved evidence decisions.
+  if (!input.hasApprovedRequirementEvidence) {
+    const suffix = input.evidenceMissingRequirementIds?.length ? ` Missing requirement IDs: ${input.evidenceMissingRequirementIds.join(", ")}.` : "";
+    return fail("REQUIREMENT_EVIDENCE_MISSING", `One or more mandatory requirements lack current approved evidence decisions.${suffix}`);
   }
 
   return { ok: true, purpose: input.purpose };
@@ -470,10 +479,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       submissionMethodContext: tender.submissionMethod ?? undefined,
     });
 
-    // H — real submission-plan signal: non-superseded GeneratedDocument rows.
-    const submissionPlanDocumentCount = await prisma.generatedDocument.count({
-      where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    });
+    // H/I — release authority comes from the current CONFIRMED persisted plan and
+    // current approved requirement evidence, never from GeneratedDocument rows.
+    const persistedPlanMod = await import("./persisted-submission-plan");
+    const hasConfirmedPersistedPlan = await persistedPlanMod.hasConfirmedPersistedPlan(tenderId);
+    const evidenceMod = await import("./requirement-evidence");
+    const evidenceState = await evidenceMod.hasAllMandatoryEvidenceApproved(tenderId);
 
     return evaluateGenerationReadiness({
       purpose,
@@ -489,7 +500,9 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirementCount: requirements.length,
       requirements: mappedRequirements,
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
-      submissionPlanDocumentCount,
+      hasConfirmedPersistedPlan,
+      hasApprovedRequirementEvidence: evidenceState.ok,
+      evidenceMissingRequirementIds: evidenceState.missingRequirementIds,
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.

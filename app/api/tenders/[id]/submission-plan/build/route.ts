@@ -2,9 +2,8 @@ import { logger } from "../../../../../../lib/observability";
 // POST /api/tenders/[id]/submission-plan/build
 //
 // Builds and persists a submission plan for the given tender.
-// Creates GeneratedDocument rows (status=PLANNED) for each planned file
-// that does not already have a matching row. Never overwrites rows that
-// have already been generated (generationStatus !== "PLANNED").
+// Creates a persisted DRAFT SubmissionPlanRevision and item rows.
+// It creates zero GeneratedDocument rows; confirmation is required before release gates can pass.
 //
 // Auth: ADMIN or PROPOSAL_MANAGER. User-scoped tender query.
 
@@ -19,9 +18,18 @@ import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engin
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
 import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
+import { buildPersistedSubmissionPlan, type PlanItemEnvelope } from "../../../../../../lib/engine/persisted-submission-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
+
+function inferPlanEnvelope(file: { exactFileName: string; documentType?: string | null }): PlanItemEnvelope {
+  const label = `${file.exactFileName} ${file.documentType ?? ""}`.toLowerCase();
+  if (/financial|price|commercial|boq|bill of quantities/.test(label)) return "FINANCIAL";
+  if (/registration|tax|legal|bid bond|security|declaration|form|annex|certificate/.test(label)) return "ADMIN";
+  return "TECHNICAL";
+}
+
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -287,45 +295,38 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
-    // Build a set of already-existing exactFileNames (case-insensitive)
+    // Persist a DRAFT SubmissionPlanRevision as the only canonical plan authority.
+    // This still creates zero GeneratedDocument rows; generation/export must wait
+    // for explicit confirmation of the persisted revision.
+    const persistedPlan = await buildPersistedSubmissionPlan(id, actor.id, plannedFiles.map((file) => ({
+      exactFileName: file.exactFileName,
+      exactOrder: file.exactOrder,
+      documentType: file.documentType ?? "TENDER_REQUIRED_FILE",
+      format: file.format ?? "DOCX",
+      envelope: inferPlanEnvelope(file),
+      sourceRequirementIds: file.sourceRequirementIds ?? [],
+      sourceFileCitations: [],
+      requiresOriginalUpload: false,
+    })));
+
     const existingKeys = new Set(
       tender.generatedDocuments
         .map((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase())
         .filter(Boolean),
     );
 
-    let created = 0;
+    const created = 0;
     let skipped = 0;
-    const fileStatuses: { exactFileName: string; status: "created" | "skipped" }[] = [];
+    const fileStatuses: { exactFileName: string; status: "virtual" | "already_exists" }[] = [];
 
     for (const file of plannedFiles) {
       const key = file.exactFileName.toLowerCase();
       if (existingKeys.has(key)) {
         skipped++;
-        fileStatuses.push({ exactFileName: file.exactFileName, status: "skipped" });
+        fileStatuses.push({ exactFileName: file.exactFileName, status: "already_exists" });
         continue;
       }
-
-      await prisma.generatedDocument.create({
-        data: {
-          tenderId: id,
-          name: file.exactFileName,
-          exactFileName: file.exactFileName,
-          exactOrder: file.exactOrder,
-          documentType: file.documentType ?? "TECHNICAL_PROPOSAL",
-          generationStatus: "PLANNED",
-          // Store DERIVED_DRAFT marker in contentSummary so the UI and
-          // export gate can surface a confirmation prompt.
-          contentSummary: isDerivedDraft
-            ? "DERIVED_DRAFT_UNCONFIRMED — requires user confirmation before export"
-            : undefined,
-          reviewStatus: "PENDING",
-          validationStatus: "PENDING",
-        },
-      });
-      existingKeys.add(key);
-      created++;
-      fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
+      fileStatuses.push({ exactFileName: file.exactFileName, status: "virtual" });
     }
 
     const isWeakExtraction =
@@ -369,8 +370,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       action: "SUBMISSION_PLAN_BUILT",
       entityType: "Tender",
       entityId: id,
-      description: `Submission plan built for tender "${tender.title}" — ${created} created, ${skipped} skipped, ${plannedFiles.length} total planned files${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
-      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft },
+      description: `Submission plan built for tender "${tender.title}" — ${plannedFiles.length} virtual planned files, ${skipped} existing generated rows${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
+      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true, planId: persistedPlan.planId, revision: persistedPlan.revision },
     });
 
     const baseWarning = isDerivedDraft
@@ -385,6 +386,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       isDerivedDraft,
       warning: baseWarning,
       contentPageWarnings: contentPageWarnings.length > 0 ? contentPageWarnings : undefined,
+      virtualOnly: true,
+      planId: persistedPlan.planId,
+      revision: persistedPlan.revision,
+      planStatus: persistedPlan.status,
+      sourceContentHash: persistedPlan.sourceContentHash,
+      requirementsHash: persistedPlan.requirementsHash,
+      confirmationRequired: persistedPlan.confirmationRequired,
       files: fileStatuses,
     });
   } catch (error) {

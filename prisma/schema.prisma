@@ -21,6 +21,9 @@ model User {
   // PR #247 — DocumentReview / DocumentComment back-relations
   documentReviews  DocumentReview[]
   documentComments DocumentComment[]
+  submittedPlans   SubmissionPlanRevision[] @relation("SubmissionPlanCreatedBy")
+  confirmedPlans   SubmissionPlanRevision[] @relation("SubmissionPlanConfirmedBy")
+  evidenceReviews  RequirementEvidenceDecision[] @relation("RequirementEvidenceReviewedBy")
   notifications    Notification[]
   tenderShares TenderShare[]
   metadataOverrides    TenderMetadataOverride[]
@@ -152,6 +155,8 @@ model CompanyAsset {
   metadata         String   @default("{}")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  evidenceDecisions RequirementEvidenceDecision[] @relation("RequirementEvidenceCompanyAsset")
+  originalEvidenceDecisions RequirementEvidenceDecision[] @relation("RequirementEvidenceOriginalUpload")
 
   @@index([companyId])
 }
@@ -186,6 +191,7 @@ model Expert {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   tenderMatches    TenderExpertMatch[]
+  evidenceDecisions RequirementEvidenceDecision[]
 
   @@index([companyId])
   @@index([trustLevel])
@@ -221,6 +227,7 @@ model Project {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   tenderMatches TenderProjectMatch[]
+  evidenceDecisions RequirementEvidenceDecision[]
 
   @@index([companyId])
   @@index([trustLevel])
@@ -258,6 +265,7 @@ model LegalRecord {
   metadata        String    @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+  evidenceDecisions RequirementEvidenceDecision[]
 }
 
 model FinancialRecord {
@@ -287,6 +295,7 @@ model CompanyComplianceRecord {
   metadata        String    @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+  evidenceDecisions RequirementEvidenceDecision[]
 }
 
 model Tender {
@@ -402,6 +411,9 @@ model Tender {
   copilotMessages       TenderCopilotMessage[]
   metadataOverrides     TenderMetadataOverride[]
   submissionPlanState   SubmissionPlanState?
+  submissionPlanRevisions SubmissionPlanRevision[]
+  metadataEvidence      TenderMetadataEvidence[]
+  requirementEvidenceDecisions RequirementEvidenceDecision[]
   aiUsageRecords        AiUsageRecord[]
 
   // Audit DB-002 (2026-06-20): the single most-queried column in the app
@@ -457,6 +469,10 @@ model TenderFile {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  metadataEvidence TenderMetadataEvidence[]
+  planCitations    SubmissionPlanItemCitation[]
+  evidenceDecisions RequirementEvidenceDecision[]
+
   @@index([tenderId])
 }
 
@@ -489,6 +505,8 @@ model TenderRequirement {
   sourceExtractionMethod String?  // "text" | "ocr" | "manual"
   sourceConfidence       Float              @default(0)
   complianceMatrixRows ComplianceMatrix[]
+  planMappings        SubmissionPlanItemRequirement[]
+  evidenceDecisions   RequirementEvidenceDecision[]
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -595,6 +613,7 @@ model GeneratedDocument {
   // most-recent action), but the full history is in DocumentReview.
   reviews          DocumentReview[]
   comments         DocumentComment[]
+  submissionPlanItem SubmissionPlanItem?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -1206,4 +1225,168 @@ model ExtractionQualityOverride {
   @@unique([tenderId, tenderFileId])
   @@index([tenderId])
   @@index([tenderFileId])
+}
+
+
+enum SubmissionPlanRevisionStatus {
+  DRAFT
+  REVIEW_REQUIRED
+  CONFIRMED
+  SUPERSEDED
+}
+
+enum SubmissionPlanEnvelope {
+  TECHNICAL
+  FINANCIAL
+  ADMIN
+}
+
+enum RequirementEvidenceStatus {
+  RECOMMENDED
+  APPROVED
+  REJECTED
+  STALE
+  INVALIDATED
+}
+
+model SubmissionPlanRevision {
+  id                    String                       @id @default(uuid())
+  tenderId              String
+  tender                Tender                       @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  revision              Int
+  status                SubmissionPlanRevisionStatus @default(DRAFT)
+  sourceContentHash     String
+  requirementsHash      String
+  confirmationSnapshot  Json?
+  confirmationHash      String?
+  createdById           String
+  createdBy             User                         @relation("SubmissionPlanCreatedBy", fields: [createdById], references: [id])
+  confirmedById         String?
+  confirmedBy           User?                        @relation("SubmissionPlanConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedAt           DateTime?
+  supersededAt          DateTime?
+  invalidatedAt         DateTime?
+  invalidationReason    String?
+  items                 SubmissionPlanItem[]
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+
+  @@unique([tenderId, revision])
+  @@index([tenderId, status])
+  @@index([sourceContentHash])
+  @@index([requirementsHash])
+}
+
+model SubmissionPlanItem {
+  id                     String                       @id @default(uuid())
+  submissionPlanId       String
+  submissionPlan         SubmissionPlanRevision       @relation(fields: [submissionPlanId], references: [id], onDelete: Cascade)
+  exactFileName          String
+  exactOrder             Int
+  documentType           String
+  format                 String                       @default("DOCX")
+  envelope               SubmissionPlanEnvelope
+  requiresOriginalUpload Boolean                      @default(false)
+  generatedDocumentId    String?                      @unique
+  generatedDocument      GeneratedDocument?           @relation(fields: [generatedDocumentId], references: [id], onDelete: SetNull)
+  requirements           SubmissionPlanItemRequirement[]
+  citations              SubmissionPlanItemCitation[]
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+
+  @@unique([submissionPlanId, exactFileName])
+  @@unique([submissionPlanId, exactOrder])
+  @@index([submissionPlanId])
+}
+
+model SubmissionPlanItemRequirement {
+  id                   String                 @id @default(uuid())
+  submissionPlanItemId String
+  submissionPlanItem   SubmissionPlanItem     @relation(fields: [submissionPlanItemId], references: [id], onDelete: Cascade)
+  tenderRequirementId  String
+  tenderRequirement    TenderRequirement      @relation(fields: [tenderRequirementId], references: [id], onDelete: Cascade)
+  createdAt            DateTime               @default(now())
+
+  @@unique([submissionPlanItemId, tenderRequirementId])
+  @@index([tenderRequirementId])
+}
+
+model SubmissionPlanItemCitation {
+  id                   String              @id @default(uuid())
+  submissionPlanItemId String
+  submissionPlanItem   SubmissionPlanItem  @relation(fields: [submissionPlanItemId], references: [id], onDelete: Cascade)
+  tenderFileId         String
+  tenderFile           TenderFile          @relation(fields: [tenderFileId], references: [id], onDelete: Cascade)
+  pageNumber           Int
+  exactQuote           String
+  sourceContentHash    String
+  citationHash         String
+  createdAt            DateTime            @default(now())
+
+  @@unique([submissionPlanItemId, tenderFileId, pageNumber, citationHash])
+  @@index([tenderFileId])
+  @@index([sourceContentHash])
+}
+
+model TenderMetadataEvidence {
+  id                   String    @id @default(uuid())
+  tenderId             String
+  tender               Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  fieldKey             String
+  tenderFileId         String
+  tenderFile           TenderFile @relation(fields: [tenderFileId], references: [id], onDelete: Cascade)
+  pageNumber           Int
+  exactQuote           String
+  extractionRevision   String
+  sourceContentHash    String
+  createdAt            DateTime  @default(now())
+  invalidatedAt        DateTime?
+  invalidationReason   String?
+
+  @@unique([tenderId, fieldKey, tenderFileId, pageNumber, sourceContentHash])
+  @@index([tenderId, fieldKey])
+  @@index([tenderFileId])
+  @@index([sourceContentHash])
+}
+
+model RequirementEvidenceDecision {
+  id                         String                    @id @default(uuid())
+  tenderId                   String
+  tender                     Tender                    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  tenderRequirementId        String
+  tenderRequirement          TenderRequirement         @relation(fields: [tenderRequirementId], references: [id], onDelete: Cascade)
+  tenderFileId               String
+  tenderFile                 TenderFile                @relation(fields: [tenderFileId], references: [id], onDelete: Cascade)
+  reviewerId                 String
+  reviewer                   User                      @relation("RequirementEvidenceReviewedBy", fields: [reviewerId], references: [id])
+  status                     RequirementEvidenceStatus @default(RECOMMENDED)
+  pageNumber                 Int
+  exactQuote                 String
+  sourceContentHash          String
+  assetContentHash           String
+  expertId                   String?
+  expert                     Expert?                   @relation(fields: [expertId], references: [id], onDelete: Restrict)
+  projectId                  String?
+  project                    Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  legalRecordId              String?
+  legalRecord                LegalRecord?              @relation(fields: [legalRecordId], references: [id], onDelete: Restrict)
+  companyComplianceRecordId  String?
+  companyComplianceRecord    CompanyComplianceRecord?  @relation(fields: [companyComplianceRecordId], references: [id], onDelete: Restrict)
+  companyAssetId             String?
+  companyAsset               CompanyAsset?             @relation("RequirementEvidenceCompanyAsset", fields: [companyAssetId], references: [id], onDelete: Restrict)
+  originalUploadId           String?
+  originalUpload             CompanyAsset?             @relation("RequirementEvidenceOriginalUpload", fields: [originalUploadId], references: [id], onDelete: Restrict)
+  approvedAt                 DateTime?
+  rejectedAt                 DateTime?
+  invalidatedAt              DateTime?
+  invalidationReason         String?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+
+  @@index([tenderId, status])
+  @@index([tenderRequirementId, status])
+  @@index([tenderFileId])
+  @@index([reviewerId])
+  @@index([sourceContentHash])
+  @@index([assetContentHash])
 }

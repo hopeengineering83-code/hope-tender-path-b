@@ -71,6 +71,42 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-29 20:23 UTC — ChatGPT
+
+- **Mode:** PR #920 update after review feedback
+- **Branch / PR:** `fix/release-ops-after-plan-correction` / local PR #920 update only
+- **Scope:** tightened the previous persisted-plan/evidence patch by adding real Prisma relations and migration foreign keys for all supported `RequirementEvidenceDecision` asset references, scoping evidence approve/reject/invalidate operations to the tender route before mutating a decision, and adding regression assertions for those fixes.
+- **Files changed:** `prisma/schema.prisma`, `prisma/migrations/20260630000000_persisted_submission_plan_evidence/migration.sql`, `lib/engine/requirement-evidence.ts`, `app/api/tenders/[id]/evidence-decisions/[decisionId]/route.ts`, `tests/release-plan-model-hardening.test.ts`, `operator_handoff.md`
+- **Tests:** `DATABASE_URL=postgresql://user:pass@localhost:5432/db npx prisma validate` passed; `npm run typecheck` passed; `node --import tsx tests/release-plan-model-hardening.test.ts` passed; `npm run lint` passed; `node --import tsx tests/canonical-readiness-contradictions.test.ts` passed; `node --import tsx tests/generation-readiness-gate.test.ts` passed; `node --import tsx tests/generation-gate-hardened.test.ts` passed.
+- **CI / deployment:** no GitHub push, PR update, Vercel CLI, preview, settings change, production migration, or deployment performed from this session.
+- **Known risk:** still not a full Phase A/B/C completion; Final ZIP snapshot assembly, original-upload package enforcement, database-backed concurrency/evidence tests, and broader operations/security hardening remain.
+- **Next action:** run full required suite with real PostgreSQL/env and finish Final ZIP/e2e/database-backed hardening before merge.
+- **Merge status:** unsafe — bounded update only
+
+### 2026-06-29 UTC — ChatGPT
+
+- **Mode:** PR #920 release-plan correction / local-only hardening
+- **Branch / PR:** `fix/release-ops-after-plan-correction` / no GitHub PR update or push from this session
+- **Scope:** added persisted `SubmissionPlanRevision` release authority, relational plan item requirement/citation mappings, metadata and requirement evidence models, confirm-plan and requirement-evidence routes, confirmed-plan/evidence gates, source/requirements hashing, pending migration, bootstrap coverage, and regression tests. Could not fetch `origin` due HTTPS 403 tunnel; used public PR #920 metadata/diff as reference.
+- **Files changed:** `prisma/schema.prisma`, `prisma/migrations/20260630000000_persisted_submission_plan_evidence/migration.sql`, `lib/engine/persisted-submission-plan.ts`, `lib/engine/requirement-evidence.ts`, `lib/engine/generation-readiness-gate.ts`, `lib/prisma.ts`, `lib/audit.ts`, `app/api/tenders/[id]/submission-plan/build/route.ts`, `app/api/tenders/[id]/confirm-plan/route.ts`, `app/api/tenders/[id]/requirements/[requirementId]/evidence/route.ts`, `app/api/tenders/[id]/evidence-decisions/[decisionId]/route.ts`, `tests/release-plan-model-hardening.test.ts`, `tests/canonical-readiness-contradictions.test.ts`, `tests/generation-readiness-gate.test.ts`, `tests/generation-gate-hardened.test.ts`, `operator_handoff.md`
+- **Tests:** `npm ci` passed with Node engine warning; `DATABASE_URL=postgresql://user:pass@localhost:5432/db npx prisma validate` passed; `npm run typecheck` passed; `npm run lint` passed; focused node tests for release plan, canonical readiness, generation readiness, hardened gate, bootstrap coverage, safe errors, and structured export/download errors passed. `npm run build` failed before build because local `DATABASE_URL` and `SESSION_SECRET` are missing. `npm run test:e2e` failed because Next config requires `SESSION_SECRET`. `timeout 120 npm test` timed out; before timeout it surfaced bootstrap coverage, which was fixed and re-tested.
+- **CI / deployment:** not checked via `gh` because GitHub CLI is unavailable and `git fetch origin`/HTTPS remote access failed with CONNECT tunnel 403; no Vercel CLI, preview, settings change, push, production migration, or deployment performed.
+- **Known risk:** this is a bounded local correction rather than a full Phase A/B/C completion; Final ZIP still needs deeper confirmed-plan snapshot assembly and original-upload package inclusion beyond the central gate. Runtime bootstrap table stubs were updated only to satisfy existing fresh-DB coverage and should not replace migrations.
+- **Next action:** run with a real local PostgreSQL database and full env, then complete database-backed concurrency/evidence/Final ZIP tests before merge.
+- **Merge status:** unsafe — not complete for all requested release-critical items
+
+### 2026-06-29 UTC — ChatGPT
+
+- **Mode:** PR #910 safety follow-up
+- **Branch / PR:** `work` / PR pending
+- **Scope:** restored/replaced canonical readiness contradiction coverage for regex fallback, missing submission plan, stale documents, OCR-required extraction, metadata trust, export blockers, and PLANNED virtual document behavior; changed Build Plan/plan-only responses so planned files are virtual/readiness-only and do not create `GeneratedDocument` rows before readiness.
+- **Files changed:** `tests/canonical-readiness-contradictions.test.ts`, `tests/submission-plan-empty-gate.test.ts`, `app/api/tenders/[id]/submission-plan/build/route.ts`, `app/api/tenders/[id]/generate/route.ts`, `operator_handoff.md`
+- **Tests:** `node --import tsx tests/canonical-readiness-contradictions.test.ts` passed; `node --import tsx tests/submission-plan-empty-gate.test.ts` passed; `npm run typecheck` passed. Attempted `npm test -- tests/canonical-readiness-contradictions.test.ts tests/submission-plan-empty-gate.test.ts tests/tender-readiness-state.test.ts`, but the repo test runner ignored the file arguments and began the full suite; stopped it after broad unrelated tests were still running.
+- **CI / deployment:** GitHub CLI unavailable in container, so open PR/CI state could not be checked from `gh`; no Vercel preview created intentionally.
+- **Known risk:** legacy `PLANNED` rows may still exist from older runs; this change prevents new pre-readiness rows from Build Plan/plan-only paths and keeps export blockers strict.
+- **Next action:** open/review CI for this branch and verify PR #910 replacement coverage before merge.
+- **Merge status:** not reviewed
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction

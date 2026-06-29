@@ -36,7 +36,8 @@ function goodInput(overrides: Partial<GenerationReadinessInput> = {}): Generatio
       },
     ],
     criticalMetadataOk: true,
-    submissionPlanDocumentCount: 1,
+    hasConfirmedPersistedPlan: true,
+    hasApprovedRequirementEvidence: true,
     ...overrides,
   };
 }

@@ -956,6 +956,113 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
   )`);
 
+
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanRevision" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'DRAFT',
+    "sourceContentHash" TEXT NOT NULL,
+    "requirementsHash" TEXT NOT NULL,
+    "confirmationSnapshot" JSONB,
+    "confirmationHash" TEXT,
+    "createdById" TEXT NOT NULL,
+    "confirmedById" TEXT,
+    "confirmedAt" TIMESTAMPTZ,
+    "supersededAt" TIMESTAMPTZ,
+    "invalidatedAt" TIMESTAMPTZ,
+    "invalidationReason" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("createdById") REFERENCES "User"("id"),
+    FOREIGN KEY ("confirmedById") REFERENCES "User"("id") ON DELETE SET NULL
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanItem" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "submissionPlanId" TEXT NOT NULL,
+    "exactFileName" TEXT NOT NULL,
+    "exactOrder" INTEGER NOT NULL,
+    "documentType" TEXT NOT NULL,
+    "format" TEXT NOT NULL DEFAULT 'DOCX',
+    "envelope" TEXT NOT NULL,
+    "requiresOriginalUpload" BOOLEAN NOT NULL DEFAULT false,
+    "generatedDocumentId" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("submissionPlanId") REFERENCES "SubmissionPlanRevision"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE SET NULL
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanItemRequirement" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "submissionPlanItemId" TEXT NOT NULL,
+    "tenderRequirementId" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("submissionPlanItemId") REFERENCES "SubmissionPlanItem"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderRequirementId") REFERENCES "TenderRequirement"("id") ON DELETE CASCADE
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanItemCitation" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "submissionPlanItemId" TEXT NOT NULL,
+    "tenderFileId" TEXT NOT NULL,
+    "pageNumber" INTEGER NOT NULL,
+    "exactQuote" TEXT NOT NULL,
+    "sourceContentHash" TEXT NOT NULL,
+    "citationHash" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("submissionPlanItemId") REFERENCES "SubmissionPlanItem"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderFileId") REFERENCES "TenderFile"("id") ON DELETE CASCADE
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderMetadataEvidence" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "fieldKey" TEXT NOT NULL,
+    "tenderFileId" TEXT NOT NULL,
+    "pageNumber" INTEGER NOT NULL,
+    "exactQuote" TEXT NOT NULL,
+    "extractionRevision" TEXT NOT NULL,
+    "sourceContentHash" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "invalidatedAt" TIMESTAMPTZ,
+    "invalidationReason" TEXT,
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderFileId") REFERENCES "TenderFile"("id") ON DELETE CASCADE
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "RequirementEvidenceDecision" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "tenderRequirementId" TEXT NOT NULL,
+    "tenderFileId" TEXT NOT NULL,
+    "reviewerId" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'RECOMMENDED',
+    "pageNumber" INTEGER NOT NULL,
+    "exactQuote" TEXT NOT NULL,
+    "sourceContentHash" TEXT NOT NULL,
+    "assetContentHash" TEXT NOT NULL,
+    "expertId" TEXT,
+    "projectId" TEXT,
+    "legalRecordId" TEXT,
+    "companyComplianceRecordId" TEXT,
+    "companyAssetId" TEXT,
+    "originalUploadId" TEXT,
+    "approvedAt" TIMESTAMPTZ,
+    "rejectedAt" TIMESTAMPTZ,
+    "invalidatedAt" TIMESTAMPTZ,
+    "invalidationReason" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderRequirementId") REFERENCES "TenderRequirement"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("tenderFileId") REFERENCES "TenderFile"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("reviewerId") REFERENCES "User"("id")
+  )`);
+
   // ── ProviderHealthSnapshot (in schema.prisma, no dedicated migration) ────
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ProviderHealthSnapshot" (
     "provider" TEXT NOT NULL PRIMARY KEY,

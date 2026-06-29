@@ -826,9 +826,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
       }, { status: 422 });
     }
-    const planRowsCreated = await ensurePlannedGeneratedDocumentRecords(id, plannedFiles);
-    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built: ${planRowsCreated} planned document stub(s) created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length } });
-    return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });
+    // Plan-only mode is virtual/readiness-only: it proves what the tender requires
+    // without creating GeneratedDocument rows before the final generation gate.
+    const planRowsCreated = 0;
+    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built virtually: ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, virtualOnly: true } });
+    return NextResponse.json({ planBuilt: true, virtualOnly: true, planRowsCreated, plannedFileCount: plannedFiles.length, virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })), message: `Submission plan built virtually — ${plannedFiles.length} required file(s) identified; no GeneratedDocument rows were created before readiness.` });
   }
 
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
