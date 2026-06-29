@@ -4,7 +4,8 @@
  * 2. Build Plan persistence: bound to content hash and file list
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
 import { isGroundedEvidence, isGroundedEvidenceWithFileCheck } from "../lib/engine/evidence-grounding";
 import { computeBuildPlanContentHash, isBuildPlanValid } from "../lib/engine/build-plan-hash";
 
@@ -13,7 +14,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
     it("should require page, quote, AND valid fileId for full grounding", () => {
       // Basic check (no fileId validation)
       const hasBasicGrounding = isGroundedEvidence(5, "This is a meaningful quote");
-      expect(hasBasicGrounding).toBe(true);
+      assert.equal(hasBasicGrounding, true);
 
       // Stricter check with fileId validation
       const activeTenderFileIds = new Set(["file-1", "file-2"]);
@@ -23,7 +24,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
         "file-1", // Valid fileId
         activeTenderFileIds
       );
-      expect(hasFullGrounding).toBe(true);
+      assert.equal(hasFullGrounding, true);
     });
 
     it("should reject evidence with null fileId when checking for full grounding", () => {
@@ -34,7 +35,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
         null, // Missing fileId
         activeTenderFileIds
       );
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
 
     it("should reject evidence with inactive fileId (not in active set)", () => {
@@ -45,7 +46,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
         "file-3", // Deleted or inactive file
         activeTenderFileIds
       );
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
 
     it("should reject evidence with empty fileId string", () => {
@@ -56,7 +57,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
         "", // Empty string
         activeTenderFileIds
       );
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
 
     it("should reject evidence with insufficient quote length even with valid fileId", () => {
@@ -67,7 +68,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
         "file-1",
         activeTenderFileIds
       );
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
 
     it("should reject evidence with zero or missing page number even with valid fileId", () => {
@@ -78,7 +79,7 @@ describe("Gap 1: Metadata Grounding Stricter Contract", () => {
         "file-1",
         activeTenderFileIds
       );
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
   });
 });
@@ -94,8 +95,8 @@ describe("Gap 2: Build Plan Persistence", () => {
       const hash1 = computeBuildPlanContentHash(files);
       const hash2 = computeBuildPlanContentHash(files);
 
-      expect(hash1).toBe(hash2);
-      expect(hash1).toHaveLength(64); // SHA256 hex is 64 chars
+      assert.equal(hash1, hash2);
+      assert.equal(hash1.length, 64); // SHA256 hex is 64 chars
     });
 
     it("should compute different hash when file is added", () => {
@@ -108,7 +109,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const hash1 = computeBuildPlanContentHash(files1);
       const hash2 = computeBuildPlanContentHash(files2);
 
-      expect(hash1).not.toBe(hash2);
+      assert.notEqual(hash1, hash2);
     });
 
     it("should compute different hash when file is removed", () => {
@@ -121,7 +122,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const hash1 = computeBuildPlanContentHash(files1);
       const hash2 = computeBuildPlanContentHash(files2);
 
-      expect(hash1).not.toBe(hash2);
+      assert.notEqual(hash1, hash2);
     });
 
     it("should compute different hash when file is renamed", () => {
@@ -131,7 +132,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const hash1 = computeBuildPlanContentHash(files1);
       const hash2 = computeBuildPlanContentHash(files2);
 
-      expect(hash1).not.toBe(hash2);
+      assert.notEqual(hash1, hash2);
     });
 
     it("should compute different hash when file order changes", () => {
@@ -147,7 +148,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const hash1 = computeBuildPlanContentHash(files1);
       const hash2 = computeBuildPlanContentHash(files2);
 
-      expect(hash1).not.toBe(hash2);
+      assert.notEqual(hash1, hash2);
     });
   });
 
@@ -161,7 +162,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const recordedHash = computeBuildPlanContentHash(files);
       const isValid = isBuildPlanValid(recordedHash, files);
 
-      expect(isValid).toBe(true);
+      assert.equal(isValid, true);
     });
 
     it("should invalidate plan when a file is added after plan creation", () => {
@@ -174,7 +175,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       ];
       const isValid = isBuildPlanValid(recordedHash, filesNow);
 
-      expect(isValid).toBe(false);
+      assert.equal(isValid, false);
     });
 
     it("should invalidate plan when a file is deleted after plan creation", () => {
@@ -187,7 +188,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const filesNow = [{ id: "file-1", originalFileName: "RFQ.pdf" }];
       const isValid = isBuildPlanValid(recordedHash, filesNow);
 
-      expect(isValid).toBe(false);
+      assert.equal(isValid, false);
     });
 
     it("should invalidate plan when a file is renamed after plan creation", () => {
@@ -197,7 +198,7 @@ describe("Gap 2: Build Plan Persistence", () => {
       const filesNow = [{ id: "file-1", originalFileName: "Tender.pdf" }];
       const isValid = isBuildPlanValid(recordedHash, filesNow);
 
-      expect(isValid).toBe(false);
+      assert.equal(isValid, false);
     });
   });
 });
