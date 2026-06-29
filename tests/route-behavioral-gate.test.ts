@@ -99,7 +99,7 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
       { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true },
     ],
     criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true,
+    hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
     exportReadyDocumentCount: 3,
     ...overrides,
   };
@@ -145,10 +145,10 @@ describe("Route behavioral — zero GeneratedDocument.create for Build Plan/plan
 
 describe("Route behavioral — virtual plan allows generation but blocks export/final-zip", () => {
 
-  it("virtual plan (hasValidVirtualSubmissionPlan=true, exportReady=0) allows generation", () => {
+  it("virtual plan (hasConfirmedPersistedPlan=true, exportReady=0) allows generation", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "generate",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 0, // no real generated files
     }));
     assert.equal(r.ok, true, "Virtual plan must allow generation");
@@ -157,7 +157,7 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan + zero export-ready files blocks export", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
@@ -167,7 +167,7 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan + zero export-ready files blocks final-zip", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "final-zip",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
@@ -177,7 +177,7 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan + real export-ready files allows export", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 3,
     }));
     assert.equal(r.ok, true);
@@ -191,7 +191,7 @@ describe("Route behavioral — legacy PLANNED rows cannot unlock any gate", () =
     // The gate uses exportReadyDocumentCount which only counts GENERATED+content+validated+reviewed.
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 0, // PLANNED rows don't count
     }));
     assert.equal(r.ok, false);
@@ -201,7 +201,7 @@ describe("Route behavioral — legacy PLANNED rows cannot unlock any gate", () =
   it("PLANNED rows (exportReadyDocumentCount=0) block final-zip", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "final-zip",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
@@ -211,7 +211,7 @@ describe("Route behavioral — legacy PLANNED rows cannot unlock any gate", () =
   it("missing virtual plan blocks generation (PLANNED is not a plan proof)", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "generate",
-      hasValidVirtualSubmissionPlan: false,
+      hasConfirmedPersistedPlan: false, hasApprovedRequirementEvidence: false,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
@@ -271,7 +271,7 @@ describe("Route behavioral — export and final-zip require real generated files
   it("generation does NOT require export-ready files (only virtual plan)", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "generate",
-      hasValidVirtualSubmissionPlan: true,
+      hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true,
       exportReadyDocumentCount: 0, // generation doesn't need export-ready files
     }));
     assert.equal(r.ok, true, "Generation only needs virtual plan, not export-ready files");

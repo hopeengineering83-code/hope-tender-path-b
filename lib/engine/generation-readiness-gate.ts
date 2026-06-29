@@ -90,6 +90,7 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
+  | "REQUIREMENT_EVIDENCE_MISSING"
   | "NO_EXPORT_READY_DOCUMENTS"
   | "GATE_INTERNAL_ERROR";
 
@@ -145,13 +146,16 @@ export interface GenerationReadinessInput {
   // G — critical metadata: no critical field may be invalid, placeholder, contaminated,
   //     or a manual candidate without active tender-source evidence
   criticalMetadataOk: boolean;
-  // H — Build/Submission plan for GENERATION: a valid virtual Build Plan satisfies
-  //     this prerequisite. This is true when the submission plan has been built
-  //     (virtual or real) and identifies at least one required file.
-  //     PLANNED, SUPERSEDED, virtual, or legacy planned rows do NOT count as
-  //     generated/export-ready — they only satisfy the plan prerequisite.
-  hasValidVirtualSubmissionPlan: boolean;
-  // I — EXPORT/FINAL-ZIP readiness: count of real current generated files with
+  // H — CONFIRMED persisted submission plan: a current CONFIRMED SubmissionPlanRevision
+  //     with matching sourceContentHash and requirementsHash. A virtual preview or
+  //     DRAFT plan does NOT satisfy this — only a reviewer-confirmed persisted plan
+  //     can authorize generation.
+  hasConfirmedPersistedPlan: boolean;
+  // I — APPROVED requirement-level evidence: every mandatory TenderRequirement must
+  //     have at least one APPROVED RequirementEvidenceDecision. A tender-level
+  //     selected CV/project does NOT automatically satisfy all requirements.
+  hasApprovedRequirementEvidence: boolean;
+  // J — EXPORT/FINAL-ZIP readiness: count of real current generated files with
   //     content, validation, review, and exact-plan reconciliation. Only these
   //     rows satisfy export and final-ZIP gates. PLANNED/SUPERSEDED/virtual/
   //     missing-content/unvalidated/unreviewed rows never count here.
@@ -265,15 +269,20 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // H — Build/Submission plan prerequisite for GENERATION.
-  //     A valid virtual Build Plan satisfies this — it proves the tender
-  //     requires at least one file. PLANNED/SUPERSEDED/virtual rows do NOT
-  //     count as generated/export-ready; they only satisfy the plan prerequisite.
-  if (!input.hasValidVirtualSubmissionPlan) {
-    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists. Build the submission plan before generating/exporting.");
+  // H — CONFIRMED persisted submission plan prerequisite for GENERATION.
+  //     Only a current CONFIRMED SubmissionPlanRevision can authorize generation.
+  //     A virtual preview or DRAFT plan does NOT satisfy this.
+  if (!input.hasConfirmedPersistedPlan) {
+    return fail("SUBMISSION_PLAN_MISSING", "No confirmed submission plan exists. Build and confirm the submission plan before generating/exporting.");
   }
 
-  // I — EXPORT/FINAL-ZIP readiness: require real current generated files.
+  // I — APPROVED requirement-level evidence: every mandatory requirement must
+  //     have at least one APPROVED evidence decision.
+  if (!input.hasApprovedRequirementEvidence) {
+    return fail("REQUIREMENT_EVIDENCE_MISSING", "One or more mandatory requirements lack approved evidence decisions. Review and approve evidence before generating/exporting.");
+  }
+
+  // J — EXPORT/FINAL-ZIP readiness: require real current generated files.
   //     PLANNED, virtual, SUPERSEDED, missing-content, unvalidated, or
   //     unreviewed rows never count. Only real generated files with content,
   //     validation, review, and exact-plan reconciliation satisfy export/ZIP.
@@ -493,25 +502,18 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       submissionMethodContext: tender.submissionMethod ?? undefined,
     });
 
-    // H — Build/Submission plan prerequisite for GENERATION.
-    //     A valid virtual Build Plan satisfies this. We compute it from the
-    //     submission plan (built from tender requirements + exact file naming)
-    //     rather than counting GeneratedDocument rows, because PLANNED rows
-    //     are now virtual and should not be required for generation.
-    //     If the tender has explicit submission scope (exact file naming/order
-    //     or requirements with exactFileName), the plan must produce at least
-    //     one required file. If there's no explicit scope, any tender with
-    //     extracted requirements has a valid plan by default.
-    const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
-    const submissionPlan = buildSubmissionPlan(tender as any);
-    const plannedFiles = hasExplicitSubmissionScope(tender as any)
-      ? plannedSubmissionTargetFiles(submissionPlan)
-      : [];
-    const hasValidVirtualSubmissionPlan = requirements.length > 0
-      ? (hasExplicitSubmissionScope(tender as any) ? plannedFiles.length > 0 : true)
-      : false;
+    // H — CONFIRMED persisted submission plan: check if a current CONFIRMED
+    //     SubmissionPlanRevision exists with matching hashes.
+    const persistedPlanMod = await import("./persisted-submission-plan");
+    const hasConfirmedPersistedPlan = await persistedPlanMod.hasConfirmedPersistedPlan(tenderId);
 
-    // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
+    // I — APPROVED requirement-level evidence: check if all mandatory requirements
+    //     have at least one APPROVED evidence decision.
+    const evidenceMod = await import("./requirement-evidence");
+    const evidenceResult = await evidenceMod.hasAllMandatoryEvidenceApproved(tenderId);
+    const hasApprovedRequirementEvidence = evidenceResult.ok;
+
+    // J — EXPORT/FINAL-ZIP readiness: count of real current generated files
     //     with content, validation, and review. PLANNED/SUPERSEDED/virtual/
     //     missing-content/unvalidated/unreviewed rows never count.
     //     This is a strict count — only GENERATED rows with fileContent and
@@ -540,7 +542,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirementCount: requirements.length,
       requirements: mappedRequirements,
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
-      hasValidVirtualSubmissionPlan,
+      hasConfirmedPersistedPlan,
+      hasApprovedRequirementEvidence,
       exportReadyDocumentCount,
     });
   } catch (err) {

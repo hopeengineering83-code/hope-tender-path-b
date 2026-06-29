@@ -441,13 +441,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
     const reqUrl2 = new URL(req.url);
-    if (reqUrl2.searchParams.get("planOnly") !== "true" && reqUrl2.searchParams.get("acceptPartialExtraction") !== "true") {
+    if (reqUrl2.searchParams.get("planOnly") !== "true") {
       return NextResponse.json({
         errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
         error: "Generation blocked: AI Analyze ran on a partially-extracted tender (some pages could not be fully read). The generated documents may be missing requirements, evaluation criteria, or submission instructions from unread pages. Re-extract the tender file (run OCR if needed) and re-run AI Analyze to get a complete analysis before generating documents.",
         blockers: ["AI analysis was performed on partial tender extraction — some pages were weak, blank, or OCR-only. Re-extract and re-analyze before generating."],
         nextAction: "RERUN_AI_ANALYZE",
-        acceptPartialExtraction: false,
+        // acceptPartialExtraction bypass removed — use persisted approval model
         diagnosticId: `partial-extraction-analysis-${id}`,
       }, { status: 422 });
     }
@@ -477,10 +477,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // the user can re-run AI Analyze or reclassify before generating.
   // Only applies when >= 3 requirements exist (avoids false positives on simple
   // scopes where all requirements are genuinely optional/desirable).
-  // Bypass with ?acceptNoMandatoryReqs=true after deliberate review.
+  // URL-based bypass removed — use persisted approval model.
   {
     const reqUrl0 = new URL(req.url);
-    if (reqUrl0.searchParams.get("planOnly") !== "true" && reqUrl0.searchParams.get("acceptNoMandatoryReqs") !== "true") {
+    if (reqUrl0.searchParams.get("planOnly") !== "true") {
       const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
       if (mandatoryCount === 0 && tender.requirements.length >= 3) {
         return NextResponse.json({
@@ -488,7 +488,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           error: "Generation advisory: requirements were extracted but none are classified as MANDATORY. This may indicate the AI missed mandatory compliance requirements. Re-run AI Analyze or manually mark critical requirements as MANDATORY before generating documents.",
           blockers: ["No requirements are classified as MANDATORY — mandatory requirement classification may be incomplete."],
           nextAction: "RERUN_AI_ANALYZE",
-          acceptNoMandatoryReqs: false,
+          // acceptNoMandatoryReqs bypass removed — use persisted approval model
           diagnosticId: `no-mandatory-reqs-${id}`,
         }, { status: 422 });
       }

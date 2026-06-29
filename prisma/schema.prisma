@@ -402,6 +402,7 @@ model Tender {
   copilotMessages       TenderCopilotMessage[]
   metadataOverrides     TenderMetadataOverride[]
   submissionPlanState   SubmissionPlanState?
+  submissionPlanRevisions SubmissionPlanRevision[]
   aiUsageRecords        AiUsageRecord[]
 
   // Audit DB-002 (2026-06-20): the single most-queried column in the app
@@ -489,6 +490,7 @@ model TenderRequirement {
   sourceExtractionMethod String?  // "text" | "ocr" | "manual"
   sourceConfidence       Float              @default(0)
   complianceMatrixRows ComplianceMatrix[]
+  evidenceDecisions  RequirementEvidenceDecision[]
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -595,6 +597,7 @@ model GeneratedDocument {
   // most-recent action), but the full history is in DocumentReview.
   reviews          DocumentReview[]
   comments         DocumentComment[]
+  submissionPlanItems SubmissionPlanItem[]
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -1138,6 +1141,85 @@ model SubmissionPlanState {
   activeDocumentCount Int       @default(0)
   confirmedAt         DateTime?
   updatedAt           DateTime  @default(now()) @updatedAt
+}
+
+// ─── Persisted, versioned submission plan (authoritative) ───────────────────
+// Replaces the virtual Build Plan as the generation authorization source.
+// One active revision per tender (DRAFT, REVIEW_REQUIRED, or CONFIRMED).
+// A CONFIRMED revision is immutable — any edit creates a new DRAFT revision.
+model SubmissionPlanRevision {
+  id                String    @id @default(uuid())
+  tenderId          String
+  tender            Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  revision          Int
+  status            String    @default("DRAFT") // DRAFT | REVIEW_REQUIRED | CONFIRMED | SUPERSEDED
+  sourceContentHash String
+  requirementsHash  String
+  createdById       String
+  confirmedById     String?
+  createdAt         DateTime  @default(now())
+  confirmedAt       DateTime?
+  supersededAt      DateTime?
+  invalidatedAt     DateTime?
+  invalidationReason String?
+  confirmationHash  String?
+  items             SubmissionPlanItem[]
+
+  @@unique([tenderId, status])
+  @@index([tenderId])
+  @@index([status])
+}
+
+// Persisted plan items — each links to a GeneratedDocument only AFTER generation.
+model SubmissionPlanItem {
+  id                   String   @id @default(uuid())
+  submissionPlanId     String
+  submissionPlan       SubmissionPlanRevision @relation(fields: [submissionPlanId], references: [id], onDelete: Cascade)
+  exactFileName        String
+  exactOrder           Int
+  documentType         String   @default("TENDER_REQUIRED_FILE")
+  format               String   @default("DOCX")
+  envelope             String   @default("TECHNICAL") // TECHNICAL | FINANCIAL | ADMIN
+  status               String   @default("PLANNED")
+  sourceRequirementIds String   @default("[]") // JSON array of TenderRequirement IDs
+  sourceFileCitations  String   @default("[]") // JSON array of {fileId, page, quote}
+  requiresOriginalUpload Boolean @default(false)
+  generatedDocumentId  String?
+  generatedDocument    GeneratedDocument? @relation(fields: [generatedDocumentId], references: [id], onDelete: SetNull)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([submissionPlanId])
+  @@index([generatedDocumentId])
+}
+
+// ─── Requirement-level evidence decisions ──────────────────────────────────
+// Each mandatory TenderRequirement must have one or more APPROVED evidence
+// decisions before generation and Final ZIP. A tender-level selected CV or
+// project does NOT automatically satisfy all requirements.
+model RequirementEvidenceDecision {
+  id                    String   @id @default(uuid())
+  tenderRequirementId   String
+  tenderRequirement     TenderRequirement @relation(fields: [tenderRequirementId], references: [id], onDelete: Cascade)
+  tenderFileId          String
+  pageNumber            Int
+  exactQuote            String
+  evidenceType          String   // CV | PROJECT | LEGAL | FINANCIAL | PROFILE | ORIGINAL
+  companyAssetType      String   // Expert | Project | CompanyAsset | LegalRecord | CompanyComplianceRecord
+  companyAssetId        String
+  relevanceExplanation  String
+  reviewerId            String
+  decisionStatus        String   @default("DRAFT") // DRAFT | APPROVED | REJECTED | STALE | BLOCKED
+  sourceContentHash     String
+  companyEvidenceHash   String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  invalidatedAt         DateTime?
+  invalidationReason    String?
+
+  @@index([tenderRequirementId])
+  @@index([decisionStatus])
+  @@index([companyAssetId])
 }
 
 // Per-provider AI usage tracking for cost monitoring (OBS-004).

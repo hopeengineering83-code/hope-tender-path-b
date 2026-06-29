@@ -36,7 +36,7 @@ function goodInput(overrides: Partial<GenerationReadinessInput> = {}): Generatio
       },
     ],
     criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true, exportReadyDocumentCount: 5,
     ...overrides,
   };
 }

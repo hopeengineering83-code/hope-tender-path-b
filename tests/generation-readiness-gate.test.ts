@@ -36,7 +36,7 @@ function ready(overrides: Partial<GenerationReadinessInput> = {}): GenerationRea
     ],
     requirementCount: 1,
     requirements: [groundedMandatory()],
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true, exportReadyDocumentCount: 5,
     criticalMetadataOk: true,
     ...overrides,
   };
@@ -146,7 +146,7 @@ test("14. zero requirements block generation", () => {
 
 // 15. Missing Build Plan blocks generation (no plan/generated documents).
 test("15. no submission-plan documents block generation", () => {
-  const r = evaluateGenerationReadiness(ready({ hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0 }));
+  const r = evaluateGenerationReadiness(ready({ hasConfirmedPersistedPlan: false, hasApprovedRequirementEvidence: false, exportReadyDocumentCount: 0 }));
   assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
 });
 
@@ -191,7 +191,7 @@ test("18b. HUMAN_APPROVED_FALLBACK blocks before submission-plan check", () => {
   const r = evaluateGenerationReadiness(ready({
     analysisState: "HUMAN_APPROVED_FALLBACK",
     fallbackApprovalBound: true,
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: true, exportReadyDocumentCount: 5,
   }));
   assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
 });

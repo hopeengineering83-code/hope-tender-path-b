@@ -287,14 +287,30 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
-    // Planned documents are virtual/readiness-only at this stage. Do not create
-    // GeneratedDocument rows until the final generation gate has passed; otherwise
-    // PLANNED database rows can be mistaken for real output or a confirmed plan.
+    // Build a persisted DRAFT submission plan revision with plan items.
+    // This creates zero GeneratedDocument rows — the plan is a durable
+    // reviewer-confirmed object, not a generated document.
+    // The plan starts as DRAFT and must be explicitly confirmed via
+    // the confirm-plan route before it can authorize generation.
     const existingKeys = new Set(
       tender.generatedDocuments
         .map((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase())
         .filter(Boolean),
     );
+
+    const { buildPersistedSubmissionPlan } = await import("../../../../../../lib/engine/persisted-submission-plan");
+    const plannedFilesForPersistence = plannedFiles.map((file) => ({
+      exactFileName: file.exactFileName,
+      exactOrder: file.exactOrder,
+      documentType: file.documentType ?? "TENDER_REQUIRED_FILE",
+      format: file.format ?? "DOCX",
+      envelope: "TECHNICAL" as const,
+      sourceRequirementIds: (file as any).sourceRequirementIds ?? [],
+      sourceFileCitations: (file as any).sourceFileCitations ?? [],
+      requiresOriginalUpload: false,
+    }));
+
+    const planResult = await buildPersistedSubmissionPlan(id, actor.id, plannedFilesForPersistence);
 
     const created = 0;
     let skipped = 0;
@@ -307,7 +323,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         fileStatuses.push({ exactFileName: file.exactFileName, status: "already_exists" });
         continue;
       }
-      // Virtual only — no GeneratedDocument.create call
       fileStatuses.push({ exactFileName: file.exactFileName, status: "virtual" });
     }
 
@@ -367,6 +382,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       total: plannedFiles.length,
       isDerivedDraft,
       virtualOnly: true,
+      planId: planResult.planId,
+      revision: planResult.revision,
+      planStatus: planResult.status,
+      sourceContentHash: planResult.sourceContentHash,
+      requirementsHash: planResult.requirementsHash,
+      confirmationRequired: planResult.confirmationRequired,
       warning: baseWarning,
       contentPageWarnings: contentPageWarnings.length > 0 ? contentPageWarnings : undefined,
       files: fileStatuses,
