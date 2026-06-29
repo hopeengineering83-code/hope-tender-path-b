@@ -71,14 +71,26 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-29 UTC — Jules
+
+- **Mode:** documentation correction
+- **Branch / PR:** `claude/operator-handoff-correction-10035225860455380987 / #911`
+- **Scope:** corrected ChatGPT's 2026-06-28 handoff entry to reflect PR #908 merge status
+- **Files changed:** `operator_handoff.md`
+- **Tests:** not applicable
+- **CI / deployment:** CI passed; Vercel preview was automatically created.
+- **Known risk:** none
+- **Next action:** submit correction
+- **Merge status:** not reviewed
+
 ### 2026-06-28 UTC — ChatGPT
 
 - **Mode:** coordination setup
-- **Branch / PR:** `claude/operator-handoff-protocol` / no PR opened
+- **Branch / PR:** `claude/operator-handoff-protocol` / #908
 - **Scope:** created the shared cross-agent handoff protocol
 - **Files changed:** `AGENTS.md`, `operator_handoff.md`
 - **Tests:** not applicable; documentation-only change
-- **CI / deployment:** not checked; no PR, merge, or manual deployment created
+- **CI / deployment:** merged into main
 - **Known risk:** Vercel may independently detect a branch commit; inspect Vercel before assuming no preview exists
-- **Next action:** review and merge through the controlled release process when Hope approves
-- **Merge status:** not reviewed
+- **Next action:** none; task complete
+- **Merge status:** merged into main
