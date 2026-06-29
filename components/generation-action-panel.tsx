@@ -120,14 +120,14 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
       const result = await res.json().catch(() => ({})) as { status: string; value?: string };
       if (result.status === "REPAIRED") {
         setKind("success");
-        setMessage("evaluationMethodology repaired from source.");
+        setMessage("Evaluation criteria repaired from source.");
         startTransition(() => router.refresh());
       } else if (result.status === "NOT_FOUND") {
         setKind("info");
-        setMessage("evaluationMethodology not found in the tender source.");
+        setMessage("Evaluation criteria not found in the tender source.");
       } else if (result.status === "SKIPPED") {
         setKind("info");
-        setMessage("evaluationMethodology repair was skipped (field already has a value).");
+        setMessage("Evaluation criteria repair was skipped (field already has a value).");
       } else {
         setKind("error");
         setMessage("Repair failed.");
@@ -276,7 +276,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
                 disabled={running || isPending}
                 className="rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200 disabled:opacity-50"
               >
-                Repair evaluationMethodology only
+                Repair evaluation criteria only
               </button>
               <button
                 type="button"

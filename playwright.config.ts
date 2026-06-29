@@ -21,6 +21,22 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "samsung-tablet",
+      use: { ...devices["Galaxy Tab S9"] },
+    },
+    {
+      name: "ipad",
+      use: { ...devices["iPad Pro 11"] },
+    },
+    {
+      name: "pixel-mobile",
+      use: { ...devices["Pixel 7"] },
+    },
+    {
+      name: "iphone-mobile",
+      use: { ...devices["iPhone 15"] },
+    },
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
@@ -40,3 +56,6 @@ export default defineConfig({
         },
       },
 });
+
+// Additional projects for tablet and mobile testing
+// These run after the desktop chromium project

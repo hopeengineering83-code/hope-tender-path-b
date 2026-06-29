@@ -167,7 +167,7 @@ describe("migrated UI canonical rendering", () => {
 
   it("existing recovery action labels remain available in the generation panel source", () => {
     const source = readFileSync("components/generation-action-panel.tsx", "utf8");
-    assert.match(source, /Repair evaluationMethodology only/);
+    assert.match(source, /Repair evaluation criteria only/);
     assert.match(source, /Repair all empty fields from source/);
   });
 });
