@@ -132,7 +132,6 @@ export async function GET(req: NextRequest) {
     logger.error("admin/ai-usage GET failed", { error: error instanceof Error ? error.message : String(error) });
     return err("AI usage lookup failed.", 500, {
       code: "AI_USAGE_RUNTIME_ERROR",
-      detail: error instanceof Error ? error.message : String(error),
     });
   }
 }
