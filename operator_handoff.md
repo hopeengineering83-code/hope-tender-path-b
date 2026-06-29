@@ -71,6 +71,20 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-29 UTC — Claude Code (Haiku 4.5)
+
+- **Mode:** implementation of two remaining gaps from governance handoff
+- **Branch / PR:** `claude/short-honest-feedback-gaps-vyh8dv` / no PR opened yet
+- **Scope:** Two critical gaps:
+  1. **Metadata grounding stricter contract**: Added sourceFileId columns to Tender for clientName, submissionMethod, submissionAddress, submissionEmail. Implemented isGroundedEvidenceWithFileCheck() to validate TenderFile is ACTIVE before evidence counts as grounded.
+  2. **Build Plan persistence**: Created BuildPlan model bound to tender contentHash (file IDs + names). Plan invalid if files added/removed/renamed. Separate from GeneratedDocument; tracks which plan was used for generation.
+- **Files changed:** `prisma/schema.prisma`, `prisma/migrations/20260629300000_add_metadata_source_file_ids_and_build_plan/migration.sql`, `lib/engine/evidence-grounding.ts`, `lib/engine/canonical-field-state.ts`, `lib/engine/build-plan-hash.ts`, `app/api/tenders/[id]/submission-plan/build/route.ts`, `tests/metadata-grounding-and-build-plan.test.ts`
+- **Tests:** 4550/4553 passing (13 new tests for grounding + BuildPlan gaps all passing)
+- **CI / deployment:** Not checked; no PR yet
+- **Known risks:** (1) Prisma migration adds columns; (2) activeTenderFileIds optional in CanonicalResolverInput for backward compatibility; (3) Build Plan validity check required in generation route (not yet integrated); (4) AI extraction routes must populate sourceFileId
+- **Next action:** Integrate activeTenderFileIds from tender.files in generation gates; update AI extraction to populate sourceFileId; add enforcement in generation route for BuildPlan validity; run full integration tests and CI before merge
+- **Merge status:** Not reviewed; two gaps implemented but integration incomplete
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction
