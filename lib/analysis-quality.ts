@@ -383,6 +383,22 @@ export function assessTenderAnalysisQuality(params: {
   if (zeroGrounding && severity === "WARNING") score = Math.min(score, 74);
   if (severity === "GOOD" && warnings.length === 0) recommendations.push("Tender analysis appears usable for matching, scoring, and generation.");
 
+  // Contradiction #4 (general case): when the overall score is hard-capped for
+  // safety (isUnsafe — e.g. a multi-page tender missing its deadline, submission
+  // method, evaluation criteria, or required documents), no individual axis may
+  // advertise a score above the capped overall. An UNSAFE analysis cannot
+  // credibly claim any sub-dimension is fully healthy, so a 40/100 overall can
+  // never sit beside a 100 sub-score. This runs last so `score` is final and it
+  // subsumes the narrower extraction/grounding caps applied above.
+  if (isUnsafe) {
+    finalExtractQualitySub = Math.min(finalExtractQualitySub, score);
+    finalRequirementSub = Math.min(finalRequirementSub, score);
+    finalMetadataSub = Math.min(finalMetadataSub, score);
+    finalSubmissionSub = Math.min(finalSubmissionSub, score);
+    finalMatchingSub = Math.min(finalMatchingSub, score);
+    finalGroundingSub = Math.min(finalGroundingSub, score);
+  }
+
   return {
     severity,
     score,

@@ -204,6 +204,20 @@ export function mandatoryEvidenceCoverageRatio(requirements: Array<{
   return fullyConfirmedWithSource / mandatory.length;
 }
 
+// Documents that count as "already present" when reconciling the submission plan
+// against the required-document list. This is active final-export candidates PLUS
+// planned-but-not-yet-generated rows. A PLANNED row is work-in-progress, not
+// missing — including it here prevents Contradiction #5, where a planned document
+// was reported as both "planned" and "missing required" (docs 0/2). SUPERSEDED
+// rows never count. NOTE: isFinalExportCandidateDocument() deliberately excludes
+// PLANNED, so the explicit PLANNED clause is what re-admits those rows.
+export function selectPlanReconciliationDocuments<T extends DocumentLike>(docs: T[]): T[] {
+  return docs.filter((d) =>
+    d.generationStatus !== "SUPERSEDED" &&
+    (d.generationStatus === "PLANNED" || isFinalExportCandidateDocument(d)),
+  );
+}
+
 function severityForReasons(reasons: string[]): FinalReadinessSeverity {
   if (reasons.some((r) =>
     /NO_ACTIVE_GENERATED_DOCUMENTS|fileContent|generationStatus|CONTROL|ORIGINAL_REQUIRED|PDF_CONVERSION_REQUIRED|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED|MISSING_CONTENT/i.test(r),
@@ -574,10 +588,7 @@ export async function getFinalSubmissionReadiness(
   // Include PLANNED status documents in the "candidates" for missing-plan detection
   // so that planned-but-not-yet-generated documents do not count as "missing required".
   // This prevents the contradiction where docs 0/2 shows both "missing" AND "planned".
-  const allActiveAndPlannedDocs = tender.generatedDocuments.filter((d) =>
-    d.generationStatus !== "SUPERSEDED" &&
-    (d.generationStatus === "PLANNED" || isFinalExportCandidateDocument(d))
-  );
+  const allActiveAndPlannedDocs = selectPlanReconciliationDocuments(tender.generatedDocuments);
   const missingPlan = findMissingGeneratedDocuments(plan, allActiveAndPlannedDocs);
   const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
   const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
@@ -1070,6 +1081,7 @@ export const __testing__ = {
   buildMessage,
   detectMessageType,
   mandatoryEvidenceCoverageRatio,
+  selectPlanReconciliationDocuments,
 };
 
 // Re-export shared types so consumers don't need to also import from

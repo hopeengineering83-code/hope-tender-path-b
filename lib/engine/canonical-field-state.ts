@@ -391,7 +391,16 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       // cannot substitute for real source proof when generation is at stake.
       // EXCEPTION: if the confirmed value matches the grounded extracted value,
       // do not mark as "needs source" — the field IS properly grounded.
-      if (isGrounded) {
+      // NOTE: the top-level `isGrounded` is deliberately false whenever an
+      // override exists (it gates the no-override path), so it cannot be reused
+      // here. Recompute grounding for the confirmed value directly: the source
+      // evidence must be grounded AND the confirmed value must match what was
+      // extracted (a confirmation of a *different* value is not source-proven).
+      const confirmedMatchesGroundedSource =
+        validation.valid &&
+        isGroundedEvidence(evidence) &&
+        effectiveStr === (rawValue ?? "");
+      if (confirmedMatchesGroundedSource) {
         status = "EXTRACTED_AND_GROUNDED";
       } else {
         status = "MANUAL_CONFIRMED";
