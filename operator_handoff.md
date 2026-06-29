@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-29 UTC — ChatGPT
+
+- **Mode:** PR #910 safety follow-up
+- **Branch / PR:** `work` / PR pending
+- **Scope:** restored/replaced canonical readiness contradiction coverage for regex fallback, missing submission plan, stale documents, OCR-required extraction, metadata trust, export blockers, and PLANNED virtual document behavior; changed Build Plan/plan-only responses so planned files are virtual/readiness-only and do not create `GeneratedDocument` rows before readiness.
+- **Files changed:** `tests/canonical-readiness-contradictions.test.ts`, `tests/submission-plan-empty-gate.test.ts`, `app/api/tenders/[id]/submission-plan/build/route.ts`, `app/api/tenders/[id]/generate/route.ts`, `operator_handoff.md`
+- **Tests:** `node --import tsx tests/canonical-readiness-contradictions.test.ts` passed; `node --import tsx tests/submission-plan-empty-gate.test.ts` passed; `npm run typecheck` passed. Attempted `npm test -- tests/canonical-readiness-contradictions.test.ts tests/submission-plan-empty-gate.test.ts tests/tender-readiness-state.test.ts`, but the repo test runner ignored the file arguments and began the full suite; stopped it after broad unrelated tests were still running.
+- **CI / deployment:** GitHub CLI unavailable in container, so open PR/CI state could not be checked from `gh`; no Vercel preview created intentionally.
+- **Known risk:** legacy `PLANNED` rows may still exist from older runs; this change prevents new pre-readiness rows from Build Plan/plan-only paths and keeps export blockers strict.
+- **Next action:** open/review CI for this branch and verify PR #910 replacement coverage before merge.
+- **Merge status:** not reviewed
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction
