@@ -21,10 +21,14 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
-    // Tablet/mobile projects using Chromium engine (not WebKit) so they
-    // work in CI where only Chromium browsers are installed. We override
-    // the viewport and userAgent to simulate tablet/mobile form factors
-    // without requiring separate browser binaries.
+    // Tablet project using Chromium engine (not WebKit) so it works in CI
+    // where only Chromium browsers are installed. We override the viewport
+    // and userAgent to simulate tablet form factors without requiring
+    // separate browser binaries.
+    //
+    // NOTE: We only add ONE tablet project (not multiple) to avoid
+    // triggering login rate limits in CI. Each Playwright project re-runs
+    // all e2e tests, and the login endpoint has rate limiting.
     {
       name: "samsung-tablet",
       use: {
@@ -32,39 +36,6 @@ export default defineConfig({
         viewport: { width: 800, height: 1280 },
         userAgent: "Mozilla/5.0 (Linux; Android 14; SM-X916B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         deviceScaleFactor: 2,
-        isMobile: true,
-        hasTouch: true,
-      },
-    },
-    {
-      name: "ipad",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 1024, height: 1366 },
-        userAgent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1",
-        deviceScaleFactor: 2,
-        isMobile: true,
-        hasTouch: true,
-      },
-    },
-    {
-      name: "pixel-mobile",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 412, height: 915 },
-        userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        deviceScaleFactor: 2.625,
-        isMobile: true,
-        hasTouch: true,
-      },
-    },
-    {
-      name: "iphone-mobile",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 393, height: 852 },
-        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1",
-        deviceScaleFactor: 3,
         isMobile: true,
         hasTouch: true,
       },
