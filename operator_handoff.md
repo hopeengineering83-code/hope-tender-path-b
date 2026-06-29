@@ -74,11 +74,11 @@ Never claim a fix is complete unless the stated tests passed.
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction
-- **Branch / PR:** `claude/operator-handoff-correction` / none
+- **Branch / PR:** `claude/operator-handoff-correction-10035225860455380987 / #911`
 - **Scope:** corrected ChatGPT's 2026-06-28 handoff entry to reflect PR #908 merge status
 - **Files changed:** `operator_handoff.md`
 - **Tests:** not applicable
-- **CI / deployment:** not applicable
+- **CI / deployment:** CI passed; Vercel preview was automatically created.
 - **Known risk:** none
 - **Next action:** submit correction
 - **Merge status:** not reviewed
