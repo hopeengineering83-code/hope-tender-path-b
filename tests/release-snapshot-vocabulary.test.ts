@@ -155,10 +155,12 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
     assert.equal(r.hasGenerationBlocker, true);
   });
 
-  it("does NOT block USER_CONFIRMED when source evidence is present", () => {
+  it("does NOT block USER_CONFIRMED when source evidence matches confirmed value", () => {
+    // After the grounding fix: USER_CONFIRMED unblocks ONLY when the confirmed
+    // value matches the extracted raw value AND has active source evidence.
     const r = resolveCanonicalFieldState({
       tender: makeTender({
-        clientName: null,
+        clientName: "Ministry of Transport",
         procuringEntityName: null,
         clientNameSourcePage: 1,
         clientNameSourceQuote: "Ministry of Transport, Republic of Kenya invites sealed bids",
@@ -174,9 +176,9 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
       hasExtractedRequirements: true,
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
-    assert.equal(f.status, "MANUAL_CONFIRMED");
-    // Has source evidence → no blocker
-    assert.equal(f.blockerReason, null, "USER_CONFIRMED with source evidence must not block");
+    // Value matches raw + has source evidence → EXTRACTED_AND_GROUNDED (no blocker)
+    assert.equal(f.status, "EXTRACTED_AND_GROUNDED");
+    assert.equal(f.blockerReason, null, "USER_CONFIRMED with matching value + source evidence must not block");
     assert.equal(r.hasGenerationBlocker, false);
   });
 });
