@@ -183,7 +183,7 @@ function nextActionForReason(reason: string): string {
   return "Review and resolve this blocker before final export.";
 }
 
-function mandatoryEvidenceCoverageRatio(requirements: Array<{
+export function mandatoryEvidenceCoverageRatio(requirements: Array<{
   priority?: string | null;
   complianceMatrixRows?: Array<{ supportLevel?: string | null }> | null;
   sourceConfidence?: number | null;
