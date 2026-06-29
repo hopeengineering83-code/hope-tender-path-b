@@ -31,7 +31,7 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
       { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "Fifth requirement quote for grounding test", sourceFileActiveInTender: true },
     ],
     criticalMetadataOk: true,
-    submissionPlanDocumentCount: 3,
+    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 3,
     ...overrides,
   };
 }
@@ -103,7 +103,7 @@ describe("Gate blocks corrupted/weak extraction", () => {
 
 describe("Gate blocks missing/stale submission plan", () => {
   it("blocks when submissionPlanDocumentCount is 0 (virtual plan only)", () => {
-    const r = evaluateGenerationReadiness(makePassingInput({ submissionPlanDocumentCount: 0 }));
+    const r = evaluateGenerationReadiness(makePassingInput({ hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0 }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
   });
@@ -186,7 +186,7 @@ describe("Gate blocks for export purpose too", () => {
   it("blocks export when submissionPlanDocumentCount is 0", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      submissionPlanDocumentCount: 0,
+      hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
@@ -205,7 +205,7 @@ describe("Gate blocks for final-zip purpose", () => {
   it("blocks final-zip when submissionPlanDocumentCount is 0", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "final-zip",
-      submissionPlanDocumentCount: 0,
+      hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");

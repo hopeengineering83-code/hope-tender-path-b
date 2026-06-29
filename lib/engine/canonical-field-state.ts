@@ -386,8 +386,19 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const effectiveStr = effectiveValue ?? "";
     const validation = effectiveStr ? validateValue(fieldKey, effectiveStr) : { valid: false, reason: "No value detected." };
 
-    // Determine grounding
-    const isGrounded = validation.valid && isGroundedEvidence(evidence) && !override;
+    // Determine grounding.
+    // isGrounded must agree with EXTRACTED_AND_GROUNDED status: when an override
+    // value matches the grounded extracted value, the field IS grounded (the
+    // override confirmed the extracted value). This keeps isGrounded, grounded
+    // counts, and dashboard metrics consistent with the status.
+    const overrideMatchesGroundedForIsGrounded =
+      override != null &&
+      (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
+      validation.valid &&
+      isGroundedEvidence(evidence) &&
+      normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
+      normalizeFieldValue(fieldKey, effectiveStr) !== "";
+    const isGrounded = (validation.valid && isGroundedEvidence(evidence) && !override) || overrideMatchesGroundedForIsGrounded;
 
     // Determine status
     let status: CanonicalFieldStatus;
@@ -411,12 +422,28 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         blockerReason = `Field "${label}" is critical. Not Stated cannot unblock it. Critical fields remain blocked until source-grounded.`;
       }
-    } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr && !override) {
+    } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr) {
       // Contamination takes priority over validity (matches the Metadata Truth
       // panel): a client/procuring name polluted by portal navigation or
       // unrelated-tender text must be corrected before generation/export.
-      status = "PORTAL_CONTAMINATION";
-      blockerReason = `Field "${label}" appears contaminated by tender-portal navigation or unrelated-tender text. Correct it before generating documents.`;
+      // A contaminated field stays blocked even if an override exists — the
+      // override must be independently proven by active field-specific
+      // tender evidence (page + quote matching the corrected value).
+      const overrideMatchesGroundedSource =
+        override != null &&
+        (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
+        validation.valid &&
+        isGroundedEvidence(evidence) &&
+        normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
+        normalizeFieldValue(fieldKey, effectiveStr) !== "";
+      if (overrideMatchesGroundedSource) {
+        // The override value matches the grounded extracted value — the
+        // contamination is resolved by independent source proof.
+        status = "EXTRACTED_AND_GROUNDED";
+      } else {
+        status = "PORTAL_CONTAMINATION";
+        blockerReason = `Field "${label}" appears contaminated by tender-portal navigation or unrelated-tender text. Correct it with a value proven by active tender-source evidence (matching page + quote) before generating documents.`;
+      }
     } else if (!effectiveStr) {
       status = "INVALID";
       blockerReason = isCritical ? `Missing critical field: ${label}.` : null;
