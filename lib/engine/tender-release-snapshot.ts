@@ -429,11 +429,16 @@ export async function getTenderReleaseSnapshot(
   };
 
   // Build plan / submission plan.
+  const realGeneratedCount = tender.generatedDocuments.filter(d => (d as any).generationStatus === "GENERATED").length;
   const buildPlanCount = tender.generatedDocuments.length;
   const buildPlan: SnapshotBuildPlanState = {
     documentCount: buildPlanCount,
     valid: buildPlanCount > 0,
-    blocker: buildPlanCount < 1 ? "No submission plan / generated documents exist. Build the plan first." : null,
+    blocker: buildPlanCount < 1
+      ? "No submission plan / generated documents exist. Build the plan first."
+      : realGeneratedCount < 1 && buildPlanCount > 0
+      ? "Submission plan exists but no real documents have been generated yet. Generation is allowed but export/ZIP remain blocked."
+      : null,
   };
 
   // Vault matches.
@@ -465,12 +470,13 @@ export async function getTenderReleaseSnapshot(
     ...(analysis.blocker ? [analysis.blocker] : []),
     ...(metadata.hasGenerationBlocker ? ["One or more critical metadata fields are invalid or ungrounded."] : []),
     ...(requirements.blocker ? [requirements.blocker] : []),
-    ...(buildPlan.blocker ? [buildPlan.blocker] : []),
+    ...(buildPlan.blocker && buildPlanCount < 1 ? [buildPlan.blocker] : []),
     ...(vault.blocker ? [vault.blocker] : []),
   ];
 
   const exportBlockers: string[] = [
     ...generationBlockers,
+    ...(buildPlan.blocker && realGeneratedCount < 1 ? [buildPlan.blocker] : []),
     // Export requires evidence coverage ≥ 50% on mandatory requirements when any exist.
     ...(mandatory.length > 0 && evidence.coveragePercent < 50
       ? [`Evidence coverage is ${evidence.coveragePercent}% (need ≥ 50% for export).`]

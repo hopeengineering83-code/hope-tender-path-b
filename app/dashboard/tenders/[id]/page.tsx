@@ -11,6 +11,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
+import { getTenderReleaseSnapshot } from "../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
@@ -143,6 +144,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
+  const releaseSnapshot = await getTenderReleaseSnapshot(prismaClient, tender.id, userId).catch(() => null);
 
   return (
     <main className="space-y-5" aria-label="Tender workflow workspace">
@@ -189,7 +191,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
           lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
         />
-        <AnalysisQualityPanel tenderId={tender.id} />
+        <AnalysisQualityPanel tenderId={tender.id} snapshot={releaseSnapshot} />
         <AIAnalyzeRecoveryPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} />
         <AICopilotSuggestionsPanel tenderId={tender.id} />

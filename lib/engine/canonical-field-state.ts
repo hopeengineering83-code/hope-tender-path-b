@@ -277,6 +277,18 @@ function getSourceEvidence(
   return { page: null, quote: null, fileId: null };
 }
 
+function normalizeForComparison(field: string, value: string | null): string {
+  if (!value) return "";
+  const trimmed = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (field === "deadline" || field === "preBidMeetingDate") {
+    try {
+      const d = new Date(trimmed);
+      if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+    } catch { /* fall back to trimmed */ }
+  }
+  return trimmed;
+}
+
 function validateValue(field: string, value: string): { valid: boolean; reason: string | null } {
   if (!value || value.trim().length === 0) return { valid: false, reason: "No value detected." };
   if (containsMetadataPlaceholder(value) || looksLikeMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
@@ -386,18 +398,36 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         : "INVALID_FORMAT";
       blockerReason = validation.reason;
     } else if (override?.fieldState === "USER_CONFIRMED") {
-      // USER_CONFIRMED without active tender-source evidence remains blocked for
-      // critical fields. A human confirmation may resolve a field candidate but
-      // cannot substitute for real source proof when generation is at stake.
-      status = "MANUAL_CONFIRMED";
-      if (isCritical && !isGroundedEvidence(evidence)) {
-        blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+      // USER_CONFIRMED must match normalized active evidence to be grounded.
+      const confirmedMatchesGroundedSource =
+        validation.valid &&
+        isGroundedEvidence(evidence) &&
+        normalizeForComparison(fieldKey, effectiveStr) === normalizeForComparison(fieldKey, rawValue);
+      if (confirmedMatchesGroundedSource) {
+        status = "EXTRACTED_AND_GROUNDED";
+      } else {
+        status = "MANUAL_CONFIRMED";
+        if (isCritical) {
+          blockerReason = !isGroundedEvidence(evidence)
+            ? `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`
+            : `Field "${label}" was manually confirmed but the value does not match the linked tender-source evidence. Correct the value or link to the matching source to unblock generation.`;
+        }
       }
     } else if (override?.fieldState === "USER_EDITED") {
-      // USER_EDITED is always a candidate — never unlocks a critical field.
-      status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
-      if (isCritical) {
-        blockerReason = `Field "${label}" has a candidate value. Critical fields remain blocked until linked to an active tender source.`;
+      // USER_EDITED must match normalized active evidence to be grounded.
+      const editedMatchesGroundedSource =
+        validation.valid &&
+        isGroundedEvidence(evidence) &&
+        normalizeForComparison(fieldKey, effectiveStr) === normalizeForComparison(fieldKey, rawValue);
+      if (editedMatchesGroundedSource) {
+        status = "EXTRACTED_AND_GROUNDED";
+      } else {
+        status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
+        if (isCritical) {
+          blockerReason = !isGroundedEvidence(evidence)
+            ? `Field "${label}" has a candidate value. Critical fields remain blocked until linked to an active tender source.`
+            : `Field "${label}" has a candidate value that does not match the linked tender-source evidence. Link to the matching source to unblock generation.`;
+        }
       }
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";
@@ -435,7 +465,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const contaminated = status === "PORTAL_CONTAMINATION";
     const candidateUnconfirmed = status === "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED";
     const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed;
-    const effectiveGrounded = isGrounded && !contaminated;
+    const effectiveGrounded = (isGrounded || status === "EXTRACTED_AND_GROUNDED") && !contaminated;
 
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;

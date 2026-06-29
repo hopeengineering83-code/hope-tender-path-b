@@ -298,34 +298,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     let skipped = 0;
     const fileStatuses: { exactFileName: string; status: "created" | "skipped" }[] = [];
 
+    // Build Plan and planOnly must create zero GeneratedDocument rows per hardening policy.
     for (const file of plannedFiles) {
-      const key = file.exactFileName.toLowerCase();
-      if (existingKeys.has(key)) {
-        skipped++;
-        fileStatuses.push({ exactFileName: file.exactFileName, status: "skipped" });
-        continue;
-      }
-
-      await prisma.generatedDocument.create({
-        data: {
-          tenderId: id,
-          name: file.exactFileName,
-          exactFileName: file.exactFileName,
-          exactOrder: file.exactOrder,
-          documentType: file.documentType ?? "TECHNICAL_PROPOSAL",
-          generationStatus: "PLANNED",
-          // Store DERIVED_DRAFT marker in contentSummary so the UI and
-          // export gate can surface a confirmation prompt.
-          contentSummary: isDerivedDraft
-            ? "DERIVED_DRAFT_UNCONFIRMED — requires user confirmation before export"
-            : undefined,
-          reviewStatus: "PENDING",
-          validationStatus: "PENDING",
-        },
-      });
-      existingKeys.add(key);
-      created++;
-      fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
+      fileStatuses.push({ exactFileName: file.exactFileName, status: "skipped" });
     }
 
     const isWeakExtraction =
