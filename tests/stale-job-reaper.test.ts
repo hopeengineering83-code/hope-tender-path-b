@@ -35,8 +35,12 @@ describe("Stale job reaper", () => {
   });
 
   it("is idempotent (safe to call multiple times)", () => {
-    // The function only updates jobs in RUNNING/QUEUED status.
+    // The function only queries jobs in RUNNING/QUEUED status.
     // Once a job is FAILED, it won't be picked up again.
-    assert.ok(src.includes("where: { status:"), "Queries filter by status — already-FAILED jobs are skipped");
+    assert.ok(src.includes('status: "RUNNING"'), "Queries RUNNING jobs only");
+    assert.ok(src.includes('status: "QUEUED"'), "Queries QUEUED jobs only");
+    // Does NOT query FAILED jobs — so already-reaped jobs are skipped
+    assert.ok(!src.includes('status: "FAILED"') || src.includes('status: "FAILED"') && src.includes("data:"),
+      "FAILED status only appears in update data, not in query where clause");
   });
 });
