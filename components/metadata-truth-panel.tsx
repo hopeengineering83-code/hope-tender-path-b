@@ -76,7 +76,7 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
           setSnapshotRevision(json.snapshot.snapshotRevision);
         }
       })
-      .catch(console.error);
+      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
   }, [tenderId]);
 
   if (!snapshot) {

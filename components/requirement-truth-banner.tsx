@@ -10,7 +10,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
     fetch(`/api/tenders/${tenderId}/workflow-center`)
       .then(res => res.json())
       .then(json => setStatus(json.analysis.state))
-      .catch(console.error);
+      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
   }, [tenderId]);
 
   if (status !== "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED") return null;

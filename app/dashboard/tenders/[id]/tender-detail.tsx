@@ -1940,7 +1940,6 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                 onClick={() => window.open(`/api/tenders/${tender.id}/matching-diagnostics`, "_blank")}
                 className="rounded-md border border-indigo-300 px-2 py-1 text-[11px] text-indigo-800 hover:bg-indigo-100"
               >
-                Open JSON
               </button>
             </div>
           </div>
