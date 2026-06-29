@@ -80,11 +80,11 @@ describe("phase 18 — generate route mandatory requirements gate (static audit)
     );
   });
 
-  it("gate uses acceptNoMandatoryReqs bypass parameter", () => {
+  it("gate no longer uses acceptNoMandatoryReqs bypass (removed)", () => {
     const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
     assert.ok(
-      src.includes("acceptNoMandatoryReqs"),
-      "generate route must support acceptNoMandatoryReqs bypass for deliberate override",
+      !src.includes("acceptNoMandatoryReqs"),
+      "generate route must NOT support acceptNoMandatoryReqs bypass",
     );
   });
 
@@ -100,13 +100,13 @@ describe("phase 18 — generate route mandatory requirements gate (static audit)
     );
   });
 
-  it("gate is only active when planOnly is not set", () => {
+  it("gate is always active (planOnly bypass removed)", () => {
     const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
     const gateStart = src.indexOf("NO_MANDATORY_REQUIREMENTS");
     const before = src.slice(Math.max(0, gateStart - 400), gateStart);
     assert.ok(
-      before.includes("planOnly") && before.includes('"true"'),
-      "mandatory requirements gate must respect planOnly=true bypass",
+      !before.includes("planOnly"),
+      "mandatory requirements gate must NOT respect planOnly bypass",
     );
   });
 

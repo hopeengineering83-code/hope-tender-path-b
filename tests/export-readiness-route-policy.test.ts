@@ -54,7 +54,7 @@ describe("export-readiness route policy mappings", () => {
       "generate route must use PARTIAL_EXTRACTION_ANALYSIS error code",
     );
     assert.ok(
-      src.includes("acceptPartialExtraction"),
+      !src.includes("acceptPartialExtraction"),
       "generate route must provide acceptPartialExtraction override mechanism",
     );
   });

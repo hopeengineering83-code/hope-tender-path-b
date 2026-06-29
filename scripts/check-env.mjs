@@ -11,7 +11,7 @@
 
 // The canonical provider ORDER and API-key env NAMES come from the single
 // shared catalog (lib/ai-provider-catalog.cjs) — never re-declared here.
-import { AI_PROVIDER_API_KEY_ENVS } from "../lib/ai-provider-catalog.cjs";
+import { ALL_PROVIDER_API_KEY_ENVS } from "../lib/ai-provider-catalog.cjs";
 
 // Required in production AND preview deployments (app cannot function without these)
 const ALWAYS_REQUIRED = [
@@ -53,7 +53,7 @@ const CANONICAL_CHAIN = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRout
 
 // Per-key descriptions + validators, keyed by env name. This map carries NO
 // ordering — the canonical order is owned solely by the shared catalog
-// (AI_PROVIDER_API_KEY_ENVS). AI_PROVIDER_KEYS below is derived from it.
+// (ALL_PROVIDER_API_KEY_ENVS). AI_PROVIDER_KEYS below is derived from it.
 const PROVIDER_KEY_META = {
   ZAI_API_KEY: {
     description: `Z.ai GLM API key. FIRST-tier AI provider in the canonical chain (${CANONICAL_CHAIN}). General OpenAI-compatible endpoint (ZAI_BASE_URL, default https://api.z.ai/api/paas/v4). Models override via ZAI_PROPOSAL_MODEL / ZAI_ANALYSIS_MODEL / ZAI_FAST_MODEL (default glm-4-flash).`,
@@ -114,7 +114,7 @@ const PROVIDER_KEY_META = {
 
 // Derived from the single source of truth (catalog order). Never re-declare the
 // order here — add metadata to PROVIDER_KEY_META keyed by env name instead.
-const AI_PROVIDER_KEYS = AI_PROVIDER_API_KEY_ENVS.map((name) => ({
+const AI_PROVIDER_KEYS = ALL_PROVIDER_API_KEY_ENVS.map((name) => ({
   name,
   ...(PROVIDER_KEY_META[name] ?? { description: `${name} AI provider key.`, validate: (_v) => null }),
 }));

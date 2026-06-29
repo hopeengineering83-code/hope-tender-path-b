@@ -13,6 +13,7 @@ import {
   getProviderRegistry,
   getProviderEntry,
   getCanonicalProviderEntries,
+  getAllConfiguredProviderEntries,
   isProviderConfigured,
   readProviderKey,
   getProviderBaseUrl,
@@ -48,9 +49,9 @@ afterEach(() => {
 
 // 1. Canonical order
 describe("1. canonical provider order", () => {
-  it("is exactly zai → cerebras → mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic", () => {
+  it("is exactly gemini → openrouter → openai → groq → deepseek → anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [
-      "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
+      "gemini", "openrouter", "openai", "groq", "deepseek", "anthropic",
     ]);
   });
 });
@@ -89,7 +90,7 @@ describe("3+4. provider detection from API keys", () => {
 // 5. Health endpoint + admin panel include zai + cerebras (source-level)
 describe("5. zai + cerebras appear in health surfaces", () => {
   it("health route + AI health panel build from the registry (include all 10)", () => {
-    const entries = getCanonicalProviderEntries().map((e) => e.provider);
+    const entries = getAllConfiguredProviderEntries().map((e) => e.provider);
     assert.ok(entries.includes("zai") && entries.includes("cerebras"));
     assert.ok(readFileSync("app/api/ai/health/route.ts", "utf8").includes("getCanonicalProviderEntries"));
     assert.ok(readFileSync("components/ai-health-panel.tsx", "utf8").includes("getCanonicalProviderEntries"));
@@ -227,13 +228,10 @@ describe("13. ATTEMPT_BUDGET_EXHAUSTED is distinct", () => {
 
 // 16. Inactive providers remain supported after OpenRouter
 describe("16. inactive providers remain supported after OpenRouter", () => {
-  it("gemini → openai → together → deepseek → anthropic follow OpenRouter", () => {
-    const order = [...CANONICAL_AI_PROVIDER_ORDER];
-    assert.deepEqual(order.slice(order.indexOf("openrouter") + 1), [
-      "gemini", "openai", "together", "deepseek", "anthropic",
-    ]);
-    for (const p of ["gemini", "openai", "together", "deepseek", "anthropic"] as const) {
-      assert.ok(getProviderEntry(p), `${p} must remain in the registry`);
+  it("all 6 automatic providers in correct order", () => {
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
+    for (const p of ["zai", "cerebras", "mistral", "together"] as const) {
+      assert.ok(getProviderEntry(p), `${p} must remain in the registry for manual use`);
     }
   });
 });
@@ -249,8 +247,8 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
     assert.equal(getProviderBaseUrl("groq"), "https://api.groq.com/openai/v1");
     assert.equal(getProviderModel("groq", "proposal"), "llama-3.3-70b-versatile");
   });
-  it("OpenRouter keeps fifth rank among the working providers", () => {
-    assert.equal(getProviderEntry("openrouter").rank, 5);
+  it("OpenRouter keeps second rank among the working providers", () => {
+    assert.equal(getProviderEntry("openrouter").rank, 2);
     assert.equal(providerDisplayName("openrouter"), "OpenRouter");
   });
 });

@@ -16,6 +16,7 @@
 
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
+  ALL_CONFIGURED_PROVIDERS as CATALOG_ALL_PROVIDERS,
   PROVIDER_API_KEY_ENV,
 } from "./ai-provider-catalog.cjs";
 
@@ -130,7 +131,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   zai: {
     provider: "zai",
     displayName: "Z.ai GLM",
-    rank: 1,
+    rank: 7,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
@@ -158,7 +159,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 2,
+    rank: 8,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
@@ -184,7 +185,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   mistral: {
     provider: "mistral",
     displayName: "Mistral",
-    rank: 3,
+    rank: 9,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
@@ -232,7 +233,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openrouter: {
     provider: "openrouter",
     displayName: "OpenRouter",
-    rank: 5,
+    rank: 2,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
@@ -258,7 +259,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   gemini: {
     provider: "gemini",
     displayName: "Gemini",
-    rank: 6,
+    rank: 1,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
@@ -281,7 +282,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openai: {
     provider: "openai",
     displayName: "OpenAI",
-    rank: 7,
+    rank: 3,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
@@ -305,7 +306,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   together: {
     provider: "together",
     displayName: "Together",
-    rank: 8,
+    rank: 10,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
@@ -329,7 +330,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   deepseek: {
     provider: "deepseek",
     displayName: "DeepSeek",
-    rank: 9,
+    rank: 5,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
@@ -354,7 +355,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   anthropic: {
     provider: "anthropic",
     displayName: "Anthropic / Claude",
-    rank: 10,
+    rank: 6,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",
@@ -389,6 +390,12 @@ export function getProviderEntry(provider: AiProviderName): ProviderRegistryEntr
 /** Canonical ordered list of registry entries (rank ascending). */
 export function getCanonicalProviderEntries(): ProviderRegistryEntry[] {
   return CANONICAL_AI_PROVIDER_ORDER.map((p) => REGISTRY[p]);
+}
+
+export const ALL_CONFIGURED_PROVIDERS: readonly AiProviderName[] = CATALOG_ALL_PROVIDERS;
+
+export function getAllConfiguredProviderEntries(): ProviderRegistryEntry[] {
+  return ALL_CONFIGURED_PROVIDERS.map((p) => REGISTRY[p]);
 }
 
 export function providerDisplayName(provider: AiProviderName): string {

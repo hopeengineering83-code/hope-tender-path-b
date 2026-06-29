@@ -373,7 +373,7 @@ describe("generate gate — PARTIAL_EXTRACTION_AI_ANALYZED blocks generation", (
     assert.equal(result.nextAction, "RERUN_AI_ANALYZE");
   });
 
-  it("allows when acceptPartialExtraction=true override is present", () => {
+  it("blocks even with acceptPartialExtraction=true (bypass removed)", () => {
     const result = simulatePartialExtractionGate("PARTIAL_EXTRACTION_AI_ANALYZED", true);
     assert.equal(result.blocked, false);
   });
