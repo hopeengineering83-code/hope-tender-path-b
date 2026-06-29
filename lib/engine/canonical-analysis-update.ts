@@ -36,6 +36,12 @@ export type CanonicalAnalysisExisting = {
   submissionMethod?: string | null;
   submissionEmails?: string | null;
   notes?: string | null;
+  // Primary ACTIVE tender file the extracted metadata is attributed to. Used to
+  // bind each metadata field's source evidence to a live tender document, so
+  // grounding can later verify the evidence points to a file still active in
+  // THIS tender (not a deleted/superseded/unrelated file). When omitted, the
+  // sourceFileId columns are left untouched.
+  primarySourceFileId?: string | null;
 };
 
 export type CanonicalAnalysisUpdate = {
@@ -133,6 +139,18 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
     ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
     ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
+    // Bind each metadata field's source evidence to the primary ACTIVE tender
+    // file so grounding can verify the evidence comes from a live tender
+    // document. Only set when we have a real source page (positive number) and
+    // a known primary file — otherwise the evidence is not file-traceable.
+    ...(existing.primarySourceFileId && typeof aiResult.clientNameSourcePage === "number" && aiResult.clientNameSourcePage > 0
+      ? { clientNameSourceFileId: existing.primarySourceFileId } : {}),
+    ...(existing.primarySourceFileId && typeof aiResult.submissionMethodSourcePage === "number" && aiResult.submissionMethodSourcePage > 0
+      ? { submissionMethodSourceFileId: existing.primarySourceFileId } : {}),
+    ...(existing.primarySourceFileId && typeof aiResult.submissionAddressSourcePage === "number" && aiResult.submissionAddressSourcePage > 0
+      ? { submissionAddressSourceFileId: existing.primarySourceFileId } : {}),
+    ...(existing.primarySourceFileId && typeof aiResult.submissionEmailSourcePage === "number" && aiResult.submissionEmailSourcePage > 0
+      ? { submissionEmailSourceFileId: existing.primarySourceFileId } : {}),
     ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
     metadataContaminated,
   };

@@ -40,6 +40,19 @@ import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+// The primary ACTIVE tender file extracted metadata is attributed to: the
+// earliest-created file whose deletionStatus is ACTIVE. Used to bind metadata
+// source evidence to a live tender document so grounding can verify it. Returns
+// null when no active file exists.
+function primaryActiveSourceFileId(
+  files: Array<{ id: string; createdAt: Date; deletionStatus?: string | null }>,
+): string | null {
+  const active = files
+    .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  return active[0]?.id ?? null;
+}
+
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
   stepName: string;
   status: string;
@@ -308,7 +321,7 @@ async function handleStreamingAnalyze(
                   id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
                   classification: true, extractedText: true, createdAt: true,
                   totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-                  extractionScore: true, extractionMethod: true,
+                  extractionScore: true, extractionMethod: true, deletionStatus: true,
                 },
               },
             },
@@ -623,6 +636,7 @@ async function handleStreamingAnalyze(
                 submissionMethod: tenderRecord.submissionMethod,
                 submissionEmails: tenderRecord.submissionEmails,
                 notes: tenderRecord.notes,
+                primarySourceFileId: primaryActiveSourceFileId(tenderRecord.files),
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -998,7 +1012,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
             classification: true, extractedText: true, createdAt: true,
             totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-            extractionScore: true, extractionMethod: true,
+            extractionScore: true, extractionMethod: true, deletionStatus: true,
           },
         },
       },
@@ -1307,6 +1321,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             submissionMethod: tenderRecord.submissionMethod,
             submissionEmails: tenderRecord.submissionEmails,
             notes: tenderRecord.notes,
+            primarySourceFileId: primaryActiveSourceFileId(tenderRecord.files),
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.

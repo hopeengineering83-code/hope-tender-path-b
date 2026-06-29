@@ -71,6 +71,21 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-29 UTC — Claude Code (Haiku 4.5) — enforcement wiring + #909 merge
+
+- **Mode:** finish the two-gap wiring so #919 actually changes behavior; merge #909
+- **Branch / PR:** `claude/short-honest-feedback-gaps-vyh8dv` / #919 (draft)
+- **Decision on #909:** MERGED (squash) — green, clean, isolated error-response redaction security fix. Now on main.
+- **Honest finding:** #919 was scaffolding — the new grounding/BuildPlan code was not wired into any gate (no caller passed activeTenderFileIds; nothing read BuildPlan; no extraction populated sourceFileId). Fixed all three:
+  1. **activeTenderFileIds enforced** in the central gate `assertTenderReadyForGenerationAndExport` (generation-readiness-gate.ts) — reused the existing active-file Set. This gate is called by generate, export, download, regenerate, ai-proposal, generate-missing-plan-files, so all generation/export paths now enforce that a USER_EDITED/USER_CONFIRMED critical field only unblocks when its evidence points to an ACTIVE tender file. Added the 4 sourceFileId columns to the gate's tender select.
+  2. **sourceFileId populated** at extraction: buildCanonicalAnalysisTenderUpdate now binds clientName/submissionMethod/submissionAddress/submissionEmail source evidence to the primary ACTIVE file; both ai-analyze route paths + analysis-job-service pass primarySourceFileId (earliest active file).
+  3. **BUILD_PLAN_STALE** blocker added to the pure evaluateGenerationReadiness; the async gate loads the persisted BuildPlan, recomputes the content hash from current active files, and blocks generation/export when the recorded plan no longer matches (files added/removed/renamed/reordered). Backward-compatible: no recorded plan → undefined → virtual-plan gate H governs.
+- **Files changed (this entry):** `lib/engine/generation-readiness-gate.ts`, `lib/engine/canonical-analysis-update.ts`, `lib/ai-jobs/analysis-job-service.ts`, `app/api/tenders/[id]/ai-analyze/route.ts`, `tests/grounding-and-buildplan-enforcement.test.ts`, `operator_handoff.md`
+- **Tests:** 11 new enforcement tests + 219 pre-existing in affected suites all pass locally (node:test/tsx). Full typecheck/build deferred to CI (local prisma client cannot be regenerated — network-restricted).
+- **Known risks:** display-only paths (metadata-override route, tender-release-snapshot, final-submission-readiness panel) still use the basic page+quote grounding check, not activeTenderFileIds — consistent with the gate for normal fileId-populated data; only legacy rows lacking sourceFileId could show "grounded" in a panel while the gate treats an override-confirmed critical field as needing confirmation. Enforcement (blocking) is centralized in assertTenderReadyForGenerationAndExport, so this is display-only.
+- **Next action:** confirm CI green on #919; consider mark-ready when Hope approves.
+- **Merge status:** #909 merged; #919 not reviewed (draft, enforcement now complete).
+
 ### 2026-06-29 UTC — Claude Code (Haiku 4.5)
 
 - **Mode:** implementation of two remaining gaps from governance handoff

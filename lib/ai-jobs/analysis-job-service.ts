@@ -420,13 +420,24 @@ export async function finalizeJob(jobId: string, userId: string) {
 
         const existingTender = await prisma.tender.findUnique({
             where: { id: job.tenderId! },
-            select: { clientName: true, submissionMethod: true, submissionEmails: true, notes: true },
+            select: {
+                clientName: true, submissionMethod: true, submissionEmails: true, notes: true,
+                files: {
+                    where: { deletionStatus: "ACTIVE" },
+                    orderBy: { createdAt: "asc" },
+                    select: { id: true },
+                },
+            },
         });
+        // Attribute extracted metadata evidence to the primary (earliest) active
+        // tender file, so grounding can verify it points to a live tender document.
+        const primarySourceFileId = existingTender?.files?.[0]?.id ?? null;
         const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
             clientName: existingTender?.clientName,
             submissionMethod: existingTender?.submissionMethod,
             submissionEmails: existingTender?.submissionEmails,
             notes: existingTender?.notes,
+            primarySourceFileId,
         });
 
         tenderUpdate = {

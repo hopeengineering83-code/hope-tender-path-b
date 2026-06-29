@@ -90,6 +90,7 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
+  | "BUILD_PLAN_STALE"
   | "NO_EXPORT_READY_DOCUMENTS"
   | "GATE_INTERNAL_ERROR";
 
@@ -151,6 +152,14 @@ export interface GenerationReadinessInput {
   //     PLANNED, SUPERSEDED, virtual, or legacy planned rows do NOT count as
   //     generated/export-ready — they only satisfy the plan prerequisite.
   hasValidVirtualSubmissionPlan: boolean;
+  // H2 — Recorded Build Plan staleness. When a BuildPlan has been persisted for
+  //      this tender, it is bound to the content hash of the exact file set/order
+  //      at build time. If the tender's active files have since changed (added,
+  //      removed, renamed, reordered), the recorded plan no longer reflects the
+  //      tender and must be rebuilt before generation/export. Undefined/false
+  //      means either no recorded plan exists (the virtual-plan gate H governs)
+  //      or the recorded plan is still valid.
+  recordedBuildPlanStale?: boolean;
   // I — EXPORT/FINAL-ZIP readiness: count of real current generated files with
   //     content, validation, review, and exact-plan reconciliation. Only these
   //     rows satisfy export and final-ZIP gates. PLANNED/SUPERSEDED/virtual/
@@ -273,6 +282,13 @@ export function evaluateGenerationReadiness(
     return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists. Build the submission plan before generating/exporting.");
   }
 
+  // H2 — A recorded Build Plan that no longer matches the tender's current file
+  //      set is stale: the tender content changed after the plan was built, so
+  //      the plan cannot be trusted. Rebuild it before generating/exporting.
+  if (input.recordedBuildPlanStale) {
+    return fail("BUILD_PLAN_STALE", "The recorded submission/build plan is out of date because the tender's files changed (added, removed, renamed, or reordered) after it was built. Rebuild the submission plan before generating/exporting.");
+  }
+
   // I — EXPORT/FINAL-ZIP readiness: require real current generated files.
   //     PLANNED, virtual, SUPERSEDED, missing-content, unvalidated, or
   //     unreviewed rows never count. Only real generated files with content,
@@ -373,11 +389,15 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         metadataContaminated: true,
         clientNameSourcePage: true,
         clientNameSourceQuote: true,
+        clientNameSourceFileId: true,
         submissionMethodSourcePage: true,
         submissionMethodSourceQuote: true,
+        submissionMethodSourceFileId: true,
         submissionAddressSourcePage: true,
         submissionAddressSourceQuote: true,
+        submissionAddressSourceFileId: true,
         submissionEmailSourcePage: true,
+        submissionEmailSourceFileId: true,
         contactDetailsSourceJson: true,
         files: {
           select: {
@@ -473,11 +493,15 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         deadline: tender.deadline ?? null,
         clientNameSourcePage: tender.clientNameSourcePage ?? null,
         clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+        clientNameSourceFileId: tender.clientNameSourceFileId ?? null,
         submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
         submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+        submissionMethodSourceFileId: tender.submissionMethodSourceFileId ?? null,
         submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
         submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+        submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
@@ -491,6 +515,11 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       })),
       hasExtractedRequirements: requirements.length > 0,
       submissionMethodContext: tender.submissionMethod ?? undefined,
+      // Enforce stricter metadata grounding: a USER_EDITED/USER_CONFIRMED
+      // critical field only counts as grounded when its evidence points to an
+      // ACTIVE tender file (page + quote + valid file). Stale/deleted-file
+      // evidence cannot unblock generation.
+      activeTenderFileIds: activeFileIds,
     });
 
     // H — Build/Submission plan prerequisite for GENERATION.
@@ -526,6 +555,24 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       },
     });
 
+    // H2 — recorded Build Plan staleness. When a BuildPlan has been persisted,
+    //      it is bound to the content hash of the exact active-file set/order at
+    //      build time. If the active files changed since, the recorded plan is
+    //      stale and must be rebuilt. No recorded plan → undefined (the virtual
+    //      plan gate H governs); recorded + hash mismatch → stale (block).
+    const recordedBuildPlan = await prisma.buildPlan.findUnique({
+      where: { tenderId },
+      select: { contentHash: true },
+    });
+    let recordedBuildPlanStale: boolean | undefined;
+    if (recordedBuildPlan) {
+      const { computeBuildPlanContentHash } = await import("./build-plan-hash");
+      const currentFileHash = computeBuildPlanContentHash(
+        activeFiles.map((f) => ({ id: f.id, originalFileName: f.originalFileName })),
+      );
+      recordedBuildPlanStale = recordedBuildPlan.contentHash !== currentFileHash;
+    }
+
     return evaluateGenerationReadiness({
       purpose,
       tenderExistsAndOwned: true,
@@ -541,6 +588,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirements: mappedRequirements,
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
       hasValidVirtualSubmissionPlan,
+      recordedBuildPlanStale,
       exportReadyDocumentCount,
     });
   } catch (err) {
