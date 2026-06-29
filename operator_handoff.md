@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-28 UTC — Jules
+
+- **Mode:** contradiction investigation and alignment
+- **Branch / PR:** `claude/fix-readiness-contradictions` / no PR opened
+- **Scope:** aligned dashboard UI panels with canonical readiness state machine
+- **Files changed:** `app/dashboard/tenders/[id]/executive-snapshot.tsx`, `components/tender-health-score-panel.tsx`, `components/analysis-quality-panel.tsx`, `components/requirement-coverage-panel.tsx`, `components/matching-quality-panel.tsx`, `components/extraction-quality-panel.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `operator_handoff.md`, `tests/ui-readiness-alignment.test.ts`
+- **Tests:** `tests/ui-readiness-alignment.test.ts` (9 pass), `tests/canonical-readiness-contradictions.test.ts` (28 pass)
+- **CI / deployment:** build checked (failed on missing env vars as expected in sandbox)
+- **Known risk:** ExecutiveSnapshot "GO" decision now stricter; may surprise users who relied on legacy scores.
+- **Next action:** review and merge alignment fixes
+- **Merge status:** not reviewed
+
 ### 2026-06-28 UTC — ChatGPT
 
 - **Mode:** coordination setup

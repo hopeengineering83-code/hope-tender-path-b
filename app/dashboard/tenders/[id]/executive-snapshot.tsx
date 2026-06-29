@@ -99,54 +99,39 @@ function bidOutcomeBadgeClass(outcome: string): string {
 }
 
 export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: TenderLike; canonicalReadiness?: CanonicalTenderReadiness | null }) {
-  const requirements = tender.requirements ?? [];
-  const gaps = tender.complianceGaps ?? [];
-  const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
-  const submissionPlan = buildSubmissionPlan({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements,
-  });
-  const missingPlannedDocs = findMissingGeneratedDocuments(submissionPlan, generatedDocs);
-  const extraGeneratedDocs = findExtraGeneratedDocuments(submissionPlan, generatedDocs);
-  const plannedDocCount = submissionPlanFileCount(submissionPlan);
-  const dashboardDocTotal = plannedDocCount > 0 ? plannedDocCount : generatedDocs.length;
-  const dashboardGeneratedCount = plannedDocCount > 0 ? Math.max(0, plannedDocCount - missingPlannedDocs.length) : generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
-  const expertMatches = tender.expertMatches ?? [];
-  const projectMatches = tender.projectMatches ?? [];
-  const matrix = tender.complianceMatrix ?? [];
-  const files = tender.files ?? [];
   const snapshotState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";
 
-  const unresolvedCritical = gaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
-  const unresolvedHigh = gaps.filter((g) => !g.isResolved && g.severity === "HIGH").length;
-  const selectedExperts = expertMatches.filter((m) => m.isSelected);
-  const selectedProjects = projectMatches.filter((m) => m.isSelected);
+  const requirements = tender.requirements || [];
+  const matrix = tender.complianceMatrix || [];
+  const generatedDocs = tender.generatedDocuments || [];
+  const selectedExperts = (tender.expertMatches || []).filter((m) => m.isSelected);
+  const selectedProjects = (tender.projectMatches || []).filter((m) => m.isSelected);
   const reviewedExperts = selectedExperts.filter((m) => m.expert?.trustLevel === "REVIEWED").length;
   const reviewedProjects = selectedProjects.filter((m) => m.project?.trustLevel === "REVIEWED").length;
-  const strongExperts = expertMatches.filter((m) => m.score >= 0.9).length;
-  const strongProjects = projectMatches.filter((m) => m.score >= 0.9).length;
+  const strongExperts = selectedExperts.filter((m) => m.score >= 90).length;
+  const strongProjects = selectedProjects.filter((m) => m.score >= 90).length;
+
+  const unresolvedCritical = (tender.complianceGaps || []).filter((g) => g.severity === "CRITICAL" && !g.isResolved).length;
+  const unresolvedHigh = (tender.complianceGaps || []).filter((g) => g.severity === "HIGH" && !g.isResolved).length;
+
+  const files = tender.files || [];
+  const extractedFiles = files.filter((f) => (f.extractedTextLength || 0) > 200).length;
+
+  const submissionPlan = buildSubmissionPlan(tender);
+  const dashboardDocTotal = submissionPlanFileCount(submissionPlan);
+  const dashboardGeneratedCount = visiblePackageDocs(generatedDocs).length;
+  const missingPlannedDocs = findMissingGeneratedDocuments(submissionPlan, generatedDocs);
+  const extraGeneratedDocs = findExtraGeneratedDocuments(submissionPlan, generatedDocs);
+  const plannedDocCount = submissionPlan.files.filter((f) => f.required).length;
+
   const generatedCount = generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
   const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(d.validationStatus))).length;
   const approvedCount = generatedDocs.filter((d) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(d.reviewStatus))).length;
-  const extractedFiles = files.filter((f) => (f.extractedTextLength ?? 0) > 80).length;
 
-  // Legacy evidence score — lenient counting (PARTIAL counts), kept for
-  // backward-compat with the readiness score the engine writes to
-  // tender.readinessScore.
-  const supportedEvidence = matrix.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportLevel)).length;
-  const evidenceScoreLegacy = pct(supportedEvidence, matrix.length);
-
-  // Canonical evidence coverage (Gap 14 helper) — only requirements
-  // linked to FULL or SUBSTANTIAL evidence count toward "strong" coverage.
-  // Group matrix rows by requirementId and feed into the canonical helper.
-  const matrixByRequirement = new Map<string, Array<{ id: string; supportLevel?: string | null }>>();
+  const matrixByRequirement = new Map<string, Array<{ id: string; supportLevel: string }>>();
   for (const row of matrix) {
     if (!row.requirementId) continue;
-    const arr = matrixByRequirement.get(row.requirementId) ?? [];
+    const arr = matrixByRequirement.get(row.requirementId) || [];
     arr.push({ id: row.id, supportLevel: row.supportLevel });
     matrixByRequirement.set(row.requirementId, arr);
   }
@@ -163,6 +148,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
     })),
   );
   const evidenceScore = evidenceCoverage.strongCoveragePercent;
+  const evidenceScoreLegacy = evidenceCoverage.coveragePercent;
   // Legacy DB readiness is displayed as workflow progress only. It must not
   // drive the GO/REVIEW decision because it can drift from canonical gates.
   const workflowProgress = tender.readinessScore ?? evidenceScore;
@@ -178,9 +164,6 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
 
   // GO requires trusted AI analysis — regex fallback (approved or not) must
   // stay at REVIEW so no one exports on unverified extraction-based analysis.
-  // The Tender model has no `analysisSource` column — the source is recorded in
-  // tender.notes, so detect it from there (FM-008). Reading the non-existent
-  // field left this permanently false, so the snapshot never reached GO.
   const analysisSourceNorm = detectAnalysisSource(tender);
   const analysisTrustedForGo = analysisSourceNorm === "AI";
 
@@ -192,6 +175,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
       && !hasPlanMismatch
       && !hasStrongEvidenceGap
       && analysisTrustedForGo
+      && (canonicalReadiness ? canonicalReadiness.modules.export.state === "READY" : true)
         ? "GO"
         : "REVIEW";
 
@@ -232,10 +216,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
             One proposal-management view for canonical generation readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>
-          {/* Additive honest-UI overlay: authoritative release-snapshot export
-              verdict + revision (read-only) so this executive view is seen to
-              read the same generation of truth as every other panel. */}
-          <SnapshotConsistencyBadge tenderId={tender.id} verdict="export" />
+          <SnapshotConsistencyBadge tenderId={tender.id} verdict="export" localEligible={decision === "GO"} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {tender.bidOutcome && (

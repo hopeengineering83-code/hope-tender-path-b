@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { CanonicalStatusIcon } from "./canonical-status-badge";
+import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 
@@ -73,7 +75,7 @@ type TraceabilitySummary = {
   selectedProjectsWithWeakEvidence: number;
 };
 
-export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
+export default function RequirementCoveragePanel({ tenderId, canonicalReadiness }: { tenderId: string; canonicalReadiness?: CanonicalTenderReadiness | null }) {
   const router = useRouter();
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -200,7 +202,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       } catch { /* continue remaining items */ }
     }
     setConfirmingAll(false);
-    setConfirmAllResult(`Confirmed ${confirmed} of ${autoLinks.length} auto-linked suggestion(s).`);
+    setConfirmAllResult(`Confirmed ${confirmed} auto-linked suggestions.`);
     void load();
     router.refresh();
   };
@@ -209,44 +211,16 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     const key = `${requirementId}:${action}`;
     setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: true, error: null, success: null } }));
     try {
-      let supportLevel: string;
-      let notes: string;
-      if (action === "CONFIRM_FULL") {
-        supportLevel = "FULL";
-        notes = "Manually confirmed as FULL coverage by reviewer.";
-      } else if (action === "CONFIRM_SUBSTANTIAL") {
-        supportLevel = "SUBSTANTIAL";
-        notes = "Manually confirmed as SUBSTANTIAL coverage by reviewer.";
-      } else {
-        supportLevel = "NOT_APPLICABLE";
-        notes = reason ? `Marked N/A: ${reason}` : "Marked as NOT_APPLICABLE by reviewer.";
-      }
-      // Use the compliance matrix update endpoint via the confirm route
-      // with a special evidence type indicating manual reviewer confirmation.
+      const supportLevel = action === "MARK_NA" ? "NOT_APPLICABLE" : action === "CONFIRM_SUBSTANTIAL" ? "SUBSTANTIAL" : "FULL";
       const res = await fetch(`/api/tenders/${tenderId}/requirement-coverage/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requirementId,
-          evidenceType: "MANUAL_REVIEWER_CONFIRMATION",
-          evidenceReference: `manual-${action}-${Date.now()}`,
-          supportLevel,
-          notes,
-        }),
+        body: JSON.stringify({ requirementId, supportLevel, notes: reason || `Manually set coverage to ${supportLevel}.` }),
       });
-      const json = await res.json() as { ok?: boolean; error?: string; code?: string };
+      const json = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        // Fallback: try direct compliance matrix update
-        const res2 = await fetch(`/api/tenders/${tenderId}/requirement-coverage/set-support-level`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requirementId, supportLevel, notes }),
-        });
-        const json2 = await res2.json() as { ok?: boolean; error?: string };
-        if (!res2.ok || !json2.ok) {
-          setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: json.error ?? json2.error ?? "Failed to update coverage", success: null } }));
-          return;
-        }
+        setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: json.error ?? "Action failed", success: null } }));
+        return;
       }
       setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: null, success: `Set to ${supportLevel}` } }));
       void load();
@@ -309,20 +283,24 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     return true;
   });
 
+  const requirementsReady = canonicalReadiness?.modules.requirements.state === "READY";
+
   return (
     <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-white shadow-sm">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-gray-800">Mandatory Requirement Coverage</span>
+          <span className="text-sm font-semibold text-gray-800">
+            {canonicalReadiness?.modules.requirements && <CanonicalStatusIcon status={canonicalReadiness.modules.requirements.state} />} Mandatory Requirement Coverage
+          </span>
           <div className="flex items-center gap-2">
             <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-200">
               <div
-                className={`h-full rounded-full transition-all ${coveragePct >= 80 ? "bg-green-500" : coveragePct >= 50 ? "bg-amber-500" : "bg-red-500"}`}
+                className={`h-full rounded-full transition-all ${requirementsReady ? "bg-green-500" : coveragePct >= 50 ? "bg-amber-500" : "bg-red-500"}`}
                 style={{ width: `${coveragePct}%` }}
               />
             </div>
-            <span className={`text-xs font-semibold ${coveragePct >= 80 ? "text-green-700" : coveragePct >= 50 ? "text-amber-700" : "text-red-700"}`}>
+            <span className={`text-xs font-semibold ${requirementsReady ? "text-green-700" : coveragePct >= 50 ? "text-amber-700" : "text-red-700"}`}>
               {coveragePct}%
             </span>
           </div>
@@ -349,14 +327,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       </div>
 
       {confirmAllResult && (
-        <div className="border-b border-green-100 bg-green-50 px-5 py-2 text-xs text-green-800">{confirmAllResult}</div>
+        <div className="border-b border-green-100 bg-green-50 px-5 py-2 text-[10px] text-green-700">
+          {confirmAllResult}
+        </div>
       )}
 
-      <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
-        Auto-linked vault suggestions can only be confirmed as PARTIAL in this panel. FULL/SUBSTANTIAL coverage requires a compliance-matrix confirmation with traceable source support.
-      </div>
-
-      {/* Traceability summary */}
       {traceOpen && traceability && (
         <div id="traceability-panel" className="border-b border-gray-100 px-5 py-3 bg-amber-50">
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-2">Traceability Audit</p>
@@ -402,92 +377,71 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
       {/* Requirement list */}
       {expanded && (
-        <div id="req-coverage-list" className="divide-y divide-gray-100">
-          {/* Filter tabs */}
-          <div className="flex gap-1 px-5 py-2">
+        <div id="req-coverage-list" className="max-h-[600px] overflow-y-auto divide-y divide-gray-50 p-1">
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-1.5 p-2 bg-gray-50 rounded-lg mb-2">
             {(["ALL", "UNCOVERED", "PARTIAL", "COVERED"] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${filter === f ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                className={`px-3 py-1 rounded-full text-[10px] font-medium transition-colors ${
+                  filter === f ? "bg-gray-800 text-white" : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
+                }`}
               >
-                {f === "ALL" ? `All (${data.rows.length})` : f === "UNCOVERED" ? `Uncovered (${data.uncovered})` : f === "PARTIAL" ? `Partial (${data.partiallyCovered})` : `Covered (${data.fullyCovered})`}
+                {f.charAt(0) + f.slice(1).toLowerCase()}
+                {f === "ALL" ? ` (${data.rows.length})` : f === "UNCOVERED" ? ` (${data.uncovered})` : f === "PARTIAL" ? ` (${data.partiallyCovered})` : ` (${data.fullyCovered})`}
               </button>
             ))}
           </div>
 
           {filteredRows.length === 0 && (
-            <div className="px-5 py-4 text-sm text-gray-500">No requirements match this filter.</div>
+            <div className="py-8 text-center text-xs text-gray-500 bg-white">
+              No requirements match the active filter.
+            </div>
           )}
 
           {filteredRows.map((row) => {
+            const isExpanded = expandedRows.has(row.id);
             const cfg = SUPPORT_LEVEL_CONFIG[row.supportLevel] ?? SUPPORT_LEVEL_CONFIG.NONE;
-            const isOpen = expandedRows.has(row.id);
             return (
-              <div key={row.id} className="px-5 py-3">
-                <button
-                  type="button"
+              <div key={row.id} className={`transition-colors hover:bg-gray-50/50 ${isExpanded ? "bg-gray-50/30" : ""}`}>
+                <div
+                  className="flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5"
                   onClick={() => toggleRow(row.id)}
-                  aria-expanded={isOpen}
-                  aria-controls={`req-row-${row.id}`}
-                  className="flex w-full items-start gap-3 text-left"
                 >
-                  <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${cfg.dot}`} aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">{row.title}</span>
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                        {REQ_TYPE_LABELS[row.requirementType] ?? row.requirementType}
-                      </span>
-                      <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${cfg.color}`}>
-                        {cfg.label}
-                      </span>
-                      {!row.hasSourceRef && (
-                        <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                          No source ref
-                        </span>
-                      )}
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="truncate text-xs font-medium text-gray-900">{row.title}</span>
+                        <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">{REQ_TYPE_LABELS[row.requirementType] || "Req"}</span>
+                        {row.isFullyCovered && <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">READY</span>}
+                        {row.priority === "CRITICAL" && <span className="rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold text-red-700">CRITICAL</span>}
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2 text-[10px] text-gray-400">
+                        {row.sectionReference && <span>Section {row.sectionReference}</span>}
+                        {row.sourcePageNumber && <span>p. {row.sourcePageNumber}</span>}
+                        {!row.hasSourceRef && <span className="text-amber-600 font-medium italic">No source ref</span>}
+                      </div>
                     </div>
-                    {!isOpen && (
-                      <p className="mt-0.5 text-xs text-gray-500">{row.nextAction}</p>
-                    )}
                   </div>
-                  <span className="shrink-0 text-gray-400">{isOpen ? "▲" : "▼"}</span>
-                </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cfg.color}`}>
+                      {cfg.label}
+                    </span>
+                    <span className={`text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}>⌄</span>
+                  </div>
+                </div>
 
-                {isOpen && (
-                  <div id={`req-row-${row.id}`} className="ml-5 mt-2 space-y-3">
-                    {/* Source reference */}
-                    <div>
-                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Source Reference</p>
-                      {row.hasSourceRef ? (
-                        <div className="text-xs text-gray-700 space-y-0.5">
-                          {row.sectionReference && <div>Section: {row.sectionReference}</div>}
-                          {row.sourcePageNumber && <div>Page: {row.sourcePageNumber}</div>}
-                          {row.sourceSectionHeading && <div>Heading: {row.sourceSectionHeading}</div>}
-                          {row.sourceExactQuote && (
-                            <blockquote className="mt-1 border-l-2 border-gray-300 pl-2 text-gray-600 italic">
-                              &ldquo;{row.sourceExactQuote.slice(0, 200)}{row.sourceExactQuote.length > 200 ? "…" : ""}&rdquo;
-                            </blockquote>
-                          )}
-                          {(() => {
-                            const pct = Math.round((row.sourceConfidence ?? 0) * 100);
-                            const cls = pct >= 70
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : pct >= 40
-                                ? "bg-amber-50 text-amber-700 border-amber-200"
-                                : "bg-red-50 text-red-700 border-red-200";
-                            const label = pct >= 70 ? "high" : pct >= 40 ? "med" : "low";
-                            return (
-                              <span
-                                className={`inline-flex items-center rounded border px-1 py-0.5 text-[9px] font-medium ${cls}`}
-                                title="Source confidence: how reliably this requirement was traced to the tender document"
-                              >
-                                {pct}% conf ({label})
-                              </span>
-                            );
-                          })()}
-                        </div>
+                {isExpanded && (
+                  <div className="space-y-4 bg-white/50 px-9 pb-4 pt-1">
+                    {/* Source citation */}
+                    <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Source Reference</p>
+                      {row.sourceExactQuote ? (
+                        <blockquote className="border-l-2 border-gray-200 pl-3 text-xs italic text-gray-600 leading-relaxed">
+                          &quot;{row.sourceExactQuote}&quot;
+                        </blockquote>
                       ) : (
                         <p className="text-xs text-amber-700">⚠ No source reference recorded. Run source extraction or add manually.</p>
                       )}

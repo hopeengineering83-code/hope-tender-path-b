@@ -177,7 +177,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <MetadataTruthPanel tenderId={tender.id} />
         <MetadataCompletionPanel tenderId={tender.id} />
         <ClientSubmissionDetailsPanel tenderId={tender.id} />
-        <ExtractionQualityPanel tenderId={tender.id} />
+        <ExtractionQualityPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
@@ -189,16 +189,16 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
           lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
         />
-        <AnalysisQualityPanel tenderId={tender.id} />
+        <AnalysisQualityPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
         <AIAnalyzeRecoveryPanel tenderId={tender.id} />
-        <RequirementCoveragePanel tenderId={tender.id} />
+        <RequirementCoveragePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
         <AICopilotSuggestionsPanel tenderId={tender.id} />
         {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
         {ai && <TenderAICopilotPanel tenderId={tender.id} />}
       </WorkflowStage>
 
       <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
-        <MatchingQualityPanel tenderId={tender.id} />
+        <MatchingQualityPanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
         <ProposalEvidenceReadinessPanel tenderId={tender.id} />
         <EvidenceCoveragePanel tenderId={tender.id} />
         <VaultEvidenceSearchPanel tenderId={tender.id} />

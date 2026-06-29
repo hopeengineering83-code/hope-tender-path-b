@@ -1,67 +1,55 @@
+"use client";
+
 import Link from "next/link";
-import { getSession } from "../lib/auth";
-import { prisma, prismaReady } from "../lib/prisma";
-import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
-import { assessMatchingQuality } from "../lib/matching-quality";
-import { ensureCompanyForUser } from "../lib/company-workspace";
-import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
-import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
-import { inferSector } from "../lib/engine/proposal-intelligence";
-import { statusToSeverity, severityBadgeClasses, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
+import React, { useEffect, useState } from "react";
+import {
+  assessTenderAnalysisQuality,
+  isUntrustedAnalysisStatus,
+  scoreToSeverity,
+  statusToSeverity,
+} from "../lib/engine/analysis/tender-analysis-quality";
+import { severityBgClass, severityBorderClass, severityTextClass } from "../lib/utils/severity-classes";
+import { analysisSourceSummary } from "../lib/engine/analysis-source";
+import { inferSector } from "../lib/engine/universal-tender-taxonomy";
+import { CanonicalStatusIcon } from "./canonical-status-badge";
+import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
-function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
-  if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (draft-approved)", risk: "MEDIUM" as const, detail: "Approved for draft review only. Not approved for final export because extraction is weak; final export requires reliable extraction or an explicit admin override." };
-  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
-  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze only after extraction is reliable enough for analysis." };
-}
+type AnalysisQualityPanelProps = {
+  tenderId: string;
+  canonicalReadiness?: CanonicalTenderReadiness | null;
+};
 
-function isUntrustedAnalysisStatus(status?: string | null) {
-  return status === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" ||
-    status === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
-    status === "OCR_REQUIRED" ||
-    status === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
-    status === "AI_ANALYSIS_PARTIAL" ||
-    status === "PARTIAL_EXTRACTION_AI_ANALYZED";
-}
+export function AnalysisQualityPanel({ tenderId, canonicalReadiness }: AnalysisQualityPanelProps) {
+  const [tender, setTender] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
-  const userId = await getSession();
-  if (!userId) return null;
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch(`/api/tenders/${tenderId}/analysis-quality`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Failed to load");
+        setTender(json.tender);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Load failed");
+      } finally {
+        setLoading(false);
+      }
+    }
+    void load();
+  }, [tenderId]);
 
-  await prismaReady;
-  const [company, tender] = await Promise.all([
-    ensureCompanyForUser(prisma, userId),
-    prisma.tender.findFirst({
-      where: { id: tenderId, userId },
-      include: {
-        requirements: { orderBy: { createdAt: "asc" } },
-        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
-      },
-    }),
-  ]);
-  if (!tender) return null;
+  if (loading) return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm animate-pulse">Loading analysis quality…</section>;
+  if (error || !tender) return <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700 shadow-sm">Analysis quality error: {error}</section>;
 
-  const rawMetrics = await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
-    SELECT
-      COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars",
-      COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
-    FROM "TenderFile"
-    WHERE "tenderId" = ${tenderId}
-  `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }]);
-  const [{ extractedChars, totalPageCount }] = rawMetrics.length > 0 ? rawMetrics : [{ extractedChars: 0, totalPageCount: 0 }];
+  const matchingQuality = tender.matchingQuality || { score: 0 };
+  const extractedChars = tender.files?.reduce((acc: number, f: any) => acc + (f.extractedTextLength || 0), 0) || 0;
+  const totalPageCount = tender.files?.reduce((acc: number, f: any) => acc + (f.totalPages || 0), 0) || 0;
 
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
-  const matchingQuality = assessMatchingQuality({
-    requirements: tender.requirements,
-    expertMatches: tender.expertMatches,
-    projectMatches: tender.projectMatches,
-    vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
-    vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
-  });
-
-  const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+  const rawSource = tender.notes?.includes("ANALYSIS_SOURCE: AI") ? "AI" :
+                    tender.notes?.includes("ANALYSIS_SOURCE: REGEX_FALLBACK_AI_ERROR") ? "REGEX_FALLBACK_AI_ERROR" :
+                    tender.notes?.includes("ANALYSIS_SOURCE: HUMAN_APPROVED_REGEX_FALLBACK") ? "HUMAN_APPROVED_REGEX_FALLBACK" : "UNKNOWN";
 
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -83,11 +71,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     submissionEmails: tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
     analysisSource: rawSource,
-    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
-    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
+    selectedReviewedExperts: tender.expertMatches.filter((m: any) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
+    selectedReviewedProjects: tender.projectMatches.filter((m: any) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });
 
-  const analysisSource = analysisSourceSummary(rawSource);
+  const analysisSource = analysisSourceSummary(rawSource as any);
   const sourceIsFallbackOrUnknown = rawSource !== "AI";
   const untrustedStatus = isUntrustedAnalysisStatus(tender.analysisExtractionStatus);
   const fallbackOnly = quality.isRegexFallback || sourceIsFallbackOrUnknown || untrustedStatus;
@@ -110,7 +98,9 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     <section id="analysis-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${headerTone}`}>Analysis quality</p>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${headerTone}`}>
+            {canonicalReadiness?.modules.analysis && <CanonicalStatusIcon status={canonicalReadiness.modules.analysis.state} />} Analysis quality
+          </p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Tender analysis appears usable" : "Tender analysis needs review"}</h2>
           <p className="mt-1 text-sm text-slate-600">Checks whether extracted requirements include mandatory criteria, scoring methodology, submission rules, file naming/order, source references, and whether analysis used AI or fallback rules.</p>
         </div>

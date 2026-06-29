@@ -179,7 +179,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
   }, tender.metadataOverrides);
   const metaScore = meta.blockingForGeneration || tender.metadataContaminated ? 0
     : Math.round(meta.overallRatio * 15);
-  const metaStatusLabel: Dimension["status"] = metaScore >= 12 ? "PASS" : metaScore >= 8 ? "WARN" : "FAIL";
+  const metaStatusLabel: Dimension["status"] = ((canonicalReadiness?.modules.metadata.state === "READY") ? "PASS" : (canonicalReadiness?.modules.metadata.state === "BLOCKED" ? "FAIL" : "WARN"));
   const missingCriticalNames = meta.missingCritical.map((f) => f.field);
   const notApplicableNames = meta.notApplicableFields.map((f) => f.field);
   const metaDetail = missingCriticalNames.length > 0
@@ -209,7 +209,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
     : tender.requirements.length === 0 ? 0
     : mandatoryReqs.length === 0 ? 10
     : Math.round((tracedReqs.length / mandatoryReqs.length) * 15);
-  const reqStatusLabel: Dimension["status"] = reqScore >= 12 ? "PASS" : reqScore >= 7 ? "WARN" : "FAIL";
+  const reqStatusLabel: Dimension["status"] = ((canonicalReadiness?.modules.requirements.state === "READY") ? "PASS" : (canonicalReadiness?.modules.requirements.state === "BLOCKED" ? "FAIL" : "WARN"));
   const reqDetail = !hasAnalysis ? "Analysis not run"
     : !analysisIsTrusted ? "Analysis untrusted — re-run AI Analyze"
     : tender.requirements.length === 0 ? "None extracted"
@@ -231,7 +231,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
     score: hasPlan ? 10 : 0,
     max: 10,
     detail: hasPlan ? `${planFiles.length} files planned` : "Not built",
-    status: hasPlan ? "PASS" : "FAIL",
+    status: ((canonicalReadiness?.modules.submissionPlan.state === "READY") ? "PASS" : (canonicalReadiness?.modules.submissionPlan.state === "BLOCKED" ? "FAIL" : "WARN")),
     ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#ai-analyze-section" } : {}),
   });
 
@@ -248,7 +248,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
     : !hasPlanForDocs ? 2
     : generatedDocs.length === 0 ? 2
     : Math.round((validatedDocs.length / Math.max(generatedDocs.length, 1)) * 15);
-  const docStatusLabel: Dimension["status"] = docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL";
+  const docStatusLabel: Dimension["status"] = ((canonicalReadiness?.modules.documents.state === "READY") ? "PASS" : (canonicalReadiness?.modules.documents.state === "BLOCKED" ? "FAIL" : "WARN"));
   const docDetail = activeDocs.length === 0 ? "Not generated"
     : !hasPlanForDocs ? "Build submission plan before generating docs"
     : `${validatedDocs.length}/${generatedDocs.length} validated`;
