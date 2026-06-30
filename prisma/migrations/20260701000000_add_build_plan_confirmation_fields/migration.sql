@@ -35,8 +35,26 @@ ALTER TABLE "BuildPlan" ADD COLUMN IF NOT EXISTS "confirmedById" TEXT;
 
 -- Backfill: if older rows used `createdBy` for the builder, copy it into
 -- `builtById` so the unified service can read a single authoritative column.
-UPDATE "BuildPlan" SET "builtById" = "createdBy" WHERE "builtById" IS NULL AND "createdBy" IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'BuildPlan' AND column_name = 'createdBy'
+  ) THEN
+    UPDATE "BuildPlan" SET "builtById" = "createdBy"
+    WHERE "builtById" IS NULL AND "createdBy" IS NOT NULL;
+  END IF;
+END $$;
 
 -- Backfill: if older rows used `confirmedBy` for the approver, copy it into
 -- `confirmedById` so the unified service can read a single authoritative column.
-UPDATE "BuildPlan" SET "confirmedById" = "confirmedBy" WHERE "confirmedById" IS NULL AND "confirmedBy" IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'BuildPlan' AND column_name = 'confirmedBy'
+  ) THEN
+    UPDATE "BuildPlan" SET "confirmedById" = "confirmedBy"
+    WHERE "confirmedById" IS NULL AND "confirmedBy" IS NOT NULL;
+  END IF;
+END $$;
