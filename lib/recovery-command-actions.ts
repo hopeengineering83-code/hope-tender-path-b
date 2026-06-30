@@ -55,7 +55,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
   },
   APPROVE_FALLBACK_WITH_NOTE: {
-    label: "Approve Fallback Analysis (with note)",
+    label: "Approve Fallback Analysis (audit-only — does NOT authorize release)",
     kind: "custom",
     path: "/api/tenders/{tenderId}/approve-analysis",
     aliases: ["APPROVE_FALLBACK"],

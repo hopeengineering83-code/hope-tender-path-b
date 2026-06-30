@@ -347,13 +347,20 @@ async function handleStreamingAnalyze(
           return;
         }
         const tenderRecord = tender;
-        // Pre-build the set of real TenderFile IDs so we can validate the
+        // Pre-build the set of real ACTIVE TenderFile IDs so we can validate the
         // AI-returned sourceFileToken before storing it as sourceTenderFileId.
         // The AI prompt embeds [FILE_ID:{uuid}] markers and asks the model to
         // copy the exact UUID, but LLMs sometimes return garbled values or file
         // names instead. Storing a garbage ID would make the export-readiness
         // SOURCE_REFERENCES_MISSING gate pass when it should block.
-        const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
+        // ONLY ACTIVE files are accepted — deleted/foreign file IDs are rejected
+        // so a requirement cannot be grounded against a file that no longer
+        // exists in the tender.
+        const validTenderFileIds = new Set(
+          tenderRecord.files
+            .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+            .map((f) => f.id),
+        );
 
         const extractionReports = tenderRecord.files.map((file) => ({
           fileName: file.originalFileName || file.fileName,
@@ -1033,7 +1040,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const tenderRecord = tender;
-  const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
+  // ONLY ACTIVE TenderFile IDs are accepted as valid sourceTenderFileId values.
+  // Deleted/foreign file IDs are rejected so a requirement cannot be grounded
+  // against a file that no longer exists in the tender.
+  const validTenderFileIds = new Set(
+    tenderRecord.files
+      .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+      .map((f) => f.id),
+  );
 
   const extractionReports = tenderRecord.files.map((file) => ({
     fileName: file.originalFileName || file.fileName,

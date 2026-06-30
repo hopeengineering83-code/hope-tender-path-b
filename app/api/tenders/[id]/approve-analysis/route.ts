@@ -90,7 +90,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       description: `Human approved current regex-fallback analysis${note ? ` — ${note}` : ""}.`,
     });
 
-    return NextResponse.json({ success: true, approved: true, analysisSource: source });
+    return NextResponse.json({
+      success: true,
+      approved: true,
+      analysisSource: source,
+      auditOnly: true,
+      message: "Human approval recorded as AUDIT-ONLY. It does NOT authorize generation, export, download, regeneration, AI proposal, missing-file generation, or ZIP. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis that authorizes release.",
+    });
   } catch (error) {
     logger.error("approve-analysis POST failed", { detail: error });
     return err("Approve-analysis failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });

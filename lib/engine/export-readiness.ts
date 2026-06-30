@@ -15,6 +15,7 @@ import { containsPricingLeakage } from "./pricing-hygiene";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
+import { detectAnalysisSourceWithApproval } from "./analysis-source";
 
 export type ExportReadyDocument = {
   id: string;
@@ -452,6 +453,35 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "ANALYSIS_FROM_WEAK_EXTRACTION_REVIEW",
       "AI analysis ran on a weak extraction — the tender text had low density or quality. Generated documents may be incomplete and require human review before export.",
       "Re-extract the tender (run OCR if needed), then re-run AI Analyze. If re-extraction is not possible, manually review all generated documents before exporting.",
+      "HIGH",
+    ));
+  }
+
+  // ── Analysis source blocker (audit-only fallback must NOT authorize export) ──
+  // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK is audit-only. Even though
+  // the central gate (assertTenderReadyForGenerationAndExport) already blocks
+  // it, this secondary panel MUST be consistent so the UI never shows "export
+  // ready" when the analysis source is audit-only.
+  const analysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+  if (analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_FALLBACK_AUDIT_ONLY",
+      "Tender analysis was human-approved as audit-only. Human approval no longer authorizes export.",
+      "Re-run AI Analyze with healthy providers to obtain a genuine AI analysis. The audit-only approval is preserved for record-keeping but does NOT unblock export.",
+      "HIGH",
+    ));
+  } else if (analysisSource === "REGEX_FALLBACK_AI_ERROR") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+      "Tender analysis came from the regex fallback (AI providers failed) and has not been human-approved.",
+      "Re-run AI Analyze with healthy providers. Human approval is audit-only and does NOT authorize export.",
+      "HIGH",
+    ));
+  } else if (analysisSource === "UNKNOWN") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_SOURCE_UNKNOWN",
+      "Tender analysis source is unknown — no analysis has been run or the source could not be determined.",
+      "Run AI Analyze to produce a genuine AI analysis before exporting.",
       "HIGH",
     ));
   }

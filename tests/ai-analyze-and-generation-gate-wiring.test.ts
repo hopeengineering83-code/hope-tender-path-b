@@ -44,8 +44,18 @@ describe("generation-readiness mirrors the analysis-source gate (Part 5)", () =>
     assert.match(source, /fullProposalBlockers\.push\(\{[\s\S]*?analysisGate\.code/);
   });
 
-  it("is defensive against test fakes lacking complianceGap.findFirst", () => {
-    assert.match(source, /\.catch\(\(\)\s*=>\s*\(\{\s*ok:\s*true/);
+  it("FAIL-CLOSED: if assertAnalysisReadyForFinalGeneration throws, the helper blocks (not ok:true)", () => {
+    // PERMANENT BLOCK: the previous fail-open `.catch(() => ({ ok: true }))`
+    // silently authorized generation when the gate could not be evaluated.
+    // The new code MUST fail-closed — a thrown gate produces a blocker, not
+    // an authorization. This test verifies the fail-closed pattern is in
+    // place; if anyone re-introduces the fail-open catch, this test fails.
+    assert.ok(
+      !/\.catch\(\(\)\s*=>\s*\(\{\s*ok:\s*true/.test(source),
+      "tender-generation-readiness MUST NOT use fail-open .catch(() => ({ ok: true })) — fail-closed is required",
+    );
+    // The new code MUST have a try/catch that produces ok:false on error.
+    assert.match(source, /catch\s*\{[\s\S]*?ok:\s*false/);
   });
 });
 

@@ -70,9 +70,13 @@ describe("release gap audit regressions", () => {
     assert.match(security, /buffer\.length\s*<\s*signature\.length/);
   });
 
-  it("validates AI-returned source file tokens before persisting source linkage", () => {
+  it("validates AI-returned source file tokens before persisting source linkage (ACTIVE files only)", () => {
     const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(route, /validTenderFileIds\s*=\s*new Set\(tenderRecord\.files\.map\(\(f\)\s*=>\s*f\.id\)\)/);
+    // The validTenderFileIds set MUST be filtered to ACTIVE files only —
+    // deleted/foreign file IDs must NOT be accepted as sourceTenderFileId.
+    // The previous pattern `new Set(tenderRecord.files.map((f) => f.id))`
+    // included deleted files; the new pattern filters by deletionStatus.
+    assert.match(route, /validTenderFileIds\s*=\s*new Set\([\s\S]*?filter\(\(f\)\s*=>\s*\(f\.deletionStatus\s*\?\?\s*"ACTIVE"\)\s*===\s*"ACTIVE"\)[\s\S]*?map\(\(f\)\s*=>\s*f\.id\)/);
     assert.match(route, /validTenderFileIds\.has\(req\.sourceFileToken\)/);
     assert.ok(!route.includes("sourceTenderFileId: req.sourceFileToken ?? null"));
   });
