@@ -65,6 +65,10 @@ function passingGateInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     hasValidVirtualSubmissionPlan: true,
     recordedBuildPlanState: "VALID",
     exportReadyDocumentCount: 3,
+    // BuildPlan enforcement is fail-closed: default to true so the "good"
+    // base case passes; tests that exercise the BuildPlan blocker override.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
     ...overrides,
   };
 }

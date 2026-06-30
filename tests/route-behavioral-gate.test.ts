@@ -100,6 +100,11 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     ],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true,
+    // BuildPlan enforcement is fail-closed: undefined blocks the same as false.
+    // Default to true so the "passing" base case actually passes; tests that
+    // exercise the BuildPlan-confirmed blocker override these to false.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
     exportReadyDocumentCount: 3,
     ...overrides,
   };
@@ -275,5 +280,54 @@ describe("Route behavioral — export and final-zip require real generated files
       exportReadyDocumentCount: 0, // generation doesn't need export-ready files
     }));
     assert.equal(r.ok, true, "Generation only needs virtual plan, not export-ready files");
+  });
+});
+
+// ─── Mutation guards: source-code contracts that protect against regressions ──
+
+describe("Route behavioral — mutation guards for GeneratedDocument proxy + ensurePlanned stub", () => {
+  const { readFileSync } = require("node:fs");
+
+  it("generate route MUST NOT import or call hasValidSubmissionPlan (proxy removed)", () => {
+    // Mutation guard: if anyone re-imports hasValidSubmissionPlan or re-adds
+    // a `hasValidSubmissionPlan(prisma, ...)` call in the generate route,
+    // this test fails. GeneratedDocument rows must NEVER be used as a
+    // BuildPlan proxy.
+    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    // The import may not appear anywhere in the file.
+    assert.ok(
+      !/import\s*\{[^}]*\bhasValidSubmissionPlan\b[^}]*\}\s*from/.test(src),
+      "generate route MUST NOT import hasValidSubmissionPlan — GeneratedDocument rows are not a BuildPlan proxy",
+    );
+    // The call may not appear anywhere except inside the no-op stub comment.
+    // Strip the comment block first, then check.
+    const withoutComments = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.ok(
+      !/hasValidSubmissionPlan\s*\(/.test(withoutComments),
+      "generate route MUST NOT call hasValidSubmissionPlan — GeneratedDocument rows are not a BuildPlan proxy",
+    );
+  });
+
+  it("generate route ensurePlannedGeneratedDocumentRecords is a no-op stub that returns 0", () => {
+    // Mutation guard: if anyone re-enables ensurePlannedGeneratedDocumentRecords
+    // to actually create GeneratedDocument rows before preflight, this test
+    // fails. The function body MUST be `return 0;` with no other logic.
+    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    // Find the function body.
+    const m = src.match(/async function ensurePlannedGeneratedDocumentRecords\([^)]*\):\s*Promise<number>\s*\{([^}]*)\}/);
+    assert.ok(m, "ensurePlannedGeneratedDocumentRecords function must exist");
+    const body = m[1].trim();
+    assert.equal(body, "return 0;", `ensurePlannedGeneratedDocumentRecords MUST be a no-op stub returning 0. Got: "${body}"`);
+  });
+
+  it("generate route planOnly path returns authorizesGeneration:false", () => {
+    // Mutation guard: if anyone changes the planOnly response to
+    // authorizesGeneration:true, this test fails. planOnly MUST NEVER
+    // authorize generation — it only proves the tender CAN be planned.
+    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    const planOnlyIdx = src.indexOf('url.searchParams.get("planOnly") === "true"');
+    assert.ok(planOnlyIdx > -1, "planOnly path must exist");
+    const planOnlyBlock = src.slice(planOnlyIdx, planOnlyIdx + 4000);
+    assert.match(planOnlyBlock, /authorizesGeneration:\s*false/, "planOnly MUST return authorizesGeneration:false");
   });
 });

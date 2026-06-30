@@ -38,6 +38,11 @@ function ready(overrides: Partial<GenerationReadinessInput> = {}): GenerationRea
     requirements: [groundedMandatory()],
     hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
     criticalMetadataOk: true,
+    // BuildPlan enforcement is fail-closed: undefined blocks the same as false.
+    // Default to true so the "ready" base case actually passes; tests that
+    // exercise the BuildPlan-confirmed blocker override this to false.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
     ...overrides,
   };
 }

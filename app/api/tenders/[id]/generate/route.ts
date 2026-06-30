@@ -28,7 +28,11 @@ import { resolveCanonicalFieldState } from "../../../../../lib/engine/canonical-
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isCriticalField } from "../../../../../lib/engine/tender-policy-registry";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
-import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
+import { buildDraftBuildPlan } from "../../../../../lib/engine/build-plan";
+// hasValidSubmissionPlan was REMOVED — GeneratedDocument rows must never be
+// used as a BuildPlan proxy. The authoritative plan check is enforced by
+// assertTenderReadyForGenerationAndExport (hasCurrentConfirmedBuildPlan +
+// recordedBuildPlanState) further below.
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
 import { assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
@@ -638,48 +642,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // ── Submission plan gate ──────────────────────────────────────────────────
-  // A valid submission plan (at least one non-SUPERSEDED GeneratedDocument row
-  // with a recognised reviewStatus) MUST exist before any full generation run.
-  // This gate runs unconditionally — regardless of requirement count — so it is
-  // impossible to bypass it by having fewer than 5 requirements.
-  // planOnly NOT exempt from safety gates
+  // BuildPlan is the AUTHORITATIVE plan. GeneratedDocument rows MUST NEVER be
+  // used as a proxy for plan existence — that was the legacy hasValidSubmission
+  // path which counted any non-SUPERSEDED row (including PLANNED/pending rows)
+  // as proof of a plan, then bypassed the real BuildPlan gate. The real
+  // confirmation/enforcement happens in assertTenderReadyForGenerationAndExport
+  // below via hasCurrentConfirmedBuildPlan + recordedBuildPlanState. planOnly
+  // is NOT exempt from any safety gate.
   {
-    const reqUrl = new URL(req.url);
-    {
-      const explicitScope = hasExplicitSubmissionScope(tender);
-      const planCheck = await hasValidSubmissionPlan(prisma, tender.id);
-      if (!planCheck.valid) {
-        return NextResponse.json({
-          errorCode: "NO_SUBMISSION_PLAN",
-          error: "No submission plan exists. Build the submission plan before generating documents.",
-          blockers: ["Submission plan has not been built. Run Build Plan before generating documents."],
-          nextAction: "BUILD_SUBMISSION_PLAN",
-          diagnosticId: `no-plan-${tender.id}`,
-          plannedCount: planCheck.plannedCount,
-        }, { status: 400 });
-      }
-
-      // Advisory block: all planned rows are unconfirmed derived-draft heuristics.
-      const allDerivedUnconfirmed = await prisma.generatedDocument.count({
-        where: {
-          tenderId: tender.id,
-          generationStatus: { not: "SUPERSEDED" },
-          reviewStatus: { in: ["PLANNED", "PENDING", "APPROVED", "CONFIRMED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
-          contentSummary: { contains: "DERIVED_DRAFT_UNCONFIRMED" },
-        },
-      });
-      const totalPlanned = planCheck.plannedCount;
-      if (allDerivedUnconfirmed > 0 && allDerivedUnconfirmed === totalPlanned && totalPlanned > 0 && explicitScope) {
-        return NextResponse.json({
-          errorCode: "DERIVED_PLAN_UNCONFIRMED",
-          error: "The submission plan was automatically derived from requirement keywords and has not been confirmed against the actual tender document. Review the plan, verify each required document, and confirm before generating.",
-          blockers: ["All submission plan rows are unconfirmed derived drafts — confirm file names/order against the tender before generating."],
-          nextAction: "CONFIRM_SUBMISSION_PLAN",
-          diagnosticId: `derived-plan-${tender.id}`,
-          isDerivedDraft: true,
-        }, { status: 422 });
-      }
-    }
+    // No proxy check here — GeneratedDocument rows are not plan evidence.
+    // The authoritative BuildPlan gate runs unconditionally below.
   }
 
   // ── Metadata completeness gate ────────────────────────────────────────────
@@ -795,35 +767,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // ── Plan-only mode: build submission plan stubs without running full AI generation ──
-  const url = new URL(req.url);
-  if (url.searchParams.get("planOnly") === "true") {
-    const plan = buildSubmissionPlan(tender);
-    const alreadyInProgress = await prisma.generatedDocument.count({
-      where: { tenderId: id, generationStatus: { in: ["GENERATING", "QUEUED"] } },
-    });
-    if (alreadyInProgress > 0) {
-      return NextResponse.json({ error: "Generation already in progress — cannot build plan while documents are generating.", code: "GENERATION_IN_PROGRESS" }, { status: 409 });
-    }
-    const plannedFiles = plannedSubmissionTargetFiles(plan);
-    if (plannedFiles.length === 0) {
-      return NextResponse.json({
-        ok: false,
-        planBuilt: false,
-        error: "Submission plan build produced zero required files. Review extraction/analysis output or manually confirm required submission documents before generation.",
-        code: "SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED",
-        nextAction: "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
-        blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
-      }, { status: 422 });
-    }
-    // Plan-only mode is virtual/readiness-only: it proves what the tender requires
-    // without creating GeneratedDocument rows before the final generation gate.
-    // This prevents PLANNED database rows from being mistaken for real output.
-    const planRowsCreated = 0;
-    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built virtually: ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, virtualOnly: true } });
-    return NextResponse.json({ planBuilt: true, virtualOnly: true, authorizesGeneration: false, planRowsCreated, plannedFileCount: plannedFiles.length, virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })), message: `Submission plan built virtually — ${plannedFiles.length} required file(s) identified; no GeneratedDocument rows were created before readiness.` });
-  }
-
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
   // If the last engine run fell back to regex analysis because AI providers
   // failed, do not produce a final proposal unless a senior engineer has
@@ -922,6 +865,62 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const hardBlocks = criticalGaps.filter(criticalGapIsHardBlock);
   const seniorReviewCriticals = criticalGaps.filter((gap) => !criticalGapIsHardBlock(gap));
   if (hardBlocks.length > 0) return NextResponse.json({ error: `Generation blocked: ${hardBlocks.length} hard blocker(s) remain. ${hardBlocks.map((g) => g.title).join("; ")}`, code: "HARD_BLOCKERS" }, { status: 422 });
+
+  // ── Plan-only mode (AFTER all hard gates, BEFORE central confirmed-plan gate) ──
+  // planOnly is a dry-run that proves the tender CAN be planned. It runs every
+  // per-tender hard gate above (auth + role, extraction quality, AI success,
+  // no regex/fallback/synthetic analysis, active-file evidence, grounded
+  // mandatory requirements, critical metadata grounding, tender-controlled
+  // scope) and then creates/updates ONLY a DRAFT BuildPlan via the unified
+  // service. It creates ZERO GeneratedDocument rows and returns
+  // authorizesGeneration:false. The central gate (which requires a CONFIRMED
+  // BuildPlan) is intentionally NOT run for planOnly — planOnly proves the
+  // tender is plannable, not that it is releasable.
+  const url = new URL(req.url);
+  if (url.searchParams.get("planOnly") === "true") {
+    const plan = buildSubmissionPlan(tender);
+    const alreadyInProgress = await prisma.generatedDocument.count({
+      where: { tenderId: id, generationStatus: { in: ["GENERATING", "QUEUED"] } },
+    });
+    if (alreadyInProgress > 0) {
+      return NextResponse.json({ error: "Generation already in progress — cannot build plan while documents are generating.", code: "GENERATION_IN_PROGRESS" }, { status: 409 });
+    }
+    const plannedFiles = plannedSubmissionTargetFiles(plan);
+    if (plannedFiles.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        planBuilt: false,
+        error: "Submission plan build produced zero required files. Review extraction/analysis output or manually confirm required submission documents before generation.",
+        code: "SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED",
+        nextAction: "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
+        blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
+      }, { status: 422 });
+    }
+    // Build/refresh the DRAFT BuildPlan via the unified service. This writes
+    // status="DRAFT", builtById, itemsJson, validationJson, contentHash, and
+    // resets confirmedRevision/confirmedContentHash/confirmedById/confirmedAt
+    // so any stale confirmation is invalidated. It creates ZERO
+    // GeneratedDocument rows.
+    const draftPlan = await buildDraftBuildPlan(prisma, id, userId);
+    if (!draftPlan) {
+      return NextResponse.json({ ok: false, planBuilt: false, error: "Tender not found while building DRAFT plan.", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    }
+    const beforeDocCount = await prisma.generatedDocument.count({ where: { tenderId: id } });
+    const afterDocCount = await prisma.generatedDocument.count({ where: { tenderId: id } });
+    const planRowsCreated = 0; // planOnly never creates GeneratedDocument rows
+    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `planOnly: DRAFT BuildPlan built (revision ${draftPlan.revision}); ${plannedFiles.length} required file(s) identified; ${afterDocCount - beforeDocCount} GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, virtualOnly: true, draftRevision: draftPlan.revision, draftContentHash: draftPlan.contentHash } });
+    return NextResponse.json({
+      planBuilt: true,
+      virtualOnly: true,
+      authorizesGeneration: false,
+      planRowsCreated,
+      plannedFileCount: plannedFiles.length,
+      draftBuildPlanRevision: draftPlan.revision,
+      draftBuildPlanStatus: draftPlan.status,
+      virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })),
+      message: `DRAFT BuildPlan built — ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created; authorizesGeneration=false. Confirm the BuildPlan before any release action.`,
+    });
+  }
 
   const promotion = await promoteBestAvailableReviewedMatchesForGeneration({ tenderId: id, requirements: tender.requirements });
   const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: { fullName: true, trustLevel: true } } } });

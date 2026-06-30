@@ -1058,6 +1058,23 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  // ─── BuildPlan DRAFT/CONFIRMED service columns ───────────────────────────
+  // The unified service (lib/engine/build-plan.ts) writes status, revision,
+  // itemsJson, validationJson, builtById, confirmedById, confirmedBy (legacy
+  // alias), confirmedRevision, confirmedContentHash, confirmedAt. These are
+  // additive ALTERs wrapped in ensureColumn so an unmigrated dev DB still
+  // boots without a `prisma migrate deploy` step. In production, migrations
+  // 20260629300000 + 20260701000000 provide the same columns idempotently.
+  await ensureColumn(client, "BuildPlan", "status", "TEXT NOT NULL DEFAULT 'DRAFT'");
+  await ensureColumn(client, "BuildPlan", "revision", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn(client, "BuildPlan", "validationJson", "TEXT");
+  await ensureColumn(client, "BuildPlan", "itemsJson", "TEXT NOT NULL DEFAULT '[]'");
+  await ensureColumn(client, "BuildPlan", "builtById", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedById", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedBy", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedRevision", "INTEGER");
+  await ensureColumn(client, "BuildPlan", "confirmedContentHash", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedAt", "TIMESTAMPTZ");
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [

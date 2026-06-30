@@ -37,6 +37,10 @@ function goodInput(overrides: Partial<GenerationReadinessInput> = {}): Generatio
     ],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    // BuildPlan enforcement is fail-closed: default to true so the "good"
+    // base case passes; tests that exercise the BuildPlan blocker override.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
     ...overrides,
   };
 }

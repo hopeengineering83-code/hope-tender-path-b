@@ -349,14 +349,18 @@ describe("generate gate — AI_ANALYSIS_PARTIAL blocks generation", () => {
 // partially-extracted tender (some pages could not be fully read).
 
 describe("generate gate — PARTIAL_EXTRACTION_AI_ANALYZED blocks generation", () => {
+  // Simulates the route's PARTIAL_EXTRACTION_AI_ANALYZED gate. The bypass
+  // parameter is IGNORED on purpose — the route no longer reads
+  // `acceptPartialExtraction` from the URL, so the gate MUST block regardless
+  // of what the caller passes. This is the contract that the previous
+  // false-green test failed to verify: it kept `!acceptPartialExtraction` in
+  // the simulation, then asserted `blocked === false`, so the test passed
+  // even though the bypass was still effectively present in the simulation.
   function simulatePartialExtractionGate(
     analysisExtractionStatus: string | null | undefined,
-    acceptPartialExtraction: boolean,
+    _acceptPartialExtraction: boolean,
   ): { blocked: boolean; errorCode?: string; nextAction?: string } {
-    if (
-      analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" &&
-      !acceptPartialExtraction
-    ) {
+    if (analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
       return {
         blocked: true,
         errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
@@ -374,8 +378,15 @@ describe("generate gate — PARTIAL_EXTRACTION_AI_ANALYZED blocks generation", (
   });
 
   it("blocks even with acceptPartialExtraction=true (bypass removed)", () => {
+    // The simulation no longer honors acceptPartialExtraction — the route
+    // ignores it too. The gate MUST block on PARTIAL_EXTRACTION_AI_ANALYZED
+    // regardless of what the caller passes. A passing test here proves the
+    // bypass is actually removed; if anyone re-introduces `!acceptPartial
+    // Extraction` into the simulation or the route, this assertion flips to
+    // `blocked === false` and the test fails.
     const result = simulatePartialExtractionGate("PARTIAL_EXTRACTION_AI_ANALYZED", true);
-    assert.equal(result.blocked, false);
+    assert.equal(result.blocked, true, "bypass must be removed: partial extraction must block even when acceptPartialExtraction=true");
+    assert.equal(result.errorCode, "PARTIAL_EXTRACTION_ANALYSIS");
   });
 
   it("does NOT block on FULL_EXTRACTION_AI_ANALYZED", () => {

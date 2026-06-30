@@ -36,6 +36,7 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import type { BuildPlanItem } from "./build-plan";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
@@ -314,12 +315,15 @@ export function evaluateGenerationReadiness(
   //     unreviewed rows never count. Only real generated files with content,
   //     validation, review, and exact-plan reconciliation satisfy export/ZIP.
   // K — Confirmed BuildPlan is mandatory for all release actions.
-  if (input.hasCurrentConfirmedBuildPlan === false) {
+  //     Fail-closed: undefined (caller did not compute it) blocks the same as
+  //     false. Without this, a caller that forgets to pass the field would
+  //     silently bypass the confirmed-plan requirement.
+  if (input.hasCurrentConfirmedBuildPlan !== true) {
     return fail("BUILD_PLAN_NOT_CONFIRMED", "No current confirmed Build Plan exists. Build and confirm the Build Plan before any release action.");
   }
 
   if (input.purpose === "export" || input.purpose === "final-zip") {
-    if (input.confirmedPlanDocumentsOk === false) {
+    if (input.confirmedPlanDocumentsOk !== true) {
       return fail("CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE", "Confirmed plan documents are incomplete, missing, or mismatched.");
     }
     if (input.exportReadyDocumentCount < 1) {
@@ -598,7 +602,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //      so the recorded plan and this check can never disagree.
     const recordedBuildPlan = await prisma.buildPlan.findUnique({
       where: { tenderId },
-      select: { contentHash: true },
+      select: { contentHash: true, status: true, revision: true, confirmedRevision: true, confirmedContentHash: true, itemsJson: true },
     });
     const { computeBuildPlanHash, buildPlanHashInputFromTender } = await import("./build-plan-hash");
     const currentPlanHash = computeBuildPlanHash(buildPlanHashInputFromTender({
@@ -618,6 +622,34 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         : recordedBuildPlan.contentHash !== currentPlanHash ? "STALE"
         : "VALID";
 
+    // K — Confirmed BuildPlan (MANDATORY for all release actions). Uses the
+    //     unified service (lib/engine/build-plan.ts getCurrentConfirmedBuildPlan)
+    //     so the gate's definition of "confirmed" matches the confirmation
+    //     route's definition exactly: status=CONFIRMED, confirmedRevision =
+    //     current revision, confirmedContentHash = current contentHash, and the
+    //     live computed hash still equals confirmedContentHash. Any drift
+    //     (files added/removed/renamed, requirements changed, submission
+    //     instructions changed, plan rebuilt but not re-confirmed) → false.
+    let hasCurrentConfirmedBuildPlan = false;
+    let confirmedPlanDocumentsOk: boolean | undefined;
+    let confirmedPlanDocumentBlockers: string[] | undefined;
+    if (recordedBuildPlan && recordedBuildPlanState === "VALID") {
+      const buildPlanModule: typeof import("./build-plan") = await import("./build-plan");
+      const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+      if (confirmed.ok) {
+        hasCurrentConfirmedBuildPlan = true;
+        // For export/final-zip, also validate that every required plan item has
+        // a matching generated, validated, approved document with content — and
+        // no extra/foreign documents exist outside the confirmed plan.
+        if (purpose === "export" || purpose === "final-zip") {
+          const items = JSON.parse(confirmed.plan.itemsJson || "[]") as BuildPlanItem[];
+          const docValidation = await buildPlanModule.validateConfirmedPlanDocuments(prisma, tenderId, userId, items);
+          confirmedPlanDocumentsOk = docValidation.ok;
+          confirmedPlanDocumentBlockers = docValidation.blockers;
+        }
+      }
+    }
+
     return evaluateGenerationReadiness({
       purpose,
       tenderExistsAndOwned: true,
@@ -634,6 +666,9 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
       hasValidVirtualSubmissionPlan,
       recordedBuildPlanState,
+      hasCurrentConfirmedBuildPlan,
+      confirmedPlanDocumentsOk,
+      confirmedPlanDocumentBlockers,
       exportReadyDocumentCount,
     });
   } catch (err) {

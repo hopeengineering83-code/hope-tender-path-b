@@ -182,7 +182,10 @@ describe("phase 18 — generate gate regression checks", () => {
     "CRITICAL_CONTENT_PAGES_MISSING",
     "ANALYSIS_QUALITY_NOT_READY",
     "CRITICAL_METADATA_MISSING",
-    "NO_SUBMISSION_PLAN",
+    // NOTE: "NO_SUBMISSION_PLAN" was REMOVED — GeneratedDocument rows must
+    // never be used as a BuildPlan proxy. The authoritative plan check is
+    // enforced by assertTenderReadyForGenerationAndExport (BUILD_PLAN_NOT_
+    // CONFIRMED + BUILD_PLAN_MISSING + BUILD_PLAN_STALE).
   ];
 
   for (const gate of existingGates) {

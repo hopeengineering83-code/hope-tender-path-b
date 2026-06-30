@@ -1237,10 +1237,30 @@ model BuildPlan {
   // Plan type: "EXPLICIT" (from exactFileNaming/exactFileOrder) or
   // "DERIVED" (from requirements) or "DERIVED_DRAFT" (fallback heuristic)
   planType          String   @default("DERIVED")
+<<<<<<< Updated upstream
   // Audit trail
   createdBy         String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+=======
+  // Items JSON (for #930 compatibility)
+  itemsJson         String   @default("[]")
+  // Audit trail — DRAFT/CONFIRMED service authoritative columns.
+  // builtById is the user who built the DRAFT. confirmedById is the user
+  // who confirmed it. confirmedRevision/confirmedContentHash snapshot the
+  // revision+hash at confirmation time so post-confirmation drift is
+  // detectable. Legacy createdBy/confirmedBy are retained as audit-only
+  // aliases for backward compatibility with the submission-plan/build route.
+  builtById            String?
+  createdBy            String?
+  confirmedById        String?
+  confirmedBy          String?
+  confirmedRevision    Int?
+  confirmedContentHash String?
+  confirmedAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+>>>>>>> Stashed changes
 
   @@index([contentHash])
 }

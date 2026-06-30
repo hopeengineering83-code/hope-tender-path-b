@@ -32,6 +32,10 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     ],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 3,
+    // BuildPlan enforcement is fail-closed: default to true so the "passing"
+    // base case passes; tests that exercise the BuildPlan blocker override.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
     ...overrides,
   };
 }

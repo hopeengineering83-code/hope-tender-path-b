@@ -374,7 +374,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         required: doc.required,
       }))
     );
+    const itemsJson = JSON.stringify(plannedFiles);
+    const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
 
+    // UNIFIED BuildPlan contract: this route writes the SAME authoritative
+    // fields as the DRAFT/CONFIRMED service in lib/engine/build-plan.ts:
+    //   status="DRAFT", builtById, itemsJson, validationJson, contentHash,
+    //   confirmedRevision=null, confirmedContentHash=null, confirmedById=null,
+    //   confirmedAt=null (reset on every rebuild so stale confirmations cannot
+    //   authorize release after a plan rebuild).
+    // Legacy filesList/plannedDocuments/createdBy are still written so older
+    // panels that read them keep working, but the gate and confirmation route
+    // only trust the authoritative DRAFT/CONFIRMED columns.
     await prisma.buildPlan.upsert({
       where: { tenderId: id },
       update: {
@@ -382,6 +393,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         filesList,
         plannedDocuments: plannedDocumentsJson,
         planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED",
+        status: "DRAFT",
+        itemsJson,
+        validationJson,
+        builtById: actor.id,
+        createdBy: actor.id,
+        confirmedRevision: null,
+        confirmedContentHash: null,
+        confirmedById: null,
+        confirmedBy: null,
+        confirmedAt: null,
         updatedAt: new Date(),
       },
       create: {
@@ -390,6 +411,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         filesList,
         plannedDocuments: plannedDocumentsJson,
         planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED",
+        status: "DRAFT",
+        revision: 1,
+        itemsJson,
+        validationJson,
+        builtById: actor.id,
         createdBy: actor.id,
       },
     });

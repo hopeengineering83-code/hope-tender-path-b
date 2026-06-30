@@ -104,4 +104,71 @@ describe("Section C release safety", () => {
   it("keeps Anthropic last in actual automatic runtime fallback", () => {
     assert.deepEqual(CANONICAL_AI_PROVIDER_ORDER, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
   });
+
+  it("FAIL-CLOSED: undefined hasCurrentConfirmedBuildPlan blocks (not just === false)", () => {
+    // Mutation guard: if anyone reverts the gate from `!== true` back to
+    // `=== false`, undefined values would bypass the check. This test passes
+    // { ...base } WITHOUT hasCurrentConfirmedBuildPlan, and asserts the gate
+    // still blocks. With the fail-closed `!== true` check, undefined blocks.
+    const { hasCurrentConfirmedBuildPlan: _omit, ...baseWithoutConfirmed } = base;
+    const result = evaluateGenerationReadiness(baseWithoutConfirmed);
+    assert.equal(result.ok, false, "undefined hasCurrentConfirmedBuildPlan MUST block (fail-closed)");
+    assert.equal(result.blockerCode, "BUILD_PLAN_NOT_CONFIRMED");
+  });
+
+  it("FAIL-CLOSED: undefined confirmedPlanDocumentsOk blocks for export (not just === false)", () => {
+    // Mutation guard: if anyone reverts the gate from `!== true` back to
+    // `=== false`, undefined values would bypass the check. This test passes
+    // a fully-passing export input WITHOUT confirmedPlanDocumentsOk, and
+    // asserts the gate still blocks. With the fail-closed `!== true` check,
+    // undefined blocks.
+    const { confirmedPlanDocumentsOk: _omit, ...exportInput } = {
+      ...base,
+      purpose: "export" as const,
+      hasCurrentConfirmedBuildPlan: true,
+      exportReadyDocumentCount: 1,
+    };
+    const result = evaluateGenerationReadiness(exportInput);
+    assert.equal(result.ok, false, "undefined confirmedPlanDocumentsOk MUST block export (fail-closed)");
+    assert.equal(result.blockerCode, "CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE");
+  });
+
+  it("BLOCKS confirmation when a mandatory requirement references a deleted/foreign file", async () => {
+    // Mutation guard: if anyone disables the `if (!file) blockers.push(...)`
+    // check in validateBuildPlanForConfirmation, this test fails. The
+    // requirement references sourceTenderFileId="foreign-file" which is NOT
+    // in the tender's active files map — the gate MUST block.
+    const prisma = {
+      tender: {
+        findFirst: async () => ({
+          id: "t1",
+          title: "Tender",
+          exactFileNaming: "[]",
+          exactFileOrder: "[]",
+          pageLimit: null,
+          submissionMethod: "email",
+          files: [
+            { id: "f1", deletionStatus: "ACTIVE", extractedText: "This tender requires a meaningful source quote for the technical proposal." },
+          ],
+          requirements: [
+            {
+              id: "r1",
+              title: "Technical Proposal",
+              description: "Submit technical proposal",
+              requirementType: "TECHNICAL",
+              priority: "MANDATORY",
+              exactFileName: "Technical Proposal.docx",
+              exactOrder: 1,
+              sourceTenderFileId: "foreign-file", // ← foreign — NOT in activeFiles
+              sourcePageNumber: 1,
+              sourceExactQuote: "meaningful source quote",
+            },
+          ],
+        }),
+      },
+    };
+    const result = await validateBuildPlanForConfirmation(prisma as any, "t1", "u1", [planItem]);
+    assert.equal(result.ok, false, "foreign/deleted source file MUST block confirmation");
+    assert.match(result.blockers.join("\n"), /not an ACTIVE TenderFile|evidence/i);
+  });
 });

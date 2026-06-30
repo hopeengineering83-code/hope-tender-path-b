@@ -292,8 +292,12 @@ describe("docs/ai-provider-order.md reflects the runtime order", () => {
 describe(".env.example tier labels reflect the runtime order", () => {
   const env = readFileSync(".env.example", "utf8");
 
-  it("header comment lists the canonical order (Z.ai first)", () => {
-    assert.match(env, /Z\.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic\/Claude/);
+  it("header comment lists the canonical automatic order (Gemini first)", () => {
+    assert.match(env, /Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic\/Claude/);
+  });
+
+  it("documents that Z.ai/Cerebras/Mistral/Together are NOT automatic", () => {
+    assert.match(env, /Z\.ai, Cerebras, Mistral, and Together are CONFIGURED but NOT automatic/);
   });
 
   it("includes ZAI and CEREBRAS env vars", () => {
@@ -310,21 +314,36 @@ describe(".env.example tier labels reflect the runtime order", () => {
 describe("scripts/check-env.mjs tier labels reflect the runtime order", () => {
   const src = readFileSync("scripts/check-env.mjs", "utf8");
 
-  it("ZAI_API_KEY description says FIRST-tier", () => {
-    assert.match(src, /ZAI_API_KEY[\s\S]*?FIRST-tier AI provider/);
+  it("ZAI_API_KEY description says CONFIGURED but NOT automatic", () => {
+    assert.match(src, /ZAI_API_KEY[\s\S]*?CONFIGURED but NOT automatic/);
   });
-  it("CEREBRAS_API_KEY description says SECOND-tier", () => {
-    assert.match(src, /CEREBRAS_API_KEY[\s\S]*?SECOND-tier AI provider/);
+  it("CEREBRAS_API_KEY description says CONFIGURED but NOT automatic", () => {
+    assert.match(src, /CEREBRAS_API_KEY[\s\S]*?CONFIGURED but NOT automatic/);
   });
-  it("ANTHROPIC_API_KEY description says TENTH-tier (last) and 'keep Claude last'", () => {
-    assert.match(src, /ANTHROPIC_API_KEY[\s\S]*?TENTH-tier \(last/);
+  it("GEMINI_API_KEY description says FIRST-tier (top-priority) automatic", () => {
+    assert.match(src, /GEMINI_API_KEY[\s\S]*?FIRST-tier \(top-priority\) automatic AI provider/);
+  });
+  it("OPENROUTER_API_KEY description says SECOND-tier automatic", () => {
+    assert.match(src, /OPENROUTER_API_KEY[\s\S]*?SECOND-tier automatic aggregator AI provider/);
+  });
+  it("OPENAI_API_KEY description says THIRD-tier automatic", () => {
+    assert.match(src, /OPENAI_API_KEY[\s\S]*?THIRD-tier automatic AI provider/);
+  });
+  it("GROQ_API_KEY description says FOURTH-tier automatic", () => {
+    assert.match(src, /GROQ_API_KEY[\s\S]*?FOURTH-tier automatic AI provider/);
+  });
+  it("DEEPSEEK_API_KEY description says FIFTH-tier automatic", () => {
+    assert.match(src, /DEEPSEEK_API_KEY[\s\S]*?FIFTH-tier automatic AI provider/);
+  });
+  it("ANTHROPIC_API_KEY description says SIXTH-tier (LAST) automatic and 'keep Claude last'", () => {
+    assert.match(src, /ANTHROPIC_API_KEY[\s\S]*?SIXTH-tier \(LAST, emergency-only\) automatic AI provider/);
     assert.match(src, /Keep Claude last/);
   });
   it("every provider description references the shared canonical chain constant", () => {
     // Descriptions interpolate the shared CANONICAL_CHAIN constant, so the
     // literal string is defined once and referenced via ${CANONICAL_CHAIN} in
     // each of the 10 provider descriptions.
-    assert.match(src, /const CANONICAL_CHAIN = "Z\.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic\/Claude"/);
+    assert.match(src, /const CANONICAL_CHAIN = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic \(Z\.ai, Cerebras, Mistral, Together are configured but NOT automatic\)"/);
     const refs = src.match(/\$\{CANONICAL_CHAIN\}/g);
     assert.ok(refs && refs.length >= 10, `Expected >= 10 references to CANONICAL_CHAIN, got ${refs?.length ?? 0}`);
   });
