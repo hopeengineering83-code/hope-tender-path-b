@@ -33,8 +33,10 @@ function isFallbackLikeAnalysisSource(value: string | null | undefined): boolean
 }
 
 function isUnapprovedFallbackOrUnknown(value: string | null | undefined): boolean {
+  // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK is audit-only and MUST
+  // NEVER authorize bid strategy (or any release action). Treat it the same
+  // as unapproved regex fallback — only genuine "AI" authorizes release.
   const upper = String(value ?? "").toUpperCase();
-  if (upper === "HUMAN_APPROVED_REGEX_FALLBACK") return false;
   return upper === "UNKNOWN" || upper.includes("REGEX_FALLBACK") || upper.includes("DETERMINISTIC_FALLBACK");
 }
 

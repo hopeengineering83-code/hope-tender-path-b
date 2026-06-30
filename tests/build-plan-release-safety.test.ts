@@ -20,6 +20,10 @@ describe("Section C release safety", () => {
     requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful source quote", sourceFileActiveInTender: true }],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true,
+    // BuildPlan enforcement is fail-closed: default to true so the "passing"
+    // base case passes; tests that exercise the BuildPlan blocker override.
+    hasCurrentConfirmedBuildPlan: true as boolean | undefined,
+    confirmedPlanDocumentsOk: true as boolean | undefined,
     exportReadyDocumentCount: 1,
   };
 

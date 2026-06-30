@@ -275,7 +275,19 @@ async function preserveAiAnalyzeProgressOnFailure(jobId: string, results: any) {
     // legacy marker for tests
 }
 
-function mapToDraft(req: AIRequirement): RequirementDraft {
+function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): RequirementDraft {
+    // Source-file attribution: only accept sourceTenderFileId / sourceFileToken
+    // when the value is a real ACTIVE TenderFile ID on this tender. Guessed,
+    // unsupported, or foreign tokens are dropped to null — they cannot serve
+    // as source evidence. The downstream gate (validateBuildPlanForConfirmation)
+    // then blocks any MANDATORY requirement whose sourceTenderFileId is null.
+    const rawFileId = typeof req.sourceTenderFileId === "string" ? req.sourceTenderFileId.trim() : "";
+    const rawToken = typeof req.sourceFileToken === "string" ? req.sourceFileToken.trim() : "";
+    const validSet = validTenderFileIds;
+    const sourceTenderFileId =
+        (rawFileId && (!validSet || validSet.has(rawFileId))) ? rawFileId
+        : (rawToken && (!validSet || validSet.has(rawToken))) ? rawToken
+        : null;
     return {
         title: req.title,
         description: req.description,
@@ -286,11 +298,11 @@ function mapToDraft(req: AIRequirement): RequirementDraft {
         exactFileName: req.exactFileName,
         restrictions: req.restrictions,
         sectionReference: req.sectionReference,
-        sourceTenderFileId: req.sourceTenderFileId || (req.sourceFileToken && req.sourceFileToken.length > 20 ? req.sourceFileToken : null),
+        sourceTenderFileId,
         sourcePageNumber: req.sourcePage,
         sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
         sourceExactQuote: req.sourceQuote,
-        sourceConfidence: req.sourceConfidence ?? 0,
+        sourceConfidence: sourceTenderFileId ? (req.sourceConfidence ?? 0) : 0,
         sourceExtractionMethod: req.sourceExtractionMethod
     };
 }
@@ -352,16 +364,27 @@ export async function finalizeJob(jobId: string, userId: string) {
 
     const merged = mergeAnalysisResults(parts);
 
+    // Load active TenderFile IDs ONCE so the strict-grounding check below can
+    // validate sourceTenderFileId / sourceFileToken against the real active
+    // set. Without this, the check would accept any non-empty string as
+    // "valid" — including guessed/foreign/unsupported tokens.
+    const activeFilesForGrounding = await prisma.tenderFile.findMany({
+        where: { tenderId: job.tenderId!, deletionStatus: "ACTIVE" },
+        select: { id: true },
+    });
+    const activeFileIdSet = new Set(activeFilesForGrounding.map((f: any) => f.id));
+
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {
-        // Treat a file reference as present only when it is a non-empty string —
-        // guards against undefined/null/"" tokens slipping through as truthy.
+        // Treat a file reference as present only when it is a non-empty string
+        // AND it matches a real ACTIVE TenderFile ID on this tender. Guessed,
+        // foreign, or unsupported tokens are rejected.
         const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
         const fileToken = typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
-        const hasId = fileId.length > 0 || fileToken.length > 0;
+        const hasId = (fileId.length > 0 && activeFileIdSet.has(fileId)) || (fileToken.length > 0 && activeFileIdSet.has(fileToken));
         const hasPage = typeof r.sourcePage === "number" && r.sourcePage > 0;
         const hasQuote = typeof r.sourceQuote === "string" && r.sourceQuote.trim().length > 0;
-        // Strict grounding: mandatory requirements MUST have file, page, and quote.
+        // Strict grounding: mandatory requirements MUST have file (active), page, and quote.
         return !hasId || !hasPage || !hasQuote;
     });
 
@@ -417,8 +440,6 @@ export async function finalizeJob(jobId: string, userId: string) {
     let tenderUpdate: Prisma.TenderUpdateInput;
     let outputJson: string;
     try {
-        drafts = merged.requirements.map(mapToDraft);
-
         const existingTender = await prisma.tender.findUnique({
             where: { id: job.tenderId! },
             select: {
@@ -429,6 +450,13 @@ export async function finalizeJob(jobId: string, userId: string) {
                 },
             },
         });
+        // Build the set of ACTIVE TenderFile IDs ONCE — passed into mapToDraft
+        // so sourceFileToken/sourceTenderFileId is only accepted when it
+        // matches a real active file on this tender. Guessed/foreign/unsupported
+        // tokens are dropped to null (matching the ai-analyze route's behavior).
+        const validTenderFileIds = new Set((existingTender?.files ?? []).map((f: any) => f.id));
+        drafts = merged.requirements.map((r: any) => mapToDraft(r, validTenderFileIds));
+
         // Bind each metadata field's source evidence to the ACTUAL active file
         // whose extracted text contains the field's supporting quote (or null →
         // ungrounded). No earliest-file guessing.
