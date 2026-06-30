@@ -15,7 +15,7 @@ function groundedMandatory(): ReadinessRequirement {
     sourceTenderFileId: "file-1",
     sourcePageNumber: 3,
     sourceExactQuote: "The bidder shall submit audited financial statements.",
-    sourceFileActiveInTender: true,
+    sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: The bidder shall submit audited financial statements.. Additional context for the tender file extraction.",
   };
 }
 

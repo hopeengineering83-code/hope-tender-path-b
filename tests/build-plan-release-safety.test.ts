@@ -17,7 +17,7 @@ describe("Section C release safety", () => {
     fallbackApprovalBound: false,
     currentHashChunks: [],
     requirementCount: 1,
-    requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful source quote", sourceFileActiveInTender: true }],
+    requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful source quote", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: meaningful source quote. Additional context for the tender file extraction." }],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true,
     // BuildPlan enforcement is fail-closed: default to true so the "passing"

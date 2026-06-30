@@ -24,11 +24,11 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
     requirementCount: 5,
     requirements: [
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true },
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 2, sourceExactQuote: "Another meaningful source quote for grounding", sourceFileActiveInTender: true },
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 3, sourceExactQuote: "Third requirement source quote for testing", sourceFileActiveInTender: true },
-      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 4, sourceExactQuote: "Fourth requirement quote for grounding", sourceFileActiveInTender: true },
-      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "Fifth requirement quote for grounding test", sourceFileActiveInTender: true },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction." },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 2, sourceExactQuote: "Another meaningful source quote for grounding", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Another meaningful source quote for grounding. Additional context for the tender file extraction." },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 3, sourceExactQuote: "Third requirement source quote for testing", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Third requirement source quote for testing. Additional context for the tender file extraction." },
+      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 4, sourceExactQuote: "Fourth requirement quote for grounding", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Fourth requirement quote for grounding. Additional context for the tender file extraction." },
+      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "Fifth requirement quote for grounding test", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Fifth requirement quote for grounding test. Additional context for the tender file extraction." },
     ],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 3,
@@ -139,21 +139,21 @@ describe("Gate blocks ungrounded mandatory requirements", () => {
   });
   it("blocks when MANDATORY req has no page", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: null, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true }],
+      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: null, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: meaningful quote text here. Additional context for the tender file extraction." }],
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
   it("blocks when MANDATORY req has no quote", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: null, sourceFileActiveInTender: true }],
+      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: null, sourceFileActiveInTender: true, sourceFileExtractedText: "This tender requires a meaningful source quote for the technical proposal. Another meaningful source quote for grounding. Third requirement source quote for testing." }],
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
   it("blocks when MANDATORY req has short quote", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "short", sourceFileActiveInTender: true }],
+      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "short", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: short. Additional context for the tender file extraction." }],
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");

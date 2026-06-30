@@ -21,36 +21,30 @@ function quoteSupported(extractedText: unknown, quote: string): boolean {
   return normalizeText(extractedText).includes(normalizeText(quote));
 }
 
-function stable(value: unknown): string {
-  return JSON.stringify(value, (_k, v) => {
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)));
-    }
-    return v;
-  });
-}
-
-export function hashBuildPlanState(input: unknown): string {
-  return createHash("sha256").update(stable(input)).digest("hex");
-}
-
 export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId: string, userId: string, items?: BuildPlanItem[]): Promise<string | null> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
       id: true, title: true, reference: true, exactFileNaming: true, exactFileOrder: true, submissionMethod: true, submissionAddress: true, submissionEmails: true, submissionEmailSubject: true,
-      files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, size: true, extractedText: true, updatedAt: true } },
-      requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true, updatedAt: true } },
+      files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true } },
+      requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },
   });
   if (!tender) return null;
   const planItems = items ?? plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
-  return hashBuildPlanState({
-    tender: { id: tender.id, title: tender.title, reference: tender.reference, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, submissionMethod: tender.submissionMethod, submissionAddress: tender.submissionAddress, submissionEmails: tender.submissionEmails, submissionEmailSubject: tender.submissionEmailSubject },
-    files: tender.files.map((f) => ({ id: f.id, name: f.originalFileName, size: f.size, digest: hashBuildPlanState(f.extractedText ?? ""), updatedAt: f.updatedAt.toISOString() })),
-    requirements: tender.requirements.map((r) => ({ ...r, updatedAt: r.updatedAt.toISOString() })),
-    items: planItems.map((i) => ({ exactFileName: i.exactFileName, exactOrder: i.exactOrder, documentType: i.documentType, format: i.format, required: i.required, sourceRequirementIds: i.sourceRequirementIds })),
-  });
+  // CANONICAL HASH: uses the SINGLE shared computeBuildPlanHash from
+  // build-plan-hash.ts — the SAME helper the generation-readiness-gate uses
+  // for stale detection. No second "compatibility" hash may exist.
+  const { computeBuildPlanHash, buildPlanHashInputFromTender } = await import("./build-plan-hash");
+  return computeBuildPlanHash(buildPlanHashInputFromTender({
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    files: tender.files.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: f.deletionStatus })),
+    requirements: tender.requirements.map((r) => ({ id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority, exactFileName: r.exactFileName, exactOrder: r.exactOrder })),
+  }));
 }
 
 export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string, userId: string) {
@@ -62,11 +56,40 @@ export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string
   const items = plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
   const contentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
   if (!contentHash) return null;
-  const existing = await (prisma as any).buildPlan.findFirst({ where: { tenderId, status: "DRAFT" } });
-  const data = { tenderId, status: "DRAFT", contentHash, itemsJson: JSON.stringify(items), validationJson: JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] }), builtById: userId };
-  return existing
-    ? (prisma as any).buildPlan.update({ where: { id: existing.id }, data: { ...data, revision: { increment: 1 }, confirmedRevision: null, confirmedContentHash: null, confirmedById: null, confirmedAt: null } })
-    : (prisma as any).buildPlan.create({ data });
+
+  // TRANSACTION-SAFE REBUILD: BuildPlan has ONE unique row per tender
+  // (tenderId @unique). Whether the existing row is DRAFT or CONFIRMED,
+  // rebuild it in-place: set status=DRAFT, increment revision, replace
+  // canonical items/hash, and CLEAR all confirmed* fields so any stale
+  // confirmation is invalidated. Never create a second row; never delete
+  // a confirmed plan. Uses upsert for race safety.
+  const itemsJson = JSON.stringify(items);
+  const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
+  return (prisma as any).buildPlan.upsert({
+    where: { tenderId },
+    update: {
+      status: "DRAFT",
+      revision: { increment: 1 },
+      contentHash,
+      itemsJson,
+      validationJson,
+      builtById: userId,
+      confirmedRevision: null,
+      confirmedContentHash: null,
+      confirmedById: null,
+      confirmedBy: null,
+      confirmedAt: null,
+    },
+    create: {
+      tenderId,
+      status: "DRAFT",
+      revision: 1,
+      contentHash,
+      itemsJson,
+      validationJson,
+      builtById: userId,
+    },
+  });
 }
 
 export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {

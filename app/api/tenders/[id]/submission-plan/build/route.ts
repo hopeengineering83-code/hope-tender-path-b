@@ -19,7 +19,7 @@ import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engin
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
 import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
-import { computeBuildPlanHash, buildPlanHashInputFromTender } from "../../../../../../lib/engine/build-plan-hash";
+// build-plan-hash import removed — canonical hash is now used via buildDraftBuildPlan.
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -349,75 +349,22 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
-    // Persist the BuildPlan bound to the current tender state via the SINGLE
-    // shared deterministic hash (same helper the readiness gate uses), so the
-    // recorded plan and the gate's freshness check can never disagree. Map files
-    // to the helper's shape (originalFileName → fileName), exactly as the gate does.
-    const contentHash = computeBuildPlanHash(buildPlanHashInputFromTender({
-      exactFileNaming: tender.exactFileNaming,
-      exactFileOrder: tender.exactFileOrder,
-      submissionMethod: tender.submissionMethod,
-      submissionAddress: tender.submissionAddress,
-      submissionEmails: tender.submissionEmails,
-      files: tender.files.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: f.deletionStatus })),
-      requirements: tender.requirements.map((r) => ({ id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority, exactFileName: r.exactFileName, exactOrder: r.exactOrder })),
-    }));
+    // UNIFIED: call the SAME canonical buildDraftBuildPlan service that
+    // /api/tenders/[id]/build-plan uses. This guarantees one hash, one
+    // persistence path, one revision-increment behavior. No competing
+    // hash or persistence logic remains in this route.
+    const { buildDraftBuildPlan } = await import("../../../../../../lib/engine/build-plan");
+    const draftPlan = await buildDraftBuildPlan(prisma, id, actor.id);
+    if (!draftPlan) {
+      return NextResponse.json({ ok: false, error: "Tender not found while building DRAFT plan.", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    }
+    // Also write legacy fields for backward-compatible panel reads.
     const activeFiles = tender.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
-    const filesList = JSON.stringify(
-      activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName }))
-    );
-    const plannedDocumentsJson = JSON.stringify(
-      plannedFiles.map((doc) => ({
-        canonicalId: doc.canonicalId,
-        exactFileName: doc.exactFileName,
-        documentType: doc.documentType,
-        required: doc.required,
-      }))
-    );
-    const itemsJson = JSON.stringify(plannedFiles);
-    const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
-
-    // UNIFIED BuildPlan contract: this route writes the SAME authoritative
-    // fields as the DRAFT/CONFIRMED service in lib/engine/build-plan.ts:
-    //   status="DRAFT", builtById, itemsJson, validationJson, contentHash,
-    //   confirmedRevision=null, confirmedContentHash=null, confirmedById=null,
-    //   confirmedAt=null (reset on every rebuild so stale confirmations cannot
-    //   authorize release after a plan rebuild).
-    // Legacy filesList/plannedDocuments/createdBy are still written so older
-    // panels that read them keep working, but the gate and confirmation route
-    // only trust the authoritative DRAFT/CONFIRMED columns.
-    await prisma.buildPlan.upsert({
+    const filesList = JSON.stringify(activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName })));
+    const plannedDocumentsJson = JSON.stringify(plannedFiles.map((doc) => ({ canonicalId: doc.canonicalId, exactFileName: doc.exactFileName, documentType: doc.documentType, required: doc.required })));
+    await prisma.buildPlan.update({
       where: { tenderId: id },
-      update: {
-        contentHash,
-        filesList,
-        plannedDocuments: plannedDocumentsJson,
-        planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED",
-        status: "DRAFT",
-        itemsJson,
-        validationJson,
-        builtById: actor.id,
-        createdBy: actor.id,
-        confirmedRevision: null,
-        confirmedContentHash: null,
-        confirmedById: null,
-        confirmedBy: null,
-        confirmedAt: null,
-        updatedAt: new Date(),
-      },
-      create: {
-        tenderId: id,
-        contentHash,
-        filesList,
-        plannedDocuments: plannedDocumentsJson,
-        planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED",
-        status: "DRAFT",
-        revision: 1,
-        itemsJson,
-        validationJson,
-        builtById: actor.id,
-        createdBy: actor.id,
-      },
+      data: { filesList, plannedDocuments: plannedDocumentsJson, planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED", createdBy: actor.id },
     });
 
     await logAction({
@@ -426,7 +373,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       entityType: "Tender",
       entityId: id,
       description: `Submission plan built for tender "${tender.title}" — ${plannedFiles.length} planned files, ${skipped} existing generated rows${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
-      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true, contentHash },
+      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true, contentHash: draftPlan.contentHash },
     });
 
     const baseWarning = isDerivedDraft

@@ -32,7 +32,7 @@ function goodInput(overrides: Partial<GenerationReadinessInput> = {}): Generatio
         sourceTenderFileId: "f1",
         sourcePageNumber: 3,
         sourceExactQuote: "The procuring entity requires ISO certification for all bidders.",
-        sourceFileActiveInTender: true,
+        sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: The procuring entity requires ISO certification for all bidders.. Additional context for the tender file extraction.",
       },
     ],
     criticalMetadataOk: true,
@@ -151,7 +151,7 @@ describe("hardened gate — ungrounded mandatory requirements blocked", () => {
           sourceTenderFileId: "f1",
           sourcePageNumber: 2,
           sourceExactQuote: "", // no quote
-          sourceFileActiveInTender: true,
+          sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: . Additional context for the tender file extraction.",
         },
       ],
     }));
@@ -195,7 +195,7 @@ describe("hardened gate — ungrounded mandatory requirements blocked", () => {
           sourceTenderFileId: "f1",
           sourcePageNumber: 3,
           sourceExactQuote: "ISO certification is required for all bidders",
-          sourceFileActiveInTender: true,
+          sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: ISO certification is required for all bidders. Additional context for the tender file extraction.",
         },
       ],
     }));

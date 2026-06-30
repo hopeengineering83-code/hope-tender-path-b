@@ -96,7 +96,7 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
     requirementCount: 5,
     requirements: [
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction." },
     ],
     criticalMetadataOk: true,
     hasValidVirtualSubmissionPlan: true,

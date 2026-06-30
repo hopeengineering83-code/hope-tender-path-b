@@ -23,8 +23,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       await (tx as any).buildPlan.update({ where: { id: draft.id }, data: { validationJson: JSON.stringify({ ok: false, blockers: validation.blockers.concat(staleBlockers) }), contentHash: contentHash ?? draft.contentHash } });
       return { status: 422 as const, body: { ok: false, code: "BUILD_PLAN_CONFIRMATION_BLOCKED", blockers: validation.blockers.concat(staleBlockers), authorizesGeneration: false } };
     }
-    await (tx as any).buildPlan.deleteMany({ where: { tenderId: id, status: "CONFIRMED" } });
-    const confirmed = await (tx as any).buildPlan.update({ where: { id: draft.id }, data: { status: "CONFIRMED", confirmedRevision: draft.revision, confirmedContentHash: contentHash, confirmedById: actor.id, confirmedAt: new Date(), validationJson: JSON.stringify({ ok: true, blockers: [] }) } });
+    // CONFIRM updates the SAME DRAFT row — never delete a confirmed plan.
+    // The one-row-per-tender constraint (tenderId @unique) guarantees no
+    // duplicate. confirmedRevision/confirmedContentHash snapshot the current
+    // revision+hash so post-confirmation drift is detectable.
+    const confirmed = await (tx as any).buildPlan.update({ where: { id: draft.id }, data: { status: "CONFIRMED", confirmedRevision: draft.revision, confirmedContentHash: contentHash, confirmedById: actor.id, confirmedBy: actor.id, confirmedAt: new Date(), validationJson: JSON.stringify({ ok: true, blockers: [] }) } });
     return { status: 200 as const, body: { ok: true, status: confirmed.status, revision: confirmed.revision, confirmedContentHash: confirmed.confirmedContentHash, authorizesGeneration: true } };
   });
   if (result.status === 200) await logAction({ userId: actor.id, action: "SUBMISSION_PLAN_BUILT", entityType: "Tender", entityId: id, description: "Build Plan confirmed after source-grounded validation.", metadata: { tenderId: id, revision: (result.body as any).revision, contentHash: (result.body as any).confirmedContentHash } });

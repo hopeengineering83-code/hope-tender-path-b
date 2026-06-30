@@ -94,6 +94,7 @@ export type GenerationBlockerCode =
   | "CHUNKS_INCOMPLETE"
   | "REQUIREMENTS_MISSING"
   | "REQUIREMENT_SOURCE_UNGROUNDED"
+  | "REQUIREMENT_QUOTE_NOT_IN_FILE"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
   | "BUILD_PLAN_MISSING"
@@ -131,6 +132,8 @@ export interface ReadinessRequirement {
   sourceExactQuote: string | null;
   // True only when sourceTenderFileId resolves to an ACTIVE file in THIS tender.
   sourceFileActiveInTender: boolean;
+  /** Extracted text of the source TenderFile — used for quote containment verification. */
+  sourceFileExtractedText?: string | null;
 }
 
 export interface GenerationReadinessInput {
@@ -280,14 +283,22 @@ export function evaluateGenerationReadiness(
   const mandatory = input.requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
   for (const r of mandatory) {
     const quote = (r.sourceExactQuote ?? "").trim();
-    const grounded =
+    const hasStructuralGrounding =
       !!r.sourceTenderFileId &&
       r.sourceFileActiveInTender &&
       typeof r.sourcePageNumber === "number" &&
       r.sourcePageNumber >= 1 &&
       quote.length >= MIN_MEANINGFUL_QUOTE_CHARS;
-    if (!grounded) {
+    if (!hasStructuralGrounding) {
       return fail("REQUIREMENT_SOURCE_UNGROUNDED", "At least one mandatory requirement is missing a valid source reference (active source file, page number, and a meaningful verbatim quote). Re-run AI Analyze to ground requirements.");
+    }
+    // QUOTE CONTAINMENT: the normalized quote MUST actually appear in the
+    // extracted text of the referenced ACTIVE TenderFile. Without this, a
+    // foreign/guessed/unsupported quote could pass the structural check.
+    const fileText = (r.sourceFileExtractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    if (quote.length >= MIN_MEANINGFUL_QUOTE_CHARS && (fileText.length === 0 || !fileText.includes(normalizedQuote))) {
+      return fail("REQUIREMENT_QUOTE_NOT_IN_FILE", "At least one mandatory requirement has a source quote that is not contained in the extracted text of the referenced active TenderFile. Foreign, guessed, or unsupported evidence is blocked. Re-run AI Analyze to ground requirements.");
     }
   }
 
@@ -521,6 +532,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       sourcePageNumber: r.sourcePageNumber,
       sourceExactQuote: r.sourceExactQuote,
       sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
+      sourceFileExtractedText: r.sourceTenderFileId ? (activeFiles.find((f) => f.id === r.sourceTenderFileId)?.extractedText ?? null) : null,
     }));
 
     // G — canonical field-state resolver: every critical field must pass validation
