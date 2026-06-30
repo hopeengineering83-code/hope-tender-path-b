@@ -49,18 +49,18 @@ const ALWAYS_REQUIRED = [
 // Canonical display chain (informational string for operator messages). The
 // authoritative ORDER + key NAMES come from the shared catalog; this string is
 // only human-facing copy embedded in each key's description.
-const CANONICAL_CHAIN = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude";
+const CANONICAL_CHAIN = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude";
 
 // Per-key descriptions + validators, keyed by env name. This map carries NO
 // ordering — the canonical order is owned solely by the shared catalog
 // (AI_PROVIDER_API_KEY_ENVS). AI_PROVIDER_KEYS below is derived from it.
 const PROVIDER_KEY_META = {
   ZAI_API_KEY: {
-    description: `Z.ai GLM API key. FIRST-tier AI provider in the canonical chain (${CANONICAL_CHAIN}). General OpenAI-compatible endpoint (ZAI_BASE_URL, default https://api.z.ai/api/paas/v4). Models override via ZAI_PROPOSAL_MODEL / ZAI_ANALYSIS_MODEL / ZAI_FAST_MODEL (default glm-4-flash).`,
+    description: `Z.ai GLM API key. Configurable provider (not automatic fallback) in the canonical chain (${CANONICAL_CHAIN}). General OpenAI-compatible endpoint (ZAI_BASE_URL, default https://api.z.ai/api/paas/v4). Models override via ZAI_PROPOSAL_MODEL / ZAI_ANALYSIS_MODEL / ZAI_FAST_MODEL (default glm-4-flash).`,
     validate: (_v) => null,
   },
   CEREBRAS_API_KEY: {
-    description: `Cerebras API key. SECOND-tier AI provider in the canonical chain (${CANONICAL_CHAIN}). OpenAI-compatible endpoint that uses max_completion_tokens. Models override via CEREBRAS_PROPOSAL_MODEL / CEREBRAS_ANALYSIS_MODEL / CEREBRAS_FAST_MODEL (default gpt-oss-120b).`,
+    description: `Cerebras API key. Configurable provider (not automatic fallback) in the canonical chain (${CANONICAL_CHAIN}). OpenAI-compatible endpoint that uses max_completion_tokens. Models override via CEREBRAS_PROPOSAL_MODEL / CEREBRAS_ANALYSIS_MODEL / CEREBRAS_FAST_MODEL (default gpt-oss-120b).`,
     validate: (_v) => null,
   },
   MISTRAL_API_KEY: {
@@ -72,7 +72,7 @@ const PROVIDER_KEY_META = {
     validate: (_v) => null,
   },
   OPENROUTER_API_KEY: {
-    description: `OpenRouter API key (sk-or-...). FIFTH-tier aggregator AI provider in the canonical chain (${CANONICAL_CHAIN}). OpenAI-compatible endpoint. OPENROUTER_PROPOSAL_MODEL MUST be an explicit ':free' model — 'openrouter/auto' and non-':free' models are rejected to prevent paid usage.`,
+    description: `OpenRouter API key (sk-or-...). SECOND-tier aggregator AI provider in the canonical chain (${CANONICAL_CHAIN}). OpenAI-compatible endpoint. OPENROUTER_PROPOSAL_MODEL MUST be an explicit ':free' model — 'openrouter/auto' and non-':free' models are rejected to prevent paid usage.`,
     validate: (_v) => null,
   },
   GEMINI_API_KEY: {
@@ -88,7 +88,7 @@ const PROVIDER_KEY_META = {
     },
   },
   OPENAI_API_KEY: {
-    description: `OpenAI API key (sk-...). SEVENTH-tier AI provider in the canonical chain (${CANONICAL_CHAIN}). At least one AI provider key is required in production.`,
+    description: `OpenAI API key (sk-...). THIRD-tier AI provider in the canonical chain (${CANONICAL_CHAIN}). At least one AI provider key is required in production.`,
     validate: (v) => {
       if (!v.startsWith("sk-")) return `Expected an OpenAI API key starting with "sk-". Got: "${v.slice(0, 8)}..."`;
       return null;
@@ -99,11 +99,11 @@ const PROVIDER_KEY_META = {
     validate: (_v) => null,
   },
   DEEPSEEK_API_KEY: {
-    description: `DeepSeek API key. NINTH-tier fallback AI provider in the canonical chain (${CANONICAL_CHAIN}). OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).`,
+    description: `DeepSeek API key. FIFTH-tier fallback AI provider in the canonical chain (${CANONICAL_CHAIN}). OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).`,
     validate: (_v) => null, // no canonical prefix to validate
   },
   ANTHROPIC_API_KEY: {
-    description: `Anthropic Claude API key (sk-ant-..., 97+ chars). TENTH-tier (last, emergency-only) AI provider in the canonical chain (${CANONICAL_CHAIN}). Keep Claude last to avoid Anthropic rate limits blocking the app when other providers are available. Get from https://console.anthropic.com/settings/keys.`,
+    description: `Anthropic Claude API key (sk-ant-..., 97+ chars). SIXTH-tier (last, emergency-only) AI provider in the canonical chain (${CANONICAL_CHAIN}). Keep Claude last to avoid Anthropic rate limits blocking the app when other providers are available. Get from https://console.anthropic.com/settings/keys.`,
     validate: (v) => {
       if (!v.startsWith("sk-ant-")) return `Expected a Claude API key starting with "sk-ant-". Got: "${v.slice(0, 8)}..." — check you have not set a Gemini or OpenAI key here.`;
       if (v.length < 50) return `Claude API key is too short (${v.length} chars). A real key is 97+ characters.`;

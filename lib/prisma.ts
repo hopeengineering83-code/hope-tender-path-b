@@ -691,6 +691,27 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+
+  // ─── Authoritative Build Plan (Section C release safety) ───────────────
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "BuildPlan" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'DRAFT',
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "contentHash" TEXT NOT NULL,
+    "confirmedRevision" INTEGER,
+    "confirmedContentHash" TEXT,
+    "itemsJson" TEXT NOT NULL DEFAULT '[]',
+    "validationJson" TEXT NOT NULL DEFAULT '{}',
+    "builtById" TEXT NOT NULL,
+    "confirmedById" TEXT,
+    "confirmedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "BuildPlan_tenderId_idx" ON "BuildPlan"("tenderId")`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "BuildPlan_tenderId_status_key" ON "BuildPlan"("tenderId", "status")`);
+
   // ─── Section-level evidence map (G5) ───────────────────────────────────
   // Each generated proposal section is recorded with which requirements
   // it covers, which evidence IDs it cites, the text hash, and reviewer

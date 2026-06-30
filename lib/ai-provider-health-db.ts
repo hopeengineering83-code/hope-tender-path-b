@@ -23,8 +23,8 @@ import {
 import { CANONICAL_AI_PROVIDER_ORDER } from "./ai-provider-registry";
 
 // Persistence iteration is in the canonical runtime chain order, derived from
-// the authoritative registry (zai → cerebras → mistral → groq → openrouter →
-// gemini → openai → together → deepseek → anthropic) so that operator-facing
+// the authoritative registry (gemini → openrouter → openai → groq →
+// deepseek → anthropic) so that operator-facing
 // artifacts (DB rows, logs, snapshots) read in the same canonical order. This
 // list is NOT a fallback chain by itself — it only governs read/write order of
 // ProviderHealthSnapshot rows.

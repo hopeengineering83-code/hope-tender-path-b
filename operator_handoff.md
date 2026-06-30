@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-06-30 UTC — ChatGPT
+
+- **Mode:** release-safety implementation
+- **Branch / PR:** `hotfix/complete-release-safety` / PR not opened from this environment (no git remote configured and `gh` unavailable); PR metadata prepared after local commit
+- **Scope:** implemented Section C, part 2 release-safety gates: authoritative BuildPlan draft/confirm routes, deterministic tender-state hashing, current confirmed-plan enforcement in the central readiness gate, strict plan-only preview behavior, automatic provider fallback ordering, bootstrap schema coverage, and behavioral tests.
+- **Files changed:** `.env.example`, `app/api/tenders/[id]/build-plan/route.ts`, `app/api/tenders/[id]/build-plan/confirm/route.ts`, `app/api/tenders/[id]/generate/route.ts`, `components/ai-health-panel.tsx`, `docs/ai-provider-order.md`, `lib/ai-environment-readiness.ts`, `lib/ai-provider-catalog.cjs`, `lib/ai-provider-health-db.ts`, `lib/ai-provider-registry.ts`, `lib/audit.ts`, `lib/engine/build-plan.ts`, `lib/engine/generation-readiness-gate.ts`, `lib/env-check.ts`, `lib/prisma.ts`, `prisma/schema.prisma`, `prisma/migrations/20260630120000_add_build_plan/migration.sql`, `scripts/check-env.mjs`, and provider/build-plan release-safety tests under `tests/`.
+- **Tests:** passed `npx prisma validate`; passed `npx prisma generate`; PostgreSQL migration deploy could not connect to local PostgreSQL (`P1001`); passed `npm run typecheck -- --pretty false`; passed `npm run lint -- --max-warnings 999`; passed targeted BuildPlan/provider/generation gate tests; passed full `npm test`; passed production `npm run build` with required dummy/env warnings only.
+- **CI / deployment:** no remote/CI metadata available locally; no Vercel CLI run, no preview created, no deployment attempted.
+- **Known risk:** database migration application still needs verification in an environment with reachable PostgreSQL; actual GitHub push/PR update requires a configured remote or GitHub CLI.
+- **Next action:** push the committed branch once to the canonical remote and open/update exactly one PR against `main`, then run CI including PostgreSQL migration checks.
+- **Merge status:** unsafe until remote CI and PostgreSQL migration checks pass.
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction

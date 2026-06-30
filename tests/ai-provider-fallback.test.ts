@@ -180,8 +180,7 @@ describe("check-env.mjs — 10-provider policy alignment", () => {
     // The catalog itself is the single source and is in canonical order.
     const { AI_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
     assert.deepEqual(AI_PROVIDER_API_KEY_ENVS, [
-      "ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
-      "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+      "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
     ]);
   });
 

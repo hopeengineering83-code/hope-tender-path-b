@@ -48,9 +48,9 @@ afterEach(() => {
 
 // 1. Canonical order
 describe("1. canonical provider order", () => {
-  it("is exactly zai → cerebras → mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic", () => {
+  it("is exactly gemini → openrouter → openai → groq → deepseek → anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [
-      "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
+      "gemini", "openrouter", "openai", "groq", "deepseek", "anthropic",
     ]);
   });
 });
@@ -86,11 +86,11 @@ describe("3+4. provider detection from API keys", () => {
   });
 });
 
-// 5. Health endpoint + admin panel include zai + cerebras (source-level)
-describe("5. zai + cerebras appear in health surfaces", () => {
-  it("health route + AI health panel build from the registry (include all 10)", () => {
+// 5. Health endpoint + admin panel use automatic runtime providers from registry (source-level)
+describe("5. automatic providers appear in health surfaces", () => {
+  it("health route + AI health panel build from the registry (automatic 6)", () => {
     const entries = getCanonicalProviderEntries().map((e) => e.provider);
-    assert.ok(entries.includes("zai") && entries.includes("cerebras"));
+    assert.deepEqual(entries, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
     assert.ok(readFileSync("app/api/ai/health/route.ts", "utf8").includes("getCanonicalProviderEntries"));
     assert.ok(readFileSync("components/ai-health-panel.tsx", "utf8").includes("getCanonicalProviderEntries"));
   });
@@ -225,15 +225,14 @@ describe("13. ATTEMPT_BUDGET_EXHAUSTED is distinct", () => {
   });
 });
 
-// 16. Inactive providers remain supported after OpenRouter
-describe("16. inactive providers remain supported after OpenRouter", () => {
-  it("gemini → openai → together → deepseek → anthropic follow OpenRouter", () => {
+// 16. Non-automatic providers remain configurable but outside fallback
+describe("16. non-automatic providers remain configurable but outside fallback", () => {
+  it("Z.ai/Cerebras/Mistral/Together are registry entries but not automatic fallback members", () => {
     const order = [...CANONICAL_AI_PROVIDER_ORDER];
-    assert.deepEqual(order.slice(order.indexOf("openrouter") + 1), [
-      "gemini", "openai", "together", "deepseek", "anthropic",
-    ]);
-    for (const p of ["gemini", "openai", "together", "deepseek", "anthropic"] as const) {
-      assert.ok(getProviderEntry(p), `${p} must remain in the registry`);
+    assert.deepEqual(order, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
+    for (const p of ["zai", "cerebras", "mistral", "together"] as const) {
+      assert.ok(getProviderEntry(p), `${p} must remain configurable`);
+      assert.equal(order.includes(p as any), false);
     }
   });
 });
@@ -249,8 +248,8 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
     assert.equal(getProviderBaseUrl("groq"), "https://api.groq.com/openai/v1");
     assert.equal(getProviderModel("groq", "proposal"), "llama-3.3-70b-versatile");
   });
-  it("OpenRouter keeps fifth rank among the working providers", () => {
-    assert.equal(getProviderEntry("openrouter").rank, 5);
+  it("OpenRouter keeps second rank in the automatic fallback", () => {
+    assert.equal(getProviderEntry("openrouter").rank, 2);
     assert.equal(providerDisplayName("openrouter"), "OpenRouter");
   });
 });

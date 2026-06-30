@@ -13,19 +13,15 @@ import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
 // test fails loudly if the registry order ever changes without an explicit
 // product decision.
 const REQUIRED_ORDER = [
-  "zai",
-  "cerebras",
-  "mistral",
-  "groq",
-  "openrouter",
   "gemini",
+  "openrouter",
   "openai",
-  "together",
+  "groq",
   "deepseek",
   "anthropic",
 ] as const;
 
-const REQUIRED_DISPLAY = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude";
+const REQUIRED_DISPLAY = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic / Claude";
 
 describe("AI provider chain policy — canonical order", () => {
   it("registry CANONICAL_AI_PROVIDER_ORDER is exactly the required order", () => {
@@ -40,7 +36,7 @@ describe("AI provider chain policy — canonical order", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_CHAIN], [...REQUIRED_ORDER]);
   });
 
-  it("registry ranks are 1..10 in canonical order", () => {
+  it("registry ranks are 1..6 in canonical order", () => {
     const entries = getCanonicalProviderEntries();
     entries.forEach((entry, idx) => {
       assert.equal(entry.provider, REQUIRED_ORDER[idx], `rank ${idx + 1} provider mismatch`);
@@ -48,15 +44,17 @@ describe("AI provider chain policy — canonical order", () => {
     });
   });
 
-  it("zai is first, cerebras second, anthropic last", () => {
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
+  it("gemini is first, openrouter second, anthropic last", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "gemini");
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "openrouter");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
   });
 
-  it("the inactive providers remain supported after OpenRouter in the required order", () => {
-    const afterOpenRouter = REQUIRED_ORDER.slice(REQUIRED_ORDER.indexOf("openrouter") + 1);
-    assert.deepEqual([...afterOpenRouter], ["gemini", "openai", "together", "deepseek", "anthropic"]);
+  it("non-automatic providers remain supported but outside automatic fallback", () => {
+    const automatic = new Set(REQUIRED_ORDER);
+    for (const provider of ["zai", "cerebras", "mistral", "together"] as const) {
+      assert.equal(automatic.has(provider as any), false);
+    }
   });
 
   it("display-name chain matches the required display order", () => {

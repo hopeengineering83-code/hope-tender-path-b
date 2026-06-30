@@ -85,8 +85,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   ];
 
   // Provider chain, generated directly from the registry in canonical order
-  // (zai → cerebras → mistral → groq → openrouter → gemini → openai → together
-  // → deepseek → anthropic). Only configured providers appear.
+  // (gemini → openrouter → openai → groq → deepseek → anthropic). Only configured providers appear.
   const providerChain: string[] = [];
   for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
     if (!isProviderConfigured(provider)) continue;

@@ -403,6 +403,7 @@ model Tender {
   metadataOverrides     TenderMetadataOverride[]
   submissionPlanState   SubmissionPlanState?
   aiUsageRecords        AiUsageRecord[]
+  buildPlans            BuildPlan[]
 
   // Audit DB-002 (2026-06-20): the single most-queried column in the app
   // (every "list my tenders" dashboard query filters on userId). Was a
@@ -564,6 +565,28 @@ model ComplianceGap {
   @@index([requirementId])
   // Audit DB-002 (2026-06-20): compliance-gap panels load by tenderId.
   @@index([tenderId])
+}
+
+
+model BuildPlan {
+  id                   String   @id @default(uuid())
+  tenderId             String
+  tender               Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  status               String   @default("DRAFT") // DRAFT | CONFIRMED
+  revision             Int      @default(1)
+  contentHash          String
+  confirmedRevision    Int?
+  confirmedContentHash String?
+  itemsJson            String   @default("[]")
+  validationJson       String   @default("{}")
+  builtById            String
+  confirmedById        String?
+  confirmedAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([tenderId])
+  @@unique([tenderId, status])
 }
 
 model GeneratedDocument {

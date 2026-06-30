@@ -49,7 +49,7 @@ describe("Environment Variable Reconciliation", () => {
   });
 
   describe("Canonical Provider Order Preservation", () => {
-    it("preserves exact provider order: ZAI → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic", () => {
+    it("preserves exact automatic provider order: Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic", () => {
       const order = [
         "zai",
         "cerebras",

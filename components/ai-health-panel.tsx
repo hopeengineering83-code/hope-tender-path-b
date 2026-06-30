@@ -49,8 +49,8 @@ function present(value: string | undefined) {
 
 function getAIHealth(): AIHealthResponse {
   // Provider cards are generated DIRECTLY from the authoritative registry in
-  // canonical order (zai → cerebras → mistral → groq → openrouter → gemini →
-  // openai → together → deepseek → anthropic). Anthropic / Claude is last so
+  // canonical order (gemini → openrouter → openai → groq →
+  // deepseek → anthropic). Anthropic / Claude is last so
   // its rate limits never block the app while earlier providers are available.
   const entries = getCanonicalProviderEntries();
   const orModelValidity = openRouterModelValidity();

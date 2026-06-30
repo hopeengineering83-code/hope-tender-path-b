@@ -130,7 +130,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   zai: {
     provider: "zai",
     displayName: "Z.ai GLM",
-    rank: 1,
+    rank: 999,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
@@ -158,7 +158,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 2,
+    rank: 999,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
@@ -184,7 +184,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   mistral: {
     provider: "mistral",
     displayName: "Mistral",
-    rank: 3,
+    rank: 999,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
@@ -232,7 +232,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openrouter: {
     provider: "openrouter",
     displayName: "OpenRouter",
-    rank: 5,
+    rank: 2,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
@@ -258,7 +258,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   gemini: {
     provider: "gemini",
     displayName: "Gemini",
-    rank: 6,
+    rank: 1,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
@@ -281,7 +281,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openai: {
     provider: "openai",
     displayName: "OpenAI",
-    rank: 7,
+    rank: 3,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
@@ -305,7 +305,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   together: {
     provider: "together",
     displayName: "Together",
-    rank: 8,
+    rank: 999,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
@@ -329,7 +329,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   deepseek: {
     provider: "deepseek",
     displayName: "DeepSeek",
-    rank: 9,
+    rank: 5,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
@@ -354,7 +354,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   anthropic: {
     provider: "anthropic",
     displayName: "Anthropic / Claude",
-    rank: 10,
+    rank: 6,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",

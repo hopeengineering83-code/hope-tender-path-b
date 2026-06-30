@@ -18,7 +18,7 @@ The app uses this canonical fallback order for AI analysis, extraction, proposal
 10. Anthropic / Claude (`anthropic`)
 11. Deterministic draft fallback — only after every configured AI provider has failed, returned no usable result, or is in cooldown. The deterministic fallback is NOT an AI provider and its output is never exportable as a final proposal.
 
-The currently-working providers are the first five: Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter. The remaining providers (Gemini → OpenAI → Together → DeepSeek → Anthropic) remain fully supported and sit, in that exact order, after OpenRouter.
+Automatic fallback is Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic. Z.ai, Cerebras, Mistral, and Together remain configurable but outside automatic fallback.
 
 Anthropic / Claude is intentionally the last AI provider in the chain (an emergency-only, last-resort provider) so Anthropic rate limits do not block the app when earlier providers are configured and available. Do not change this order anywhere except in the registry.
 
@@ -74,6 +74,6 @@ The deterministic draft fallback is not a provider health state. It is the final
 
 ## Documentation note
 
-Older README text or comments that say "Mistral is first", "Gemini is first", "Claude is preferred", or that imply any other ordering are stale. The authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Z.ai GLM is first, Cerebras second, and Anthropic / Claude remains the last AI provider, followed by the deterministic draft fallback.
+Older README text or comments that say "Mistral is first", "Gemini is first", "Claude is preferred", or that imply any other ordering are stale. The authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Gemini is first, OpenRouter second, and Anthropic / Claude remains the last automatic AI provider, followed by the deterministic draft fallback.
 
 Do not change provider fallback order anywhere except in the registry, and only via an explicit product decision.
