@@ -141,10 +141,10 @@ export type TenderReleaseSnapshot = {
   // ─── Aggregated eligibility ──────────────────────────────────────────────
   generationEligible: boolean;
   exportEligible: boolean;
-  generationBlockers: string[];
-  exportBlockers: string[];
   finalZipEligible: boolean;
 
+  generationBlockers: string[];
+  exportBlockers: string[];
   finalZipBlockers: string[];
 };
 

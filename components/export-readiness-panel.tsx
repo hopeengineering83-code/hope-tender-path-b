@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CanonicalStatusBadge } from "./canonical-status-badge";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 

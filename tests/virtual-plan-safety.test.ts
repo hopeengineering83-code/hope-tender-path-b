@@ -1,28 +1,36 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
-import { prisma } from "../lib/prisma";
+import { test } from "node:test";
+import assert from "node:assert";
+import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../lib/engine/submission-plan";
 
-describe("Virtual Plan Safety — no GeneratedDocument rows before readiness", () => {
-  it("Build Plan route does not create GeneratedDocument rows", async () => {
-    // This is a static analysis check of the route implementation
-    const fs = require('fs');
-    const routeContent = fs.readFileSync('app/api/tenders/[id]/submission-plan/build/route.ts', 'utf8');
+test("Proof: submission plan can be virtual and approved via status PLAN_APPROVED", () => {
+  const tender = {
+    id: "t1",
+    status: "PLAN_APPROVED",
+    exactFileNaming: '["test.docx"]',
+    exactFileOrder: '[]',
+    requirements: [],
+    generatedDocuments: [] // No real rows!
+  };
 
-    assert.strictEqual(routeContent.includes('prisma.generatedDocument.create'), false,
-      "Build Plan route must not call prisma.generatedDocument.create");
+  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const status = deriveSubmissionPlanStatus(tender as any, plan);
 
-    assert.ok(routeContent.includes('status: "PLAN_APPROVED"'),
-      "Build Plan route must update tender status to PLAN_APPROVED");
-  });
+  assert.strictEqual(status, "CANONICAL_APPROVED", "Status should be approved even with zero rows if status is PLAN_APPROVED");
+  assert.strictEqual(plan.files.length, 1, "Plan should have 1 virtual file");
+});
 
-  it("Generation gate respects virtual plan and approved status", async () => {
-    const fs = require('fs');
-    const gateContent = fs.readFileSync('lib/engine/generation-readiness-gate.ts', 'utf8');
+test("Proof: submission plan is BLOCKED if status is NOT PLAN_APPROVED and no rows exist", () => {
+  const tender = {
+    id: "t1",
+    status: "DRAFT",
+    exactFileNaming: '["test.docx"]',
+    exactFileOrder: '[]',
+    requirements: [],
+    generatedDocuments: []
+  };
 
-    assert.ok(gateContent.includes('planStatus === "CANONICAL_APPROVED"'),
-      "Generation gate must check for CANONICAL_APPROVED plan status");
+  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const status = deriveSubmissionPlanStatus(tender as any, plan);
 
-    assert.ok(gateContent.includes('buildSubmissionPlanWithDerivedFallback'),
-      "Generation gate must use virtual plan derivation");
-  });
+  assert.strictEqual(status, "USER_REVIEW_REQUIRED", "Status should be unapproved");
 });

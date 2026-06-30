@@ -186,7 +186,12 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
 
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
     ? "NO_GO"
-    : canonicalReadiness?.exportEligible
+    : canonicalDecisionScore >= 85
+      && unresolvedHigh === 0
+      && dashboardGeneratedCount > 0
+      && !hasPlanMismatch
+      && !hasStrongEvidenceGap
+      && analysisTrustedForGo
         ? "GO"
         : "REVIEW";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { errorCodeLabel } from "@/lib/ui/human-labels";
 import type {
   AuthorityReviewResult,
   AuthorityBlocker,
@@ -62,7 +63,7 @@ function BlockerRow({ blocker }: { blocker: AuthorityBlocker }) {
       <div className="flex flex-wrap items-center gap-2">
         {severityBadge(blocker.severity)}
         <span className="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-700">
-          {blocker.code}
+          {errorCodeLabel(blocker.code)}
         </span>
         {blocker.documentName && (
           <span className="text-xs text-slate-600">{blocker.documentName}</span>

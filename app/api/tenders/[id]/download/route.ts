@@ -50,6 +50,7 @@ async function readContentOrError(doc: ExportReadyDocument) {
   try {
     return { ok: true as const, content: await readGeneratedDocumentContent(doc) };
   } catch (error) {
+    logger.error("readContentOrError: document bytes unavailable", { documentId: doc.id, detail: error });
     return {
       ok: false as const,
       response: err("Document bytes are unavailable. Regenerate the document or reattach the final file before export.", 409, {
@@ -58,7 +59,6 @@ async function readContentOrError(doc: ExportReadyDocument) {
         fileName: doc.exactFileName ?? fileName(doc.name),
         hasStoragePath: Boolean(doc.storagePath),
         hasInlineFileContent: Boolean(doc.fileContent),
-        detail: error instanceof Error ? error.message : String(error),
       }),
     };
   }
@@ -441,18 +441,18 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     assembledZip = await assembleFinalSubmissionZip(entries, zipContents);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    logger.error("Final ZIP assembly/verification failed", { detail: error });
     // PERF-003: a size-cap violation thrown by the assembly helper is surfaced
     // as 413 (Payload Too Large) rather than the generic 422 verification error.
     if (/PERF-003|safety cap/i.test(detail)) {
       return err(
         `Final ZIP package exceeds the ${Math.floor(FINAL_ZIP_MAX_INPUT_BYTES / (1024 * 1024))}MB safety cap (PERF-003). Reduce the package size by splitting envelopes or removing non-final documents.`,
         413,
-        { code: "FINAL_ZIP_SIZE_CAP_EXCEEDED", limitBytes: FINAL_ZIP_MAX_INPUT_BYTES, detail },
+        { code: "FINAL_ZIP_SIZE_CAP_EXCEEDED", limitBytes: FINAL_ZIP_MAX_INPUT_BYTES },
       );
     }
     return err("Final ZIP verification failed. Regenerate the affected documents before export.", 422, {
       code: "FINAL_ZIP_VERIFICATION_FAILED",
-      detail,
     });
   }
 
@@ -629,6 +629,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409, { code: "DIRECT_PROPOSAL_EXPORT_DISABLED" });
   } catch (error) {
     logger.error("Tender download route failed", { detail: error });
-    return err("Download route failed.", 500, { code: "DOWNLOAD_ROUTE_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Download route failed.", 500, { code: "DOWNLOAD_ROUTE_RUNTIME_ERROR" });
   }
 }

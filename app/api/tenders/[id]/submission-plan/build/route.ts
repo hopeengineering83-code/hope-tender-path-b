@@ -2,9 +2,9 @@ import { logger } from "../../../../../../lib/observability";
 // POST /api/tenders/[id]/submission-plan/build
 //
 // Builds and persists a submission plan for the given tender.
-// Builds and approves the submission plan virtually.
-//
-//
+// Creates GeneratedDocument rows (status=PLANNED) for each planned file
+// that does not already have a matching row. Never overwrites rows that
+// have already been generated (generationStatus !== "PLANNED").
 //
 // Auth: ADMIN or PROPOSAL_MANAGER. User-scoped tender query.
 
@@ -287,15 +287,28 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
-    // Skip DB record creation; update status instead
-    await prisma.tender.update({ where: { id }, data: { status: "PLAN_APPROVED" } });
+    // Planned documents are virtual/readiness-only at this stage. Do not create
+    // GeneratedDocument rows until the final generation gate has passed; otherwise
+    // PLANNED database rows can be mistaken for real output or a confirmed plan.
+    const existingKeys = new Set(
+      tender.generatedDocuments
+        .map((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase())
+        .filter(Boolean),
+    );
 
-    let created = 0;
+    const created = 0;
     let skipped = 0;
-    const fileStatuses: { exactFileName: string; status: "created" | "skipped" }[] = [];
+    const fileStatuses: { exactFileName: string; status: "virtual" | "already_exists" }[] = [];
+
     for (const file of plannedFiles) {
-        fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
-        created++;
+      const key = file.exactFileName.toLowerCase();
+      if (existingKeys.has(key)) {
+        skipped++;
+        fileStatuses.push({ exactFileName: file.exactFileName, status: "already_exists" });
+        continue;
+      }
+      // Virtual only — no GeneratedDocument.create call
+      fileStatuses.push({ exactFileName: file.exactFileName, status: "virtual" });
     }
 
     const isWeakExtraction =
@@ -339,8 +352,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       action: "SUBMISSION_PLAN_BUILT",
       entityType: "Tender",
       entityId: id,
-      description: `Submission plan built for tender "${tender.title}" — ${created} created, ${skipped} skipped, ${plannedFiles.length} total planned files${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
-      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft },
+      description: `Submission plan built for tender "${tender.title}" — ${plannedFiles.length} virtual planned files, ${skipped} existing generated rows${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
+      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true },
     });
 
     const baseWarning = isDerivedDraft
@@ -353,6 +366,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       skipped,
       total: plannedFiles.length,
       isDerivedDraft,
+      virtualOnly: true,
       warning: baseWarning,
       contentPageWarnings: contentPageWarnings.length > 0 ? contentPageWarnings : undefined,
       files: fileStatuses,

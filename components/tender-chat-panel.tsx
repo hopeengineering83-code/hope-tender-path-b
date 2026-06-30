@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { clientLogger } from "@/lib/ui/client-logger";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,7 @@ export function TenderChatPanel({ tenderId }: { tenderId: string }) {
       setMessages(data.messages ?? []);
     } catch (err) {
       // Non-fatal: the workbench still works, history is just empty.
-      console.warn("[TenderChatPanel] Could not load history:", err instanceof Error ? err.message : err);
+      clientLogger.warn("[TenderChatPanel] Could not load history:", err instanceof Error ? { message: err.message } : { error: String(err) });
     } finally {
       setLoadingHistory(false);
     }
