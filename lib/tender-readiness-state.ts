@@ -12,6 +12,7 @@ export type TenderReadinessInput = {
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
   generatedDocuments?: Array<{ contentSummary?: string | null; generationStatus?: string | null }>;
+  status?: string | null;
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
 };
 
@@ -93,7 +94,7 @@ export function computeTenderReadinessState(input: TenderReadinessInput): Tender
   const metadataTrusted = titleOk && clientOk && referenceOk && input.metadataContaminated !== true;
   if (!metadataTrusted) blockers.push("Tender metadata is incomplete or contaminated.");
 
-  const submissionPlanBuilt = Boolean((input.exactFileNaming ?? "").trim() && input.exactFileNaming !== "[]") || Boolean((input.exactFileOrder ?? "").trim() && input.exactFileOrder !== "[]") || reqs.some((r) => Boolean((r.exactFileName ?? "").trim()));
+  const submissionPlanBuilt = (input.status === "PLAN_APPROVED") && (Boolean((input.exactFileNaming ?? "").trim() && input.exactFileNaming !== "[]") || Boolean((input.exactFileOrder ?? "").trim() && input.exactFileOrder !== "[]") || reqs.some((r) => Boolean((r.exactFileName ?? "").trim())));
   if (!submissionPlanBuilt) warnings.push("Submission plan is not built.");
 
   const currentAnalysisHash = deriveAnalysisHash({ extractionStatus, analysisSource, requirementCount: rawRequirementsCount, mandatoryCount: mandatoryRequirementsCount, sourceTracedCount: sourceTracedRequirementsCount });

@@ -306,20 +306,25 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {dimensions.map((d) => (
-          <div key={d.label} className={`rounded-xl border bg-white/80 p-3 ${d.status === "FAIL" ? "border-red-200" : d.status === "WARN" ? "border-amber-200" : "border-slate-200"}`}>
+        {dimensions.map((d) => {
+          const canonicalModule = canonicalReadiness?.modules[DIMENSION_MODULE[d.label]];
+          const effectiveStatus = canonicalModule
+            ? (canonicalModule.state === "READY" ? "PASS" : (canonicalModule.state === "WARNING" ? "WARN" : "FAIL"))
+            : d.status;
+          return (
+          <div key={d.label} className={`rounded-xl border bg-white/80 p-3 ${effectiveStatus === "FAIL" ? "border-red-200" : effectiveStatus === "WARN" ? "border-amber-200" : "border-slate-200"}`}>
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs font-semibold text-slate-700">{canonicalReadiness?.modules[DIMENSION_MODULE[d.label]] ? <CanonicalStatusIcon status={canonicalReadiness.modules[DIMENSION_MODULE[d.label]].state} /> : null} {d.label}</p>
             </div>
             {scoreBar(d.score, d.max)}
             <p className="mt-1 text-[10px] text-slate-500 truncate" title={d.detail}>{d.detail}</p>
-            {d.actionLabel && d.actionHref && (
-              <a href={d.actionHref} className={`mt-1.5 inline-block text-[10px] font-medium underline ${d.status === "FAIL" ? "text-red-600 hover:text-red-800" : "text-amber-600 hover:text-amber-800"}`}>
+            {d.actionLabel && d.actionHref && (effectiveStatus !== "PASS") && (
+              <a href={d.actionHref} className={`mt-1.5 inline-block text-[10px] font-medium underline ${effectiveStatus === "FAIL" ? "text-red-600 hover:text-red-800" : "text-amber-600 hover:text-amber-800"}`}>
                 {d.actionLabel} →
               </a>
             )}
           </div>
-        ))}
+        ); })}
       </div>
 
       {dimensions.some((d) => d.status === "FAIL") && (

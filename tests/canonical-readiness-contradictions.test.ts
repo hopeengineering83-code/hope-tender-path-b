@@ -42,6 +42,7 @@ function healthyReadinessState() {
       { priority: "CRITICAL", sourcePageNumber: 5, sourceExactQuote: "Quote2", sectionReference: "§2.2", sourceConfidence: 0.8 },
     ],
     exactFileNaming: JSON.stringify(["Technical Proposal.docx", "Financial Proposal.docx"]),
+    status: "PLAN_APPROVED",
     generatedDocuments: [],
   });
 }
@@ -72,6 +73,7 @@ describe("Contradiction C1 — compliance cannot be READY when analysis is regex
         { priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Quote", sectionReference: "§1", sourceConfidence: 0.9 },
       ],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     const cs = computeCanonicalModuleStates({ ...rs, hasAnalysis: true, hasRequirements: true, hasDocuments: false });
@@ -92,6 +94,7 @@ describe("Contradiction C1 — compliance cannot be READY when analysis is regex
         { priority: "MANDATORY", sourcePageNumber: 2, sourceExactQuote: "Quote", sectionReference: "§1", sourceConfidence: 0.9 },
       ],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     const cs = computeCanonicalModuleStates({ ...rs, hasAnalysis: true, hasRequirements: true, hasDocuments: false });
@@ -140,6 +143,7 @@ describe("Contradiction C2 — documents cannot be READY when submission plan no
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [] as Array<{ contentSummary: string | null; generationStatus: string }>,
     };
     const rsForHash = computeTenderReadinessState(baseInput);
@@ -166,6 +170,7 @@ describe("Contradiction C3 — approved regex fallback must show WARNING, not RE
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     const cs = computeCanonicalModuleStates({ ...rs, hasAnalysis: true, hasRequirements: true, hasDocuments: false, analysisIsApprovedFallback: true });
@@ -203,6 +208,7 @@ describe("Contradiction C5 — export cannot be READY when requirements are untr
       reference: "R",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     assert.equal(rs.requirementsTrusted, false, "requirements should not be trusted with regex fallback");
@@ -226,6 +232,7 @@ describe("Contradiction C6 — export blocked when metadata is untrusted", () =>
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     assert.equal(rs.metadataTrusted, false, "metadata should not be trusted with empty client name");
@@ -245,6 +252,7 @@ describe("Contradiction C6 — export blocked when metadata is untrusted", () =>
       metadataContaminated: true,
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     assert.equal(rs.metadataTrusted, false, "metadata should not be trusted when contaminated");
@@ -315,6 +323,7 @@ describe("Contradiction C8 — stale documents must show STALE, not READY", () =
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [
         { contentSummary: JSON.stringify({ analysisHash: "v1:STALE_OLD_HASH" }), generationStatus: "GENERATED" },
       ],
@@ -336,6 +345,7 @@ describe("Contradiction C8 — stale documents must show STALE, not READY", () =
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [
         { contentSummary: null, generationStatus: "GENERATED" },
       ],
@@ -359,6 +369,7 @@ describe("Contradiction C9 — export is never READY for regex fallback analysis
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     const cs = computeCanonicalModuleStates({ ...rs, hasAnalysis: true, hasRequirements: true, hasDocuments: false, analysisIsApprovedFallback: false });
@@ -375,6 +386,7 @@ describe("Contradiction C9 — export is never READY for regex fallback analysis
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     const cs = computeCanonicalModuleStates({ ...rs, hasAnalysis: true, hasRequirements: true, hasDocuments: false, analysisIsApprovedFallback: true });
@@ -392,6 +404,7 @@ describe("Contradiction C9 — export is never READY for regex fallback analysis
       reference: "REF-001",
       requirements: [{ priority: "MANDATORY", sourcePageNumber: 1, sourceExactQuote: "Q", sectionReference: "§1", sourceConfidence: 0.9 }],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       // Simulate docs generated from current analysis by providing correct hash
       generatedDocuments: [],
     });
@@ -485,6 +498,7 @@ describe("CRITICAL requirements counted as mandatory-type in readiness state", (
         { priority: "CRITICAL", sourcePageNumber: 3, sourceExactQuote: "Critical quote", sectionReference: "§3", sourceConfidence: 0.95 },
       ],
       exactFileNaming: JSON.stringify(["file.docx"]),
+      status: "PLAN_APPROVED",
       generatedDocuments: [],
     });
     assert.equal(rs.requirementsTrusted, true, "requirements should be trusted when all CRITICAL reqs are traced");

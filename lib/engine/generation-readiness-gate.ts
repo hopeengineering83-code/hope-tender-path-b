@@ -36,6 +36,7 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "./submission-plan";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
@@ -470,10 +471,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       submissionMethodContext: tender.submissionMethod ?? undefined,
     });
 
-    // H — real submission-plan signal: non-superseded GeneratedDocument rows.
-    const submissionPlanDocumentCount = await prisma.generatedDocument.count({
-      where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    });
+    // H — virtual submission-plan signal.
+    const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+    const planStatus = deriveSubmissionPlanStatus(tender, plan);
+    const submissionPlanDocumentCount = (planStatus === "CANONICAL_APPROVED")
+      ? ((await prisma.generatedDocument.count({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } } })) || plan.files.length)
+      : 0;
 
     return evaluateGenerationReadiness({
       purpose,

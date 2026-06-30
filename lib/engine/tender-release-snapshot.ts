@@ -25,6 +25,7 @@ import { resolveCanonicalFieldState, type CanonicalFieldStateResult } from "./ca
 import { resolveTenderAnalysisState, type AnalysisState } from "./analysis-state-resolver";
 import { assessExtractionQuality } from "../extraction-quality";
 import { isGroundedEvidence } from "./evidence-grounding";
+import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "./submission-plan";
 import { createHash } from "node:crypto";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
@@ -140,10 +141,10 @@ export type TenderReleaseSnapshot = {
   // ─── Aggregated eligibility ──────────────────────────────────────────────
   generationEligible: boolean;
   exportEligible: boolean;
-  finalZipEligible: boolean;
-
   generationBlockers: string[];
   exportBlockers: string[];
+  finalZipEligible: boolean;
+
   finalZipBlockers: string[];
 };
 
@@ -429,11 +430,13 @@ export async function getTenderReleaseSnapshot(
   };
 
   // Build plan / submission plan.
-  const buildPlanCount = tender.generatedDocuments.length;
+  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const planStatus = deriveSubmissionPlanStatus(tender, plan);
+  const buildPlanCount = (planStatus === "CANONICAL_APPROVED") ? (tender.generatedDocuments.length || plan.files.length) : (tender.generatedDocuments.length);
   const buildPlan: SnapshotBuildPlanState = {
     documentCount: buildPlanCount,
-    valid: buildPlanCount > 0,
-    blocker: buildPlanCount < 1 ? "No submission plan / generated documents exist. Build the plan first." : null,
+    valid: planStatus === "CANONICAL_APPROVED",
+    blocker: planStatus !== "CANONICAL_APPROVED" ? "Submission plan is not yet approved. Confirm plan in Stage 4." : null,
   };
 
   // Vault matches.
@@ -495,6 +498,7 @@ export async function getTenderReleaseSnapshot(
     metadataContaminated: tender.metadataContaminated,
     analysisState: analysisDetail.state,
     analysisJobId: analysisDetail.canonicalJobId,
+    planStatus,
     requirementCount: allReqs.length,
     overrides: (tender.metadataOverrides ?? []).map((o) => ({
       field: o.field,

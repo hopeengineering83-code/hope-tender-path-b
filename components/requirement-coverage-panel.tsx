@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { CanonicalStatusIcon } from "./canonical-status-badge"; // check components/icons.tsx if this fails
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 
@@ -76,6 +77,7 @@ type TraceabilitySummary = {
 export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
   const router = useRouter();
   const [data, setData] = useState<CoverageData | null>(null);
+  const [readiness, setReadiness] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -107,6 +109,12 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   }, [tenderId]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    fetch(`/api/tenders/${tenderId}/workflow-center`)
+      .then(res => res.json())
+      .then(json => setReadiness(json.snapshot))
+      .catch(console.error);
+  }, [tenderId]);
 
   const toggleRow = (id: string) => {
     setExpandedRows((prev) => {
@@ -314,7 +322,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       {/* Header */}
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-gray-800">Mandatory Requirement Coverage</span>
+          <div className="flex items-center gap-2">
+            {readiness?.modules.requirements && <CanonicalStatusIcon status={readiness.modules.requirements.state} />}
+            <span className="text-sm font-semibold text-gray-800">Mandatory Requirement Coverage</span>
+          </div>
           <div className="flex items-center gap-2">
             <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-200">
               <div

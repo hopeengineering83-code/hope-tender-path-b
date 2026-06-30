@@ -73,36 +73,7 @@ function plannedRecordDocumentType(file: SubmissionPlanFile): string {
   return file.documentType || "TENDER_REQUIRED_FILE";
 }
 
-async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFiles: SubmissionPlanFile[]): Promise<number> {
-  if (plannedFiles.length === 0) return 0;
-  let created = 0;
-  for (const file of plannedFiles) {
-    // Guard: skip files without an explicit exact filename — a Prisma lookup with
-    // exactFileName: undefined would match ANY record regardless of filename (silent bug).
-    if (!file.exactFileName || !file.exactFileName.trim()) continue;
-    const key = generatedDocumentSubmissionKey({ exactFileName: file.exactFileName });
-    const documentType = plannedRecordDocumentType(file);
-    const summary = `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`;
-    const current = await prisma.generatedDocument.findFirst({
-      where: { tenderId, exactFileName: file.exactFileName },
-      select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true, storagePath: true },
-    });
-    if (!current) {
-      try {
-        await prisma.generatedDocument.create({ data: { tenderId, name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary: summary } });
-        created += 1;
-      } catch (err) {
-        // Narrow catch: swallow only unique-constraint violations (concurrent insert race).
-        // Re-throw anything else so real errors surface.
-        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")) throw err;
-      }
-    } else if (current.generationStatus !== "GENERATED") {
-      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: generatedDocumentHasContent(current) ? undefined : summary, updatedAt: new Date() } });
-    }
-    void key;
-  }
-  return created;
-}
+
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
   const children: Paragraph[] = [para(title, true), para(`Tender: ${shortText(tenderTitle, 200)}. Package item: ${title}.`)];
@@ -179,31 +150,63 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
 ]);
 
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
-  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      title: true, clientName: true, procuringEntityName: true, description: true, requirements: true,
+      category: true, submissionMethod: true, analysisExtractionStatus: true, exactFileNaming: true, exactFileOrder: true, pageLimit: true,
+      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } }
+    }
+  });
   if (!tender) return 0;
+
+  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const plannedFiles = plannedSubmissionTargetFiles(plan);
+
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
   const projects = tender.projectMatches.filter((m) => m.project && m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
+
   const docs = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, storagePath: true } });
-  // Deduplicate by filename before filling: if multiple non-superseded records share the same
-  // exactFileName (from prior generation runs), only fill the first one encountered to avoid
-  // generating duplicate support documents for the same logical file.
-  const seenFillKeys = new Set<string>();
-  const dedupedDocs = docs.filter((doc) => {
-    const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
-    if (seenFillKeys.has(key)) return false;
-    seenFillKeys.add(key);
-    return true;
-  });
-  const incomplete = dedupedDocs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && generatedDocumentHasContent(doc)) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
+  const docByKey = new Map<string, any>();
+  for (const d of docs) {
+    const key = (d.exactFileName ?? d.name ?? "").trim().toLowerCase();
+    if (key && !docByKey.has(key)) docByKey.set(key, d);
+  }
+
   let filled = 0;
-  for (const doc of incomplete) {
+  for (const file of plannedFiles) {
+    if (!file.exactFileName) continue;
+    const key = file.exactFileName.trim().toLowerCase();
+    if (plannedFileKeys && !plannedFileKeys.has(key)) continue;
+
+    let doc = docByKey.get(key);
+    if (!doc) {
+        // Create the missing row from the virtual plan
+        doc = await prisma.generatedDocument.create({
+            data: {
+                tenderId,
+                name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                exactFileName: file.exactFileName,
+                exactOrder: file.exactOrder,
+                documentType: plannedRecordDocumentType(file),
+                generationStatus: "PLANNED",
+                validationStatus: "PENDING",
+                reviewStatus: "PENDING",
+                contentSummary: `Planned tender-required file from virtual submission plan.`
+            }
+        });
+    }
+
+    if (isMainProposalLike(doc)) continue;
+    if (doc.generationStatus === "GENERATED" && generatedDocumentHasContent(doc)) continue;
+
     const title = clean(doc.exactFileName || doc.name);
     const kind = classifySupportDoc(title);
     const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName || tender.procuringEntityName, tender.description), description: tender.description });
 
     if (COMPANY_PRODUCED_KINDS.has(kind)) {
-      // Company-produced deliverable: generate a real DOCX with company evidence content.
       const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
       await prisma.generatedDocument.update({
         where: { id: doc.id },
@@ -218,9 +221,6 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
       });
       filled += 1;
     } else {
-      // Placeholder / form / legal / financial / declaration / annex / submission-rules / generic:
-      // Do NOT generate a fake DOCX. Mark as PLANNED stub so the user knows to attach the real document.
-      // Only update if the record is not already in the correct placeholder state.
       if (doc.generationStatus !== "PLANNED" || !generatedDocumentHasContent(doc)) {
         await prisma.generatedDocument.update({
           where: { id: doc.id },
@@ -826,7 +826,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
       }, { status: 422 });
     }
-    const planRowsCreated = await ensurePlannedGeneratedDocumentRecords(id, plannedFiles);
+    // Skip DB record creation; update status instead
+    await prisma.tender.update({ where: { id }, data: { status: "PLAN_APPROVED" } });
+    const planRowsCreated = plannedFiles.length;
     await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built: ${planRowsCreated} planned document stub(s) created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length } });
     return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });
   }

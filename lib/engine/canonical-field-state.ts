@@ -387,17 +387,26 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       blockerReason = validation.reason;
     } else if (override?.fieldState === "USER_CONFIRMED") {
       // USER_CONFIRMED without active tender-source evidence remains blocked for
-      // critical fields. A human confirmation may resolve a field candidate but
-      // cannot substitute for real source proof when generation is at stake.
+      // critical fields. A critical USER_CONFIRMED field may unblock only when
+      // its normalized value exactly matches field-specific active tender-source
+      // evidence with a valid page and quote.
       status = "MANUAL_CONFIRMED";
-      if (isCritical && !isGroundedEvidence(evidence)) {
-        blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
+      const normalizedValue = (effectiveStr || "").trim().toLowerCase();
+      const evidenceMatchesValue = !!(evidence.quote && evidence.quote.toLowerCase().includes(normalizedValue));
+      if (isCritical && (!isGroundedEvidence(evidence) || !evidenceMatchesValue)) {
+        blockerReason = `Field "${label}" was manually confirmed but has no matching active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
       }
     } else if (override?.fieldState === "USER_EDITED") {
       // USER_EDITED is always a candidate — never unlocks a critical field.
       status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
+      const normalizedValue = (effectiveStr || "").trim().toLowerCase();
+      const evidenceMatchesValue = !!(evidence.quote && evidence.quote.toLowerCase().includes(normalizedValue));
       if (isCritical) {
-        blockerReason = `Field "${label}" has a candidate value. Critical fields remain blocked until linked to an active tender source.`;
+        if (!isGroundedEvidence(evidence) || !evidenceMatchesValue) {
+          blockerReason = `Field "${label}" has a candidate value without matching source proof. Link to an active tender source to unblock.`;
+        } else {
+          blockerReason = `Field "${label}" has a candidate value. Confirm it to unblock.`;
+        }
       }
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";

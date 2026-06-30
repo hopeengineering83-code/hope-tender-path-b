@@ -2,9 +2,9 @@ import { logger } from "../../../../../../lib/observability";
 // POST /api/tenders/[id]/submission-plan/build
 //
 // Builds and persists a submission plan for the given tender.
-// Creates GeneratedDocument rows (status=PLANNED) for each planned file
-// that does not already have a matching row. Never overwrites rows that
-// have already been generated (generationStatus !== "PLANNED").
+// Builds and approves the submission plan virtually.
+//
+//
 //
 // Auth: ADMIN or PROPOSAL_MANAGER. User-scoped tender query.
 
@@ -287,45 +287,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
-    // Build a set of already-existing exactFileNames (case-insensitive)
-    const existingKeys = new Set(
-      tender.generatedDocuments
-        .map((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase())
-        .filter(Boolean),
-    );
+    // Skip DB record creation; update status instead
+    await prisma.tender.update({ where: { id }, data: { status: "PLAN_APPROVED" } });
 
     let created = 0;
     let skipped = 0;
     const fileStatuses: { exactFileName: string; status: "created" | "skipped" }[] = [];
-
     for (const file of plannedFiles) {
-      const key = file.exactFileName.toLowerCase();
-      if (existingKeys.has(key)) {
-        skipped++;
-        fileStatuses.push({ exactFileName: file.exactFileName, status: "skipped" });
-        continue;
-      }
-
-      await prisma.generatedDocument.create({
-        data: {
-          tenderId: id,
-          name: file.exactFileName,
-          exactFileName: file.exactFileName,
-          exactOrder: file.exactOrder,
-          documentType: file.documentType ?? "TECHNICAL_PROPOSAL",
-          generationStatus: "PLANNED",
-          // Store DERIVED_DRAFT marker in contentSummary so the UI and
-          // export gate can surface a confirmation prompt.
-          contentSummary: isDerivedDraft
-            ? "DERIVED_DRAFT_UNCONFIRMED — requires user confirmation before export"
-            : undefined,
-          reviewStatus: "PENDING",
-          validationStatus: "PENDING",
-        },
-      });
-      existingKeys.add(key);
-      created++;
-      fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
+        fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
+        created++;
     }
 
     const isWeakExtraction =

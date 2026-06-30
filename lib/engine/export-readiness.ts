@@ -1,3 +1,4 @@
+import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "./submission-plan";
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName, containsMetadataPlaceholder } from "./metadata-validators";
@@ -295,6 +296,12 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       projectMatches: { where: { isSelected: true }, include: { project: { select: { trustLevel: true } } } },
     },
   });
+  if (!tender) return { blockers, advisoryWarnings };
+  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const planStatus = deriveSubmissionPlanStatus(tender, plan);
+  if (planStatus !== "CANONICAL_APPROVED") {
+    blockers.push(tenderBlocker("PLAN_NOT_APPROVED", "Submission plan is not yet approved.", "Confirm the submission plan in Stage 4 before exporting."));
+  }
 
   if (!tender) return { blockers: [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")], advisoryWarnings };
 

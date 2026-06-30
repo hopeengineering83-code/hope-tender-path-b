@@ -84,8 +84,8 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
   const supportReady = readiness?.supportPackageReady ?? readiness?.ready ?? false;
   const serverGateAllowsGeneration = readiness?.fullProposalReady ?? readiness?.ready ?? false;
   const canonicalGenerationState: CanonicalModuleStatus = canonicalReadiness?.modules.generation.state ?? (serverGateAllowsGeneration ? "READY" : "BLOCKED");
-  const fullProposalReady = isGenerationActionEnabled(canonicalGenerationState, serverGateAllowsGeneration);
-  const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
+  const fullProposalReady = !!canonicalReadiness?.generationEligible;
+  const fullProposalBlockers = (canonicalReadiness?.generationBlockers ?? []).map((b: any) => ({ code: "CANONICAL", message: b }));
   const blocked = !fullProposalReady;
   const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
 
