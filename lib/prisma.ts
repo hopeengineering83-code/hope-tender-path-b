@@ -591,6 +591,11 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Tender", "submissionMethodSourceQuote", "TEXT");
   await ensureColumn(client, "Tender", "submissionAddressSourcePage", "INTEGER");
   await ensureColumn(client, "Tender", "submissionAddressSourceQuote", "TEXT");
+  // Source file IDs for metadata grounding (migration 20260629300000)
+  await ensureColumn(client, "Tender", "clientNameSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "submissionMethodSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "submissionAddressSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmailSourceFileId", "TEXT");
   await ensureColumn(client, "Tender", "evaluationCriteriaSourceJson", "TEXT");
   await ensureColumn(client, "Tender", "analysisExtractionStatus", "TEXT");
   // Extended client fields — Gap A (CLAUDE.md items 8-20)
@@ -1040,6 +1045,20 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  // BuildPlan: persisted submission plan bound to tender content hash + file list.
+  // Plan becomes invalid when files are added/removed/renamed (contentHash moves).
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "BuildPlan" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL UNIQUE,
+    "contentHash" TEXT NOT NULL,
+    "filesList" TEXT NOT NULL DEFAULT '[]',
+    "plannedDocuments" TEXT NOT NULL DEFAULT '[]',
+    "planType" TEXT NOT NULL DEFAULT 'DERIVED',
+    "createdBy" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -1109,6 +1128,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_tenderFileId_key" ON "ExtractionQualityOverride"("tenderId", "tenderFileId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_idx" ON "ExtractionQualityOverride"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderFileId_idx" ON "ExtractionQualityOverride"("tenderFileId")`,
+    `CREATE INDEX IF NOT EXISTS "BuildPlan_contentHash_idx" ON "BuildPlan"("contentHash")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {

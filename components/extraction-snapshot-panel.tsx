@@ -14,7 +14,7 @@ export function ExtractionSnapshotPanel({ tenderId }: { tenderId: string }) {
           // This assumes the route returns an array of snapshots or reports that can be converted
           setSnapshots(json.reports.map((r: any) => r.snapshot || r));
       })
-      .catch(console.error);
+      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
   }, [tenderId]);
 
   if (!snapshots) return null;

@@ -36,6 +36,15 @@ export type CanonicalAnalysisExisting = {
   submissionMethod?: string | null;
   submissionEmails?: string | null;
   notes?: string | null;
+  // Per-field source file IDs, resolved by the caller from the ACTUAL extraction
+  // evidence (the active file whose extracted text contains the field's
+  // supporting quote — see attributeMetadataSourceFileId). Each is the real
+  // source file id, or null when the quote is missing / not found in any active
+  // file (→ ungrounded). A key left undefined leaves that column untouched.
+  clientNameSourceFileId?: string | null;
+  submissionMethodSourceFileId?: string | null;
+  submissionAddressSourceFileId?: string | null;
+  submissionEmailSourceFileId?: string | null;
 };
 
 export type CanonicalAnalysisUpdate = {
@@ -133,6 +142,14 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
     ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
     ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
+    // Bind each metadata field's source evidence to the ACTUAL file the caller
+    // resolved from the supporting quote (attributeMetadataSourceFileId). The
+    // value is the real source file id or null (ungrounded); a column is only
+    // written when the caller supplied that key.
+    ...(existing.clientNameSourceFileId !== undefined ? { clientNameSourceFileId: existing.clientNameSourceFileId } : {}),
+    ...(existing.submissionMethodSourceFileId !== undefined ? { submissionMethodSourceFileId: existing.submissionMethodSourceFileId } : {}),
+    ...(existing.submissionAddressSourceFileId !== undefined ? { submissionAddressSourceFileId: existing.submissionAddressSourceFileId } : {}),
+    ...(existing.submissionEmailSourceFileId !== undefined ? { submissionEmailSourceFileId: existing.submissionEmailSourceFileId } : {}),
     ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
     metadataContaminated,
   };

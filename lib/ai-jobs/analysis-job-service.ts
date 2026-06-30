@@ -14,6 +14,7 @@ import {
 } from "../ai";
 import { upsertRequirements } from "../engine/stable-requirements";
 import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
+import { attributeMetadataSourceFileId } from "../engine/metadata-source-attribution";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
@@ -420,13 +421,27 @@ export async function finalizeJob(jobId: string, userId: string) {
 
         const existingTender = await prisma.tender.findUnique({
             where: { id: job.tenderId! },
-            select: { clientName: true, submissionMethod: true, submissionEmails: true, notes: true },
+            select: {
+                clientName: true, submissionMethod: true, submissionEmails: true, notes: true,
+                files: {
+                    where: { deletionStatus: "ACTIVE" },
+                    select: { id: true, extractedText: true, deletionStatus: true },
+                },
+            },
         });
+        // Bind each metadata field's source evidence to the ACTUAL active file
+        // whose extracted text contains the field's supporting quote (or null →
+        // ungrounded). No earliest-file guessing.
+        const attrFiles = existingTender?.files ?? [];
         const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
             clientName: existingTender?.clientName,
             submissionMethod: existingTender?.submissionMethod,
             submissionEmails: existingTender?.submissionEmails,
             notes: existingTender?.notes,
+            clientNameSourceFileId: attributeMetadataSourceFileId(merged.clientNameSourceQuote, attrFiles),
+            submissionMethodSourceFileId: attributeMetadataSourceFileId(merged.submissionMethodSourceQuote, attrFiles),
+            submissionAddressSourceFileId: attributeMetadataSourceFileId(merged.submissionAddressSourceQuote, attrFiles),
+            submissionEmailSourceFileId: null,
         });
 
         tenderUpdate = {

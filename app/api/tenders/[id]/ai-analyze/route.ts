@@ -13,6 +13,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
+import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -39,6 +40,27 @@ import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
+
+// Resolve the per-field metadata source file IDs from the ACTUAL extraction
+// evidence: each field is bound to the active file whose extracted text contains
+// the field's supporting quote (or null → ungrounded). submissionEmail has no
+// quote in the analysis result, so it is left ungrounded.
+function resolveMetadataSourceFileIds(
+  aiResult: AIAnalysisResult,
+  files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
+): {
+  clientNameSourceFileId: string | null;
+  submissionMethodSourceFileId: string | null;
+  submissionAddressSourceFileId: string | null;
+  submissionEmailSourceFileId: string | null;
+} {
+  return {
+    clientNameSourceFileId: attributeMetadataSourceFileId(aiResult.clientNameSourceQuote, files),
+    submissionMethodSourceFileId: attributeMetadataSourceFileId(aiResult.submissionMethodSourceQuote, files),
+    submissionAddressSourceFileId: attributeMetadataSourceFileId(aiResult.submissionAddressSourceQuote, files),
+    submissionEmailSourceFileId: null,
+  };
+}
 
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
   stepName: string;
@@ -308,7 +330,7 @@ async function handleStreamingAnalyze(
                   id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
                   classification: true, extractedText: true, createdAt: true,
                   totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-                  extractionScore: true, extractionMethod: true,
+                  extractionScore: true, extractionMethod: true, deletionStatus: true,
                 },
               },
             },
@@ -623,6 +645,7 @@ async function handleStreamingAnalyze(
                 submissionMethod: tenderRecord.submissionMethod,
                 submissionEmails: tenderRecord.submissionEmails,
                 notes: tenderRecord.notes,
+                ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -998,7 +1021,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
             classification: true, extractedText: true, createdAt: true,
             totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-            extractionScore: true, extractionMethod: true,
+            extractionScore: true, extractionMethod: true, deletionStatus: true,
           },
         },
       },
@@ -1307,6 +1330,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             submissionMethod: tenderRecord.submissionMethod,
             submissionEmails: tenderRecord.submissionEmails,
             notes: tenderRecord.notes,
+            ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.

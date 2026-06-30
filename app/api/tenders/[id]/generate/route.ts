@@ -84,6 +84,12 @@ function plannedRecordDocumentType(file: SubmissionPlanFile): string {
  * This function is retained as a no-op stub so any future call site fails
  * closed (returns 0, creates nothing). Do NOT re-enable it.
  */
+
+
+/**
+ * @deprecated PERMANENTLY DISABLED — do not call.
+ * Creates zero GeneratedDocument rows. Retained as no-op stub.
+ */
 async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: SubmissionPlanFile[]): Promise<number> {
   return 0;
 }
@@ -441,13 +447,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
     const reqUrl2 = new URL(req.url);
-    if (reqUrl2.searchParams.get("planOnly") !== "true" && reqUrl2.searchParams.get("acceptPartialExtraction") !== "true") {
+    {
       return NextResponse.json({
         errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
         error: "Generation blocked: AI Analyze ran on a partially-extracted tender (some pages could not be fully read). The generated documents may be missing requirements, evaluation criteria, or submission instructions from unread pages. Re-extract the tender file (run OCR if needed) and re-run AI Analyze to get a complete analysis before generating documents.",
         blockers: ["AI analysis was performed on partial tender extraction — some pages were weak, blank, or OCR-only. Re-extract and re-analyze before generating."],
         nextAction: "RERUN_AI_ANALYZE",
-        acceptPartialExtraction: false,
+        // URL bypass removed
         diagnosticId: `partial-extraction-analysis-${id}`,
       }, { status: 422 });
     }
@@ -477,10 +483,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // the user can re-run AI Analyze or reclassify before generating.
   // Only applies when >= 3 requirements exist (avoids false positives on simple
   // scopes where all requirements are genuinely optional/desirable).
-  // Bypass with ?acceptNoMandatoryReqs=true after deliberate review.
+  // URL bypass removed
   {
     const reqUrl0 = new URL(req.url);
-    if (reqUrl0.searchParams.get("planOnly") !== "true" && reqUrl0.searchParams.get("acceptNoMandatoryReqs") !== "true") {
+    {
       const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
       if (mandatoryCount === 0 && tender.requirements.length >= 3) {
         return NextResponse.json({
@@ -488,7 +494,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           error: "Generation advisory: requirements were extracted but none are classified as MANDATORY. This may indicate the AI missed mandatory compliance requirements. Re-run AI Analyze or manually mark critical requirements as MANDATORY before generating documents.",
           blockers: ["No requirements are classified as MANDATORY — mandatory requirement classification may be incomplete."],
           nextAction: "RERUN_AI_ANALYZE",
-          acceptNoMandatoryReqs: false,
+          // URL bypass removed
           diagnosticId: `no-mandatory-reqs-${id}`,
         }, { status: 422 });
       }
@@ -502,7 +508,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // the plan may under-score sections).
   {
     const reqUrl = new URL(req.url);
-    if (reqUrl.searchParams.get("planOnly") !== "true") {
+    {
       const explicitScope = hasExplicitSubmissionScope(tender);
       let anySubmission = false;
       let anyRequiredDocs = false;
@@ -578,7 +584,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // completeness gate further below is the full enforcing authority.
   {
     const reqUrl = new URL(req.url);
-    if (reqUrl.searchParams.get("planOnly") !== "true") {
+    {
       const explicitScope = hasExplicitSubmissionScope(tender);
       // Use canonical field-state resolver instead of raw column checks.
       // A valid manual override must NOT fail just because the raw DB column is blank.
@@ -636,10 +642,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // with a recognised reviewStatus) MUST exist before any full generation run.
   // This gate runs unconditionally — regardless of requirement count — so it is
   // impossible to bypass it by having fewer than 5 requirements.
-  // planOnly requests are exempt because they ARE the plan-building step itself.
+  // planOnly NOT exempt from safety gates
   {
     const reqUrl = new URL(req.url);
-    if (reqUrl.searchParams.get("planOnly") !== "true") {
+    {
       const explicitScope = hasExplicitSubmissionScope(tender);
       const planCheck = await hasValidSubmissionPlan(prisma, tender.id);
       if (!planCheck.valid) {
@@ -815,7 +821,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // This prevents PLANNED database rows from being mistaken for real output.
     const planRowsCreated = 0;
     await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built virtually: ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, virtualOnly: true } });
-    return NextResponse.json({ planBuilt: true, virtualOnly: true, planRowsCreated, plannedFileCount: plannedFiles.length, virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })), message: `Submission plan built virtually — ${plannedFiles.length} required file(s) identified; no GeneratedDocument rows were created before readiness.` });
+    return NextResponse.json({ planBuilt: true, virtualOnly: true, authorizesGeneration: false, planRowsCreated, plannedFileCount: plannedFiles.length, virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })), message: `Submission plan built virtually — ${plannedFiles.length} required file(s) identified; no GeneratedDocument rows were created before readiness.` });
   }
 
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────

@@ -2,9 +2,9 @@ import { logger } from "../../../../../../lib/observability";
 // POST /api/tenders/[id]/submission-plan/build
 //
 // Builds and persists a submission plan for the given tender.
-// Creates GeneratedDocument rows (status=PLANNED) for each planned file
-// that does not already have a matching row. Never overwrites rows that
-// have already been generated (generationStatus !== "PLANNED").
+// Creates a BuildPlan record bound to the current file state (contentHash).
+// The plan becomes invalid if files are added/removed/renamed; generation requires
+// a valid plan.
 //
 // Auth: ADMIN or PROPOSAL_MANAGER. User-scoped tender query.
 
@@ -19,6 +19,7 @@ import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engin
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
 import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
+import { computeBuildPlanHash, buildPlanHashInputFromTender } from "../../../../../../lib/engine/build-plan-hash";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -73,6 +74,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
             extractedPages: true,
             ocrPages: true,
             failedPages: true,
+            deletionStatus: true,
           },
         },
         requirements: {
@@ -347,13 +349,58 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
+    // Persist the BuildPlan bound to the current tender state via the SINGLE
+    // shared deterministic hash (same helper the readiness gate uses), so the
+    // recorded plan and the gate's freshness check can never disagree. Map files
+    // to the helper's shape (originalFileName → fileName), exactly as the gate does.
+    const contentHash = computeBuildPlanHash(buildPlanHashInputFromTender({
+      exactFileNaming: tender.exactFileNaming,
+      exactFileOrder: tender.exactFileOrder,
+      submissionMethod: tender.submissionMethod,
+      submissionAddress: tender.submissionAddress,
+      submissionEmails: tender.submissionEmails,
+      files: tender.files.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: f.deletionStatus })),
+      requirements: tender.requirements.map((r) => ({ id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority, exactFileName: r.exactFileName, exactOrder: r.exactOrder })),
+    }));
+    const activeFiles = tender.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
+    const filesList = JSON.stringify(
+      activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName }))
+    );
+    const plannedDocumentsJson = JSON.stringify(
+      plannedFiles.map((doc) => ({
+        canonicalId: doc.canonicalId,
+        exactFileName: doc.exactFileName,
+        documentType: doc.documentType,
+        required: doc.required,
+      }))
+    );
+
+    await prisma.buildPlan.upsert({
+      where: { tenderId: id },
+      update: {
+        contentHash,
+        filesList,
+        plannedDocuments: plannedDocumentsJson,
+        planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED",
+        updatedAt: new Date(),
+      },
+      create: {
+        tenderId: id,
+        contentHash,
+        filesList,
+        plannedDocuments: plannedDocumentsJson,
+        planType: isDerivedDraft ? "DERIVED_DRAFT" : "DERIVED",
+        createdBy: actor.id,
+      },
+    });
+
     await logAction({
       userId: actor.id,
       action: "SUBMISSION_PLAN_BUILT",
       entityType: "Tender",
       entityId: id,
-      description: `Submission plan built for tender "${tender.title}" — ${plannedFiles.length} virtual planned files, ${skipped} existing generated rows${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
-      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true },
+      description: `Submission plan built for tender "${tender.title}" — ${plannedFiles.length} planned files, ${skipped} existing generated rows${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
+      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true, contentHash },
     });
 
     const baseWarning = isDerivedDraft

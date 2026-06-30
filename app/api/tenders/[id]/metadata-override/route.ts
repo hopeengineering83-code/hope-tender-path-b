@@ -45,11 +45,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       clientRepresentative: true, legalClientName: true, donorAgency: true, implementingAgency: true,
       preBidChannel: true, preBidMeetingDate: true, preBidMeetingLocation: true,
       evaluationMethodology: true, metadataContaminated: true,
-      clientNameSourcePage: true, clientNameSourceQuote: true,
-      submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
-      submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
-      submissionEmailSourcePage: true, contactDetailsSourceJson: true,
+      clientNameSourcePage: true, clientNameSourceQuote: true, clientNameSourceFileId: true,
+      submissionMethodSourcePage: true, submissionMethodSourceQuote: true, submissionMethodSourceFileId: true,
+      submissionAddressSourcePage: true, submissionAddressSourceQuote: true, submissionAddressSourceFileId: true,
+      submissionEmailSourcePage: true, submissionEmailSourceFileId: true, contactDetailsSourceJson: true,
       requirements: { select: { id: true }, take: 1 },
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } },
     },
   });
   if (!tender) return err("Tender not found", 404, "TENDER_NOT_FOUND");
@@ -93,11 +94,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         metadataContaminated: tender.metadataContaminated === true,
         clientNameSourcePage: tender.clientNameSourcePage ?? null,
         clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+        clientNameSourceFileId: tender.clientNameSourceFileId ?? null,
         submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
         submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+        submissionMethodSourceFileId: tender.submissionMethodSourceFileId ?? null,
         submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
         submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+        submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         evaluationMethodology: tender.evaluationMethodology ?? null,
         legalClientName: tender.legalClientName ?? null, donorAgency: tender.donorAgency ?? null,
@@ -115,6 +120,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
       hasExtractedRequirements: tender.requirements.length > 0,
       submissionMethodContext: tender.submissionMethod ?? undefined,
+      // Same canonical active-file grounding rule as the gates, so the dashboard
+      // panel chips can never disagree with generation/export.
+      activeTenderFileIds: new Set((tender.files ?? []).map((f) => f.id)),
     });
     for (const f of resolved.fields) {
       fieldStates[f.fieldKey] = {
