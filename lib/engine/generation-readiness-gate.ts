@@ -91,6 +91,7 @@ export type GenerationBlockerCode =
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
   | "BUILD_PLAN_NOT_CONFIRMED"
+  | "CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE"
   | "NO_EXPORT_READY_DOCUMENTS"
   | "GATE_INTERNAL_ERROR";
 
@@ -153,6 +154,8 @@ export interface GenerationReadinessInput {
   //     generated/export-ready — they only satisfy the plan prerequisite.
   hasValidVirtualSubmissionPlan: boolean;
   hasCurrentConfirmedBuildPlan?: boolean;
+  confirmedPlanDocumentsOk?: boolean;
+  confirmedPlanDocumentBlockers?: string[];
   // I — EXPORT/FINAL-ZIP readiness: count of real current generated files with
   //     content, validation, review, and exact-plan reconciliation. Only these
   //     rows satisfy export and final-ZIP gates. PLANNED/SUPERSEDED/virtual/
@@ -283,6 +286,9 @@ export function evaluateGenerationReadiness(
   //     unreviewed rows never count. Only real generated files with content,
   //     validation, review, and exact-plan reconciliation satisfy export/ZIP.
   if (input.purpose === "export" || input.purpose === "final-zip") {
+    if (input.confirmedPlanDocumentsOk === false) {
+      return fail("CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE", (input.confirmedPlanDocumentBlockers ?? ["Confirmed Build Plan documents are incomplete or do not match exact naming/order/type."]).join("; "));
+    }
     if (input.exportReadyDocumentCount < 1) {
       return fail("NO_EXPORT_READY_DOCUMENTS",
         "No export-ready documents exist. Generate and validate real documents before exporting or creating a final ZIP. PLANNED, virtual, and superseded rows do not count.");
@@ -508,7 +514,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     one required file. If there's no explicit scope, any tender with
     //     extracted requirements has a valid plan by default.
     const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
-    const { getCurrentConfirmedBuildPlan } = await import("./build-plan");
+    const { getCurrentConfirmedBuildPlan, validateConfirmedPlanDocuments } = await import("./build-plan");
     const submissionPlan = buildSubmissionPlan(tender as any);
     const plannedFiles = hasExplicitSubmissionScope(tender as any)
       ? plannedSubmissionTargetFiles(submissionPlan)
@@ -524,15 +530,10 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     validationStatus/reviewStatus indicating readiness are included.
     const confirmedBuildPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
 
-    const exportReadyDocumentCount = await prisma.generatedDocument.count({
-      where: {
-        tenderId,
-        generationStatus: "GENERATED",
-        fileContent: { not: null },
-        validationStatus: { in: ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"] },
-        reviewStatus: { in: ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
-      },
-    });
+    const confirmedPlanDocuments = confirmedBuildPlan.ok
+      ? await validateConfirmedPlanDocuments(prisma, tenderId, userId, JSON.parse(confirmedBuildPlan.plan.itemsJson || "[]"))
+      : { ok: false, blockers: [confirmedBuildPlan.blocker], exportReadyDocumentCount: 0 };
+    const exportReadyDocumentCount = confirmedPlanDocuments.exportReadyDocumentCount;
 
     return evaluateGenerationReadiness({
       purpose,
@@ -550,6 +551,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
       hasValidVirtualSubmissionPlan,
       hasCurrentConfirmedBuildPlan: confirmedBuildPlan.ok,
+      confirmedPlanDocumentsOk: confirmedPlanDocuments.ok,
+      confirmedPlanDocumentBlockers: confirmedPlanDocuments.blockers,
       exportReadyDocumentCount,
     });
   } catch (err) {

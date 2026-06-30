@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-06-30 UTC — ChatGPT
 
+- **Mode:** release-safety hardening follow-up
+- **Branch / PR:** `hotfix/complete-release-safety` / PR metadata prepared after local commit; actual GitHub push/PR update unavailable locally (no git remote and no `gh`)
+- **Scope:** fixed remaining BuildPlan release-safety gaps after prior commit: confirmation now revalidates exact tender-controlled scope inside a transaction, source-quote matching is whitespace/case normalized, confirmed-plan document validation enforces required files, no extras, exact name/order/type, non-empty content, validation, and review before export/final ZIP, and targeted tests cover the stricter blockers.
+- **Files changed:** `app/api/tenders/[id]/build-plan/confirm/route.ts`, `lib/engine/build-plan.ts`, `lib/engine/generation-readiness-gate.ts`, `tests/build-plan-release-safety.test.ts`, `operator_handoff.md`.
+- **Tests:** passed `npx prisma validate`; passed `npx prisma generate`; PostgreSQL migration deploy could not connect to local PostgreSQL (`P1001`); passed `npm run typecheck -- --pretty false`; passed `npm run lint -- --max-warnings 999`; passed targeted BuildPlan/generation/provider gate tests; passed full `npm test` (4579 tests); passed production `npm run build` with expected dummy/missing-env warnings only.
+- **CI / deployment:** no remote/CI metadata available locally; no Vercel CLI run, no preview created, no deployment attempted.
+- **Known risk:** migration application still needs verification in a real PostgreSQL CI/deployment environment; push/PR update still requires a configured remote or GitHub CLI.
+- **Next action:** push the committed branch once to the canonical remote and open/update exactly one PR against `main`, then verify CI including PostgreSQL migration application.
+- **Merge status:** unsafe until remote CI and PostgreSQL migration checks pass.
+
+### 2026-06-30 UTC — ChatGPT
+
 - **Mode:** release-safety implementation
 - **Branch / PR:** `hotfix/complete-release-safety` / PR not opened from this environment (no git remote configured and `gh` unavailable); PR metadata prepared after local commit
 - **Scope:** implemented Section C, part 2 release-safety gates: authoritative BuildPlan draft/confirm routes, deterministic tender-state hashing, current confirmed-plan enforcement in the central readiness gate, strict plan-only preview behavior, automatic provider fallback ordering, bootstrap schema coverage, and behavioral tests.
