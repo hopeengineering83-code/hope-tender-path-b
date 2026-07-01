@@ -238,4 +238,79 @@ describe("Canonical metadata evidence — real PostgreSQL proof", () => {
     }
     await cleanup(tender.id, user.id);
   });
+
+  it("adding a metadata override stales the confirmed plan (overrides are hashed)", async () => {
+    // This test proves the fix for the critical bug where metadataOverrides
+    // were loaded but NEVER hashed — override changes had zero effect on the
+    // hash, so stale-plan detection was broken.
+    const { user, tender } = await createTenderWithMetadata("override-stales", { submissionMethod: "email submission required" });
+    await buildDraftBuildPlan(prisma, tender.id, user.id);
+    await confirmPlan(tender.id, user.id);
+    // Add a metadata override — this MUST change the hash and stale the plan
+    await prisma.tenderMetadataOverride.create({
+      data: {
+        tenderId: tender.id,
+        field: "deadline",
+        fieldState: "USER_EDITED",
+        overrideValue: "2026-12-31",
+        overriddenBy: user.id,
+      },
+    });
+    const confirmed = await getCurrentConfirmedBuildPlan(prisma, tender.id, user.id);
+    assert.ok(!confirmed.ok, "Adding a metadata override MUST stale the confirmed plan (overrides are hashed)");
+    if (!confirmed.ok) {
+      // The blocker should mention stale/hash, not evidence failure
+      assert.match(confirmed.blocker, /stale|hash/i, `Override should cause stale/hash mismatch: ${confirmed.blocker}`);
+    }
+    await cleanup(tender.id, user.id);
+  });
+
+  it("changing metadata override value stales the confirmed plan", async () => {
+    const { user, tender } = await createTenderWithMetadata("override-change", { submissionMethod: "email submission required" });
+    await buildDraftBuildPlan(prisma, tender.id, user.id);
+    // Add an override BEFORE confirmation so it's part of the confirmed hash
+    await prisma.tenderMetadataOverride.create({
+      data: {
+        tenderId: tender.id,
+        field: "deadline",
+        fieldState: "USER_EDITED",
+        overrideValue: "2026-12-31",
+        overriddenBy: user.id,
+      },
+    });
+    // Rebuild to pick up the override in the hash, then confirm
+    await buildDraftBuildPlan(prisma, tender.id, user.id);
+    await confirmPlan(tender.id, user.id);
+    // Change the override value — this MUST stale the plan
+    await prisma.tenderMetadataOverride.updateMany({
+      where: { tenderId: tender.id, field: "deadline" },
+      data: { overrideValue: "2027-01-15" },
+    });
+    const confirmed = await getCurrentConfirmedBuildPlan(prisma, tender.id, user.id);
+    assert.ok(!confirmed.ok, "Changing override value MUST stale the confirmed plan");
+    await cleanup(tender.id, user.id);
+  });
+
+  it("removing a metadata override stales the confirmed plan", async () => {
+    const { user, tender } = await createTenderWithMetadata("override-remove", { submissionMethod: "email submission required" });
+    // Add override, build, confirm
+    await prisma.tenderMetadataOverride.create({
+      data: {
+        tenderId: tender.id,
+        field: "deadline",
+        fieldState: "USER_EDITED",
+        overrideValue: "2026-12-31",
+        overriddenBy: user.id,
+      },
+    });
+    await buildDraftBuildPlan(prisma, tender.id, user.id);
+    await confirmPlan(tender.id, user.id);
+    // Remove the override — this MUST stale the plan
+    await prisma.tenderMetadataOverride.deleteMany({
+      where: { tenderId: tender.id, field: "deadline" },
+    });
+    const confirmed = await getCurrentConfirmedBuildPlan(prisma, tender.id, user.id);
+    assert.ok(!confirmed.ok, "Removing a metadata override MUST stale the confirmed plan");
+    await cleanup(tender.id, user.id);
+  });
 });

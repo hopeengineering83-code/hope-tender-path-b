@@ -150,6 +150,15 @@ export type CanonicalResolverInput = {
     submissionAddressSourceFileId?: string | null;
     submissionEmailSourcePage: number | null;
     submissionEmailSourceFileId?: string | null;
+    submissionEmailSourceQuote?: string | null;
+    // Title + deadline source evidence — required for full source-grounding
+    // verification of these critical fields.
+    titleSourceFileId?: string | null;
+    titleSourcePage?: number | null;
+    titleSourceQuote?: string | null;
+    deadlineSourceFileId?: string | null;
+    deadlineSourcePage?: number | null;
+    deadlineSourceQuote?: string | null;
     contactDetailsSourceJson: any;
     // Extended client/submission fields surfaced in the Client & Submission
     // Details panel. Optional so existing gate call sites (which only need the
@@ -274,7 +283,9 @@ function getSourceEvidence(
     clientName: { page: tender.clientNameSourcePage, quote: tender.clientNameSourceQuote, fileId: tender.clientNameSourceFileId ?? null },
     submissionMethod: { page: tender.submissionMethodSourcePage, quote: tender.submissionMethodSourceQuote, fileId: tender.submissionMethodSourceFileId ?? null },
     submissionAddress: { page: tender.submissionAddressSourcePage, quote: tender.submissionAddressSourceQuote, fileId: tender.submissionAddressSourceFileId ?? null },
-    submissionEmails: { page: tender.submissionEmailSourcePage, quote: null, fileId: tender.submissionEmailSourceFileId ?? null },
+    submissionEmails: { page: tender.submissionEmailSourcePage, quote: tender.submissionEmailSourceQuote ?? null, fileId: tender.submissionEmailSourceFileId ?? null },
+    title: { page: tender.titleSourcePage ?? null, quote: tender.titleSourceQuote ?? null, fileId: tender.titleSourceFileId ?? null },
+    deadline: { page: tender.deadlineSourcePage ?? null, quote: tender.deadlineSourceQuote ?? null, fileId: tender.deadlineSourceFileId ?? null },
   };
   if (dedicated[field]) return dedicated[field];
   // Fall back to the structured contactDetailsSource map for the extended fields.

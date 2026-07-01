@@ -430,6 +430,17 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         submissionAddressSourceFileId: true,
         submissionEmailSourcePage: true,
         submissionEmailSourceFileId: true,
+        submissionEmailSourceQuote: true,
+        // Title + deadline source evidence — required by the canonical
+        // field-state resolver and validateCriticalMetadataEvidenceForBuildPlan
+        // for full source-grounding verification. Without these, the gate's
+        // criticalMetadataOk check would be incomplete.
+        titleSourceFileId: true,
+        titleSourcePage: true,
+        titleSourceQuote: true,
+        deadlineSourceFileId: true,
+        deadlineSourcePage: true,
+        deadlineSourceQuote: true,
         contactDetailsSourceJson: true,
         // Plan-driving fields for the shared Build Plan hash.
         exactFileNaming: true,
@@ -542,6 +553,13 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
         submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
+        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+        titleSourcePage: (tender as any).titleSourcePage ?? null,
+        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
