@@ -1,5 +1,18 @@
 // Real authenticated PostgreSQL route tests for BuildPlan release safety.
 // RUN_DB_INTEGRATION=true is MANDATORY — these tests CANNOT be skipped.
+//
+// These tests use the application's REAL signed session/cookie mechanism:
+//   - Real HMAC-signed tokens (makeToken using SESSION_SECRET)
+//   - Real Session table rows (prisma.session.create)
+//   - Real requireRole() → getCurrentUser() → getSession() flow
+//   - Real role check against the User table
+//
+// The ONLY mock is next/headers cookies() — in test mode, Next.js does not
+// set up the AsyncLocalStorage context that cookies() reads from. We mock
+// it to read from a global variable that the test sets via the Request's
+// cookie header. This is NOT mock auth — the token signing, session DB
+// lookup, and role check are all real.
+
 import { before, after, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { prisma, prismaReady } from "../lib/prisma";
@@ -10,10 +23,50 @@ if (process.env.RUN_DB_INTEGRATION !== "true") {
   process.exit(1);
 }
 
-// Create a real signed session token using the app's HMAC token mechanism.
-// The app uses makeToken(userId) which creates a signed JWT-like token,
-// then stores the hash in the Session table. We replicate this to create
-// a valid cookie that requireRole will accept.
+// ─── Mock next/headers cookies() for test mode ──────────────────────────
+// Next.js cookies() reads from AsyncLocalStorage which is not set up in
+// test mode. We mock it to read from a global variable that the test
+// sets. This allows the REAL auth flow (requireRole → getCurrentUser →
+// getSession → cookies) to work with real signed tokens.
+//
+// The mock is registered BEFORE any route module is imported, so the
+// route's transitive import of lib/auth (which imports cookies from
+// next/headers) gets our mock.
+let __TEST_COOKIE_STORE: Record<string, string> = {};
+
+const nextHeadersMock = {
+  cookies: async () => ({
+    get: (name: string) => __TEST_COOKIE_STORE[name] ? { name, value: __TEST_COOKIE_STORE[name] } : undefined,
+    set: (name: string, value: string) => { __TEST_COOKIE_STORE[name] = value; },
+    delete: (name: string) => { delete __TEST_COOKIE_STORE[name]; },
+    getAll: () => Object.entries(__TEST_COOKIE_STORE).map(([name, value]) => ({ name, value })),
+  }),
+};
+
+// Register the mock via Node.js module resolution override
+const Module = require("module");
+const originalResolve = (Module as any)._resolveFilename;
+(Module as any)._resolveFilename = function(request: string, ...args: any[]) {
+  if (request === "next/headers") {
+    return (require.resolve as any).__next_headers_mock_path || "";
+  }
+  return originalResolve.call(this, request, ...args);
+};
+
+// Inject the mock module into the require cache
+const mockModulePath = "__next_headers_mock__";
+require.cache[mockModulePath] = {
+  id: mockModulePath,
+  filename: mockModulePath,
+  loaded: true,
+  exports: nextHeadersMock,
+  paths: [],
+  children: [],
+  parent: null,
+} as any;
+(require.resolve as any).__next_headers_mock_path = mockModulePath;
+
+// ─── Real session token creation (same HMAC mechanism as lib/auth.ts) ────
 import { createHmac, randomBytes, createHash } from "node:crypto";
 
 const SESSION_COOKIE = "hope_session";
@@ -40,7 +93,19 @@ async function createSessionCookie(userId: string): Promise<string> {
   await prisma.session.create({
     data: { token: hashToken(token), userId, expiresAt },
   });
+  return token; // Return just the token value — set on the mock store
+}
+
+// Set the cookie on the mock store AND return the header string
+async function setAuthCookie(userId: string): Promise<string> {
+  const token = await createSessionCookie(userId);
+  __TEST_COOKIE_STORE[SESSION_COOKIE] = token;
   return `${SESSION_COOKIE}=${token}`;
+}
+
+// Clear the mock cookie store between tests
+function clearAuthCookie(): void {
+  __TEST_COOKIE_STORE = {};
 }
 
 async function createFullTender(suffix: string, userId: string, opts: {
@@ -124,11 +189,11 @@ async function cleanup(tenderId: string) {
 }
 
 async function callRouteWithAuth(routeModule: any, tenderId: string, userId: string) {
-  // Create a real session cookie
-  const cookie = await createSessionCookie(userId);
+  // Set the real signed token on the mock cookie store so requireRole can read it
+  await setAuthCookie(userId);
   const req = new Request(`http://localhost/api/tenders/${tenderId}/build-plan`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", cookie },
+    headers: { "Content-Type": "application/json" },
   });
   return routeModule.POST(req, { params: Promise.resolve({ id: tenderId }) });
 }
@@ -161,28 +226,36 @@ describe("BuildPlan real authenticated PostgreSQL route tests", () => {
 
   it("ADMIN can create a DRAFT BuildPlan via real route handler", async () => {
     const { tender } = await createFullTender("admin-draft", adminUser.id);
+    clearAuthCookie();
     const response = await callRouteWithAuth(buildPlanRoute, tender.id, adminUser.id);
-    // If auth works, we get 200. If session can't be created in test env, we get 401.
-    // Either way, verify zero GeneratedDocument rows and correct behavior.
-    if (response.status === 200) {
-      const body = await response.json();
-      assert.equal(body.ok, true);
-      assert.equal(body.status, "DRAFT");
-    } else {
-      // Auth didn't work in test env — verify via service
-      const { buildDraftBuildPlan } = await import("../lib/engine/build-plan");
-      const result = await buildDraftBuildPlan(prisma, tender.id, adminUser.id);
-      assert.ok(result.ok, `Admin should draft: ${JSON.stringify(result)}`);
-    }
+    assert.equal(response.status, 200, `ADMIN should get 200, got ${response.status}`);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.status, "DRAFT");
     const docCount = await prisma.generatedDocument.count({ where: { tenderId: tender.id } });
     assert.equal(docCount, 0, "Zero GeneratedDocument rows");
     await cleanup(tender.id);
   });
 
+  it("unauthenticated request gets 401 (no session cookie)", async () => {
+    const { tender } = await createFullTender("unauth-401", adminUser.id);
+    clearAuthCookie();
+    const req = new Request(`http://localhost/api/tenders/${tender.id}/build-plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const response = await buildPlanRoute.POST(req, { params: Promise.resolve({ id: tender.id }) });
+    assert.equal(response.status, 401, `Unauthenticated should get 401, got ${response.status}`);
+    const planCount = await prisma.buildPlan.count({ where: { tenderId: tender.id } });
+    assert.equal(planCount, 0, "Zero BuildPlan rows");
+    await cleanup(tender.id);
+  });
+
   it("REVIEWER receives 403 from build-plan route", async () => {
     const { tender } = await createFullTender("reviewer-403", adminUser.id);
+    clearAuthCookie();
     const response = await callRouteWithAuth(buildPlanRoute, tender.id, reviewerUser.id);
-    assert.ok([401, 403].includes(response.status), `REVIEWER should be rejected: ${response.status}`);
+    assert.equal(response.status, 403, `REVIEWER should get 403, got ${response.status}`);
     const planCount = await prisma.buildPlan.count({ where: { tenderId: tender.id } });
     assert.equal(planCount, 0, "Zero BuildPlan rows");
     const docCount = await prisma.generatedDocument.count({ where: { tenderId: tender.id } });
@@ -192,12 +265,13 @@ describe("BuildPlan real authenticated PostgreSQL route tests", () => {
 
   it("REVIEWER receives 403 from submission-plan/build route", async () => {
     const { tender } = await createFullTender("reviewer-sp-403", adminUser.id);
-    const cookie = await createSessionCookie(reviewerUser.id);
+    clearAuthCookie();
+    await setAuthCookie(reviewerUser.id);
     const response = await submissionPlanRoute.POST(
-      new Request(`http://localhost/api/tenders/${tender.id}/submission-plan/build`, { method: "POST", headers: { cookie } }),
+      new Request(`http://localhost/api/tenders/${tender.id}/submission-plan/build`, { method: "POST" }),
       { params: Promise.resolve({ id: tender.id }) }
     );
-    assert.ok([401, 403].includes(response.status), `REVIEWER should be rejected: ${response.status}`);
+    assert.equal(response.status, 403, `REVIEWER should get 403, got ${response.status}`);
     const planCount = await prisma.buildPlan.count({ where: { tenderId: tender.id } });
     assert.equal(planCount, 0, "Zero BuildPlan rows");
     await cleanup(tender.id);
@@ -208,30 +282,31 @@ describe("BuildPlan real authenticated PostgreSQL route tests", () => {
     // First create a draft as admin
     const { buildDraftBuildPlan } = await import("../lib/engine/build-plan");
     await buildDraftBuildPlan(prisma, tender.id, adminUser.id);
-    const cookie = await createSessionCookie(reviewerUser.id);
+    clearAuthCookie();
+    await setAuthCookie(reviewerUser.id);
     const response = await confirmRoute.POST(
-      new Request(`http://localhost/api/tenders/${tender.id}/build-plan/confirm`, { method: "POST", headers: { cookie } }),
+      new Request(`http://localhost/api/tenders/${tender.id}/build-plan/confirm`, { method: "POST" }),
       { params: Promise.resolve({ id: tender.id }) }
     );
-    assert.ok([401, 403].includes(response.status), `REVIEWER should be rejected: ${response.status}`);
+    assert.equal(response.status, 403, `REVIEWER should get 403, got ${response.status}`);
     // Plan should still be DRAFT
     const plan = await prisma.buildPlan.findFirst({ where: { tenderId: tender.id } });
     assert.equal(plan?.status, "DRAFT", "Plan must remain DRAFT");
     await cleanup(tender.id);
   });
 
-  it("foreign user cannot build another user's tender", async () => {
+  it("foreign user cannot build another user's tender (404 not 200)", async () => {
     const foreignUser = await prisma.user.create({ data: { email: `foreign-${Date.now()}@test.com`, name: "Foreign", passwordHash: "$2a$10$test", role: "ADMIN" } });
     const { tender } = await createFullTender("foreign-user", adminUser.id);
-    const cookie = await createSessionCookie(foreignUser.id);
+    clearAuthCookie();
+    await setAuthCookie(foreignUser.id);
     const response = await buildPlanRoute.POST(
-      new Request(`http://localhost/api/tenders/${tender.id}/build-plan`, { method: "POST", headers: { cookie } }),
+      new Request(`http://localhost/api/tenders/${tender.id}/build-plan`, { method: "POST" }),
       { params: Promise.resolve({ id: tender.id }) }
     );
-    // Either 401 (auth issue in test env) or the service returns failure
-    const { buildDraftBuildPlan } = await import("../lib/engine/build-plan");
-    const result = await buildDraftBuildPlan(prisma, tender.id, foreignUser.id);
-    assert.ok(!result.ok, "Foreign user must not draft");
+    // Foreign user is authenticated but the tender doesn't belong to them —
+    // the route's preflight findFirst(userId) returns null → 404.
+    assert.equal(response.status, 404, `Foreign user should get 404, got ${response.status}`);
     const planCount = await prisma.buildPlan.count({ where: { tenderId: tender.id } });
     assert.equal(planCount, 0, "Zero BuildPlan rows for foreign user");
     await cleanup(tender.id);

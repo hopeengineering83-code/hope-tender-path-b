@@ -175,20 +175,33 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
     )
     .join("\n");
 
+  // Metadata overrides signature — changes to overrides (field/state/value)
+  // MUST stale the plan. Sorted by field+state+value for determinism.
+  const overrideSig = (input.metadataOverrides ?? [])
+    .slice()
+    .sort((a, b) => {
+      const ka = `${a.field}|${a.fieldState}|${a.overrideValue ?? ""}`;
+      const kb = `${b.field}|${b.fieldState}|${b.overrideValue ?? ""}`;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    })
+    .map((o) => `ov:${o.field}|${o.fieldState}|${o.overrideValue ?? ""}`)
+    .join("\n");
+
+  // Canonical hash — metadata is represented ONLY by the resolved effective
+  // evidence (metaSig) and overrides (overrideSig). Raw metadata fields
+  // (submissionMethod, submissionAddress, submissionEmails, deadline, title,
+  // etc.) are NOT included separately because they are already captured in
+  // metadataEvidence as effectiveValue. Including them twice would be
+  // redundant and would couple the hash to raw values instead of the
+  // canonical resolver output.
   const canonical = [
     `files:${fileSig}`,
     `reqs:${reqSig}`,
     `items:${itemSig}`,
     `meta:${metaSig}`,
+    `overrides:${overrideSig}`,
     `exactFileNaming:${input.exactFileNaming ?? ""}`,
     `exactFileOrder:${input.exactFileOrder ?? ""}`,
-    `submissionMethod:${input.submissionMethod ?? ""}`,
-    `submissionAddress:${input.submissionAddress ?? ""}`,
-    `submissionEmailSubject:${input.submissionEmailSubject ?? ""}`,
-    `deadline:${input.deadline ? new Date(input.deadline).toISOString() : ""}`,
-    `title:${input.title ?? ""}`,
-    `title:${input.title ?? ""}`,
-    `submissionEmails:${input.submissionEmails ?? ""}`,
   ].join("\n\n");
 
   return sha256(canonical);
@@ -303,8 +316,11 @@ export function buildCanonicalBuildPlanHashInput(
       evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
     }
   } else {
-    // Unknown: default to address
-    evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+    // Unknown/empty/malformed submission method: do NOT add endpoint evidence.
+    // The validator (validateCriticalMetadataEvidenceForBuildPlan) will block
+    // unknown methods anyway, so the hash only needs the 4 core fields above.
+    // Adding fallback address evidence here would be inconsistent with the
+    // fail-closed policy.
   }
   input.metadataEvidence = evidence;
   // Include metadata overrides in hash so override changes stale the plan

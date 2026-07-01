@@ -55,6 +55,15 @@ function baseInput(overrides: Partial<BuildPlanHashInput> = {}): BuildPlanHashIn
     submissionMethod: "Email",
     submissionAddress: "client@x.com",
     submissionEmails: "client@x.com",
+    // Metadata evidence — the CANONICAL source of metadata in the hash.
+    // Raw metadata fields (submissionMethod, etc.) are NOT hashed separately.
+    metadataEvidence: [
+      { fieldKey: "title", effectiveValue: "Test Tender", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "Test Tender Title", evidenceState: "GROUNDED" },
+      { fieldKey: "clientName", effectiveValue: "Test Client", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "Test Client Name", evidenceState: "GROUNDED" },
+      { fieldKey: "deadline", effectiveValue: "2026-12-31T00:00:00.000Z", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "Submit by Dec 31", evidenceState: "GROUNDED" },
+      { fieldKey: "submissionMethod", effectiveValue: "Email", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "Submit by email", evidenceState: "GROUNDED" },
+      { fieldKey: "submissionEmails", effectiveValue: "client@x.com", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "client@x.com", evidenceState: "GROUNDED" },
+    ],
     ...overrides,
   };
 }
@@ -121,15 +130,51 @@ describe("Gap 2: Build Plan hash — change detection (invalidation)", () => {
     assert.notEqual(original, computeBuildPlanHash(baseInput({ exactFileOrder: '["Tech.docx"]' })));
   });
 
-  it("changes when submission instructions change", () => {
-    assert.notEqual(original, computeBuildPlanHash(baseInput({ submissionMethod: "Portal" })));
-    assert.notEqual(original, computeBuildPlanHash(baseInput({ submissionAddress: "other@x.com" })));
+  it("changes when metadata evidence changes (submission method/value)", () => {
+    // Metadata is hashed via metadataEvidence — changing the effective value
+    // or source grounding must stale the hash.
+    const changedMethod = baseInput({
+      metadataEvidence: baseInput().metadataEvidence!.map((m) =>
+        m.fieldKey === "submissionMethod" ? { ...m, effectiveValue: "Portal" } : m
+      ),
+    });
+    assert.notEqual(original, computeBuildPlanHash(changedMethod));
+    const changedEmail = baseInput({
+      metadataEvidence: baseInput().metadataEvidence!.map((m) =>
+        m.fieldKey === "submissionEmails" ? { ...m, effectiveValue: "other@x.com" } : m
+      ),
+    });
+    assert.notEqual(original, computeBuildPlanHash(changedEmail));
+  });
+
+  it("changes when metadata override is added", () => {
+    // Overrides MUST stale the plan — previously overrides were loaded but
+    // never hashed, so override changes went undetected.
+    const withOverride = baseInput({
+      metadataOverrides: [{ field: "deadline", fieldState: "USER_EDITED", overrideValue: "2027-01-15" }],
+    });
+    assert.notEqual(original, computeBuildPlanHash(withOverride));
+  });
+
+  it("changes when source grounding is lost (evidenceState GROUNDED -> UNGROUNDED)", () => {
+    const ungrounded = baseInput({
+      metadataEvidence: baseInput().metadataEvidence!.map((m) =>
+        m.fieldKey === "title" ? { ...m, evidenceState: "UNGROUNDED", sourceTenderFileId: null } : m
+      ),
+    });
+    assert.notEqual(original, computeBuildPlanHash(ungrounded));
   });
 
   it("isBuildPlanValid returns true only for the matching state", () => {
     const recorded = computeBuildPlanHash(baseInput());
     assert.equal(isBuildPlanValid(recorded, baseInput()), true);
-    assert.equal(isBuildPlanValid(recorded, baseInput({ submissionMethod: "Portal" })), false);
+    // Changing metadata evidence must invalidate
+    const changed = baseInput({
+      metadataEvidence: baseInput().metadataEvidence!.map((m) =>
+        m.fieldKey === "submissionMethod" ? { ...m, effectiveValue: "Portal" } : m
+      ),
+    });
+    assert.equal(isBuildPlanValid(recorded, changed), false);
   });
 });
 
@@ -144,6 +189,11 @@ describe("buildPlanHashInputFromTender", () => {
       files: baseInput().activeFiles,
       requirements: baseInput().requirements,
     };
-    assert.equal(computeBuildPlanHash(buildPlanHashInputFromTender(tender)), computeBuildPlanHash(baseInput()));
+    // buildPlanHashInputFromTender does NOT set metadataEvidence (it's the
+    // legacy helper). Compare against baseInput with metadataEvidence stripped
+    // so the comparison is apples-to-apples.
+    const { metadataEvidence, ...baseWithoutMeta } = baseInput();
+    void metadataEvidence;
+    assert.equal(computeBuildPlanHash(buildPlanHashInputFromTender(tender)), computeBuildPlanHash(baseWithoutMeta));
   });
 });

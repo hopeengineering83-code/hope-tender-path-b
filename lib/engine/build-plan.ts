@@ -283,6 +283,10 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
     where: { tenderId },
     select: { field: true, fieldState: true, overrideValue: true },
   }).catch(() => []);
+  // ATTACH overrides to the tender object so buildCanonicalBuildPlanHashInput
+  // can read them via tender.metadataOverrides. Without this, overrides have
+  // ZERO effect on the hash (override changes would not stale the plan).
+  (tender as any).metadataOverrides = metadataOverrides;
   const planItems = items ?? plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
   // CANONICAL HASH: uses buildCanonicalBuildPlanHashInput — the ONE shared
   // builder. No caller may manually construct a reduced hash input or append
