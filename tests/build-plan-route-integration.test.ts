@@ -49,6 +49,11 @@ async function createTestTender(suffix: string, options: { extractionScore?: num
       submissionAddressSourcePage: 1,
       submissionAddressSourceQuote: options.extractedText ?? "This tender requires a Technical Proposal for the project.",
       submissionEmailSourcePage: 1,
+      submissionEmailSourceQuote: options.extractedText ?? "This tender requires a Technical Proposal for the project.",
+      titleSourcePage: 1,
+      titleSourceQuote: options.extractedText ?? "This tender requires a Technical Proposal for the project.",
+      deadlineSourcePage: 1,
+      deadlineSourceQuote: options.extractedText ?? "This tender requires a Technical Proposal for the project.",
     },
   });
   const file = await prisma.tenderFile.create({
@@ -74,6 +79,8 @@ async function createTestTender(suffix: string, options: { extractionScore?: num
       submissionMethodSourceFileId: file.id,
       submissionAddressSourceFileId: file.id,
       submissionEmailSourceFileId: file.id,
+      titleSourceFileId: file.id,
+      deadlineSourceFileId: file.id,
     },
   });
   await prisma.tenderRequirement.create({

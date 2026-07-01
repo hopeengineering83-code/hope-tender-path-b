@@ -358,6 +358,16 @@ model Tender {
   clientNameSourcePage     Int?
   clientNameSourceQuote    String?
   submissionEmailSourcePage Int?
+  // Title source evidence (Blocker 2 — policy-critical but missing durable storage)
+  titleSourceFileId       String?
+  titleSourcePage          Int?
+  titleSourceQuote         String?
+  // Deadline source evidence (Blocker 2 — value was hashed but evidence was not)
+  deadlineSourceFileId     String?
+  deadlineSourcePage       Int?
+  deadlineSourceQuote      String?
+  // Email endpoint source quote (Blocker 2 — sourceFileId/Page existed but quote was missing)
+  submissionEmailSourceQuote String?
   // JSON map of per-field source provenance for contact/location fields extracted
   // by AI Analyze. Shape: { [fieldName]: { page: number|null, quote: string|null } }
   // Covers: clientContactName, clientContactTitle, clientContactEmail,

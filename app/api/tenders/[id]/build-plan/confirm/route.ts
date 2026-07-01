@@ -45,11 +45,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
         if (staleBlockers.length > 0 || !validation.ok) {
           // Update validationJson ONLY through conditional updateMany.
-          // Never overwrite contentHash.
-          await (tx as any).buildPlan.updateMany({
+          // Never overwrite contentHash. Check count — if zero, candidate was
+          // concurrently rebuilt → return 409, not 422.
+          const valUpdate = await (tx as any).buildPlan.updateMany({
             where: { id: candidateId, status: "DRAFT", revision: candidateRevision, contentHash: candidateHash },
             data: { validationJson: JSON.stringify({ ok: false, blockers: validation.blockers.concat(staleBlockers) }) },
           });
+          if (valUpdate.count === 0) {
+            return { status: 409 as const, body: { ok: false, code: "BUILD_PLAN_CONFLICT", error: "Build Plan was rebuilt during validation. Rebuild and retry.", authorizesGeneration: false } };
+          }
           return { status: 422 as const, body: { ok: false, code: "BUILD_PLAN_CONFIRMATION_BLOCKED", blockers: validation.blockers.concat(staleBlockers), authorizesGeneration: false } };
         }
 
@@ -83,7 +87,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       if (err?.code === "P2034" && attempt < MAX_RETRIES) {
         continue; // Retry targeting same original candidate
       }
-      // Non-concurrency failure — sanitized 500, NOT false 409
+      if (err?.code === "P2034") {
+        // Final P2034 exhaustion — this IS a concurrency conflict → 409
+        return NextResponse.json({ ok: false, code: "BUILD_PLAN_CONFLICT", error: "Confirmation failed after retries due to concurrent modification. Rebuild and retry.", authorizesGeneration: false }, { status: 409 });
+      }
+      // Non-concurrency failure — sanitized 500
       return NextResponse.json({ ok: false, code: "BUILD_PLAN_INTERNAL_ERROR", error: "Confirmation failed due to an internal error." }, { status: 500 });
     }
   }

@@ -602,6 +602,13 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Tender", "clientCity", "TEXT");
   await ensureColumn(client, "Tender", "clientWebsite", "TEXT");
   await ensureColumn(client, "Tender", "submissionEmailSubject", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmailSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "deadlineSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "deadlineSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "deadlineSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "titleSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "titleSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "titleSourceFileId", "TEXT");
   await ensureColumn(client, "Tender", "preBidChannel", "TEXT");
   await ensureColumn(client, "Tender", "clientRepresentative", "TEXT");
   // Soft-delete for Expert + Project

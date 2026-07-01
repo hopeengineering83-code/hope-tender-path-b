@@ -26,10 +26,18 @@ export type MetadataEvidenceValidation = { ok: boolean; blockers: string[] };
 
 export function validateCriticalMetadataEvidenceForBuildPlan(
   tender: {
+    title?: string | null;
+    titleSourceFileId?: string | null;
+    titleSourcePage?: number | null;
+    titleSourceQuote?: string | null;
     clientName?: string | null;
     clientNameSourceFileId?: string | null;
     clientNameSourcePage?: number | null;
     clientNameSourceQuote?: string | null;
+    deadline?: Date | string | null;
+    deadlineSourceFileId?: string | null;
+    deadlineSourcePage?: number | null;
+    deadlineSourceQuote?: string | null;
     submissionMethod?: string | null;
     submissionMethodSourceFileId?: string | null;
     submissionMethodSourcePage?: number | null;
@@ -41,6 +49,7 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     submissionEmails?: string | null;
     submissionEmailSourceFileId?: string | null;
     submissionEmailSourcePage?: number | null;
+    submissionEmailSourceQuote?: string | null;
   },
   activeFiles: Array<{ id: string; extractedText?: string | null }>,
 ): MetadataEvidenceValidation {
@@ -84,10 +93,25 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     }
   }
 
+  // POLICY-DRIVEN: always check title, clientName, deadline, submissionMethod.
+  checkField("title", tender.title, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote);
   checkField("clientName", tender.clientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote);
+  checkField("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote);
   checkField("submissionMethod", tender.submissionMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
-  checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
-  checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, null, false);
+
+  // SUBMISSION-METHOD-DRIVEN: only check the applicable endpoint.
+  const method = (tender.submissionMethod ?? "").toLowerCase();
+  if (method.includes("email")) {
+    checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+  } else if (method.includes("physical") || method.includes("hard") || method.includes("address") || method.includes("mail")) {
+    checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+  } else if (method.includes("portal") || method.includes("online")) {
+    if (!tender.submissionAddress && !tender.submissionEmails) {
+      blockers.push("Portal submission requires at least one submission endpoint (address or email).");
+    }
+  } else {
+    checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+  }
 
   return { ok: blockers.length === 0, blockers };
 }

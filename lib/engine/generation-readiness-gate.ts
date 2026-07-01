@@ -599,38 +599,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       where: { tenderId },
       select: { contentHash: true, status: true, revision: true, confirmedRevision: true, confirmedContentHash: true, itemsJson: true },
     });
-    // CANONICAL HASH: use buildCanonicalBuildPlanHashInput — the ONE shared
-    // builder. No manual item or metadata append. Uses persisted confirmed
-    // items for stale detection.
-    const { computeBuildPlanHash, buildCanonicalBuildPlanHashInput } = await import("./build-plan-hash");
+    // CANONICAL HASH: call computeTenderBuildPlanHash — the ONE shared service
+    // that loads tender data and builds the canonical hash input internally.
+    // No manual file/requirement/metadata/item mapping in the gate.
     const persistedItems = recordedBuildPlan?.itemsJson ? JSON.parse(recordedBuildPlan.itemsJson) : [];
-    const currentPlanHash = computeBuildPlanHash(buildCanonicalBuildPlanHashInput({
-      exactFileNaming: tender.exactFileNaming,
-      exactFileOrder: tender.exactFileOrder,
-      submissionMethod: tender.submissionMethod,
-      submissionAddress: tender.submissionAddress,
-      submissionEmails: tender.submissionEmails,
-      submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
-      deadline: (tender as any).deadline ?? null,
-      clientName: tender.clientName,
-      clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
-      clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
-      clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
-      submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
-      submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
-      submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
-      submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
-      submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
-      submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
-      submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
-      submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
-      files: activeFiles.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: "ACTIVE" })),
-      requirements: (requirements as _RequirementRow[]).map((r) => ({
-        id: r.id, title: r.title, description: r.description, requirementType: r.requirementType, priority: r.priority,
-        exactFileName: r.exactFileName, exactOrder: r.exactOrder,
-        sourceTenderFileId: r.sourceTenderFileId, sourcePageNumber: r.sourcePageNumber, sourceExactQuote: r.sourceExactQuote,
-      })),
-    }, persistedItems));
+    const { computeTenderBuildPlanHash } = await import("./build-plan");
+    const currentPlanHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, persistedItems);
     const recordedBuildPlanState: "MISSING" | "STALE" | "VALID" =
       !recordedBuildPlan ? "MISSING"
         : recordedBuildPlan.contentHash !== currentPlanHash ? "STALE"

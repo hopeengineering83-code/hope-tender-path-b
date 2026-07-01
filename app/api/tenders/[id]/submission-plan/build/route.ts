@@ -54,7 +54,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       entityType: "Tender",
       entityId: id,
       description: `Submission plan built via compatibility endpoint — DRAFT revision ${plan.revision}; ${items.length} planned files; ${afterDocs - beforeDocs} GeneratedDocument rows created.`,
-      metadata: { tenderId: id, created: 0, skipped: 0, total: items.length, isDerivedDraft: false, virtualOnly: true, contentHash: plan.contentHash, revision: plan.revision },
+      metadata: { tenderId: id, created: 0, skipped: 0, total: items.length, isDerivedDraft: false, contentHash: plan.contentHash, revision: plan.revision },
     });
 
     return NextResponse.json({
@@ -65,7 +65,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       contentHash: plan.contentHash,
       revision: plan.revision,
       status: plan.status,
-      files: items.map((item: any) => ({ exactFileName: item.exactFileName, status: "virtual" as const })),
     });
   } catch (error) {
     logger.error("[submission-plan/build] error:", { detail: error });

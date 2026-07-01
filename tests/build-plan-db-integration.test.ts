@@ -60,6 +60,11 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
         submissionAddressSourcePage: 1,
         submissionAddressSourceQuote: "This tender requires a Technical Proposal.",
         submissionEmailSourcePage: 1,
+        submissionEmailSourceQuote: "This tender requires a Technical Proposal.",
+        titleSourcePage: 1,
+        titleSourceQuote: "This tender requires a Technical Proposal.",
+        deadlineSourcePage: 1,
+        deadlineSourceQuote: "This tender requires a Technical Proposal.",
       },
     });
     tenderId = tender.id;
@@ -88,6 +93,8 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
         submissionMethodSourceFileId: fileId,
         submissionAddressSourceFileId: fileId,
         submissionEmailSourceFileId: fileId,
+        titleSourceFileId: fileId,
+        deadlineSourceFileId: fileId,
       },
     });
     // Create a MANDATORY requirement with source grounding tied to the active file.
