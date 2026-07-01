@@ -65,6 +65,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       contentHash: plan.contentHash,
       revision: plan.revision,
       status: plan.status,
+      items,
+      authorizesGeneration: false,
+      generatedDocumentsCreated: 0,
     });
   } catch (error) {
     logger.error("[submission-plan/build] error:", { detail: error });
