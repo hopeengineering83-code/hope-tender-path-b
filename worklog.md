@@ -61,3 +61,62 @@ Stage Summary:
      from all 22 mutation routes, provider registry aligned, role-policy test)
 - 4696/4696 tests pass, typecheck/lint/build all green.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: 2
+Agent: main
+Task: Deep audit and fix all remaining gaps
+
+Work Log:
+- Started local PostgreSQL 16.4 on port 5433 (was still running from previous session).
+- Deployed all migrations to verify schema is complete.
+- Deep audit of lib/engine/build-plan-hash.ts found 4 critical bugs:
+  1. metadataOverrides loaded into local var but never attached to tender
+     → buildCanonicalBuildPlanHashInput read undefined → empty array
+     → computeBuildPlanHash never included overrides in canonical string
+     → override changes had ZERO effect on hash (stale-plan check broken)
+  2. Raw metadata (submissionMethod, submissionAddress, submissionEmails,
+     submissionEmailSubject, deadline, title) duplicated in hash alongside
+     metadataEvidence — user explicitly required only resolved effective output
+  3. Duplicate title: line in canonical array (sloppy code)
+  4. Unknown submission method fell back to address evidence in hash builder
+     — inconsistent with validator's fail-closed policy
+- Deep audit of tests/build-plan-route-integration.test.ts found 1 critical bug:
+  5. Test accepted 401 as valid response, fell back to direct service call
+     — next/headers cookies() doesn't work in test env
+     — user explicitly wanted real authenticated HTTP endpoint tests
+
+Fixes applied:
+- lib/engine/build-plan-hash.ts:
+  - Added overrideSig to canonical hash (sorted field|state|value)
+  - Removed raw metadata fields from canonical string (submissionMethod,
+    submissionAddress, submissionEmails, submissionEmailSubject, deadline, title)
+  - Metadata now represented ONLY by metadataEvidence + metadataOverrides
+  - Removed duplicate title: line
+  - Unknown submission method no longer adds endpoint evidence (fail-closed)
+- lib/engine/build-plan.ts:
+  - Attached metadataOverrides to tender object before passing to
+    buildCanonicalBuildPlanHashInput (was loaded into local var but never passed)
+- tests/metadata-grounding-and-build-plan.test.ts:
+  - baseInput now includes metadataEvidence
+  - 3 new tests: override detection, source grounding loss, metadata evidence change
+  - buildPlanHashInputFromTender test updated for apples-to-apples comparison
+- tests/build-plan-route-integration.test.ts:
+  - Mock next/headers cookies() to read from global variable (ONLY cookie
+    reading is mocked — token signing, Session DB lookup, role check are REAL)
+  - All 9 tests now assert exact status codes: ADMIN=200, unauth=401,
+    REVIEWER=403, foreign=404
+  - New test: 'unauthenticated request gets 401 (no session cookie)'
+
+Verification:
+- 4699/4699 tests pass (was 4696; +3 new tests)
+- typecheck: clean
+- lint: clean (0 warnings)
+- build: succeeds
+- Committed as b622a163 and pushed to origin/hotfix/release-safety-consolidation
+
+Stage Summary:
+- PR #931 now has a truly canonical BuildPlan hash with no raw metadata
+  duplication, metadataOverrides actually hashed, and real authenticated
+  HTTP route tests.
+- NOT merged, NOT deployed — awaiting explicit user authorization.
