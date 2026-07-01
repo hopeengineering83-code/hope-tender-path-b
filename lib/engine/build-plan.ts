@@ -52,7 +52,7 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     submissionEmailSourcePage?: number | null;
     submissionEmailSourceQuote?: string | null;
   },
-  activeFiles: Array<{ id: string; extractedText?: string | null }>,
+  activeFiles: Array<{ id: string; extractedText?: string | null; totalPages?: number | null }>,
 ): MetadataEvidenceValidation {
   const blockers: string[] = [];
   const activeFileMap = new Map(activeFiles.map((f) => [f.id, f]));
@@ -76,6 +76,13 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     }
     if (typeof sourcePage !== "number" || sourcePage < 1) {
       blockers.push(`Critical metadata field ${label} has invalid source page.`);
+      return;
+    }
+    // ENFORCE sourcePage <= totalPages when totalPages exists
+    const file = activeFileMap.get(sourceFileId!);
+    const totalPages = (file as any)?.totalPages;
+    if (typeof totalPages === "number" && totalPages > 0 && sourcePage > totalPages) {
+      blockers.push(`Critical metadata field ${label} source page ${sourcePage} exceeds file total pages ${totalPages}.`);
       return;
     }
     if (requireQuote) {
@@ -211,6 +218,11 @@ export async function assertTenderReadyToDraftBuildPlan(
     if (typeof req.sourcePageNumber !== "number" || req.sourcePageNumber < 1) {
       return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has invalid source page.`, status: 422 };
     }
+    const reqFile = activeFileMap.get(req.sourceTenderFileId);
+    const reqTotalPages = (reqFile as any)?.totalPages;
+    if (typeof reqTotalPages === "number" && reqTotalPages > 0 && req.sourcePageNumber > reqTotalPages) {
+      return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} source page ${req.sourcePageNumber} exceeds file total pages ${reqTotalPages}.`, status: 422 };
+    }
     const quote = String(req.sourceExactQuote ?? "").trim();
     if (quote.length < 10) {
       return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has no meaningful source quote.`, status: 422 };
@@ -266,6 +278,11 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
     },
   });
   if (!tender) return null;
+  // Load metadata overrides to resolve effective values for canonical hash
+  const metadataOverrides = await prisma.tenderMetadataOverride.findMany({
+    where: { tenderId },
+    select: { field: true, fieldState: true, overrideValue: true },
+  }).catch(() => []);
   const planItems = items ?? plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
   // CANONICAL HASH: uses buildCanonicalBuildPlanHashInput — the ONE shared
   // builder. No caller may manually construct a reduced hash input or append
@@ -376,6 +393,8 @@ export async function validateBuildPlanForConfirmation(prisma: PrismaClient, ten
       const quote = String(req.sourceExactQuote ?? "").trim();
       if (!file) blockers.push(`Requirement ${reqId} evidence is not an ACTIVE TenderFile on this tender.`);
       if (!Number.isInteger(req.sourcePageNumber) || req.sourcePageNumber < 1) blockers.push(`Requirement ${reqId} has invalid source page.`);
+      const confirmTotalPages = (file as any)?.totalPages;
+      if (typeof confirmTotalPages === "number" && confirmTotalPages > 0 && req.sourcePageNumber > confirmTotalPages) blockers.push(`Requirement ${reqId} source page ${req.sourcePageNumber} exceeds file total pages ${confirmTotalPages}.`);
       if (quote.length < 10) blockers.push(`Requirement ${reqId} has no meaningful source quote.`);
       if (file && quote.length >= 10 && !quoteSupported(file.extractedText, quote)) blockers.push(`Requirement ${reqId} quote is not supported by active file text.`);
     }

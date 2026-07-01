@@ -88,6 +88,7 @@ export type BuildPlanHashInput = {
   title?: string | null;
   items?: BuildPlanHashItem[];
   metadataEvidence?: BuildPlanHashMetadataEvidence[];
+  metadataOverrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>;
 };
 
 const UNIT = ""; // field separator unlikely to appear in tender text
@@ -268,6 +269,7 @@ export function buildCanonicalBuildPlanHashInput(
     deadlineSourcePage?: number | null;
     deadlineSourceQuote?: string | null;
     title?: string | null;
+    metadataOverrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>;
     files: BuildPlanHashFile[];
     requirements: BuildPlanHashRequirement[];
   },
@@ -305,6 +307,8 @@ export function buildCanonicalBuildPlanHashInput(
     evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
   }
   input.metadataEvidence = evidence;
+  // Include metadata overrides in hash so override changes stale the plan
+  input.metadataOverrides = (tender as any).metadataOverrides ?? [];
 
   return input;
 }

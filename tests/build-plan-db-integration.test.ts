@@ -18,7 +18,11 @@ import {
   validateConfirmedPlanDocuments,
 } from "../lib/engine/build-plan";
 
-const dbDescribe = process.env.RUN_DB_INTEGRATION === "true" ? describe : describe.skip;
+if (process.env.RUN_DB_INTEGRATION !== "true") {
+  console.error("FATAL: RUN_DB_INTEGRATION=true is required for this test suite.");
+  process.exit(1);
+}
+const dbDescribe = describe;
 
 let userId: string;
 let tenderId: string;
