@@ -43,8 +43,11 @@ export const dynamic = "force-dynamic";
 
 // Resolve the per-field metadata source file IDs from the ACTUAL extraction
 // evidence: each field is bound to the active file whose extracted text contains
-// the field's supporting quote (or null → ungrounded). submissionEmail has no
-// quote in the analysis result, so it is left ungrounded.
+// the field's supporting quote (or null → ungrounded). Previously only
+// clientName, submissionMethod, and submissionAddress had quotes to attribute.
+// Now title and deadline also carry source quotes (tenderTitleSourceQuote,
+// deadlineSourceQuote), and submissionEmail is attributed from its own
+// submissionEmailSourceQuote (no longer left null).
 function resolveMetadataSourceFileIds(
   aiResult: AIAnalysisResult,
   files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
@@ -53,12 +56,16 @@ function resolveMetadataSourceFileIds(
   submissionMethodSourceFileId: string | null;
   submissionAddressSourceFileId: string | null;
   submissionEmailSourceFileId: string | null;
+  titleSourceFileId: string | null;
+  deadlineSourceFileId: string | null;
 } {
   return {
     clientNameSourceFileId: attributeMetadataSourceFileId(aiResult.clientNameSourceQuote, files),
     submissionMethodSourceFileId: attributeMetadataSourceFileId(aiResult.submissionMethodSourceQuote, files),
     submissionAddressSourceFileId: attributeMetadataSourceFileId(aiResult.submissionAddressSourceQuote, files),
-    submissionEmailSourceFileId: null,
+    submissionEmailSourceFileId: attributeMetadataSourceFileId(aiResult.submissionEmailSourceQuote, files),
+    titleSourceFileId: attributeMetadataSourceFileId(aiResult.tenderTitleSourceQuote, files),
+    deadlineSourceFileId: attributeMetadataSourceFileId(aiResult.deadlineSourceQuote, files),
   };
 }
 

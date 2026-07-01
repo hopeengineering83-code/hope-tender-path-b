@@ -130,6 +130,72 @@ describe("buildCanonicalAnalysisTenderUpdate", () => {
     assert.match(String(data.contactDetailsSourceJson), /jane@works\.gov/);
     assert.equal(typeof data.evaluationCriteriaSourceJson, "string");
   });
+
+  it("persists title source evidence when AI extracted a title with source page/quote", () => {
+    const { data } = buildCanonicalAnalysisTenderUpdate(
+      baseResult({
+        tenderTitle: "Supply of Medical Equipment to Addis Ababa Health Bureau",
+        tenderTitleSourcePage: 1,
+        tenderTitleSourceQuote: "Tender Notice: Supply of Medical Equipment to Addis Ababa Health Bureau",
+      }),
+      { titleSourceFileId: "file-1" },
+    );
+    assert.equal(data.title, "Supply of Medical Equipment to Addis Ababa Health Bureau");
+    assert.equal(data.titleSourcePage, 1);
+    assert.equal(data.titleSourceQuote, "Tender Notice: Supply of Medical Equipment to Addis Ababa Health Bureau");
+    assert.equal(data.titleSourceFileId, "file-1");
+  });
+
+  it("persists deadline value AND deadline source evidence when AI extracted a deadline", () => {
+    const { data } = buildCanonicalAnalysisTenderUpdate(
+      baseResult({
+        deadline: "2026-09-30",
+        deadlineSourcePage: 2,
+        deadlineSourceQuote: "Bids must be submitted no later than 30 September 2026 at 17:00 local time.",
+      }),
+      { deadlineSourceFileId: "file-2" },
+    );
+    assert.ok(data.deadline instanceof Date, "deadline must be persisted as a Date");
+    assert.equal((data.deadline as Date).toISOString().slice(0, 10), "2026-09-30");
+    assert.equal(data.deadlineSourcePage, 2);
+    assert.equal(data.deadlineSourceQuote, "Bids must be submitted no later than 30 September 2026 at 17:00 local time.");
+    assert.equal(data.deadlineSourceFileId, "file-2");
+  });
+
+  it("persists submissionEmailSourceQuote so BuildPlan preflight can verify quote containment", () => {
+    const { data } = buildCanonicalAnalysisTenderUpdate(
+      baseResult({
+        submissionEmails: "bids@works.gov",
+        submissionEmailSourcePage: 3,
+        submissionEmailSourceQuote: "Submit all bids via email to bids@works.gov before the deadline.",
+      }),
+      { submissionEmailSourceFileId: "file-3" },
+    );
+    assert.equal(data.submissionEmails, "bids@works.gov");
+    assert.equal(data.submissionEmailSourcePage, 3);
+    assert.equal(data.submissionEmailSourceQuote, "Submit all bids via email to bids@works.gov before the deadline.");
+    assert.equal(data.submissionEmailSourceFileId, "file-3");
+  });
+
+  it("does not persist title source evidence when title is missing or placeholder", () => {
+    const noTitle = buildCanonicalAnalysisTenderUpdate(
+      baseResult({ tenderTitle: null, tenderTitleSourcePage: 1, tenderTitleSourceQuote: "some quote" }),
+      { titleSourceFileId: "file-1" },
+    );
+    assert.ok(!("title" in noTitle.data), "null title must not be persisted");
+    // Source page/quote are still passed through when caller supplies them —
+    // they are independent of whether the title value itself was accepted.
+    // The file ID is also still passed through so downstream can clear stale
+    // evidence if needed.
+    assert.equal(noTitle.data.titleSourcePage, 1);
+    assert.equal(noTitle.data.titleSourceFileId, "file-1");
+
+    const placeholderTitle = buildCanonicalAnalysisTenderUpdate(
+      baseResult({ tenderTitle: "TBD", tenderTitleSourcePage: 1, tenderTitleSourceQuote: "quote" }),
+      {},
+    );
+    assert.ok(!("title" in placeholderTitle.data), "placeholder title must not be persisted");
+  });
 });
 
 describe("buildAnalysisNotes", () => {

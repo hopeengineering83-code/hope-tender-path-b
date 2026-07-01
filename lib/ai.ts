@@ -1435,10 +1435,24 @@ export type AIAnalysisResult = {
   legalClientName?: string | null;
   donorAgency?: string | null;
   tenderTitle?: string | null;
+  // Source traceability for tenderTitle — required for BuildPlan evidence.
+  // The page/quote from which the verbatim tender title was extracted.
+  tenderTitleSourcePage?: number | null;
+  tenderTitleSourceQuote?: string | null;
+  // Submission deadline (ISO date string). Persisted as Tender.deadline so
+  // downstream gates (BuildPlan, export) can read it without re-running AI.
+  deadline?: string | null;
+  // Source traceability for deadline — required for BuildPlan evidence.
+  deadlineSourcePage?: number | null;
+  deadlineSourceQuote?: string | null;
   implementingAgency?: string | null;
   clientNameSourcePage?: number | null;
   clientNameSourceQuote?: string | null;
   submissionEmailSourcePage?: number | null;
+  // Source quote for submission email endpoint (the sourceFileId and sourcePage
+  // already exist on Tender, but the quote was missing — quote containment
+  // could not be verified for email submissions).
+  submissionEmailSourceQuote?: string | null;
   // Additional client/contact fields for full CLAUDE.md coverage
   country?: string | null;
   clientAddress?: string | null;
@@ -1743,6 +1757,11 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
   const clientType = firstDefined((p) => p.clientType);
   const submissionFormat = firstDefined((p) => p.submissionFormat);
   const tenderTitle = firstDefined((p) => p.tenderTitle ?? undefined);
+  const tenderTitleSourcePage = firstDefined((p) => p.tenderTitleSourcePage ?? undefined);
+  const tenderTitleSourceQuote = firstDefined((p) => p.tenderTitleSourceQuote ?? undefined);
+  const deadline = firstDefined((p) => p.deadline ?? undefined);
+  const deadlineSourcePage = firstDefined((p) => p.deadlineSourcePage ?? undefined);
+  const deadlineSourceQuote = firstDefined((p) => p.deadlineSourceQuote ?? undefined);
   // Extended client fields — first non-null value wins across chunks
   const procuringEntityName = firstDefined((p) => p.procuringEntityName ?? undefined);
   const legalClientName = firstDefined((p) => p.legalClientName ?? undefined);
@@ -1768,6 +1787,7 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
+  const submissionEmailSourceQuote = firstDefined((p) => p.submissionEmailSourceQuote ?? undefined);
   // Merge contactDetailsSource: prefer entries with real source data (non-null page or quote).
   // Earlier chunks may output null for a key that appears in a later chunk — "best wins" ensures
   // donorAgency/implementingAgency found in chunk 3 are not silently dropped by a null entry from chunk 0.
@@ -1797,6 +1817,11 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
     clientType,
     submissionFormat,
     tenderTitle: tenderTitle ?? null,
+    tenderTitleSourcePage: tenderTitleSourcePage ?? null,
+    tenderTitleSourceQuote: tenderTitleSourceQuote ?? null,
+    deadline: deadline ?? null,
+    deadlineSourcePage: deadlineSourcePage ?? null,
+    deadlineSourceQuote: deadlineSourceQuote ?? null,
     procuringEntityName: procuringEntityName ?? null,
     legalClientName: legalClientName ?? null,
     donorAgency: donorAgency ?? null,
@@ -1822,6 +1847,7 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
     submissionEmailSourcePage: submissionEmailSourcePage ?? null,
+    submissionEmailSourceQuote: submissionEmailSourceQuote ?? null,
     submissionMethodSourcePage: firstDefined((p) => p.submissionMethodSourcePage ?? undefined) ?? null,
     submissionMethodSourceQuote: firstDefined((p) => p.submissionMethodSourceQuote ?? undefined) ?? null,
     submissionAddressSourcePage: firstDefined((p) => p.submissionAddressSourcePage ?? undefined) ?? null,
@@ -1898,6 +1924,11 @@ JSON structure required:
 {
   "summary": "4-6 sentence senior bid interpretation: client name, tender title, assignment scope, key technical challenges, main evaluation driver, top strategic risk for the responding firm",
   "tenderTitle": "The full official title of the tender project as printed on the document (NOT a summary, the verbatim title), or null",
+  "tenderTitleSourcePage": page_number_integer_or_null,
+  "tenderTitleSourceQuote": "verbatim snippet showing the official tender title, or null",
+  "deadline": "ISO-8601 date string (YYYY-MM-DD) for the bid submission deadline, or null if not stated",
+  "deadlineSourcePage": page_number_integer_or_null,
+  "deadlineSourceQuote": "verbatim snippet showing the deadline date, or null",
   "requirements": [
     {
       "title": "short strategic title (max 80 chars)",
@@ -1948,6 +1979,7 @@ JSON structure required:
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
   "submissionEmailSourcePage": page_number_integer_or_null,
+  "submissionEmailSourceQuote": "verbatim snippet showing the submission email address(es), or null",
   "contactDetailsSource": {
     "country": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
@@ -2018,6 +2050,11 @@ ${tenderContent}`;
         exactFileOrder: Array.isArray(parsed.exactFileOrder) ? parsed.exactFileOrder.filter((s: unknown) => typeof s === "string") : [],
         evaluationMethodology: typeof parsed.evaluationMethodology === "string" ? parsed.evaluationMethodology : "",
         tenderTitle: typeof parsed.tenderTitle === "string" ? parsed.tenderTitle.trim().slice(0, 400) || null : null,
+        tenderTitleSourcePage: typeof parsed.tenderTitleSourcePage === "number" && Number.isInteger(parsed.tenderTitleSourcePage) && parsed.tenderTitleSourcePage > 0 ? parsed.tenderTitleSourcePage : null,
+        tenderTitleSourceQuote: typeof parsed.tenderTitleSourceQuote === "string" ? parsed.tenderTitleSourceQuote.trim().slice(0, 500) || null : null,
+        deadline: (() => { const raw = parsed.deadline; if (typeof raw !== "string" || !raw.trim()) return null; const d = raw.trim().slice(0, 50); return /^\d{4}-\d{2}-\d{2}/.test(d) ? d : null; })(),
+        deadlineSourcePage: typeof parsed.deadlineSourcePage === "number" && Number.isInteger(parsed.deadlineSourcePage) && parsed.deadlineSourcePage > 0 ? parsed.deadlineSourcePage : null,
+        deadlineSourceQuote: typeof parsed.deadlineSourceQuote === "string" ? parsed.deadlineSourceQuote.trim().slice(0, 500) || null : null,
         submissionNotes: typeof parsed.submissionNotes === "string" ? parsed.submissionNotes : "",
         // Classification fields — validated against the allowed enum sets.
         // Anything the model returns outside those sets (or a free-form
@@ -2052,6 +2089,7 @@ ${tenderContent}`;
         clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
         clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
         submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,
+        submissionEmailSourceQuote: typeof parsed.submissionEmailSourceQuote === "string" ? parsed.submissionEmailSourceQuote.trim().slice(0, 500) || null : null,
         contactDetailsSource: (() => {
           const src = parsed.contactDetailsSource;
           if (!src || typeof src !== "object") return null;
