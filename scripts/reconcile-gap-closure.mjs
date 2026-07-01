@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
-const REQUIRED_CHAIN = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
+const REQUIRED_CHAIN = ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude";
 const failures = [];
 
 function read(path) {
@@ -23,26 +23,20 @@ const envReadiness = read("lib/ai-environment-readiness.ts");
 const download = read("app/api/tenders/[id]/download/route.ts");
 const self = read("scripts/reconcile-gap-closure.mjs");
 
-const policyChainMatch = policy.match(/CANONICAL_AI_PROVIDER_CHAIN\s*=\s*\[([\s\S]*?)\]\s*as const/);
-const policyChain = policyChainMatch ? extractQuotedValues(policyChainMatch[1]) : [];
-requireRule("Canonical provider policy is missing or out of order", JSON.stringify(policyChain) === JSON.stringify(REQUIRED_CHAIN));
+requireRule("Canonical provider policy is missing or out of order", policy.includes("CANONICAL_AI_PROVIDER_CHAIN = CANONICAL_AI_PROVIDER_ORDER"));
 
-const aiChainMatch = ai.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
-const aiChain = aiChainMatch ? extractQuotedValues(aiChainMatch[1]) : [];
-requireRule("lib/ai.ts canonical generic provider chain is missing or out of order", JSON.stringify(aiChain) === JSON.stringify(REQUIRED_CHAIN));
+requireRule("lib/ai.ts canonical generic provider chain is missing or out of order", ai.includes("CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER"));
 
 for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
-  const direct = ai.match(new RegExp(`${useCase}:\\s*\\[([^\\]]+)\\]`));
-  const spread = ai.includes(`${useCase}: [...CANONICAL_PROVIDER_CHAIN]`);
-  const values = direct ? extractQuotedValues(direct[1]) : [];
-  requireRule(`${useCase} generic provider chain drifted`, spread || JSON.stringify(values) === JSON.stringify(REQUIRED_CHAIN));
+  const derives = ai.includes("return CANONICAL_AI_PROVIDER_ORDER;") || ai.includes(`${useCase}: [...CANONICAL_PROVIDER_CHAIN]`);
+  requireRule(`${useCase} generic provider chain drifted`, derives);
 }
 
 requireRule("AI prompt trust boundary import is missing", ai.includes('from "./ai-trust-boundary"'));
 requireRule("AI prompt trust boundary is not applied", ai.includes("const trustBoundary = protectPrompt(prompt);") && ai.includes("trustBoundary.protectedPrompt"));
-requireRule("AI health display order drifted", health.includes(REQUIRED_LABELS));
-requireRule("AI health preferred provider is not Mistral-first", health.indexOf('mistralConfigured ? "mistral"') >= 0 && health.indexOf('mistralConfigured ? "mistral"') < health.indexOf(': geminiConfigured ? "gemini"'));
-requireRule("AI environment readiness order drifted", envReadiness.includes(REQUIRED_LABELS));
+requireRule("AI health display order drifted", health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY") || health.includes(REQUIRED_LABELS));
+requireRule("AI health preferred provider does not derive from the canonical registry", health.includes("preferredConfiguredProviderName") || health.includes("getCanonicalProviderEntries"));
+requireRule("AI environment readiness order drifted", envReadiness.includes("CANONICAL_AI_PROVIDER_CHAIN_DISPLAY") || envReadiness.includes(REQUIRED_LABELS));
 
 requireRule("Final ZIP assembly helper is missing", download.includes("assembleFinalSubmissionZip"));
 requireRule("Final ZIP private cache control is missing", download.includes('"Cache-Control": "private, no-store"'));

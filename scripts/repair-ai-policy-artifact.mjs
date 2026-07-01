@@ -236,7 +236,7 @@ const oldHeader = `# Default order: OpenAI → Gemini → Mistral → DeepSeek �
 # OpenRouter → Claude/Anthropic. Analysis/extraction: Gemini → OpenAI →
 # Mistral → Together → DeepSeek → Groq → OpenRouter → Claude.`;
 const newHeader = `# Canonical order for analysis, extraction, proposal, validation, fast, and reasoning:
-# Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude.
+# Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude.
 # The first configured and healthy provider is used; cooled-down providers are skipped.`;
 // Tolerant of the header already being fixed in source (e.g. by PR #782 which
 // permanently fixed the stale provider-order header in .env.example). When the

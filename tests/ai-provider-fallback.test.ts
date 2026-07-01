@@ -1,8 +1,8 @@
 // AI provider fallback chain tests.
 //
-// Verifies that the multi-provider fallback chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude)
+// Verifies that the automatic multi-provider fallback chain (Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude)
 // behaves correctly under various failure modes, and that env-check logic
-// accepts any single provider key as sufficient.
+// accepts any single automatic provider key as sufficient.
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { strict as assert } from "node:assert";
@@ -23,7 +23,7 @@ function prodEnv(aiOverrides: Record<string, string | undefined> = {}): Record<s
   };
 }
 
-describe("evaluateEnv — 8-provider coverage", () => {
+describe("evaluateEnv — automatic provider coverage", () => {
   it("passes when only ANTHROPIC_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ ANTHROPIC_API_KEY: "sk-ant-test" }));
     assert.equal(r.ok, true, r.errors.join("; "));
@@ -49,6 +49,17 @@ describe("evaluateEnv — 8-provider coverage", () => {
     assert.equal(r.ok, false);
     assert.match(r.errors.join("\n"), /AI provider key/i);
   });
+  it("fails in production when only manual-only provider keys are set", () => {
+    const r = evaluateEnv(prodEnv({
+      ZAI_API_KEY: "zai-test",
+      CEREBRAS_API_KEY: "cerebras-test",
+      MISTRAL_API_KEY: "mistral-test",
+      TOGETHER_API_KEY: "together-test",
+    }));
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join("\n"), /AI provider key/i);
+  });
+
 
   it("passes when multiple AI keys are set", () => {
     const r = evaluateEnv(prodEnv({
@@ -63,12 +74,12 @@ describe("evaluateEnv — 8-provider coverage", () => {
 // ─── isAIEnabled() / isAIConfigured() ────────────────────────────────────────
 // These tests mock process.env directly and restore it after each test.
 
-describe("isAIEnabled — 8-provider awareness", () => {
+describe("isAIEnabled — automatic provider awareness", () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
     // Restore original env
-    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"]) {
+    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY"]) {
       if (key in originalEnv) {
         process.env[key] = originalEnv[key as keyof typeof originalEnv] as string;
       } else {
@@ -118,6 +129,21 @@ describe("isAIEnabled — 8-provider awareness", () => {
     // isAIConfigured reads from process.env at call time
     assert.equal(isAIConfigured(), false);
   });
+  it("returns false when only manual-only provider keys are set", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.MISTRAL_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.TOGETHER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.ZAI_API_KEY = "zai-test";
+    process.env.CEREBRAS_API_KEY = "cerebras-test";
+    const { isAIConfigured } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), false);
+  });
+
 });
 
 // ─── Error sanitisation: no secret leakage ───────────────────────────────────
@@ -161,14 +187,12 @@ describe("evaluateEnv — preview + DeepSeek only", () => {
 
 // ─── check-env.mjs alignment ─────────────────────────────────────────────────
 
-describe("check-env.mjs — 10-provider policy alignment", () => {
-  it("includes all canonical provider keys in AI_PROVIDER_KEYS (incl. ZAI + CEREBRAS)", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    assert.match(src, /AI_PROVIDER_KEYS/);
-    for (const key of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
-      assert.match(src, new RegExp(key));
-    }
+describe("check-env.mjs — automatic provider policy alignment", () => {
+  it("includes only canonical automatic provider keys in AI_PROVIDER_KEYS", async () => {
+    const { AI_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
+    assert.deepEqual(AI_PROVIDER_API_KEY_ENVS, [
+      "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+    ]);
   });
 
   it("derives AI_PROVIDER_KEYS order from the shared catalog (no local order array)", async () => {
@@ -180,8 +204,7 @@ describe("check-env.mjs — 10-provider policy alignment", () => {
     // The catalog itself is the single source and is in canonical order.
     const { AI_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
     assert.deepEqual(AI_PROVIDER_API_KEY_ENVS, [
-      "ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
-      "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+      "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
     ]);
   });
 
@@ -194,13 +217,13 @@ describe("check-env.mjs — 10-provider policy alignment", () => {
   });
 });
 
-// ─── AIEnvironmentReadiness — 8-provider chain ───────────────────────────────
+// ─── AIEnvironmentReadiness — automatic provider chain ──────────────────────
 
 describe("getAIEnvironmentReadiness — DeepSeek support", () => {
   const savedEnv = { ...process.env };
 
   afterEach(() => {
-    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"]) {
+    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY"]) {
       if (key in savedEnv) {
         process.env[key] = savedEnv[key as keyof typeof savedEnv] as string;
       } else {

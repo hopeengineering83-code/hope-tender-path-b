@@ -10,7 +10,7 @@
 
 - Branch `audit/consolidate-prs-733-736` was 1 commit ahead of main.
 - That commit (`b1b51b9`) introduced `lib/ai-provider-policy.ts` with the WRONG Gemini-first 6-provider chain.
-- This audit replaces it with the correct Mistral-first 8-provider chain and hardens health, error classification, and timeout handling.
+- This audit replaces it with the legacy Mistral-first 8-provider chain that has since been superseded by the canonical automatic chain and hardens health, error classification, and timeout handling.
 
 ---
 
@@ -27,7 +27,7 @@
 | 7 | DeepSeek | `DEEPSEEK_API_KEY` | HTTP 402 (billing) |
 | 8 | Claude/Anthropic | `ANTHROPIC_API_KEY` | Timeout ~3000ms |
 
-**Display string:** `Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude`
+**Display string:** `Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude`
 
 ---
 
@@ -49,7 +49,7 @@
 ## Files Changed
 
 ### New file
-- `lib/ai-provider-policy.ts` — Canonical Mistral-first 8-provider policy (replaces wrong Gemini-first 6-provider version)
+- `lib/ai-provider-policy.ts` — Historical Mistral-first 8-provider policy; superseded by the current Gemini-first 6-provider automatic policy
 
 ### Modified files
 - `lib/ai-provider-health.ts` — Added BILLING error category, `lastPingSucceededAt` / `lastGenerationSucceededAt` tracking, `recordProviderPingSuccess` function

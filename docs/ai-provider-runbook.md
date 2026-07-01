@@ -7,11 +7,10 @@ for provider identity, order, and configuration is the authoritative registry
 ## Canonical order
 
 ```
-Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude → deterministic draft fallback
+Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude → deterministic draft fallback
 ```
 
-The first five are the currently-working providers. Anthropic/Claude is the
-last-resort, emergency-only provider. The deterministic draft fallback is NOT
+Z.ai, Cerebras, Mistral, and Together are manual diagnostics/adapters only, not automatic fallbacks. Anthropic/Claude is the last automatic provider. The deterministic draft fallback is NOT
 an AI provider and its output can never pass final proposal export gates.
 
 ## Environment variables (set in Vercel → Settings → Environment Variables)

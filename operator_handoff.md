@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-01 UTC — ChatGPT
 
+- **Mode:** follow-up hardening
+- **Branch / PR:** `codex/fix-release-safety-pr` / PR metadata to be updated after commit
+- **Scope:** closed remaining provider-policy gaps from the prior commit by making automatic readiness use only the canonical Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic chain; keeping Z.ai, Cerebras, Mistral, and Together manual-only; aligning readiness, env checks, docs, runbooks, drift-audit script, and regression tests.
+- **Files changed:** `.env.example`, `docs/ai-provider-order.md`, AI provider runbooks/audit docs, `lib/ai-provider-registry.ts`, `lib/env-check.ts`, `lib/ai-environment-readiness.ts`, provider-policy scripts, and provider/env tests.
+- **Tests:** `npx tsx --test tests/ai-provider-chain-policy.test.ts tests/ai-provider-registry.test.ts tests/ai-provider-health.test.ts tests/ai-provider-health-order-alignment.test.ts tests/release-role-policy.test.ts tests/mistral-together-providers.test.ts tests/deepseek-provider-visibility.test.ts tests/provider-status.test.ts tests/environment-variable-reconciliation.test.ts tests/ai-provider-fallback.test.ts` passed; `node scripts/reconcile-gap-closure.mjs` passed; `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/hope_tender_path npx tsc --noEmit --pretty false` passed.
+- **CI / deployment:** not checked; no deployment run.
+- **Known risk:** this checkout still has no configured git remote, so pushing requires repository remote configuration outside this container.
+- **Next action:** push branch, open/update the GitHub PR, and run CI before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-01 UTC — ChatGPT
+
 - **Mode:** code hardening
 - **Branch / PR:** `codex/fix-release-safety-pr` / PR metadata to be created after commit
 - **Scope:** enforced release-safety provider and role policy by limiting the automatic AI provider chain to Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic; kept Z.ai, Cerebras, Mistral, and Together as manual-only adapters; removed REVIEWER from release/build/generation mutation routes; added role-policy regression coverage.

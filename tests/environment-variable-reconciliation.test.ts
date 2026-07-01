@@ -6,7 +6,7 @@
  * 2. Uses the correct names and coupling rules
  * 3. Never leaks secrets to client bundles
  * 4. Fails safely on invalid values
- * 5. Preserves exact provider order
+ * 5. Preserves exact automatic provider order
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -49,39 +49,24 @@ describe("Environment Variable Reconciliation", () => {
   });
 
   describe("Canonical Provider Order Preservation", () => {
-    it("preserves exact provider order: ZAI → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic", () => {
-      const order = [
-        "zai",
-        "cerebras",
-        "mistral",
-        "groq",
-        "openrouter",
-        "gemini",
-        "openai",
-        "together",
-        "deepseek",
-        "anthropic",
-      ];
+    it("preserves exact automatic provider order: Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic", () => {
+      const order = ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"];
       const envKeyNames = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
         "OPENAI_API_KEY",
-        "TOGETHER_API_KEY",
+        "GROQ_API_KEY",
         "DEEPSEEK_API_KEY",
         "ANTHROPIC_API_KEY",
       ];
 
-      assert.equal(order.length, 10);
-      assert.equal(envKeyNames.length, 10);
-      assert.equal(envKeyNames[order.indexOf("zai")], "ZAI_API_KEY");
+      assert.equal(order.length, 6);
+      assert.equal(envKeyNames.length, 6);
+      assert.equal(envKeyNames[order.indexOf("gemini")], "GEMINI_API_KEY");
       assert.equal(envKeyNames[order.indexOf("anthropic")], "ANTHROPIC_API_KEY");
     });
 
-    it("enforces Anthropic as the LAST provider (emergency-only to prevent rate-limit blocking)", () => {
+    it("enforces Anthropic as the LAST automatic provider", () => {
       const env = {
         NODE_ENV: "production",
         VERCEL_ENV: "production",
@@ -118,7 +103,8 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(resultWith.ok);
 
       const resultWithout = evaluateEnv(envWithoutKey);
-      assert.ok(resultWithout.warnings.some((w) => w.includes("ZAI")));
+      assert.ok(resultWithout.ok);
+      assert.ok(resultWithout.warnings.some((w) => w.includes("GEMINI_API_KEY")));
     });
 
     it("ANTHROPIC_TIER correctly gates ANTHROPIC_MAX_OUTPUT_TOKENS and timeout defaults", () => {

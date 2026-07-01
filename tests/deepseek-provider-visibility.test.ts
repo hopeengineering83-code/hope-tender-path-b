@@ -142,15 +142,15 @@ describe("/api/ai/health route contract", () => {
   it("exposes every registry provider (including deepseek) with rank + model", () => {
     const source = readFileSync("app/api/ai/health/route.ts", "utf8");
     // The route builds provider objects from the registry, so deepseek is
-    // included automatically with its registry rank (9) and model.
+    // included automatically with its registry rank (5) and model.
     assert.match(source, /getCanonicalProviderEntries/);
     assert.match(source, /fallbackRank:\s*entry\.rank/);
     assert.match(source, /model:\s*getProviderModel/);
     assert.match(source, /fallbackChain:/);
     assert.match(source, /CANONICAL_AI_FALLBACK_CHAIN_DISPLAY/);
-    // deepseek is rank 9 in the canonical registry order.
+    // deepseek is rank 5 in the canonical automatic registry order.
     const { getProviderEntry } = require("../lib/ai-provider-registry");
-    assert.equal(getProviderEntry("deepseek").rank, 9);
+    assert.equal(getProviderEntry("deepseek").rank, 5);
   });
 
   it("AIHealthPanel renders all registry cards (including DeepSeek) with messaging", () => {

@@ -254,10 +254,16 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
 });
 
 // Emergency-only flag
-describe("emergency-only provider flag", () => {
-  it("only anthropic is emergency-only", () => {
+describe("manual-only provider flag", () => {
+  it("no automatic provider is marked emergency-only", () => {
     for (const entry of getCanonicalProviderEntries()) {
-      assert.equal(entry.emergencyOnly, entry.provider === "anthropic", `${entry.provider} emergencyOnly mismatch`);
+      assert.equal(entry.emergencyOnly, false, `${entry.provider} must remain an automatic fallback`);
+    }
+  });
+
+  it("providers outside the automatic chain are manual/emergency-only", () => {
+    for (const provider of ["zai", "cerebras", "mistral", "together"] as const) {
+      assert.equal(getProviderEntry(provider).emergencyOnly, true, `${provider} must not be automatic`);
     }
   });
 });

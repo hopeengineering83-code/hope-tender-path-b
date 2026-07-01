@@ -38,38 +38,38 @@ function status(name: string, scope: AIEnvironmentVariableStatus["scope"], sever
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
-    status("ZAI_API_KEY", "ai", "critical", `First-tier provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}). Z.ai GLM via the general OpenAI-compatible endpoint.`),
+    status("ZAI_API_KEY", "ai", "optional", "Manual-only Z.ai diagnostics/adapters; not part of automatic fallback readiness."),
     status("ZAI_BASE_URL", "ai", "optional", "Z.ai general API base URL (default: https://api.z.ai/api/paas/v4)."),
     status("ZAI_PROPOSAL_MODEL", "ai", "optional", "Z.ai proposal model (default: glm-4-flash)."),
     status("ZAI_ANALYSIS_MODEL", "ai", "optional", "Z.ai analysis model (default: glm-4-flash)."),
     status("ZAI_FAST_MODEL", "ai", "optional", "Z.ai fast model (default: glm-4-flash)."),
-    status("CEREBRAS_API_KEY", "ai", "critical", "Second-tier provider. Cerebras via OpenAI-compatible endpoint (uses max_completion_tokens)."),
+    status("CEREBRAS_API_KEY", "ai", "optional", "Manual-only Cerebras diagnostics/adapters; not part of automatic fallback readiness."),
     status("CEREBRAS_BASE_URL", "ai", "optional", "Cerebras API base URL (default: https://api.cerebras.ai/v1)."),
     status("CEREBRAS_PROPOSAL_MODEL", "ai", "optional", "Cerebras proposal model (default: gpt-oss-120b)."),
     status("CEREBRAS_ANALYSIS_MODEL", "ai", "optional", "Cerebras analysis model (default: gpt-oss-120b)."),
     status("CEREBRAS_FAST_MODEL", "ai", "optional", "Cerebras fast model (default: gpt-oss-120b)."),
-    status("MISTRAL_API_KEY", "ai", "critical", `Third-tier provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}). Verified working; used for analysis, extraction, proposal, validation.`),
+    status("MISTRAL_API_KEY", "ai", "optional", "Manual-only Mistral diagnostics/adapters; not part of automatic fallback readiness."),
     status("MISTRAL_PROPOSAL_MODEL", "ai", "optional", "Mistral proposal model (default: mistral-large-latest)."),
     status("MISTRAL_ANALYSIS_MODEL", "ai", "optional", "Mistral analysis model override."),
     status("MISTRAL_FAST_MODEL", "ai", "optional", "Mistral fast/cheap model override."),
-    status("GROQ_API_KEY", "ai", "critical", "Second-tier provider — fastest verified working provider. Uses llama-3.3-70b-versatile by default."),
+    status("GROQ_API_KEY", "ai", "critical", `Fourth-tier automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}). Uses llama-3.3-70b-versatile by default.`),
     status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile)."),
-    status("OPENROUTER_API_KEY", "ai", "critical", "Third-tier aggregator provider — routes via high-quality models via OpenAI-compatible API."),
+    status("OPENROUTER_API_KEY", "ai", "critical", `Second-tier automatic aggregator in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("OPENROUTER_PROPOSAL_MODEL", "ai", "recommended", "OpenRouter model — MUST be an explicit ':free' model. 'openrouter/auto' and non-':free' models are rejected to prevent paid usage."),
-    status("GEMINI_API_KEY", "ai", "critical", "Fourth-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases."),
+    status("GEMINI_API_KEY", "ai", "critical", `First-tier automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("GEMINI_MODEL", "ai", "recommended", "Default Gemini model for general AI calls."),
     status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
     status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),
     status("GEMINI_FALLBACK_MODELS", "ai", "recommended", "Fallback Gemini model chain."),
-    status("OPENAI_API_KEY", "ai", "critical", "Fifth-tier provider in the canonical chain."),
+    status("OPENAI_API_KEY", "ai", "critical", `Third-tier automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
-    status("TOGETHER_API_KEY", "ai", "optional", "Sixth-tier fallback provider via OpenAI-compatible Together endpoint."),
+    status("TOGETHER_API_KEY", "ai", "optional", "Manual-only Together diagnostics/adapters; not part of automatic fallback readiness."),
     status("TOGETHER_PROPOSAL_MODEL", "ai", "optional", "Together proposal model override."),
     status("TOGETHER_ANALYSIS_MODEL", "ai", "optional", "Together analysis model override."),
     status("TOGETHER_FAST_MODEL", "ai", "optional", "Together fast/cheap model override."),
-    status("DEEPSEEK_API_KEY", "ai", "optional", "Seventh-tier fallback provider via OpenAI-compatible DeepSeek endpoint."),
+    status("DEEPSEEK_API_KEY", "ai", "critical", `Fifth-tier automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
-    status("ANTHROPIC_API_KEY", "ai", "recommended", "Last-resort provider (eighth in default chain). Placed last to avoid Anthropic rate limits blocking the app when other providers are available."),
+    status("ANTHROPIC_API_KEY", "ai", "critical", `Sixth and last automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
     status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
@@ -84,9 +84,9 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
-  // Provider chain, generated directly from the registry in canonical order
-  // (zai → cerebras → mistral → groq → openrouter → gemini → openai → together
-  // → deepseek → anthropic). Only configured providers appear.
+  // Provider chain, generated directly from the registry in canonical automatic
+  // order (gemini → openrouter → openai → groq → deepseek → anthropic). Only
+  // configured automatic providers appear.
   const providerChain: string[] = [];
   for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
     if (!isProviderConfigured(provider)) continue;
@@ -102,7 +102,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
 
   const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
   if (!anyProviderConfigured) {
-    const keyNames = Object.values(getProviderRegistry()).map((e) => e.env.apiKey).join(", ");
+    const keyNames = CANONICAL_AI_PROVIDER_ORDER.map((p) => getProviderRegistry()[p].env.apiKey).join(", ");
     blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");

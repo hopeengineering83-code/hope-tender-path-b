@@ -958,7 +958,7 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the default chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude).
+// DeepSeek provider in the default chain (Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each

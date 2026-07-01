@@ -4,7 +4,7 @@
 
 Use this runbook when **every** configured AI provider is unavailable at the
 same time. The Hope Tender Path app depends on at least one working provider in
-the canonical chain (`Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → …`).
+the canonical automatic chain (`Gemini → OpenRouter → OpenAI → Groq → DeepSeek → …`).
 When the entire chain is exhausted, the app degrades to the deterministic draft
 fallback, which **cannot** pass final proposal export gates.
 

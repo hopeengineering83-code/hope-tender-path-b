@@ -1,33 +1,29 @@
 # AI provider order
 
-This document is the canonical operator-facing description of the app's current AI provider priority. The single source of truth is the authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`). Every other surface — `lib/ai.ts`, `lib/ai-provider-policy.ts`, `lib/ai-provider-health.ts`, `/api/ai/health`, admin health routes, environment checks, and the AI Health panel — derives its order from that registry. There are no separate hardcoded order arrays.
+This document is the canonical operator-facing description of the app's current AI provider priority. The single source of truth is the authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`). Every automatic fallback surface — `lib/ai.ts`, `lib/ai-provider-policy.ts`, `lib/ai-provider-health.ts`, `/api/ai/health`, admin health routes, environment checks, and the AI Health panel — derives its order from that registry. There are no separate hardcoded automatic order arrays.
 
-## Runtime provider chain
+## Automatic runtime provider chain
 
-The app uses this canonical fallback order for AI analysis, extraction, proposal generation, validation, fast, and reasoning use cases:
+The app uses this canonical automatic fallback order for AI analysis, extraction, proposal generation, validation, fast, and reasoning use cases:
 
-1. Z.ai GLM (`zai`)
-2. Cerebras (`cerebras`)
-3. Mistral (`mistral`)
+1. Gemini (`gemini`)
+2. OpenRouter (`openrouter`)
+3. OpenAI (`openai`)
 4. Groq (`groq`)
-5. OpenRouter (`openrouter`)
-6. Gemini (`gemini`)
-7. OpenAI (`openai`)
-8. Together (`together`)
-9. DeepSeek (`deepseek`)
-10. Anthropic / Claude (`anthropic`)
-11. Deterministic draft fallback — only after every configured AI provider has failed, returned no usable result, or is in cooldown. The deterministic fallback is NOT an AI provider and its output is never exportable as a final proposal.
+5. DeepSeek (`deepseek`)
+6. Anthropic / Claude (`anthropic`)
+7. Deterministic draft fallback — only after every configured automatic AI provider has failed, returned no usable result, or is in cooldown. The deterministic fallback is NOT an AI provider and its output is never exportable as a final proposal.
 
-The currently-working providers are the first five: Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter. The remaining providers (Gemini → OpenAI → Together → DeepSeek → Anthropic) remain fully supported and sit, in that exact order, after OpenRouter.
+Z.ai GLM (`zai`), Cerebras (`cerebras`), Mistral (`mistral`), and Together (`together`) remain available as manual diagnostics/adapters where explicitly selected, but they are not automatic fallbacks and must not satisfy automatic runtime readiness.
 
-Anthropic / Claude is intentionally the last AI provider in the chain (an emergency-only, last-resort provider) so Anthropic rate limits do not block the app when earlier providers are configured and available. Do not change this order anywhere except in the registry.
+Anthropic / Claude is intentionally the last automatic AI provider in the chain so earlier providers are preferred. Do not change this order anywhere except in the registry.
 
 ## Vercel Hobby attempt budget
 
 The app runs on Vercel Hobby. Per single request or AI Analyze chunk:
 
 - A maximum of **3 actual outbound provider attempts** are made (`AI_MAX_PROVIDER_ATTEMPTS`, default 3).
-- Unconfigured providers, cooled-down providers, and OpenRouter with an invalid (non-`:free`) model are **skipped without consuming an attempt**.
+- Unconfigured providers, cooled-down providers, manual-only providers, and OpenRouter with an invalid (non-`:free`) model are **skipped without consuming an attempt**.
 - Only real outbound provider requests count toward the budget.
 - One shared deadline applies per route/chunk; at least 5s is reserved for error handling and DB state updates, and fallback providers never run in parallel.
 - Invalid API keys and billing-blocked providers are never retried; rate-limit and transient network failures fail over to the next eligible provider.
@@ -39,25 +35,23 @@ OpenRouter must use an explicit free model. `openrouter/auto` is rejected, and a
 
 ## Preferred provider
 
-The preferred provider is the first CONFIGURED provider in the canonical chain. For example:
+The preferred provider is the first CONFIGURED provider in the canonical automatic chain. For example:
 
-- if `ZAI_API_KEY` is configured, preferred provider is `zai`;
-- else if `CEREBRAS_API_KEY` is configured, preferred provider is `cerebras`;
-- else if `MISTRAL_API_KEY` is configured, preferred provider is `mistral`;
-- else if `GROQ_API_KEY` is configured, preferred provider is `groq`;
+- if `GEMINI_API_KEY` is configured, preferred provider is `gemini`;
 - else if `OPENROUTER_API_KEY` is configured (with a valid `:free` model), preferred provider is `openrouter`;
-- else if `GEMINI_API_KEY` is configured, preferred provider is `gemini`;
 - else if `OPENAI_API_KEY` is configured, preferred provider is `openai`;
-- else if `TOGETHER_API_KEY` is configured, preferred provider is `together`;
+- else if `GROQ_API_KEY` is configured, preferred provider is `groq`;
 - else if `DEEPSEEK_API_KEY` is configured, preferred provider is `deepseek`;
 - else if `ANTHROPIC_API_KEY` is configured, preferred provider is `anthropic`;
 - else preferred provider is `none`, and AI calls fall back to the deterministic draft fallback.
+
+Manual-only keys (`ZAI_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`) do not make a provider preferred and do not unlock automatic fallback readiness.
 
 ## Configured is not the same as runtime-verified
 
 A provider can be in one of the following health states. The dashboard provider-health panel and `/api/ai/health` use these states:
 
-- `not_configured` — the provider's required env var (e.g. `MISTRAL_API_KEY`) is missing or empty. The provider is skipped at runtime.
+- `not_configured` — the provider's required env var (e.g. `GEMINI_API_KEY`) is missing or empty. The provider is skipped at runtime.
 - `configured` — the key is present, but no successful runtime response has been recorded on this serverless instance yet. The provider is NOT healthy/Ready. It will be tried in the chain, but the dashboard must not display a green "Available" pill for it.
 - `runtime_verified` (a.k.a. `usable`) — the provider has produced a recent successful safe runtime response (a real generation call, not just a connectivity ping). Only this state should be shown as Ready / Available / green.
 - `rate_limited` — the most recent failure was a rate-limit (HTTP 429 / quota). The provider is in cooldown and is skipped until the cooldown window expires.
@@ -70,10 +64,10 @@ A provider card showing `Configured — not yet tested on this instance` means t
 
 A provider becomes `runtime_verified` only after AI Analyze, proposal generation, or the provider test action records a successful provider response. Admin connectivity pings (`recordProviderPingSuccess`) clear cooldown but do NOT flip the provider to `runtime_verified` — only a real generation success (`recordProviderSuccess`) does.
 
-The deterministic draft fallback is not a provider health state. It is the final non-AI fallback that runs only after every configured AI provider has failed or is unavailable.
+The deterministic draft fallback is not a provider health state. It is the final non-AI fallback that runs only after every configured automatic AI provider has failed or is unavailable.
 
 ## Documentation note
 
-Older README text or comments that say "Mistral is first", "Gemini is first", "Claude is preferred", or that imply any other ordering are stale. The authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Z.ai GLM is first, Cerebras second, and Anthropic / Claude remains the last AI provider, followed by the deterministic draft fallback.
+Older README text or comments that say "Z.ai is first", "Mistral is first", "Claude is preferred", or that imply any other automatic ordering are stale. The authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Gemini is first, OpenRouter second, OpenAI third, Groq fourth, DeepSeek fifth, and Anthropic / Claude remains the last automatic AI provider, followed by the deterministic draft fallback.
 
 Do not change provider fallback order anywhere except in the registry, and only via an explicit product decision.

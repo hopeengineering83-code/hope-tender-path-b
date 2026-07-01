@@ -5,7 +5,7 @@
 // NoAiProviderReadyError, /api/health separation) accurately reflects the
 // current canonical runtime order, which is owned by the authoritative
 // registry lib/ai-provider-registry.ts (CANONICAL_AI_PROVIDER_ORDER):
-//   Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude
+//   Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude
 // followed by the deterministic draft fallback as the final non-AI fallback.
 
 import { describe, it, before, beforeEach, afterEach } from "node:test";
@@ -57,7 +57,7 @@ describe("lib/ai-provider-policy.ts mirrors the runtime chain", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_CHAIN], [...CANONICAL_CHAIN]);
   });
 
-  it("CANONICAL_AI_PROVIDER_RANK assigns zai=1 ... anthropic=10", () => {
+  it("CANONICAL_AI_PROVIDER_RANK assigns gemini=1 ... anthropic=6", () => {
     CANONICAL_CHAIN.forEach((p, i) => {
       assert.equal(CANONICAL_AI_PROVIDER_RANK[p], i + 1, `${p} rank should be ${i + 1}`);
     });
@@ -267,17 +267,17 @@ describe("/api/health app/database health remains separate from AI provider heal
 describe("docs/ai-provider-order.md reflects the runtime order", () => {
   const doc = readFileSync("docs/ai-provider-order.md", "utf8");
 
-  it("lists Z.ai GLM as #1 and Cerebras as #2", () => {
-    assert.match(doc, /^1\. Z\.ai GLM/m);
-    assert.match(doc, /^2\. Cerebras/m);
+  it("lists Gemini as #1 and OpenRouter as #2", () => {
+    assert.match(doc, /^1\. Gemini/m);
+    assert.match(doc, /^2\. OpenRouter/m);
   });
 
-  it("lists Anthropic / Claude as the tenth (last AI) provider", () => {
-    assert.match(doc, /^10\. Anthropic \/ Claude/m);
+  it("lists Anthropic / Claude as the sixth (last automatic AI) provider", () => {
+    assert.match(doc, /^6\. Anthropic \/ Claude/m);
   });
 
-  it("lists deterministic draft fallback as the eleventh (final non-AI) step", () => {
-    assert.match(doc, /^11\. Deterministic draft fallback/m);
+  it("lists deterministic draft fallback as the seventh (final non-AI) step", () => {
+    assert.match(doc, /^7\. Deterministic draft fallback/m);
     assert.match(doc, /NOT an AI provider/i);
   });
 
@@ -292,8 +292,8 @@ describe("docs/ai-provider-order.md reflects the runtime order", () => {
 describe(".env.example tier labels reflect the runtime order", () => {
   const env = readFileSync(".env.example", "utf8");
 
-  it("header comment lists the canonical order (Z.ai first)", () => {
-    assert.match(env, /Z\.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic\/Claude/);
+  it("header comment lists the canonical automatic order (Gemini first)", () => {
+    assert.match(env, /Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic\/Claude/);
   });
 
   it("includes ZAI and CEREBRAS env vars", () => {
@@ -310,23 +310,29 @@ describe(".env.example tier labels reflect the runtime order", () => {
 describe("scripts/check-env.mjs tier labels reflect the runtime order", () => {
   const src = readFileSync("scripts/check-env.mjs", "utf8");
 
-  it("ZAI_API_KEY description says FIRST-tier", () => {
-    assert.match(src, /ZAI_API_KEY[\s\S]*?FIRST-tier AI provider/);
+  it("GEMINI_API_KEY description says FIRST-tier", () => {
+    assert.match(src, /GEMINI_API_KEY[\s\S]*?FIRST-tier automatic AI provider/);
   });
-  it("CEREBRAS_API_KEY description says SECOND-tier", () => {
-    assert.match(src, /CEREBRAS_API_KEY[\s\S]*?SECOND-tier AI provider/);
+  it("OPENROUTER_API_KEY description says SECOND-tier", () => {
+    assert.match(src, /OPENROUTER_API_KEY[\s\S]*?SECOND-tier automatic aggregator/);
   });
-  it("ANTHROPIC_API_KEY description says TENTH-tier (last) and 'keep Claude last'", () => {
-    assert.match(src, /ANTHROPIC_API_KEY[\s\S]*?TENTH-tier \(last/);
+  it("manual-only provider descriptions say they are not automatic fallbacks", () => {
+    assert.match(src, /ZAI_API_KEY[\s\S]*?Manual diagnostics\/adapters only/);
+    assert.match(src, /CEREBRAS_API_KEY[\s\S]*?Manual diagnostics\/adapters only/);
+    assert.match(src, /MISTRAL_API_KEY[\s\S]*?Manual diagnostics\/adapters only/);
+    assert.match(src, /TOGETHER_API_KEY[\s\S]*?Manual diagnostics\/adapters only/);
+  });
+  it("ANTHROPIC_API_KEY description says SIXTH-tier (last) and keep Claude last", () => {
+    assert.match(src, /ANTHROPIC_API_KEY[\s\S]*?SIXTH-tier \(last/);
     assert.match(src, /Keep Claude last/);
   });
   it("every provider description references the shared canonical chain constant", () => {
     // Descriptions interpolate the shared CANONICAL_CHAIN constant, so the
     // literal string is defined once and referenced via ${CANONICAL_CHAIN} in
-    // each of the 10 provider descriptions.
-    assert.match(src, /const CANONICAL_CHAIN = "Z\.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic\/Claude"/);
+    // each provider description.
+    assert.match(src, /const CANONICAL_CHAIN = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic\/Claude"/);
     const refs = src.match(/\$\{CANONICAL_CHAIN\}/g);
-    assert.ok(refs && refs.length >= 10, `Expected >= 10 references to CANONICAL_CHAIN, got ${refs?.length ?? 0}`);
+    assert.ok(refs && refs.length >= 6, `Expected >= 6 references to CANONICAL_CHAIN, got ${refs?.length ?? 0}`);
   });
 });
 
