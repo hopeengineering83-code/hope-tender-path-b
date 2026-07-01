@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-01 UTC — ChatGPT
 
+- **Mode:** CI follow-up
+- **Branch / PR:** `codex/fix-release-safety-pr` / PR metadata to be updated after commit
+- **Scope:** fixed the controlled PR route check for Codex branches and reconciled stale tests with the approved provider fallback order and REVIEWER mutation-role hardening.
+- **Files changed:** `.github/workflows/branch-policy.yml`, `tests/ai-provider-attempt-budget.test.ts`, `tests/analysis-source-gate.test.ts`, `tests/provider-health-runtime.test.ts`, `tests/recovery-command-center-actions.test.ts`, and `operator_handoff.md`.
+- **Tests:** controlled branch-policy shell check passed; `npx tsx --test tests/ai-provider-attempt-budget.test.ts tests/analysis-source-gate.test.ts tests/provider-health-runtime.test.ts tests/recovery-command-center-actions.test.ts tests/release-role-policy.test.ts` passed; `npm run lint` passed; `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/hope_tender_path npx tsc --noEmit --pretty false` passed; `npm test` passed.
+- **CI / deployment:** CI not checked after local commit; no deployment run.
+- **Known risk:** this checkout still has no configured git remote, so pushing requires repository remote configuration outside this container.
+- **Next action:** push branch and rerun GitHub checks.
+- **Merge status:** not reviewed
+
+### 2026-07-01 UTC — ChatGPT
+
 - **Mode:** follow-up hardening
 - **Branch / PR:** `codex/fix-release-safety-pr` / PR metadata to be updated after commit
 - **Scope:** closed remaining provider-policy gaps from the prior commit by making automatic readiness use only the canonical Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic chain; keeping Z.ai, Cerebras, Mistral, and Together manual-only; aligning readiness, env checks, docs, runbooks, drift-audit script, and regression tests.

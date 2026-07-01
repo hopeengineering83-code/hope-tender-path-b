@@ -47,7 +47,8 @@ describe("approve-analysis route — source inspection", () => {
     const source = readFileSync("app/api/tenders/[id]/approve-analysis/route.ts", "utf8");
     assert.match(source, /approveRegexFallbackAnalysis/);
     assert.match(source, /revokeRegexFallbackApproval/);
-    assert.match(source, /requireRole\(\s*"ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\s*\)/);
+    assert.match(source, /requireRole\(\s*"ADMIN",\s*"PROPOSAL_MANAGER"\s*\)/);
+    assert.doesNotMatch(source, /requireRole\(\s*"ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\s*\)/);
   });
 });
 
