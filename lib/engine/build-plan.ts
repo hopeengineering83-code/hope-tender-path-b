@@ -10,6 +10,88 @@ export type BuildPlanDraftResult =
   | { ok: false; code: string; message: string; status: number };
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRICT METADATA EVIDENCE VALIDATOR
+// ═══════════════════════════════════════════════════════════════════════════
+// For every policy-critical metadata field, requires:
+// - valid non-placeholder value
+// - ACTIVE TenderFile ID belonging to this tender
+// - valid page number
+// - meaningful source quote
+// - normalized quote actually contained in that same ACTIVE TenderFile extracted text
+// Used in: BuildPlan preflight, confirmation, generation readiness, export, final ZIP.
+
+export type MetadataEvidenceValidation = { ok: boolean; blockers: string[] };
+
+export function validateCriticalMetadataEvidenceForBuildPlan(
+  tender: {
+    clientName?: string | null;
+    clientNameSourceFileId?: string | null;
+    clientNameSourcePage?: number | null;
+    clientNameSourceQuote?: string | null;
+    submissionMethod?: string | null;
+    submissionMethodSourceFileId?: string | null;
+    submissionMethodSourcePage?: number | null;
+    submissionMethodSourceQuote?: string | null;
+    submissionAddress?: string | null;
+    submissionAddressSourceFileId?: string | null;
+    submissionAddressSourcePage?: number | null;
+    submissionAddressSourceQuote?: string | null;
+    submissionEmails?: string | null;
+    submissionEmailSourceFileId?: string | null;
+    submissionEmailSourcePage?: number | null;
+  },
+  activeFiles: Array<{ id: string; extractedText?: string | null }>,
+): MetadataEvidenceValidation {
+  const blockers: string[] = [];
+  const activeFileMap = new Map(activeFiles.map((f) => [f.id, f]));
+  const activeFileIds = new Set(activeFiles.map((f) => f.id));
+
+  function checkField(
+    label: string,
+    value: string | null | undefined,
+    sourceFileId: string | null | undefined,
+    sourcePage: number | null | undefined,
+    sourceQuote: string | null | undefined,
+    requireQuote: boolean = true,
+  ) {
+    if (!value || !value.trim()) {
+      blockers.push(`Critical metadata field ${label} has no value.`);
+      return;
+    }
+    if (!sourceFileId || !activeFileIds.has(sourceFileId)) {
+      blockers.push(`Critical metadata field ${label} has no active TenderFile source evidence.`);
+      return;
+    }
+    if (typeof sourcePage !== "number" || sourcePage < 1) {
+      blockers.push(`Critical metadata field ${label} has invalid source page.`);
+      return;
+    }
+    if (requireQuote) {
+      const quote = (sourceQuote ?? "").trim();
+      if (quote.length < 10) {
+        blockers.push(`Critical metadata field ${label} has no meaningful source quote.`);
+        return;
+      }
+      // QUOTE CONTAINMENT: normalized quote must be in the file's extracted text
+      const file = activeFileMap.get(sourceFileId!);
+      const fileText = String(file?.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+      const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+      if (fileText.length === 0 || !fileText.includes(normalizedQuote)) {
+        blockers.push(`Critical metadata field ${label} source quote is not contained in the referenced active TenderFile extracted text.`);
+      }
+    }
+  }
+
+  checkField("clientName", tender.clientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote);
+  checkField("submissionMethod", tender.submissionMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
+  checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+  checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, null, false);
+
+  return { ok: blockers.length === 0, blockers };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PREFLIGHT: assertTenderReadyToDraftBuildPlan
 // ═══════════════════════════════════════════════════════════════════════════
@@ -73,19 +155,14 @@ export async function assertTenderReadyToDraftBuildPlan(
     return { ok: false, code: "ANALYSIS_HASH_MISMATCH", message: "Tender content changed since the last analysis. Re-run AI Analyze.", status: 422 };
   }
 
-  // 6. Critical metadata — must be present, non-placeholder, AND source-grounded
-  // Uses the canonical resolveCanonicalFieldState (same as the central gate) so
-  // the preflight and gate never disagree on what counts as "grounded".
-  // For every critical field, requires: valid value, ACTIVE TenderFile ID,
-  // valid page, meaningful quote, and quote actually contained in that file's
-  // extracted text. Manual USER_EDITED/USER_CONFIRMED values must NOT authorize
-  // a draft unless policy permits AND active-file source evidence is valid.
-  const { resolveCanonicalFieldState } = await import("./canonical-field-state");
-  const overrides = await prisma.tenderMetadataOverride.findMany({ where: { tenderId }, select: { field: true, fieldState: true, overrideValue: true } }).catch(() => []);
-  const canonicalState = resolveCanonicalFieldState({ tender: tender as any, overrides: overrides as any[], hasExtractedRequirements: tender.requirements.length > 0, submissionMethodContext: tender.submissionMethod ?? undefined });
-  if (canonicalState.hasGenerationBlocker) {
-    const blockerFields = canonicalState.fields.filter((f: any) => f.blockerReason).map((f: any) => f.field).slice(0, 5);
-    return { ok: false, code: "METADATA_CRITICAL_FIELD_INVALID", message: `Critical metadata fields are missing, invalid, or not source-grounded: ${blockerFields.join(", ")}. Fill them from active tender source evidence before building a Build Plan.`, status: 422 };
+  // 6. STRICT CRITICAL METADATA EVIDENCE — must be present, non-placeholder,
+  // AND source-grounded with ACTIVE TenderFile + valid page + meaningful quote
+  // actually contained in that file's extracted text.
+  // Uses validateCriticalMetadataEvidenceForBuildPlan — one shared strict
+  // validator for BuildPlan preflight, confirmation, and release gates.
+  const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(tender as any, tender.files as any[]);
+  if (!metaValidation.ok) {
+    return { ok: false, code: "METADATA_CRITICAL_FIELD_INVALID", message: `Critical metadata evidence validation failed: ${metaValidation.blockers.join("; ")}`, status: 422 };
   }
 
   // 7. Mandatory requirements grounded by ACTIVE TenderFile + valid page + meaningful quote contained in file text

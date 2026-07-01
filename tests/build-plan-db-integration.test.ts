@@ -52,6 +52,14 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
         submissionEmails: "submission@example.com",
         submissionEmailSubject: "Tender Submission",
         deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        // Source grounding for critical metadata
+        clientNameSourcePage: 1,
+        clientNameSourceQuote: "This tender requires a Technical Proposal.",
+        submissionMethodSourcePage: 1,
+        submissionMethodSourceQuote: "This tender requires a Technical Proposal.",
+        submissionAddressSourcePage: 1,
+        submissionAddressSourceQuote: "This tender requires a Technical Proposal.",
+        submissionEmailSourcePage: 1,
       },
     });
     tenderId = tender.id;
@@ -72,6 +80,16 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
       },
     });
     fileId = file.id;
+    // Link critical metadata sourceFileId to the active file
+    await prisma.tender.update({
+      where: { id: tenderId },
+      data: {
+        clientNameSourceFileId: fileId,
+        submissionMethodSourceFileId: fileId,
+        submissionAddressSourceFileId: fileId,
+        submissionEmailSourceFileId: fileId,
+      },
+    });
     // Create a MANDATORY requirement with source grounding tied to the active file.
     await prisma.tenderRequirement.create({
       data: {

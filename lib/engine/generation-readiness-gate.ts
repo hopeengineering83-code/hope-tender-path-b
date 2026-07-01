@@ -267,13 +267,10 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // G — Critical metadata: every critical field (clientName, title, deadline,
-  //     submissionMethod, submissionEndpoint, requiredDocuments) must be valid,
-  //     non-placeholder, non-contaminated, and either source-grounded or
-  //     source-confirmed. Manual candidates (USER_EDITED) and ungrounded
-  //     USER_CONFIRMED values are not sufficient for critical fields.
+  // G — Critical metadata: validated by validateCriticalMetadataEvidenceForBuildPlan
+  //     in the DB-backed assembly. If criticalMetadataOk is false, block.
   if (!input.criticalMetadataOk) {
-    return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, contaminated, or a manual candidate without active tender-source evidence. Resolve all critical fields before generating or exporting.");
+    return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, or not source-grounded with active tender file evidence (page + quote + containment). Resolve all critical fields before generating or exporting.");
   }
 
   // F — Requirement and source grounding.
