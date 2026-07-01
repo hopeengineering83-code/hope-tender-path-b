@@ -125,8 +125,8 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
     }
   } else {
-    // Unknown method: default to address (safest)
-    checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+    // Unknown/empty/malformed submission method: BLOCK — do not fall back.
+    blockers.push(`Unsupported or unknown submission method: "${tender.submissionMethod ?? ""}". Only email, physical, or portal methods are supported.`);
   }
 
   return { ok: blockers.length === 0, blockers };

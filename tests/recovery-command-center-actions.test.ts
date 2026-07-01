@@ -451,6 +451,10 @@ describe("Recovery Command Center — REVIEWER role parity on Execute-path route
     "GENERATE_REQUIRED_DOCUMENTS",
     "RECONCILE_OUTSIDE_PLAN_DOCS",
     "REPAIR_DOCUMENT_QUALITY",
+    "REPAIR_METADATA",
+    "REPAIR_SOURCE_REFERENCES",
+    "VALIDATE_DOCS",
+    "LINK_VAULT_EVIDENCE",
   ]);
 
   for (const { action, file } of EXECUTE_PATH_ROUTES) {

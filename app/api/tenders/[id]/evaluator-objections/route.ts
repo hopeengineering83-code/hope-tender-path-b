@@ -23,7 +23,7 @@ function normalizeNote(value: unknown): string {
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
@@ -62,7 +62,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();

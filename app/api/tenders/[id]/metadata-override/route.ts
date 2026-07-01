@@ -28,7 +28,7 @@ function err(message: string, status = 400, code = "METADATA_OVERRIDE_ERROR") {
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;

@@ -23,7 +23,7 @@ export async function POST(
   try {
     let actor;
     try {
-      actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
+      actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();

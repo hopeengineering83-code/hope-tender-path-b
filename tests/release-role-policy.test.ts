@@ -10,10 +10,21 @@ const MUTATION_ROUTES = [
   "app/api/tenders/[id]/documents/[docId]/attach-original/route.ts",
   "app/api/tenders/[id]/supersede-outside-plan/route.ts",
   "app/api/tenders/[id]/link-vault-evidence/route.ts",
+  "app/api/tenders/[id]/link-vault-evidence-auto/route.ts",
   "app/api/tenders/[id]/submission-plan/build/route.ts",
   "app/api/tenders/[id]/generate-missing-plan-files/route.ts",
   "app/api/tenders/[id]/build-plan/route.ts",
   "app/api/tenders/[id]/build-plan/confirm/route.ts",
+  "app/api/tenders/[id]/download/route.ts",
+  "app/api/tenders/[id]/metadata-override/route.ts",
+  "app/api/tenders/[id]/repair-source-grounding/route.ts",
+  "app/api/tenders/[id]/repair-metadata/route.ts",
+  "app/api/tenders/[id]/validate/route.ts",
+  "app/api/tenders/[id]/authority-review/route.ts",
+  "app/api/tenders/[id]/evaluator-objections/route.ts",
+  "app/api/tenders/[id]/advisory-resolutions/route.ts",
+  "app/api/tenders/[id]/requirement-coverage/route.ts",
+  "app/api/tenders/[id]/gaps/[gapId]/route.ts",
 ];
 
 describe("release-authority mutation routes exclude REVIEWER", () => {
@@ -21,7 +32,8 @@ describe("release-authority mutation routes exclude REVIEWER", () => {
     it(`${file} does not grant REVIEWER mutation authority`, () => {
       assert.equal(existsSync(file), true, `${file} must exist`);
       const source = readFileSync(file, "utf8");
-      assert.doesNotMatch(source, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\)/);
+      assert.doesNotMatch(source, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\)/,
+        `${file} must NOT grant REVIEWER mutation authority`);
     });
   }
 });

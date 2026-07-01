@@ -48,7 +48,7 @@ function jsonError(message: string, status = 500, extra: Record<string, unknown>
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
     await prismaReady;
     const { id } = await params;
@@ -83,7 +83,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`advisory-resolutions:${actor.id}`, MUTATION_RATE_LIMIT);
