@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
+import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
@@ -99,17 +100,25 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
   checkField("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote);
   checkField("submissionMethod", tender.submissionMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
 
-  // SUBMISSION-METHOD-DRIVEN: only check the applicable endpoint.
-  const method = (tender.submissionMethod ?? "").toLowerCase();
-  if (method.includes("email")) {
+  // SUBMISSION-METHOD-DRIVEN: use policy helpers, not substring heuristics.
+  const method = tender.submissionMethod;
+  if (isEmailSubmissionMethod(method)) {
     checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
-  } else if (method.includes("physical") || method.includes("hard") || method.includes("address") || method.includes("mail")) {
+  } else if (isPhysicalSubmissionMethod(method)) {
     checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
-  } else if (method.includes("portal") || method.includes("online")) {
-    if (!tender.submissionAddress && !tender.submissionEmails) {
-      blockers.push("Portal submission requires at least one submission endpoint (address or email).");
+  } else if (isPortalSubmissionMethod(method)) {
+    // Portal: require one fully grounded declared endpoint
+    const hasEmail = tender.submissionEmails && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage;
+    const hasAddress = tender.submissionAddress && tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage;
+    if (!hasEmail && !hasAddress) {
+      blockers.push("Portal submission requires at least one fully grounded endpoint (email or address with source file + page).");
+    } else if (hasEmail) {
+      checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+    } else {
+      checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
     }
   } else {
+    // Unknown method: default to address (safest)
     checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
   }
 
@@ -245,10 +254,13 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
     where: { id: tenderId, userId },
     select: {
       id: true, title: true, reference: true, exactFileNaming: true, exactFileOrder: true, submissionMethod: true, submissionAddress: true, submissionEmails: true, submissionEmailSubject: true, deadline: true,
+      procuringEntityName: true,
       clientName: true, clientNameSourceFileId: true, clientNameSourcePage: true, clientNameSourceQuote: true,
       submissionMethodSourceFileId: true, submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
       submissionAddressSourceFileId: true, submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
-      submissionEmailSourceFileId: true, submissionEmailSourcePage: true,
+      submissionEmailSourceFileId: true, submissionEmailSourcePage: true, submissionEmailSourceQuote: true,
+      titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true,
+      deadlineSourceFileId: true, deadlineSourcePage: true, deadlineSourceQuote: true,
       files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true } },
       requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },
@@ -371,6 +383,11 @@ export async function validateBuildPlanForConfirmation(prisma: PrismaClient, ten
   for (const authoritative of authoritativeItems) {
     if (!items.some((item) => planItemKey(item) === planItemKey(authoritative))) blockers.push(`${authoritative.exactFileName} is missing from the Build Plan.`);
   }
+  // STRICT CRITICAL METADATA EVIDENCE: run the same shared validator.
+  const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(tender as any, tender.files.filter((f: any) => f.deletionStatus === "ACTIVE"));
+  if (!metaValidation.ok) {
+    blockers.push(...metaValidation.blockers);
+  }
   return { ok: blockers.length === 0, blockers };
 }
 
@@ -379,8 +396,21 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   if (!plan) return { ok: false as const, blocker: "No confirmed Build Plan exists." };
   const items = JSON.parse(plan.itemsJson || "[]") as BuildPlanItem[];
   const currentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
-  const ok = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
-  return ok ? { ok: true as const, plan, currentHash } : { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
+  const hashOk = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
+  if (!hashOk) return { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
+  // STRICT CRITICAL METADATA EVIDENCE: even if hash matches, reject if
+  // metadata evidence is no longer valid (e.g., source file was deleted).
+  const fullTender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: { files: { where: { deletionStatus: "ACTIVE" } } },
+  });
+  if (fullTender) {
+    const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[]);
+    if (!metaValidation.ok) {
+      return { ok: false as const, blocker: `Confirmed Build Plan metadata evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
+    }
+  }
+  return { ok: true as const, plan, currentHash };
 }
 
 

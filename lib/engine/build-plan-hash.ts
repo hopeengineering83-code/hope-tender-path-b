@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 
 /**
  * Single shared, deterministic hash for the canonical Build Plan.
@@ -276,16 +277,34 @@ export function buildCanonicalBuildPlanHashInput(
   input.items = items;
 
   // Derive metadata evidence from ALL policy-critical source fields.
-  // Evidence state is based on actual validation (file ID + page + quote),
-  // not merely sourceFileId existence.
-  input.metadataEvidence = [
+  // Only include APPLICABLE endpoint fields based on submission method policy.
+  // Evidence state is GROUNDED only when file ID + page + quote all exist.
+  const method = tender.submissionMethod;
+  const evidence: BuildPlanHashMetadataEvidence[] = [
     { fieldKey: "title", effectiveValue: tender.title ?? null, sourceTenderFileId: (tender as any).titleSourceFileId ?? null, sourcePage: (tender as any).titleSourcePage ?? null, sourceQuote: (tender as any).titleSourceQuote ?? null, evidenceState: ((tender as any).titleSourceFileId && (tender as any).titleSourcePage && (tender as any).titleSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
     { fieldKey: "clientName", effectiveValue: tender.clientName ?? null, sourceTenderFileId: tender.clientNameSourceFileId ?? null, sourcePage: tender.clientNameSourcePage ?? null, sourceQuote: tender.clientNameSourceQuote ?? null, evidenceState: (tender.clientNameSourceFileId && tender.clientNameSourcePage && tender.clientNameSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
     { fieldKey: "deadline", effectiveValue: tender.deadline ? new Date(tender.deadline).toISOString() : null, sourceTenderFileId: (tender as any).deadlineSourceFileId ?? null, sourcePage: (tender as any).deadlineSourcePage ?? null, sourceQuote: (tender as any).deadlineSourceQuote ?? null, evidenceState: ((tender as any).deadlineSourceFileId && (tender as any).deadlineSourcePage && (tender as any).deadlineSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
     { fieldKey: "submissionMethod", effectiveValue: tender.submissionMethod ?? null, sourceTenderFileId: tender.submissionMethodSourceFileId ?? null, sourcePage: tender.submissionMethodSourcePage ?? null, sourceQuote: tender.submissionMethodSourceQuote ?? null, evidenceState: (tender.submissionMethodSourceFileId && tender.submissionMethodSourcePage && tender.submissionMethodSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
-    { fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
-    { fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails ?? null, sourceTenderFileId: tender.submissionEmailSourceFileId ?? null, sourcePage: tender.submissionEmailSourcePage ?? null, sourceQuote: (tender as any).submissionEmailSourceQuote ?? null, evidenceState: (tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage && (tender as any).submissionEmailSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
   ];
+  // Only include APPLICABLE endpoint fields — changing a non-applicable
+  // endpoint must NOT stale the plan.
+  if (isEmailSubmissionMethod(method)) {
+    evidence.push({ fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails ?? null, sourceTenderFileId: tender.submissionEmailSourceFileId ?? null, sourcePage: tender.submissionEmailSourcePage ?? null, sourceQuote: (tender as any).submissionEmailSourceQuote ?? null, evidenceState: (tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage && (tender as any).submissionEmailSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+  } else if (isPhysicalSubmissionMethod(method)) {
+    evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+  } else if (isPortalSubmissionMethod(method)) {
+    // Portal: include whichever endpoint exists
+    if (tender.submissionEmails) {
+      evidence.push({ fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails ?? null, sourceTenderFileId: tender.submissionEmailSourceFileId ?? null, sourcePage: tender.submissionEmailSourcePage ?? null, sourceQuote: (tender as any).submissionEmailSourceQuote ?? null, evidenceState: (tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage && (tender as any).submissionEmailSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+    }
+    if (tender.submissionAddress) {
+      evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+    }
+  } else {
+    // Unknown: default to address
+    evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+  }
+  input.metadataEvidence = evidence;
 
   return input;
 }

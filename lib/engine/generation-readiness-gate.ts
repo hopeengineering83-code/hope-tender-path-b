@@ -651,7 +651,20 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       currentHashChunks,
       requirementCount: requirements.length,
       requirements: mappedRequirements,
-      criticalMetadataOk: !fieldStates.hasGenerationBlocker,
+      criticalMetadataOk: !fieldStates.hasGenerationBlocker && (await (async () => {
+        try {
+          const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
+          const fullTender = await prisma.tender.findFirst({
+            where: { id: tenderId, userId },
+            include: {
+              files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true, deletionStatus: true, totalPages: true } },
+            },
+          });
+          if (!fullTender) return false;
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[]);
+          return metaValidation.ok;
+        } catch { return false; }
+      })()),
       recordedBuildPlanState,
       hasCurrentConfirmedBuildPlan,
       confirmedPlanDocumentsOk,
