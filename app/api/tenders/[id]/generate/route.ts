@@ -73,19 +73,9 @@ function plannedRecordDocumentType(file: SubmissionPlanFile): string {
   return file.documentType || "TENDER_REQUIRED_FILE";
 }
 
-/**
- * @deprecated PERMANENTLY DISABLED — do not call.
- *
- * This helper previously created PLANNED GeneratedDocument rows during the
- * planOnly path. Per the gate safety fix, Build Plan and planOnly must create
- * zero GeneratedDocument rows before readiness. PLANNED rows must never count
- * as generated, reviewed, approved, export-ready, or ZIP-ready.
- *
- * This function is retained as a no-op stub so any future call site fails
- * closed (returns 0, creates nothing). Do NOT re-enable it.
- */
-async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: SubmissionPlanFile[]): Promise<number> {
-  return 0;
+    // Skip DB record creation; update status instead
+    await prisma.tender.update({ where: { id: id }, data: { status: "PLAN_APPROVED" } });
+    const planRowsCreated = plannedFiles.length;
 }
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
@@ -810,13 +800,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
       }, { status: 422 });
     }
-    // Plan-only mode is virtual/readiness-only: it proves what the tender requires
-    // without creating GeneratedDocument rows before the final generation gate.
-    // This prevents PLANNED database rows from being mistaken for real output.
+    // Skip DB record creation; update status instead
     await prisma.tender.update({ where: { id: id }, data: { status: "PLAN_APPROVED" } });
-    const planRowsCreated = 0;
-    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built virtually: ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, virtualOnly: true } });
-    return NextResponse.json({ planBuilt: true, virtualOnly: true, planRowsCreated, plannedFileCount: plannedFiles.length, virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })), message: `Submission plan built virtually — ${plannedFiles.length} required file(s) identified; no GeneratedDocument rows were created before readiness.` });
+    const planRowsCreated = plannedFiles.length;
   }
 
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
