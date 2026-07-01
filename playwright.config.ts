@@ -21,6 +21,25 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    // Tablet project using Chromium engine (not WebKit) so it works in CI
+    // where only Chromium browsers are installed. We override the viewport
+    // and userAgent to simulate tablet form factors without requiring
+    // separate browser binaries.
+    //
+    // NOTE: We only add ONE tablet project (not multiple) to avoid
+    // triggering login rate limits in CI. Each Playwright project re-runs
+    // all e2e tests, and the login endpoint has rate limiting.
+    {
+      name: "samsung-tablet",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 800, height: 1280 },
+        userAgent: "Mozilla/5.0 (Linux; Android 14; SM-X916B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined

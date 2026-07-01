@@ -6,6 +6,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import Link from "next/link";
+import { clientLogger } from "@/lib/ui/client-logger";
 
 interface Props {
   tenderId: string;
@@ -229,7 +230,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
       </section>
     );
   } catch (err) {
-    console.error("[VaultEvidenceSearchPanel] render error:", err);
+    clientLogger.error("[VaultEvidenceSearchPanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
     return (
       <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
         <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
