@@ -448,10 +448,20 @@ describe("Recovery Command Center — REVIEWER role parity on Execute-path route
       const filePath = resolve(process.cwd(), file);
       assert.ok(existsSync(filePath), `Route file must exist: ${file}`);
       const src = readFileSync(filePath, "utf8");
-      assert.ok(
-        src.includes('"REVIEWER"'),
-        `${action} route must include requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER") so REVIEWER users can execute it via the Recovery Command Center`,
-      );
+      // BUILD_SUBMISSION_PLAN is an AUTHORITATIVE BuildPlan creation route.
+      // REVIEWER must NOT be allowed (per release-safety spec). All other
+      // execute-path routes still allow REVIEWER.
+      if (action === "BUILD_SUBMISSION_PLAN") {
+        assert.ok(
+          !src.includes('"REVIEWER"'),
+          `${action} route must NOT allow REVIEWER — authoritative BuildPlan creation is ADMIN/PROPOSAL_MANAGER only`,
+        );
+      } else {
+        assert.ok(
+          src.includes('"REVIEWER"'),
+          `${action} route must include requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER") so REVIEWER users can execute it via the Recovery Command Center`,
+        );
+      }
     });
   }
 });

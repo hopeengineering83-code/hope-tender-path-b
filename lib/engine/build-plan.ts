@@ -5,6 +5,10 @@ import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanF
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
 
+export type BuildPlanDraftResult =
+  | { ok: true; plan: any; items: BuildPlanItem[] }
+  | { ok: false; code: string; message: string; status: number };
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PREFLIGHT: assertTenderReadyToDraftBuildPlan
@@ -69,27 +73,19 @@ export async function assertTenderReadyToDraftBuildPlan(
     return { ok: false, code: "ANALYSIS_HASH_MISMATCH", message: "Tender content changed since the last analysis. Re-run AI Analyze.", status: 422 };
   }
 
-  // 6. Critical metadata — must be present and non-placeholder
-  // Uses assessTenderMetadataCompleteness (same as generate route) for the
-  // structural check. The deeper source-grounding check (page+quote+file) is
-  // enforced by the central gate's criticalMetadataOk, which runs at release time.
-  const { assessTenderMetadataCompleteness } = await import("./tender-metadata-completeness");
+  // 6. Critical metadata — must be present, non-placeholder, AND source-grounded
+  // Uses the canonical resolveCanonicalFieldState (same as the central gate) so
+  // the preflight and gate never disagree on what counts as "grounded".
+  // For every critical field, requires: valid value, ACTIVE TenderFile ID,
+  // valid page, meaningful quote, and quote actually contained in that file's
+  // extracted text. Manual USER_EDITED/USER_CONFIRMED values must NOT authorize
+  // a draft unless policy permits AND active-file source evidence is valid.
+  const { resolveCanonicalFieldState } = await import("./canonical-field-state");
   const overrides = await prisma.tenderMetadataOverride.findMany({ where: { tenderId }, select: { field: true, fieldState: true, overrideValue: true } }).catch(() => []);
-  const metadataReport = assessTenderMetadataCompleteness({
-    clientName: tender.clientName,
-    procuringEntityName: (tender as any).procuringEntityName,
-    title: tender.title,
-    reference: tender.reference ?? null,
-    country: tender.country ?? null,
-    submissionMethod: tender.submissionMethod ?? null,
-    submissionAddress: tender.submissionAddress ?? null,
-    submissionEmails: tender.submissionEmails ?? null,
-    deadline: tender.deadline ?? null,
-    requirementCount: tender.requirements.length,
-    hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
-  } as any, overrides as any[]);
-  if (metadataReport.blockingForGeneration) {
-    return { ok: false, code: "METADATA_CRITICAL_FIELD_INVALID", message: "One or more critical metadata fields are missing or invalid. Fill deadline, submission method, and client name before building a Build Plan.", status: 422 };
+  const canonicalState = resolveCanonicalFieldState({ tender: tender as any, overrides: overrides as any[], hasExtractedRequirements: tender.requirements.length > 0, submissionMethodContext: tender.submissionMethod ?? undefined });
+  if (canonicalState.hasGenerationBlocker) {
+    const blockerFields = canonicalState.fields.filter((f: any) => f.blockerReason).map((f: any) => f.field).slice(0, 5);
+    return { ok: false, code: "METADATA_CRITICAL_FIELD_INVALID", message: `Critical metadata fields are missing, invalid, or not source-grounded: ${blockerFields.join(", ")}. Fill them from active tender source evidence before building a Build Plan.`, status: 422 };
   }
 
   // 7. Mandatory requirements grounded by ACTIVE TenderFile + valid page + meaningful quote contained in file text
@@ -171,14 +167,18 @@ id: true, title: true, reference: true, exactFileNaming: true, exactFileOrder: t
   }));
 }
 
-export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string, userId: string) {
+export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string, userId: string): Promise<BuildPlanDraftResult> {
   // PREFLIGHT: run all safety checks before creating/rebuilding any DRAFT.
   // Creates ZERO GeneratedDocument rows.
   const preflight = await assertTenderReadyToDraftBuildPlan(prisma, tenderId, userId);
-  if (!preflight.ok) return null;
+  if (!preflight.ok) {
+    return { ok: false, code: preflight.code, message: preflight.message, status: preflight.status };
+  }
   const { tender, items } = preflight;
   const contentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
-  if (!contentHash) return null;
+  if (!contentHash) {
+    return { ok: false, code: "HASH_COMPUTE_FAILED", message: "Could not compute BuildPlan content hash.", status: 500 };
+  }
 
   // TRANSACTION-SAFE REBUILD: BuildPlan has ONE unique row per tender
   // (tenderId @unique). Whether the existing row is DRAFT or CONFIRMED,
@@ -188,7 +188,7 @@ export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string
   // a confirmed plan. Uses upsert for race safety.
   const itemsJson = JSON.stringify(items);
   const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
-  return (prisma as any).buildPlan.upsert({
+  const plan = await (prisma as any).buildPlan.upsert({
     where: { tenderId },
     update: {
       status: "DRAFT",
@@ -213,6 +213,7 @@ export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string
       builtById: userId,
     },
   });
+  return { ok: true, plan, items };
 }
 
 export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {

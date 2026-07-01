@@ -42,6 +42,25 @@ export type BuildPlanHashRequirement = {
   exactOrder?: number | null;
 };
 
+export type BuildPlanHashItem = {
+  canonicalId: string;
+  exactFileName: string;
+  exactOrder: number;
+  documentType: string;
+  required: boolean;
+  format: string;
+  envelope?: string | null;
+  sourceRequirementIds: string[];
+  pageLimit?: number | null;
+  templateRequired?: boolean;
+  templateSourceFileId?: string | null;
+  brandingAllowed?: boolean;
+  signatureAllowed?: boolean;
+  stampAllowed?: boolean;
+  grouping?: string | null;
+  notes?: string | null;
+};
+
 export type BuildPlanHashInput = {
   activeFiles: BuildPlanHashFile[];
   requirements: BuildPlanHashRequirement[];
@@ -52,6 +71,7 @@ export type BuildPlanHashInput = {
   submissionEmails?: string | null;
   submissionEmailSubject?: string | null;
   deadline?: Date | string | null;
+  items?: BuildPlanHashItem[];
 };
 
 const UNIT = ""; // field separator unlikely to appear in tender text

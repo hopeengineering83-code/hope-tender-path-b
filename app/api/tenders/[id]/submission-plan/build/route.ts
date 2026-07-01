@@ -26,7 +26,7 @@ export const maxDuration = 15;
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const rl = rateLimit(`submission-plan-build:${actor.id}`, MUTATION_RATE_LIMIT);
@@ -297,10 +297,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // persistence path, one revision-increment behavior. No competing
     // hash or persistence logic remains in this route.
     const { buildDraftBuildPlan } = await import("../../../../../../lib/engine/build-plan");
-    const draftPlan = await buildDraftBuildPlan(prisma, id, actor.id);
-    if (!draftPlan) {
-      return NextResponse.json({ ok: false, error: "Tender not found while building DRAFT plan.", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    const draftResult = await buildDraftBuildPlan(prisma, id, actor.id);
+    if (!draftResult.ok) {
+      return NextResponse.json({ ok: false, error: draftResult.message, code: draftResult.code }, { status: draftResult.status });
     }
+    const draftPlan = draftResult.plan;
     // Also write legacy fields for backward-compatible panel reads.
     const activeFiles = tender.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
     const filesList = JSON.stringify(activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName })));

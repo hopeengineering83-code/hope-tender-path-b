@@ -13,17 +13,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   await prismaReady;
   const { id } = await params;
   const before = await prisma.generatedDocument.count({ where: { tenderId: id } });
-  // PREFLIGHT runs inside buildDraftBuildPlan via assertTenderReadyToDraftBuildPlan.
-  // If preflight fails, buildDraftBuildPlan returns null. We re-run the preflight
-  // here to get the specific error code/message for the response.
-  const { assertTenderReadyToDraftBuildPlan } = await import("../../../../../lib/engine/build-plan");
-  const preflight = await assertTenderReadyToDraftBuildPlan(prisma, id, actor.id);
-  if (!preflight.ok) {
-    return NextResponse.json({ ok: false, code: preflight.code, error: preflight.message }, { status: preflight.status });
+  // buildDraftBuildPlan returns a typed result: { ok: true, plan, items } or
+  // { ok: false, code, message, status }. Failed preflight never returns 404
+  // — it returns the real blocker code (extraction, analysis, grounding, etc.).
+  // Only a genuinely missing/foreign tender returns 404.
+  const draftResult = await buildDraftBuildPlan(prisma, id, actor.id);
+  if (!draftResult.ok) {
+    return NextResponse.json({ ok: false, code: draftResult.code, error: draftResult.message }, { status: draftResult.status });
   }
-  const plan = await buildDraftBuildPlan(prisma, id, actor.id);
-  if (!plan) return NextResponse.json({ ok: false, code: "TENDER_NOT_FOUND", error: "Tender not found" }, { status: 404 });
+  const { plan, items } = draftResult;
   const after = await prisma.generatedDocument.count({ where: { tenderId: id } });
   await logAction({ userId: actor.id, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: "Draft Build Plan built with zero GeneratedDocument rows created.", metadata: { tenderId: id, generatedDocumentsCreated: after - before } });
-  return NextResponse.json({ ok: true, status: plan.status, revision: plan.revision, contentHash: plan.contentHash, items: JSON.parse(plan.itemsJson), authorizesGeneration: false, generatedDocumentsCreated: after - before });
+  return NextResponse.json({ ok: true, status: plan.status, revision: plan.revision, contentHash: plan.contentHash, items, authorizesGeneration: false, generatedDocumentsCreated: after - before });
 }

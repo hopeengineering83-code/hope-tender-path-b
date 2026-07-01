@@ -123,14 +123,15 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
   });
 
   it("buildDraftBuildPlan writes status=DRAFT, builtById, itemsJson, validationJson, contentHash", async () => {
-    // Run preflight first to get the specific error if it fails
-    const { assertTenderReadyToDraftBuildPlan } = await import("../lib/engine/build-plan");
-    const preflightResult = await assertTenderReadyToDraftBuildPlan(prisma, tenderId, userId);
-    if (!preflightResult.ok) {
-      console.error("PREFLIGHT FAILED:", JSON.stringify(preflightResult));
+    // buildDraftBuildPlan now returns a typed BuildPlanDraftResult.
+    // Failed preflight returns { ok: false, code, message, status } — NOT null.
+    const draftResult = await buildDraftBuildPlan(prisma, tenderId, userId);
+    if (!draftResult.ok) {
+      console.error("DRAFT FAILED:", JSON.stringify(draftResult));
     }
-    const plan = await buildDraftBuildPlan(prisma, tenderId, userId);
-    assert.ok(plan, "buildDraftBuildPlan must return the created/updated DRAFT plan");
+    assert.ok(draftResult.ok, "buildDraftBuildPlan must succeed — preflight should pass");
+    if (!draftResult.ok) return; // type guard
+    const { plan } = draftResult;
     assert.equal(plan.status, "DRAFT");
     assert.equal(plan.builtById, userId);
     assert.ok(plan.contentHash, "contentHash must be set");

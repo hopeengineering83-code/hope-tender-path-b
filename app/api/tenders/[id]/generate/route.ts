@@ -901,10 +901,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // resets confirmedRevision/confirmedContentHash/confirmedById/confirmedAt
     // so any stale confirmation is invalidated. It creates ZERO
     // GeneratedDocument rows.
-    const draftPlan = await buildDraftBuildPlan(prisma, id, userId);
-    if (!draftPlan) {
-      return NextResponse.json({ ok: false, planBuilt: false, error: "Tender not found while building DRAFT plan.", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    const draftResult = await buildDraftBuildPlan(prisma, id, userId);
+    if (!draftResult.ok) {
+      return NextResponse.json({ ok: false, planBuilt: false, error: draftResult.message, code: draftResult.code }, { status: draftResult.status });
     }
+    const draftPlan = draftResult.plan;
     const beforeDocCount = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const afterDocCount = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const planRowsCreated = 0; // planOnly never creates GeneratedDocument rows
