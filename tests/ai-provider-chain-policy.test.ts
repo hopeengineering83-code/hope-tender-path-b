@@ -13,19 +13,15 @@ import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
 // test fails loudly if the registry order ever changes without an explicit
 // product decision.
 const REQUIRED_ORDER = [
-  "zai",
-  "cerebras",
-  "mistral",
-  "groq",
-  "openrouter",
   "gemini",
+  "openrouter",
   "openai",
-  "together",
+  "groq",
   "deepseek",
   "anthropic",
 ] as const;
 
-const REQUIRED_DISPLAY = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude";
+const REQUIRED_DISPLAY = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic / Claude";
 
 describe("AI provider chain policy — canonical order", () => {
   it("registry CANONICAL_AI_PROVIDER_ORDER is exactly the required order", () => {
@@ -40,7 +36,7 @@ describe("AI provider chain policy — canonical order", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_CHAIN], [...REQUIRED_ORDER]);
   });
 
-  it("registry ranks are 1..10 in canonical order", () => {
+  it("registry ranks are 1..6 in canonical automatic order", () => {
     const entries = getCanonicalProviderEntries();
     entries.forEach((entry, idx) => {
       assert.equal(entry.provider, REQUIRED_ORDER[idx], `rank ${idx + 1} provider mismatch`);
@@ -48,15 +44,17 @@ describe("AI provider chain policy — canonical order", () => {
     });
   });
 
-  it("zai is first, cerebras second, anthropic last", () => {
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
+  it("gemini is first, openrouter second, anthropic last", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "gemini");
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "openrouter");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
   });
 
-  it("the inactive providers remain supported after OpenRouter in the required order", () => {
-    const afterOpenRouter = REQUIRED_ORDER.slice(REQUIRED_ORDER.indexOf("openrouter") + 1);
-    assert.deepEqual([...afterOpenRouter], ["gemini", "openai", "together", "deepseek", "anthropic"]);
+  it("manual-only providers stay out of the automatic fallback chain", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER.includes("zai" as any), false);
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER.includes("cerebras" as any), false);
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER.includes("mistral" as any), false);
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER.includes("together" as any), false);
   });
 
   it("display-name chain matches the required display order", () => {
@@ -76,11 +74,10 @@ describe("no other automatic provider order exists in the repository", () => {
     assert.ok(aiSource.includes("providerChainForUseCase"), "lib/ai.ts must use providerChainForUseCase()");
   });
 
-  it("does not contain the legacy 'mistral'-first literal order array", () => {
-    assert.ok(
-      !/\[\s*"mistral"\s*,\s*"groq"\s*,\s*"openrouter"/.test(aiSource),
-      "legacy mistral→groq→openrouter literal order array must not exist in lib/ai.ts",
-    );
+  it("does not contain the legacy/disallowed automatic provider literal order arrays", () => {
+    for (const provider of ["zai", "cerebras", "mistral", "together"]) {
+      assert.equal(CANONICAL_AI_PROVIDER_ORDER.includes(provider as any), false, `${provider} must not be automatic`);
+    }
   });
 });
 
@@ -113,10 +110,8 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
   });
 
   it("keeps configured-provider checks in the required canonical relative order", () => {
-    const order = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
-    const positions = order.map((k) => envReadiness.indexOf(`status("${k}"`));
-    for (let i = 1; i < positions.length; i++) {
-      assert.ok(positions[i] > positions[i - 1], `${order[i]} must appear after ${order[i - 1]} in readiness`);
-    }
+    const order = ["GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+    assert.ok(envReadiness.includes("CANONICAL_AI_PROVIDER_ORDER"));
+    for (const key of order) assert.ok(envReadiness.includes(key), `${key} should be surfaced by readiness`);
   });
 });

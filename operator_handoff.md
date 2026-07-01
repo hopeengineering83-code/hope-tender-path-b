@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-01 UTC — ChatGPT
+
+- **Mode:** code hardening
+- **Branch / PR:** `codex/fix-release-safety-pr` / PR metadata to be created after commit
+- **Scope:** enforced release-safety provider and role policy by limiting the automatic AI provider chain to Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic; kept Z.ai, Cerebras, Mistral, and Together as manual-only adapters; removed REVIEWER from release/build/generation mutation routes; added role-policy regression coverage.
+- **Files changed:** `lib/ai-provider-catalog.cjs`, `lib/ai-provider-registry.ts`, `lib/env-check.ts`, release mutation routes under `app/api/tenders/[id]/`, provider policy tests, and `tests/release-role-policy.test.ts`.
+- **Tests:** `npx tsx --test tests/ai-provider-chain-policy.test.ts tests/ai-provider-registry.test.ts tests/ai-provider-health.test.ts tests/release-role-policy.test.ts` passed; `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/hope_tender_path npx tsc --noEmit --pretty false` passed.
+- **CI / deployment:** not checked; no deployment run.
+- **Known risk:** this checkout has no configured git remote, so pushing may require repository remote configuration outside this container.
+- **Next action:** push branch and run CI before merge.
+- **Merge status:** not reviewed
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction

@@ -25,7 +25,7 @@ export const maxDuration = 15;
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const rl = rateLimit(`submission-plan-build:${actor.id}`, MUTATION_RATE_LIMIT);

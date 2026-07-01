@@ -28,7 +28,7 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
 ];
 
 // Canonical provider key order — mirrors lib/ai-provider-registry.ts
-// CANONICAL_AI_PROVIDER_ORDER (zai → cerebras → mistral → groq → openrouter →
+// CANONICAL_AI_PROVIDER_ORDER (gemini → openrouter → openai → groq → deepseek →
 // gemini → openai → together → deepseek → anthropic).
 const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
   {

@@ -34,9 +34,9 @@ export type AiProviderName =
 // The canonical automatic provider order. The single literal lives in the
 // plain-CJS catalog (lib/ai-provider-catalog.cjs) so build-time scripts
 // (next.config.js, scripts/check-env.mjs) consume the SAME order without any
-// duplication. Currently-working tier first (zai → cerebras → mistral → groq →
-// openrouter), remaining supported providers after OpenRouter in the required
-// order (gemini → openai → together → deepseek → anthropic).
+// duplication. Automatic runtime order is Gemini → OpenRouter → OpenAI → Groq →
+// DeepSeek → Anthropic. Z.ai, Cerebras, Mistral, and Together remain available
+// as manual diagnostics/adapters but are not automatic fallbacks.
 export const CANONICAL_AI_PROVIDER_ORDER: readonly AiProviderName[] = CATALOG_ORDER;
 
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
@@ -130,7 +130,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   zai: {
     provider: "zai",
     displayName: "Z.ai GLM",
-    rank: 1,
+    rank: 7,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
@@ -153,12 +153,12 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 2,
+    rank: 8,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
@@ -179,12 +179,12 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   mistral: {
     provider: "mistral",
     displayName: "Mistral",
-    rank: 3,
+    rank: 9,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
@@ -203,7 +203,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   groq: {
     provider: "groq",
@@ -232,7 +232,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openrouter: {
     provider: "openrouter",
     displayName: "OpenRouter",
-    rank: 5,
+    rank: 2,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
@@ -258,7 +258,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   gemini: {
     provider: "gemini",
     displayName: "Gemini",
-    rank: 6,
+    rank: 1,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
@@ -281,7 +281,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openai: {
     provider: "openai",
     displayName: "OpenAI",
-    rank: 7,
+    rank: 3,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
@@ -305,7 +305,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   together: {
     provider: "together",
     displayName: "Together",
-    rank: 8,
+    rank: 10,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
@@ -324,12 +324,12 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   deepseek: {
     provider: "deepseek",
     displayName: "DeepSeek",
-    rank: 9,
+    rank: 5,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
@@ -354,7 +354,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   anthropic: {
     provider: "anthropic",
     displayName: "Anthropic / Claude",
-    rank: 10,
+    rank: 6,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",

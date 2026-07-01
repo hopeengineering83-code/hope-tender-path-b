@@ -119,6 +119,6 @@ describe("provider health DB persistence order", () => {
     // ALL_PROVIDERS now derives from CANONICAL_AI_PROVIDER_ORDER (single source).
     assert.match(source, /ALL_PROVIDERS[\s\S]*?=\s*CANONICAL_AI_PROVIDER_ORDER/);
     const { CANONICAL_AI_PROVIDER_ORDER } = await import("../lib/ai-provider-registry");
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
   });
 });
