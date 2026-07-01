@@ -143,77 +143,98 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
-id: true, title: true, reference: true, exactFileNaming: true, exactFileOrder: true, submissionMethod: true, submissionAddress: true, submissionEmails: true, submissionEmailSubject: true, deadline: true,
+      id: true, title: true, reference: true, exactFileNaming: true, exactFileOrder: true, submissionMethod: true, submissionAddress: true, submissionEmails: true, submissionEmailSubject: true, deadline: true,
+      clientName: true, clientNameSourceFileId: true, clientNameSourcePage: true, clientNameSourceQuote: true,
+      submissionMethodSourceFileId: true, submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
+      submissionAddressSourceFileId: true, submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
+      submissionEmailSourceFileId: true, submissionEmailSourcePage: true,
       files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true } },
       requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },
   });
   if (!tender) return null;
   const planItems = items ?? plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
-  // CANONICAL HASH: uses the SINGLE shared computeBuildPlanHash from
-  // build-plan-hash.ts — the SAME helper the generation-readiness-gate uses
-  // for stale detection. No second "compatibility" hash may exist.
-  const { computeBuildPlanHash, buildPlanHashInputFromTender } = await import("./build-plan-hash");
-  return computeBuildPlanHash(buildPlanHashInputFromTender({
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    submissionMethod: tender.submissionMethod,
-    submissionAddress: tender.submissionAddress,
-    submissionEmails: tender.submissionEmails,
-    submissionEmailSubject: tender.submissionEmailSubject,
-    deadline: tender.deadline,
-    files: tender.files.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: f.deletionStatus })),
-    requirements: tender.requirements.map((r) => ({ id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority, exactFileName: r.exactFileName, exactOrder: r.exactOrder })),
+  // CANONICAL HASH: uses buildCanonicalBuildPlanHashInput — the ONE shared
+  // builder. No caller may manually construct a reduced hash input or append
+  // items/metadata after calling this.
+  const { buildCanonicalBuildPlanHashInput, computeBuildPlanHash } = await import("./build-plan-hash");
+  const hashItems = planItems.map((item) => ({
+    canonicalId: item.canonicalId,
+    exactFileName: item.exactFileName,
+    exactOrder: item.exactOrder,
+    documentType: item.documentType,
+    required: item.required,
+    format: item.format,
+    envelope: item.envelope,
+    sourceRequirementIds: item.sourceRequirementIds,
+    pageLimit: item.pageLimit,
+    templateRequired: item.templateRequired,
+    templateSourceFileId: item.templateSourceFileId,
+    brandingAllowed: item.brandingAllowed,
+    signatureAllowed: item.signatureAllowed,
+    stampAllowed: item.stampAllowed,
+    grouping: item.grouping,
+    notes: item.notes,
   }));
+  return computeBuildPlanHash(buildCanonicalBuildPlanHashInput(tender as any, hashItems));
 }
 
 export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string, userId: string): Promise<BuildPlanDraftResult> {
-  // PREFLIGHT: run all safety checks before creating/rebuilding any DRAFT.
-  // Creates ZERO GeneratedDocument rows.
-  const preflight = await assertTenderReadyToDraftBuildPlan(prisma, tenderId, userId);
-  if (!preflight.ok) {
-    return { ok: false, code: preflight.code, message: preflight.message, status: preflight.status };
-  }
-  const { tender, items } = preflight;
-  const contentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
-  if (!contentHash) {
-    return { ok: false, code: "HASH_COMPUTE_FAILED", message: "Could not compute BuildPlan content hash.", status: 500 };
-  }
+  // SERIALIZABLE REBUILD: preflight + hash + persistence inside a PostgreSQL
+  // Serializable transaction with bounded P2034 retry.
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        // PREFLIGHT inside transaction — checks current state under isolation.
+        const preflight = await assertTenderReadyToDraftBuildPlan(tx as PrismaClient, tenderId, userId);
+        if (!preflight.ok) {
+          return { ok: false as const, code: preflight.code, message: preflight.message, status: preflight.status };
+        }
+        const { tender, items } = preflight;
+        const contentHash = await computeTenderBuildPlanHash(tx as PrismaClient, tenderId, userId, items);
+        if (!contentHash) {
+          return { ok: false as const, code: "HASH_COMPUTE_FAILED", message: "Could not compute BuildPlan content hash.", status: 500 };
+        }
 
-  // TRANSACTION-SAFE REBUILD: BuildPlan has ONE unique row per tender
-  // (tenderId @unique). Whether the existing row is DRAFT or CONFIRMED,
-  // rebuild it in-place: set status=DRAFT, increment revision, replace
-  // canonical items/hash, and CLEAR all confirmed* fields so any stale
-  // confirmation is invalidated. Never create a second row; never delete
-  // a confirmed plan. Uses upsert for race safety.
-  const itemsJson = JSON.stringify(items);
-  const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
-  const plan = await (prisma as any).buildPlan.upsert({
-    where: { tenderId },
-    update: {
-      status: "DRAFT",
-      revision: { increment: 1 },
-      contentHash,
-      itemsJson,
-      validationJson,
-      builtById: userId,
-      confirmedRevision: null,
-      confirmedContentHash: null,
-      confirmedById: null,
-      confirmedBy: null,
-      confirmedAt: null,
-    },
-    create: {
-      tenderId,
-      status: "DRAFT",
-      revision: 1,
-      contentHash,
-      itemsJson,
-      validationJson,
-      builtById: userId,
-    },
-  });
-  return { ok: true, plan, items };
+        const itemsJson = JSON.stringify(items);
+        const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
+        const plan = await (tx as any).buildPlan.upsert({
+          where: { tenderId },
+          update: {
+            status: "DRAFT",
+            revision: { increment: 1 },
+            contentHash,
+            itemsJson,
+            validationJson,
+            builtById: userId,
+            confirmedRevision: null,
+            confirmedContentHash: null,
+            confirmedById: null,
+            confirmedBy: null,
+            confirmedAt: null,
+          },
+          create: {
+            tenderId,
+            status: "DRAFT",
+            revision: 1,
+            contentHash,
+            itemsJson,
+            validationJson,
+            builtById: userId,
+          },
+        });
+        return { ok: true as const, plan, items };
+      }, { isolationLevel: "Serializable" });
+    } catch (err: any) {
+      if (err?.code === "P2034" && attempt < MAX_RETRIES) {
+        continue; // Serialization conflict — retry
+      }
+      // Non-concurrency failure — sanitized 500, not fake conflict
+      return { ok: false as const, code: "BUILD_PLAN_INTERNAL_ERROR", message: "BuildPlan draft failed due to an internal error.", status: 500 };
+    }
+  }
+  return { ok: false as const, code: "BUILD_PLAN_CONFLICT", message: "BuildPlan draft failed after retries due to concurrent modification.", status: 409 };
 }
 
 export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {

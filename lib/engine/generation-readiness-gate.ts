@@ -163,8 +163,7 @@ export interface GenerationReadinessInput {
   //     this prerequisite. This is true when the submission plan has been built
   //     (virtual or real) and identifies at least one required file.
   //     PLANNED, SUPERSEDED, virtual, or legacy planned rows do NOT count as
-  //     generated/export-ready — they only satisfy the plan prerequisite.
-  hasValidVirtualSubmissionPlan: boolean;
+  //     generated/export-ready.
   // H2 — Recorded (persisted) Build Plan state. A persisted BuildPlan is
   //      MANDATORY for generation/export: it is bound to the shared content hash
   //      of the tender's ACTIVE files + requirements + exact naming/order +
@@ -301,14 +300,6 @@ export function evaluateGenerationReadiness(
     if (quote.length >= MIN_MEANINGFUL_QUOTE_CHARS && (fileText.length === 0 || !fileText.includes(normalizedQuote))) {
       return fail("REQUIREMENT_QUOTE_NOT_IN_FILE", "At least one mandatory requirement has a source quote that is not contained in the extracted text of the referenced active TenderFile. Foreign, guessed, or unsupported evidence is blocked. Re-run AI Analyze to ground requirements.");
     }
-  }
-
-  // H — Build/Submission plan prerequisite for GENERATION.
-  //     A valid virtual Build Plan satisfies this — it proves the tender
-  //     requires at least one file. PLANNED/SUPERSEDED/virtual rows do NOT
-  //     count as generated/export-ready; they only satisfy the plan prerequisite.
-  if (!input.hasValidVirtualSubmissionPlan) {
-    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists. Build the submission plan before generating/exporting.");
   }
 
   // H2 — A persisted Build Plan is mandatory and must match the tender's current
@@ -584,14 +575,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     one required file. If there's no explicit scope, any tender with
     //     extracted requirements has a valid plan by default.
     const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
-    const submissionPlan = buildSubmissionPlan(tender as any);
-    const plannedFiles = hasExplicitSubmissionScope(tender as any)
-      ? plannedSubmissionTargetFiles(submissionPlan)
-      : [];
-    const hasValidVirtualSubmissionPlan = requirements.length > 0
-      ? (hasExplicitSubmissionScope(tender as any) ? plannedFiles.length > 0 : true)
-      : false;
-
+    // Virtual submission plan authority removed — release depends only on
+    // persisted confirmed BuildPlan.
     // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
     //     with content, validation, and review. PLANNED/SUPERSEDED/virtual/
     //     missing-content/unvalidated/unreviewed rows never count.
@@ -617,12 +602,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       where: { tenderId },
       select: { contentHash: true, status: true, revision: true, confirmedRevision: true, confirmedContentHash: true, itemsJson: true },
     });
-    const { computeBuildPlanHash, buildPlanHashInputFromTender } = await import("./build-plan-hash");
-    // Use persisted confirmed BuildPlan items for hash — NOT a newly derived
-    // virtual plan. This ensures stale detection compares against the exact
-    // items that were confirmed, not what would be derived now.
+    // CANONICAL HASH: use buildCanonicalBuildPlanHashInput — the ONE shared
+    // builder. No manual item or metadata append. Uses persisted confirmed
+    // items for stale detection.
+    const { computeBuildPlanHash, buildCanonicalBuildPlanHashInput } = await import("./build-plan-hash");
     const persistedItems = recordedBuildPlan?.itemsJson ? JSON.parse(recordedBuildPlan.itemsJson) : [];
-    const gateHashInput = buildPlanHashInputFromTender({
+    const currentPlanHash = computeBuildPlanHash(buildCanonicalBuildPlanHashInput({
       exactFileNaming: tender.exactFileNaming,
       exactFileOrder: tender.exactFileOrder,
       submissionMethod: tender.submissionMethod,
@@ -630,21 +615,25 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       submissionEmails: tender.submissionEmails,
       submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
       deadline: (tender as any).deadline ?? null,
+      clientName: tender.clientName,
+      clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+      clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
+      clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+      submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
+      submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
+      submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+      submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
+      submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
+      submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+      submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
+      submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
       files: activeFiles.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: "ACTIVE" })),
       requirements: (requirements as _RequirementRow[]).map((r) => ({
         id: r.id, title: r.title, description: r.description, requirementType: r.requirementType, priority: r.priority,
         exactFileName: r.exactFileName, exactOrder: r.exactOrder,
         sourceTenderFileId: r.sourceTenderFileId, sourcePageNumber: r.sourcePageNumber, sourceExactQuote: r.sourceExactQuote,
       })),
-    });
-    gateHashInput.items = persistedItems;
-    gateHashInput.metadataEvidence = [
-      { fieldKey: "clientName", effectiveValue: tender.clientName, sourceTenderFileId: (tender as any).clientNameSourceFileId ?? null, sourcePage: (tender as any).clientNameSourcePage ?? null, sourceQuote: (tender as any).clientNameSourceQuote ?? null, evidenceState: (tender as any).clientNameSourceFileId ? "GROUNDED" : "UNGROUNDED" },
-      { fieldKey: "submissionMethod", effectiveValue: tender.submissionMethod, sourceTenderFileId: (tender as any).submissionMethodSourceFileId ?? null, sourcePage: (tender as any).submissionMethodSourcePage ?? null, sourceQuote: (tender as any).submissionMethodSourceQuote ?? null, evidenceState: (tender as any).submissionMethodSourceFileId ? "GROUNDED" : "UNGROUNDED" },
-      { fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress, sourceTenderFileId: (tender as any).submissionAddressSourceFileId ?? null, sourcePage: (tender as any).submissionAddressSourcePage ?? null, sourceQuote: (tender as any).submissionAddressSourceQuote ?? null, evidenceState: (tender as any).submissionAddressSourceFileId ? "GROUNDED" : "UNGROUNDED" },
-      { fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails, sourceTenderFileId: (tender as any).submissionEmailSourceFileId ?? null, sourcePage: (tender as any).submissionEmailSourcePage ?? null, sourceQuote: null, evidenceState: (tender as any).submissionEmailSourceFileId ? "GROUNDED" : "UNGROUNDED" },
-    ];
-    const currentPlanHash = computeBuildPlanHash(gateHashInput);
+    }, persistedItems));
     const recordedBuildPlanState: "MISSING" | "STALE" | "VALID" =
       !recordedBuildPlan ? "MISSING"
         : recordedBuildPlan.contentHash !== currentPlanHash ? "STALE"
@@ -692,7 +681,6 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirementCount: requirements.length,
       requirements: mappedRequirements,
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
-      hasValidVirtualSubmissionPlan,
       recordedBuildPlanState,
       hasCurrentConfirmedBuildPlan,
       confirmedPlanDocumentsOk,
@@ -701,7 +689,9 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.
-    const detail = err instanceof Error ? err.message.slice(0, 200) : "unknown error";
-    return { ok: false, blockerCode: "GATE_INTERNAL_ERROR", blockerDetail: `Readiness gate failed to evaluate: ${detail}`, purpose };
+    // Log technical details server-side only; return only stable public-safe code.
+    const detail = err instanceof Error ? err.message : "unknown error";
+    console.error("[generation-readiness-gate] GATE_INTERNAL_ERROR:", detail);
+    return { ok: false, blockerCode: "GATE_INTERNAL_ERROR", blockerDetail: "Readiness gate failed to evaluate. Check server logs for details.", purpose };
   }
 }

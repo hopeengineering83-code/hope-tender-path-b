@@ -19,7 +19,6 @@ describe("Section C release safety", () => {
     requirementCount: 1,
     requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful source quote", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: meaningful source quote. Additional context for the tender file extraction." }],
     criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true,
     // BuildPlan enforcement is fail-closed: default to true so the "passing"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true as boolean | undefined,

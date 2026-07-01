@@ -219,6 +219,61 @@ export function buildPlanHashInputFromTender(tender: {
   };
 }
 
+
+
+/**
+ * ONE canonical hash-input builder. This is the ONLY function callers should
+ * use to construct a BuildPlanHashInput. No caller may manually construct a
+ * reduced hash input or append items/metadata after calling this builder.
+ *
+ * @param tender - tender with files, requirements, and metadata source fields
+ * @param items - the EXACT BuildPlan items to hash:
+ *   - draft/rebuild: current derived canonical items
+ *   - confirmation: exact stored DRAFT itemsJson
+ *   - confirmed-plan check: exact stored CONFIRMED itemsJson
+ *   - readiness/export/ZIP: exact persisted confirmed itemsJson
+ */
+export function buildCanonicalBuildPlanHashInput(
+  tender: {
+    exactFileNaming?: string | null;
+    exactFileOrder?: string | null;
+    submissionMethod?: string | null;
+    submissionAddress?: string | null;
+    submissionEmails?: string | null;
+    submissionEmailSubject?: string | null;
+    deadline?: Date | string | null;
+    clientName?: string | null;
+    clientNameSourceFileId?: string | null;
+    clientNameSourcePage?: number | null;
+    clientNameSourceQuote?: string | null;
+    submissionMethodSourceFileId?: string | null;
+    submissionMethodSourcePage?: number | null;
+    submissionMethodSourceQuote?: string | null;
+    submissionAddressSourceFileId?: string | null;
+    submissionAddressSourcePage?: number | null;
+    submissionAddressSourceQuote?: string | null;
+    submissionEmailSourceFileId?: string | null;
+    submissionEmailSourcePage?: number | null;
+    files: BuildPlanHashFile[];
+    requirements: BuildPlanHashRequirement[];
+  },
+  items: BuildPlanHashItem[],
+): BuildPlanHashInput {
+  const input = buildPlanHashInputFromTender(tender);
+  input.items = items;
+
+  // Derive metadata evidence from the tender's source fields.
+  // Determine included fields from the policy-critical metadata set.
+  input.metadataEvidence = [
+    { fieldKey: "clientName", effectiveValue: tender.clientName ?? null, sourceTenderFileId: tender.clientNameSourceFileId ?? null, sourcePage: tender.clientNameSourcePage ?? null, sourceQuote: tender.clientNameSourceQuote ?? null, evidenceState: tender.clientNameSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+    { fieldKey: "submissionMethod", effectiveValue: tender.submissionMethod ?? null, sourceTenderFileId: tender.submissionMethodSourceFileId ?? null, sourcePage: tender.submissionMethodSourcePage ?? null, sourceQuote: tender.submissionMethodSourceQuote ?? null, evidenceState: tender.submissionMethodSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+    { fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: tender.submissionAddressSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+    { fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails ?? null, sourceTenderFileId: tender.submissionEmailSourceFileId ?? null, sourcePage: tender.submissionEmailSourcePage ?? null, sourceQuote: null, evidenceState: tender.submissionEmailSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+  ];
+
+  return input;
+}
+
 /**
  * A recorded plan is valid only when its stored hash matches the hash recomputed
  * from the tender's CURRENT state.

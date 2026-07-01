@@ -46,16 +46,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const afterDocs = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const { plan, items } = draftResult;
 
-    // Also write legacy fields for backward-compatible panel reads.
-    // These are NOT authoritative — the canonical authority is itemsJson,
-    // revision, status, and contentHash.
-    const activeFiles = await prisma.tenderFile.findMany({ where: { tenderId: id, deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true } });
-    const filesList = JSON.stringify(activeFiles.map((f) => ({ fileId: f.id, fileName: f.originalFileName })));
-    const plannedDocumentsJson = JSON.stringify(items.map((doc: any) => ({ canonicalId: doc.canonicalId, exactFileName: doc.exactFileName, documentType: doc.documentType, required: doc.required })));
-    await prisma.buildPlan.update({
-      where: { tenderId: id },
-      data: { filesList, plannedDocuments: plannedDocumentsJson, planType: "DERIVED", createdBy: actor.id },
-    }).catch(() => {});
+    // No legacy field writes — canonical authority is itemsJson, revision, status, contentHash.
 
     await logAction({
       userId: actor.id,
@@ -71,8 +62,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       created: 0,
       skipped: 0,
       total: items.length,
-      isDerivedDraft: false,
-      virtualOnly: true,
       contentHash: plan.contentHash,
       revision: plan.revision,
       status: plan.status,

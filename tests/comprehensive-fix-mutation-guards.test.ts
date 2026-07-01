@@ -15,7 +15,7 @@ describe("Fix 1 — ONE authoritative BuildPlan hash", () => {
   it("build-plan.ts uses computeBuildPlanHash from build-plan-hash.ts (not hashBuildPlanState)", () => {
     const src = readFileSync("lib/engine/build-plan.ts", "utf8");
     assert.match(src, /computeBuildPlanHash/, "build-plan.ts MUST use computeBuildPlanHash");
-    assert.match(src, /buildPlanHashInputFromTender/, "build-plan.ts MUST use buildPlanHashInputFromTender");
+    assert.match(src, /buildCanonicalBuildPlanHashInput/, "build-plan.ts MUST use buildCanonicalBuildPlanHashInput");
     // The old hashBuildPlanState function MUST be gone.
     assert.ok(
       !src.includes("export function hashBuildPlanState"),
@@ -101,7 +101,6 @@ describe("Fix 6 — Quote containment check in central gate", () => {
         sourceFileExtractedText: "Completely different text that does not contain the quote at all.",
       }],
       criticalMetadataOk: true,
-      hasValidVirtualSubmissionPlan: true,
       hasCurrentConfirmedBuildPlan: true,
       confirmedPlanDocumentsOk: true,
       exportReadyDocumentCount: 1,
@@ -133,7 +132,6 @@ describe("Fix 6 — Quote containment check in central gate", () => {
         sourceFileExtractedText: `Some context. ${quote} More context after the quote.`,
       }],
       criticalMetadataOk: true,
-      hasValidVirtualSubmissionPlan: true,
       hasCurrentConfirmedBuildPlan: true,
       confirmedPlanDocumentsOk: true,
       exportReadyDocumentCount: 1,

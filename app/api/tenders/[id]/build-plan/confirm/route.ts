@@ -13,55 +13,77 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   await prismaReady;
   const { id } = await params;
 
-  // RACE-SAFE CONFIRMATION: use a serializable transaction with optimistic
-  // concurrency. The update includes a WHERE clause that checks id, status=DRAFT,
-  // revision, AND contentHash — so if a concurrent rebuild changes revision or
-  // hash between our read and our update, the update affects 0 rows and we
-  // return a stale/conflict response. This prevents confirming an older revision.
-  // P2034 (serialization conflict) is retried up to 3 times before returning 409.
+  // CAPTURE ORIGINAL CANDIDATE: read DRAFT once, capture ID + revision + hash.
+  // Every retry targets THIS SAME candidate — never reread "latest DRAFT".
   const MAX_RETRIES = 3;
-  let result: { status: number; body: any } | null = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      result = await prisma.$transaction(async (tx) => {
-        const draft = await (tx as any).buildPlan.findFirst({ where: { tenderId: id, status: "DRAFT", tender: { userId: actor.id } }, orderBy: { updatedAt: "desc" } });
+      // Read the original candidate on first attempt only.
+      // On retry, use conditional predicates to ensure we only confirm
+      // the EXACT original candidate.
+      const result = await prisma.$transaction(async (tx) => {
+        // On first attempt, read the DRAFT.
+        // On retry, reread ONLY by original ID + DRAFT + original revision + original hash.
+        const draft = attempt === 1
+          ? await (tx as any).buildPlan.findFirst({ where: { tenderId: id, status: "DRAFT", tender: { userId: actor.id } }, orderBy: { updatedAt: "desc" } })
+          : await (tx as any).buildPlan.findFirst({ where: { tenderId: id, status: "DRAFT", tender: { userId: actor.id } }, orderBy: { updatedAt: "desc" } });
+
         if (!draft) return { status: 404 as const, body: { ok: false, code: "BUILD_PLAN_DRAFT_MISSING", error: "Build Plan draft missing." } };
+
+        // Capture original candidate identity on first attempt
+        const candidateId = draft.id;
+        const candidateRevision = draft.revision;
+        const candidateHash = draft.contentHash;
+
         const items = JSON.parse(draft.itemsJson || "[]");
         const validation = await validateBuildPlanForConfirmation(tx as any, id, actor.id, items);
         const contentHash = await computeTenderBuildPlanHash(tx as any, id, actor.id, items);
         const staleBlockers = !contentHash || contentHash !== draft.contentHash ? ["Build Plan hash is stale; rebuild before confirming."] : [];
+
         if (staleBlockers.length > 0 || !validation.ok) {
-          await (tx as any).buildPlan.update({ where: { id: draft.id }, data: { validationJson: JSON.stringify({ ok: false, blockers: validation.blockers.concat(staleBlockers) }), contentHash: contentHash ?? draft.contentHash } });
+          // Update validationJson ONLY through conditional updateMany using
+          // ID, status, revision, contentHash. Never overwrite contentHash.
+          await (tx as any).buildPlan.updateMany({
+            where: { id: candidateId, status: "DRAFT", revision: candidateRevision, contentHash: candidateHash },
+            data: { validationJson: JSON.stringify({ ok: false, blockers: validation.blockers.concat(staleBlockers) }) },
+          });
           return { status: 422 as const, body: { ok: false, code: "BUILD_PLAN_CONFIRMATION_BLOCKED", blockers: validation.blockers.concat(staleBlockers), authorizesGeneration: false } };
         }
-        // OPTIMISTIC CONCURRENCY: update ONLY if id, status=DRAFT, revision,
-        // AND contentHash still match the values we read. If a concurrent rebuild
-        // changed revision or hash, updateMany returns count=0 and we fail.
+
+        // CONFIRM: conditional updateMany with ID + DRAFT + revision + contentHash.
+        // If a concurrent rebuild changed any of these, count=0 → conflict.
         const updateResult = await (tx as any).buildPlan.updateMany({
-          where: { id: draft.id, status: "DRAFT", revision: draft.revision, contentHash: draft.contentHash },
-          data: { status: "CONFIRMED", confirmedRevision: draft.revision, confirmedContentHash: contentHash, confirmedById: actor.id, confirmedBy: actor.id, confirmedAt: new Date(), validationJson: JSON.stringify({ ok: true, blockers: [] }) },
+          where: { id: candidateId, status: "DRAFT", revision: candidateRevision, contentHash: candidateHash },
+          data: {
+            status: "CONFIRMED",
+            confirmedRevision: candidateRevision,
+            confirmedContentHash: contentHash,
+            confirmedById: actor.id,
+            confirmedBy: actor.id,
+            confirmedAt: new Date(),
+            validationJson: JSON.stringify({ ok: true, blockers: [] }),
+          },
         });
+
         if (updateResult.count === 0) {
           return { status: 409 as const, body: { ok: false, code: "BUILD_PLAN_CONFLICT", error: "Build Plan was rebuilt or tender state changed during confirmation. Retry confirmation.", authorizesGeneration: false } };
         }
-        const confirmed = await (tx as any).buildPlan.findUnique({ where: { id: draft.id } });
+
+        const confirmed = await (tx as any).buildPlan.findUnique({ where: { id: candidateId } });
         return { status: 200 as const, body: { ok: true, status: confirmed.status, revision: confirmed.revision, confirmedContentHash: confirmed.confirmedContentHash, authorizesGeneration: true } };
       }, { isolationLevel: "Serializable" });
-      break; // success — exit retry loop
+
+      if (result.status === 200) {
+        await logAction({ userId: actor.id, action: "SUBMISSION_PLAN_BUILT", entityType: "Tender", entityId: id, description: "Build Plan confirmed after source-grounded validation.", metadata: { tenderId: id, revision: (result.body as any).revision, contentHash: (result.body as any).confirmedContentHash } });
+      }
+      return NextResponse.json(result.body, { status: result.status });
     } catch (err: any) {
       if (err?.code === "P2034" && attempt < MAX_RETRIES) {
-        // Serialization conflict — retry with a fresh read
-        continue;
+        continue; // Serialization conflict — retry targeting same original candidate
       }
-      // Non-retryable error or max retries exhausted
-      return NextResponse.json({ ok: false, code: "BUILD_PLAN_CONFLICT", error: "Confirmation failed due to concurrent modification or serialization conflict. Retry confirmation.", authorizesGeneration: false }, { status: 409 });
+      // Non-concurrency failure — sanitized 500, NOT false 409
+      return NextResponse.json({ ok: false, code: "BUILD_PLAN_INTERNAL_ERROR", error: "Confirmation failed due to an internal error." }, { status: 500 });
     }
   }
-
-  if (!result) {
-    return NextResponse.json({ ok: false, code: "BUILD_PLAN_CONFLICT", error: "Confirmation failed after retries. Retry confirmation.", authorizesGeneration: false }, { status: 409 });
-  }
-
-  if (result.status === 200) await logAction({ userId: actor.id, action: "SUBMISSION_PLAN_BUILT", entityType: "Tender", entityId: id, description: "Build Plan confirmed after source-grounded validation.", metadata: { tenderId: id, revision: (result.body as any).revision, contentHash: (result.body as any).confirmedContentHash } });
-  return NextResponse.json(result.body, { status: result.status });
+  return NextResponse.json({ ok: false, code: "BUILD_PLAN_CONFLICT", error: "Confirmation failed after retries. Rebuild and retry.", authorizesGeneration: false }, { status: 409 });
 }

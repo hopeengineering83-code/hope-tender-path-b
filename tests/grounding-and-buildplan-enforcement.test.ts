@@ -62,7 +62,6 @@ function passingGateInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
       { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction." },
     ],
     criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true,
     recordedBuildPlanState: "VALID",
     exportReadyDocumentCount: 3,
     // BuildPlan enforcement is fail-closed: default to true so the "good"

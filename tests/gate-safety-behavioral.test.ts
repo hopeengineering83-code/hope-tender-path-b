@@ -30,12 +30,12 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
       { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 4, sourceExactQuote: "Fourth requirement quote for grounding", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Fourth requirement quote for grounding. Additional context for the tender file extraction." },
       { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "Fifth requirement quote for grounding test", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Fifth requirement quote for grounding test. Additional context for the tender file extraction." },
     ],
-    criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 3,
+    criticalMetadataOk: true, exportReadyDocumentCount: 3,
     // BuildPlan enforcement is fail-closed: default to true so the "passing"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true,
     confirmedPlanDocumentsOk: true,
+    recordedBuildPlanState: "VALID" as const,
     ...overrides,
   };
 }
@@ -105,11 +105,11 @@ describe("Gate blocks corrupted/weak extraction", () => {
   });
 });
 
-describe("Gate blocks missing/stale submission plan", () => {
-  it("blocks when submissionPlanDocumentCount is 0 (virtual plan only)", () => {
-    const r = evaluateGenerationReadiness(makePassingInput({ hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0 }));
+describe("Gate blocks missing/stale BuildPlan", () => {
+  it("blocks when BuildPlan is missing", () => {
+    const r = evaluateGenerationReadiness(makePassingInput({ hasCurrentConfirmedBuildPlan: false, recordedBuildPlanState: "MISSING" as const, exportReadyDocumentCount: 0 }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "BUILD_PLAN_MISSING");
   });
 });
 
@@ -187,13 +187,12 @@ describe("Gate allows when all conditions pass", () => {
 });
 
 describe("Gate blocks for export purpose too", () => {
-  it("blocks export when submissionPlanDocumentCount is 0", () => {
+  it("blocks export when no export-ready documents", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      purpose: "export",
-      hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0,
+      purpose: "export", exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
   it("blocks export when corrupted extraction", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
@@ -206,12 +205,11 @@ describe("Gate blocks for export purpose too", () => {
 });
 
 describe("Gate blocks for final-zip purpose", () => {
-  it("blocks final-zip when submissionPlanDocumentCount is 0", () => {
+  it("blocks final-zip when no export-ready documents", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      purpose: "final-zip",
-      hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0,
+      purpose: "final-zip", exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 });

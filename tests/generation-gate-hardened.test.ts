@@ -35,12 +35,12 @@ function goodInput(overrides: Partial<GenerationReadinessInput> = {}): Generatio
         sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: The procuring entity requires ISO certification for all bidders.. Additional context for the tender file extraction.",
       },
     ],
-    criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    criticalMetadataOk: true, exportReadyDocumentCount: 5,
     // BuildPlan enforcement is fail-closed: default to true so the "good"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true,
     confirmedPlanDocumentsOk: true,
+    recordedBuildPlanState: "VALID" as const,
     ...overrides,
   };
 }
