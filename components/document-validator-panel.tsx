@@ -206,7 +206,7 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
             </div>
 
             {!check.hasContent && (
-              <p className="mt-2 text-xs text-red-700 font-medium">⚠ This document has no content yet. Click &ldquo;Generate&rdquo; to create it from the tender requirements, or &ldquo;Attach&rdquo; to upload an existing file.</p>
+              <p className="mt-2 text-xs text-red-700 font-medium">⚠ No content — document has not been generated or content is missing. Generate or attach a file before export.</p>
             )}
 
             {check.placeholders.length > 0 && (

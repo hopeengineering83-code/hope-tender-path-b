@@ -91,7 +91,6 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
-  | "NO_EXPORT_READY_DOCUMENTS"
   | "GATE_INTERNAL_ERROR";
 
 export interface GenerationReadinessResult {
@@ -146,17 +145,8 @@ export interface GenerationReadinessInput {
   // G — critical metadata: no critical field may be invalid, placeholder, contaminated,
   //     or a manual candidate without active tender-source evidence
   criticalMetadataOk: boolean;
-  // H — Build/Submission plan for GENERATION: a valid virtual Build Plan satisfies
-  //     this prerequisite. This is true when the submission plan has been built
-  //     (virtual or real) and identifies at least one required file.
-  //     PLANNED, SUPERSEDED, virtual, or legacy planned rows do NOT count as
-  //     generated/export-ready — they only satisfy the plan prerequisite.
-  hasValidVirtualSubmissionPlan: boolean;
-  // I — EXPORT/FINAL-ZIP readiness: count of real current generated files with
-  //     content, validation, review, and exact-plan reconciliation. Only these
-  //     rows satisfy export and final-ZIP gates. PLANNED/SUPERSEDED/virtual/
-  //     missing-content/unvalidated/unreviewed rows never count here.
-  exportReadyDocumentCount: number;
+  // H — submission/build plan: count of non-superseded GeneratedDocument rows
+  submissionPlanDocumentCount: number;
 }
 
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
@@ -266,23 +256,10 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // H — Build/Submission plan prerequisite for GENERATION.
-  //     A valid virtual Build Plan satisfies this — it proves the tender
-  //     requires at least one file. PLANNED/SUPERSEDED/virtual rows do NOT
-  //     count as generated/export-ready; they only satisfy the plan prerequisite.
-  if (!input.hasValidVirtualSubmissionPlan) {
-    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists. Build the submission plan before generating/exporting.");
-  }
-
-  // I — EXPORT/FINAL-ZIP readiness: require real current generated files.
-  //     PLANNED, virtual, SUPERSEDED, missing-content, unvalidated, or
-  //     unreviewed rows never count. Only real generated files with content,
-  //     validation, review, and exact-plan reconciliation satisfy export/ZIP.
-  if (input.purpose === "export" || input.purpose === "final-zip") {
-    if (input.exportReadyDocumentCount < 1) {
-      return fail("NO_EXPORT_READY_DOCUMENTS",
-        "No export-ready documents exist. Generate and validate real documents before exporting or creating a final ZIP. PLANNED, virtual, and superseded rows do not count.");
-    }
+  // H — Build/Submission plan must exist (at least one non-superseded planned or
+  //     generated document). Matches the canonical hasValidSubmissionPlan signal.
+  if (input.submissionPlanDocumentCount < 1) {
+    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists (no planned or generated documents). Build the submission plan before generating/exporting.");
   }
 
   return { ok: true, purpose: input.purpose };
@@ -494,38 +471,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       submissionMethodContext: tender.submissionMethod ?? undefined,
     });
 
-    // H — Build/Submission plan prerequisite for GENERATION.
-    //     A valid virtual Build Plan satisfies this. We compute it from the
-    //     submission plan (built from tender requirements + exact file naming)
-    //     rather than counting GeneratedDocument rows, because PLANNED rows
-    //     are now virtual and should not be required for generation.
-    //     If the tender has explicit submission scope (exact file naming/order
-    //     or requirements with exactFileName), the plan must produce at least
-    //     one required file. If there's no explicit scope, any tender with
-    //     extracted requirements has a valid plan by default.
-    const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
-    const submissionPlan = buildSubmissionPlan(tender as any);
-    const plannedFiles = hasExplicitSubmissionScope(tender as any)
-      ? plannedSubmissionTargetFiles(submissionPlan)
-      : [];
-    const hasValidVirtualSubmissionPlan = requirements.length > 0
-      ? (hasExplicitSubmissionScope(tender as any) ? plannedFiles.length > 0 : true)
-      : false;
-
-    // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
-    //     with content, validation, and review. PLANNED/SUPERSEDED/virtual/
-    //     missing-content/unvalidated/unreviewed rows never count.
-    //     This is a strict count — only GENERATED rows with fileContent and
-    //     validationStatus/reviewStatus indicating readiness are included.
-    const exportReadyDocumentCount = await prisma.generatedDocument.count({
-      where: {
-        tenderId,
-        generationStatus: "GENERATED",
-        fileContent: { not: null },
-        validationStatus: { in: ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"] },
-        reviewStatus: { in: ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
-      },
-    });
+    // H — virtual submission-plan signal.
+    const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+    const planStatus = deriveSubmissionPlanStatus(tender as any, plan);
+    const submissionPlanDocumentCount = (planStatus === "CANONICAL_APPROVED")
+      ? ((await prisma.generatedDocument.count({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } } })) || plan.files.length)
+      : 0;
 
     return evaluateGenerationReadiness({
       purpose,
@@ -541,8 +492,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       requirementCount: requirements.length,
       requirements: mappedRequirements,
       criticalMetadataOk: !fieldStates.hasGenerationBlocker,
-      hasValidVirtualSubmissionPlan,
-      exportReadyDocumentCount,
+      submissionPlanDocumentCount,
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.

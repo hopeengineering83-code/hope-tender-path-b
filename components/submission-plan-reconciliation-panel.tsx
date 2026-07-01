@@ -5,7 +5,6 @@ import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraG
 import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 function statusClass(ok: boolean) {
   return ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800";
@@ -159,7 +158,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
     </section>
   );
   } catch (err) {
-    clientLogger.error("[SubmissionPlanReconciliationPanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
+    console.error("[SubmissionPlanReconciliationPanel] render error:", err);
     return (
       <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
         <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>

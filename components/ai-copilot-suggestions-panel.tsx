@@ -4,7 +4,6 @@
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 type Suggestion = { icon: string; title: string; detail: string; priority: "HIGH" | "MEDIUM" | "LOW" };
 
@@ -221,7 +220,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       </section>
     );
   } catch (err) {
-    clientLogger.error("[AICopilotSuggestionsPanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
+    console.error("[AICopilotSuggestionsPanel] render error:", err);
     return null;
   }
 }

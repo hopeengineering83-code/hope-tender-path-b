@@ -149,6 +149,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     logger.error("Authority review route failed", { detail: error });
     return jsonError("Authority review failed.", 500, {
       code: "AUTHORITY_REVIEW_RUNTIME_ERROR",
+      detail: error instanceof Error ? error.message : String(error),
     });
   }
 }

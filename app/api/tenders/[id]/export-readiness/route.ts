@@ -106,6 +106,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     logger.error("Export readiness route failed", { detail: error });
     return jsonError("Export-readiness route failed.", 500, {
       code: "EXPORT_READINESS_RUNTIME_ERROR",
+      detail: error instanceof Error ? error.message : String(error),
     });
   }
 }

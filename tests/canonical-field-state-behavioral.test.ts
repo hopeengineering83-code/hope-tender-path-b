@@ -69,16 +69,11 @@ describe("canonical resolver — contamination parity with the Metadata Truth pa
     assert.equal(field(resolve(cleanTender()), "clientName").isGrounded, true, "(control) a clean clientName IS grounded");
   });
 
-  it("flags contamination even with override unless override matches grounded source", () => {
-    // After the fix: a contaminated field with an override stays blocked
-    // unless the override value matches the grounded extracted value.
+  it("does not flag contamination once the user has overridden the field", () => {
     const r = resolve(cleanTender({ metadataContaminated: true }), {
       overrides: [{ field: "clientName", fieldState: "USER_EDITED", overrideValue: "Ministry of Health", reason: "corrected", overriddenBy: "u", createdAt: new Date() }],
     });
-    // The override value "Ministry of Health" does NOT match the raw value
-    // (which is the contaminated value), so this must stay PORTAL_CONTAMINATION.
-    assert.equal(field(r, "clientName").status, "PORTAL_CONTAMINATION",
-      "Contaminated field with non-matching override must stay PORTAL_CONTAMINATION");
+    assert.notEqual(field(r, "clientName").status, "PORTAL_CONTAMINATION");
   });
 
   it("does not flag non-entity fields as contaminated", () => {

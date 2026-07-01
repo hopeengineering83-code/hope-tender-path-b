@@ -4,7 +4,6 @@ import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-rea
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 import { BidDecisionForm } from "./bid-decision-form";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";
 
@@ -42,7 +41,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
 
   const [generationReadiness, canonical, tender] = await Promise.all([
     getTenderGenerationReadinessStrict(prisma, userId, tenderId).catch((error) => {
-      clientLogger.error("[BidControlVerdictPanel] generation readiness failed", {
+      console.error("[BidControlVerdictPanel] generation readiness failed", {
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
         message: error instanceof Error ? error.message : String(error),
@@ -50,7 +49,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
       return null;
     }),
     getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false }).catch((error) => {
-      clientLogger.error("[BidControlVerdictPanel] final readiness failed", {
+      console.error("[BidControlVerdictPanel] final readiness failed", {
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
         message: error instanceof Error ? error.message : String(error),

@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from "react";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import type { CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 // ─── Status badge config ────────────────────────────────────────────────────
 

@@ -1,7 +1,6 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { safeParseJsonObject } from "../lib/safe-json";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 const PROBLEM_STATES = new Set([
   "OCR_REQUIRED",
@@ -77,7 +76,7 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
       </section>
     );
   } catch (error) {
-    clientLogger.error("[AIAnalyzeRecoveryPanel] render error", {
+    console.error("[AIAnalyzeRecoveryPanel] render error", {
       tenderId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       message: error instanceof Error ? error.message : String(error),

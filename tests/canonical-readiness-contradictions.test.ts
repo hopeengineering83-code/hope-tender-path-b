@@ -42,6 +42,7 @@ function healthyReadinessState() {
       { priority: "CRITICAL", sourcePageNumber: 5, sourceExactQuote: "Quote2", sectionReference: "§2.2", sourceConfidence: 0.8 },
     ],
     exactFileNaming: JSON.stringify(["Technical Proposal.docx", "Financial Proposal.docx"]),
+    status: "PLAN_APPROVED",
     generatedDocuments: [],
   });
 }

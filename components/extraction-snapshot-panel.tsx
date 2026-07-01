@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import { ExtractionSnapshot } from "../lib/extraction-quality";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 export function ExtractionSnapshotPanel({ tenderId }: { tenderId: string }) {
   const [snapshots, setSnapshots] = useState<ExtractionSnapshot[] | null>(null);

@@ -15,6 +15,10 @@ export type CanonicalTenderReadiness = {
   readyForSupportPackage: boolean;
   readyForFullProposal: boolean;
   readyForFinalExport: boolean;
+  generationEligible: boolean;
+  exportEligible: boolean;
+  generationBlockers: string[];
+  exportBlockers: string[];
   modules: CanonicalModuleStatePayload;
   blockers: string[];
   warnings: string[];
@@ -113,6 +117,9 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     currentAnalysisHash: baseState.currentAnalysisHash,
   });
 
+  const generationEligible = states.generation === "READY" || states.generation === "WARNING";
+  const exportEligible = states.export === "READY";
+
   return {
     readyForAnalysis: readiness.analysisQuality.severity !== "POOR",
     readyForMatchingAttempt: true,
@@ -121,6 +128,10 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
     readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && blockers.length === 0,
+    generationEligible,
+    exportEligible,
+    generationBlockers: states.generation !== "READY" && states.generation !== "WARNING" ? blockers : [],
+    exportBlockers: !exportEligible ? blockers : [],
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),

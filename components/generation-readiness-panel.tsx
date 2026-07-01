@@ -3,7 +3,6 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
@@ -159,7 +158,7 @@ export async function GenerationReadinessPanel({
       </section>
     );
   } catch (error) {
-    clientLogger.error("[GenerationReadinessPanel] render error", {
+    console.error("[GenerationReadinessPanel] render error", {
       tenderId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       message: error instanceof Error ? error.message : String(error),

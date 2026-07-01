@@ -57,22 +57,25 @@ describe("generate/route.ts — analysis extraction status gate", () => {
 
 // ── 3. generate/route.ts — narrowed catch block ───────────────────────────────
 
-describe("generate/route.ts — ensurePlannedGeneratedDocumentRecords permanently disabled", () => {
-  it("ensurePlannedGeneratedDocumentRecords is a no-op stub (returns 0, creates nothing)", () => {
+describe("generate/route.ts — race-condition catch narrowed to P2002", () => {
+  it("catch block references Prisma.PrismaClientKnownRequestError", () => {
     assert.ok(
-      generateSource.includes("PERMANENTLY DISABLED"),
-      "ensurePlannedGeneratedDocumentRecords must be marked PERMANENTLY DISABLED",
+      generateSource.includes("PrismaClientKnownRequestError"),
+      "race-condition catch must check PrismaClientKnownRequestError, not swallow all errors",
     );
+  });
+
+  it("catch block checks error code P2002", () => {
     assert.ok(
-      generateSource.includes("return 0;"),
-      "ensurePlannedGeneratedDocumentRecords must return 0 (no-op)",
+      generateSource.includes('"P2002"'),
+      "race-condition catch must check for unique constraint error code P2002",
     );
-    // Must NOT contain prisma.generatedDocument.create in the helper body
-    const helperIdx = generateSource.indexOf("ensurePlannedGeneratedDocumentRecords");
-    const helperBody = generateSource.slice(helperIdx, helperIdx + 500);
+  });
+
+  it("catch block re-throws non-P2002 errors", () => {
     assert.ok(
-      !helperBody.includes("prisma.generatedDocument.create"),
-      "Disabled helper must NOT contain prisma.generatedDocument.create",
+      generateSource.includes("throw err"),
+      "catch block must re-throw errors that are not unique-constraint violations",
     );
   });
 });

@@ -3,7 +3,6 @@
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 type HeatmapStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "UNKNOWN";
 
@@ -191,7 +190,7 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
       </section>
     );
   } catch (err) {
-    clientLogger.error("[ComplianceHeatmapPanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
+    console.error("[ComplianceHeatmapPanel] render error:", err);
     return (
       <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
         <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>

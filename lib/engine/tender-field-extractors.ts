@@ -63,42 +63,16 @@ function captureAround(text: string, index: number, length: number, before = 30,
 }
 
 // ─── 1. Reference number ──────────────────────────────────────────────────
-// BUGFIX: The old regex captured "Number" as the value when the document had
-// "Reference Number:" followed by a newline before the actual number. The
-// capture group `[A-Z0-9][A-Z0-9./_\-]{2,40}` matched "Number" because it
-// starts with 'N' (uppercase) and contains only letters. Now we:
-// 1. Use a negative lookahead to reject label words
-// 2. Require the first pattern to use "Ref" (not "Reference") to avoid
-//    matching "Reference Number" which should be handled by pattern 2
-// 3. Reject pure-label values in the extractReference function
-const LABEL_WORDS = "(?:Number|Reference|Ref|No|ID|Code)";
 const REFERENCE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
-  // "Tender Reference: ABC-123" / "RFP ID: XYZ/2026/01" / "Tender Ref: ABC-123"
-  // Uses "Reference" (full word) or "Ref." or "ID" — NOT "Ref" alone (which
-  // would partially match "Reference" and capture "erence")
-  { rx: new RegExp(
-    "\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID)\\s*[:#-]?\\s*" +
-    "(?!" + LABEL_WORDS + "\\b)" +
-    "([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"
-    ), confidence: "HIGH" },
-  // "Reference No.: ABC-123" / "Reference Number: XYZ/2026/01"
-  { rx: new RegExp(
-    "\\bReference\\s+(?:No\\.?|Number|#)\\s*[:.]?\\s*" +
-    "(?!" + LABEL_WORDS + "\\b)" +
-    "([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"
-    ), confidence: "HIGH" },
+  // "Reference No.: ABC-123" / "Tender Reference: XYZ/2026/01"
+  { rx: /\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\s+(?:Reference|Ref(?:erence)?|Number|No\.?|ID)\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_\-]{2,40})/i, confidence: "HIGH" },
+  { rx: /\bReference\s+(?:No\.?|Number|#)\s*[:.]?\s*([A-Z0-9][A-Z0-9./_\-]{2,40})/i, confidence: "HIGH" },
   // "Procurement Plan No.: 12345" / "ITT No. 7777"
-  { rx: new RegExp(
-    "\\b(?:Procurement|ITT|ITB|EOI|RFP)\\s+(?:Plan\\s+)?No\\.?\\s*[:#-]?\\s*" +
-    "(?!" + LABEL_WORDS + "\\b)" +
-    "([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"
-    ), confidence: "MEDIUM" },
+  { rx: /\b(?:Procurement|ITT|ITB|EOI|RFP)\s+(?:Plan\s+)?No\.?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_\-]{2,40})/i, confidence: "MEDIUM" },
 ];
 
 export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing<string> {
   const cands: ExtractedField<string>[] = [];
-  // Reject pure-label values that slipped through (e.g., "Number", "Reference")
-  const LABEL_REJECT = /^(number|reference|ref|no|id|code|tender|rfp|rfq|itb|eoi|procurement)$/i;
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     if (text.length < SOURCE_MIN) continue;
@@ -107,7 +81,6 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
       if (!m) continue;
       const value = m[1].trim();
       if (value.length < 3) continue;
-      if (LABEL_REJECT.test(value)) continue; // reject label words
       cands.push({
         found: true,
         value,

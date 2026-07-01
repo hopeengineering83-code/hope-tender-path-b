@@ -19,6 +19,7 @@ const base = {
   title: "Hospital Equipment Tender",
   clientName: "Ministry of Health",
   reference: "MOH-001",
+  status: "PLAN_APPROVED",
   metadataContaminated: false,
   requirements: [req("MANDATORY"), req("CRITICAL"), req("OPTIONAL")],
   exactFileNaming: '["Technical Proposal.docx"]',

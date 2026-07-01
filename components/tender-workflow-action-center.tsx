@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { clientLogger } from "@/lib/ui/client-logger";
 
 export interface WorkflowStageInfo {
   stage: number;

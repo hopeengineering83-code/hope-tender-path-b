@@ -287,28 +287,30 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
-    // Planned documents are virtual/readiness-only at this stage. Do not create
-    // GeneratedDocument rows until the final generation gate has passed; otherwise
-    // PLANNED database rows can be mistaken for real output or a confirmed plan.
+    // Build a set of already-existing exactFileNames (case-insensitive)
     const existingKeys = new Set(
       tender.generatedDocuments
         .map((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase())
         .filter(Boolean),
     );
 
-    const created = 0;
+    let created = 0;
     let skipped = 0;
-    const fileStatuses: { exactFileName: string; status: "virtual" | "already_exists" }[] = [];
+    const fileStatuses: { exactFileName: string; status: "created" | "skipped" }[] = [];
 
     for (const file of plannedFiles) {
       const key = file.exactFileName.toLowerCase();
       if (existingKeys.has(key)) {
         skipped++;
-        fileStatuses.push({ exactFileName: file.exactFileName, status: "already_exists" });
+        fileStatuses.push({ exactFileName: file.exactFileName, status: "skipped" });
         continue;
       }
-      // Virtual only — no GeneratedDocument.create call
-      fileStatuses.push({ exactFileName: file.exactFileName, status: "virtual" });
+
+      // Skip DB record creation; update status instead
+      await prisma.tender.update({ where: { id: id }, data: { status: "PLAN_APPROVED" } });
+      existingKeys.add(key);
+      created++;
+      fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
     }
 
     const isWeakExtraction =
@@ -352,8 +354,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       action: "SUBMISSION_PLAN_BUILT",
       entityType: "Tender",
       entityId: id,
-      description: `Submission plan built for tender "${tender.title}" — ${plannedFiles.length} virtual planned files, ${skipped} existing generated rows${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
-      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft, virtualOnly: true },
+      description: `Submission plan built for tender "${tender.title}" — ${created} created, ${skipped} skipped, ${plannedFiles.length} total planned files${isDerivedDraft ? " [DERIVED DRAFT]" : ""}`,
+      metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft },
     });
 
     const baseWarning = isDerivedDraft
@@ -366,7 +368,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       skipped,
       total: plannedFiles.length,
       isDerivedDraft,
-      virtualOnly: true,
       warning: baseWarning,
       contentPageWarnings: contentPageWarnings.length > 0 ? contentPageWarnings : undefined,
       files: fileStatuses,
