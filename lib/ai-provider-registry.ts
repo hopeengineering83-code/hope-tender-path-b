@@ -154,7 +154,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   cerebras: {
     provider: "cerebras",
@@ -180,7 +180,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   mistral: {
     provider: "mistral",
@@ -204,7 +204,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   groq: {
     provider: "groq",
@@ -325,7 +325,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: false,
+    emergencyOnly: true,
   },
   deepseek: {
     provider: "deepseek",
@@ -370,9 +370,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     outputCaps: STANDARD_CAPS,
     timeoutMs: 10_000,
     retry: FALLBACK_RETRY,
-    // Last-resort emergency provider — kept last so rate limits never block the
-    // app when earlier providers are available.
-    emergencyOnly: true,
+    // Last automatic fallback provider — kept last so earlier providers are
+    // preferred, but still part of the automatic chain.
+    emergencyOnly: false,
     supportsStructuredJson: false,
   },
 };

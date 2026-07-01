@@ -151,7 +151,7 @@ function isSensitiveDocument(doc: { name?: string | null; exactFileName?: string
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   const requestId = extractRequestId(req);
   const rl = rateLimit(`auto-finalize:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });

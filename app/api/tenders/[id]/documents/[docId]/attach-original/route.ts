@@ -33,7 +33,7 @@ function sameRequiredExtension(expected: string | null | undefined, actual: stri
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; docId: string }> }) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }

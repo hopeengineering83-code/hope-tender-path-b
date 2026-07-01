@@ -255,9 +255,10 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
 
 // Emergency-only flag
 describe("emergency-only provider flag", () => {
-  it("only anthropic is emergency-only", () => {
+  it("zai, cerebras, mistral, together are emergency-only (manual); automatic chain providers are not", () => {
+    const manualOnly = new Set(["zai", "cerebras", "mistral", "together"]);
     for (const entry of getCanonicalProviderEntries()) {
-      assert.equal(entry.emergencyOnly, entry.provider === "anthropic", `${entry.provider} emergencyOnly mismatch`);
+      assert.equal(entry.emergencyOnly, manualOnly.has(entry.provider), `${entry.provider} emergencyOnly mismatch`);
     }
   });
 });

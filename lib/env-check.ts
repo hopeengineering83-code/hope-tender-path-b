@@ -5,15 +5,15 @@ import { logger } from "./observability";
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: at least one AI provider key is required in production:
- *   - ZAI_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / GROQ_API_KEY /
- *     OPENROUTER_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY /
- *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical chain (single source of
- *     truth: lib/ai-provider-registry.ts) is Z.ai GLM → Cerebras → Mistral → Groq
- *     → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude, with
- *     Claude last so Anthropic rate limits do not block the app.
+ * ARCHITECTURE: at least one automatic AI provider key is required in production:
+ *   - GEMINI_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / GROQ_API_KEY /
+ *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical automatic chain
+ *     (single source of truth: lib/ai-provider-registry.ts) is Gemini →
+ *     OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude. Z.ai,
+ *     Cerebras, Mistral, and Together are manual diagnostics/adapters only and
+ *     must not satisfy automatic runtime readiness.
  *
- * Without EITHER key:
+ * Without an automatic provider key:
  *   - Every imported expert/project is classified as REGEX_DRAFT
  *   - REGEX_DRAFT records are BLOCKED from use in final proposal generation
  *   - A deployment with no AI key can never complete the proposal workflow

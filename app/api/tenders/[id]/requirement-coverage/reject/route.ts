@@ -18,7 +18,7 @@ type Body = {
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
