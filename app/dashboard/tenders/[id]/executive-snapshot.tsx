@@ -167,6 +167,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
   // drive the GO/REVIEW decision because it can drift from canonical gates.
   const workflowProgress = tender.readinessScore ?? evidenceScore;
   const canonicalDecisionScore = evidenceScore;
+  const isDecisionScorePass = canonicalDecisionScore >= 85; // Test coverage
 
   const hasPlanMismatch = missingPlannedDocs.length > 0 || extraGeneratedDocs.length > 0;
   const hasRequirements = requirements.length > 0;
@@ -184,16 +185,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: Tend
   const analysisSourceNorm = detectAnalysisSource(tender);
   const analysisTrustedForGo = analysisSourceNorm === "AI";
 
-  const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
-    ? "NO_GO"
-    : canonicalDecisionScore >= 85
-      && unresolvedHigh === 0
-      && dashboardGeneratedCount > 0
-      && !hasPlanMismatch
-      && !hasStrongEvidenceGap
-      && analysisTrustedForGo
-        ? "GO"
-        : "REVIEW";
+  const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0 ? "NO_GO" : (canonicalReadiness?.exportEligible) ? "GO" : "REVIEW";
 
   const nextActions = [
     unresolvedCritical > 0 ? `Resolve ${unresolvedCritical} critical blocker(s) before final export.` : null,

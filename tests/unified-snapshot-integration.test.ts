@@ -32,6 +32,8 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
   };
 
   const tender = await prisma.tender.create({ data: tenderData });
+  await prisma.aiJob.create({ data: { id: "test-job-" + Date.now(), tenderId: tender.id, jobType: "AI_ANALYZE", status: "COMPLETED", userId, analysisInputHash: "dummy" } });
+  await prisma.auditLog.create({ data: { userId, action: "TENDER_ANALYZED", entityType: "Tender", entityId: tender.id, description: "satisfy trigger" } });
 
   // 2. Create a manual override: deadline manually entered, NO source evidence
   await prisma.tenderMetadataOverride.create({
@@ -48,6 +50,8 @@ test("unified snapshot: manually entered ungrounded deadline is BLOCKED identica
   // 3. Get the unified snapshot
   const snapshot = await getTenderReleaseSnapshot(prisma, tender.id, userId);
   assert(snapshot, "Snapshot must exist");
+  const deadlineField = snapshot.metadata.fields.find((f: any) => f.fieldKey === "deadline");
+  assert.equal(deadlineField?.status, "BLOCKED", "Manually entered ungrounded deadline must be BLOCKED");
 
   // 4. Verify the snapshot has basic structure
   assert(snapshot.metadata, "Snapshot must have metadata");
