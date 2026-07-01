@@ -48,7 +48,9 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
         exactFileNaming: '["Technical Proposal.docx"]',
         exactFileOrder: '[1]',
         submissionMethod: "email",
+        submissionAddress: "submission@example.com",
         submissionEmails: "submission@example.com",
+        submissionEmailSubject: "Tender Submission",
         deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
@@ -85,6 +87,32 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
         sourceExactQuote: "This tender requires a Technical Proposal.",
       },
     });
+    // Create a promoted AI_ANALYZE job with SUCCEEDED status so the preflight
+    // (assertTenderReadyToDraftBuildPlan) accepts the tender as AI_SUCCEEDED.
+    // The analysisInputHash MUST match what the preflight computes via
+    // buildTenderAnalysisContent + computeAnalysisContentHash.
+    const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("../lib/engine/tender-analysis-content");
+    // Reload tender with the exact shape buildTenderAnalysisContent expects
+    const tenderForHash = await prisma.tender.findUnique({
+      where: { id: tenderId },
+      select: { title: true, description: true, intakeSummary: true, files: { select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true, deletionStatus: true } } },
+    });
+    const contentHash = computeAnalysisContentHash(buildTenderAnalysisContent(
+      { title: tenderForHash!.title, description: tenderForHash!.description, intakeSummary: tenderForHash!.intakeSummary, files: tenderForHash!.files as any[] },
+      undefined,
+    ));
+    await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "AI_ANALYZE",
+        status: "SUCCEEDED",
+        analysisInputHash: contentHash,
+        startedAt: new Date(),
+        finishedAt: new Date(),
+        promotedAt: new Date(),
+      },
+    });
   });
 
   after(async () => {
@@ -95,6 +123,12 @@ dbDescribe("BuildPlan DRAFT/CONFIRMED service persists to real PostgreSQL", () =
   });
 
   it("buildDraftBuildPlan writes status=DRAFT, builtById, itemsJson, validationJson, contentHash", async () => {
+    // Run preflight first to get the specific error if it fails
+    const { assertTenderReadyToDraftBuildPlan } = await import("../lib/engine/build-plan");
+    const preflightResult = await assertTenderReadyToDraftBuildPlan(prisma, tenderId, userId);
+    if (!preflightResult.ok) {
+      console.error("PREFLIGHT FAILED:", JSON.stringify(preflightResult));
+    }
     const plan = await buildDraftBuildPlan(prisma, tenderId, userId);
     assert.ok(plan, "buildDraftBuildPlan must return the created/updated DRAFT plan");
     assert.equal(plan.status, "DRAFT");

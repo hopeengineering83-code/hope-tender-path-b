@@ -623,6 +623,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       submissionMethod: tender.submissionMethod,
       submissionAddress: tender.submissionAddress,
       submissionEmails: tender.submissionEmails,
+      submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
+      deadline: (tender as any).deadline ?? null,
       files: activeFiles.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: "ACTIVE" })),
       requirements: (requirements as _RequirementRow[]).map((r) => ({
         id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority,

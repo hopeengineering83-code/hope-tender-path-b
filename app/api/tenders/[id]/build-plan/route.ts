@@ -13,6 +13,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   await prismaReady;
   const { id } = await params;
   const before = await prisma.generatedDocument.count({ where: { tenderId: id } });
+  // PREFLIGHT runs inside buildDraftBuildPlan via assertTenderReadyToDraftBuildPlan.
+  // If preflight fails, buildDraftBuildPlan returns null. We re-run the preflight
+  // here to get the specific error code/message for the response.
+  const { assertTenderReadyToDraftBuildPlan } = await import("../../../../../lib/engine/build-plan");
+  const preflight = await assertTenderReadyToDraftBuildPlan(prisma, id, actor.id);
+  if (!preflight.ok) {
+    return NextResponse.json({ ok: false, code: preflight.code, error: preflight.message }, { status: preflight.status });
+  }
   const plan = await buildDraftBuildPlan(prisma, id, actor.id);
   if (!plan) return NextResponse.json({ ok: false, code: "TENDER_NOT_FOUND", error: "Tender not found" }, { status: 404 });
   const after = await prisma.generatedDocument.count({ where: { tenderId: id } });

@@ -11,7 +11,7 @@ import { logger } from "../../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, plannedSubmissionTargetFiles, buildDerivedDraftPlan } from "../../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, plannedSubmissionTargetFiles } from "../../../../../../lib/engine/submission-plan";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
@@ -191,13 +191,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
-    const plan = buildSubmissionPlanWithDerivedFallback(tender);
+    // AUTHORITATIVE PLAN ONLY: no heuristic/derived/fallback plans.
+    // If the canonical plan produces zero files, return a hard 422 blocker.
+    const plan = buildSubmissionPlan(tender);
     let plannedFiles = plannedSubmissionTargetFiles(plan);
-
-    // ── Derived draft fallback ────────────────────────────────────────────────
-    // The primary plan produced 0 files (e.g. all requirements are non-MANDATORY
-    // and no exactFileName is set). Try a heuristic derived draft from keywords.
-    let isDerivedDraft = plan.warnings.some((w: string) => w.includes("derived draft"));
+    let isDerivedDraft = false; // Never persist a DERIVED_DRAFT plan.
 
     // Guard: even if plan is empty and no requirements exist, ensure we never
     // return a 200 response with 0 planned files. This is a gate violation per
@@ -214,71 +212,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
 
     if (plannedFiles.length === 0 && tender.requirements.length > 0) {
-      // Gate: if ALL requirements are non-MANDATORY (SCORED/INFORMATIONAL) and no
-      // exactFileName is set, we cannot reliably auto-build a plan — require the
-      // user to manually mark at least one requirement as MANDATORY or add explicit
-      // file names. This prevents a derived draft from being built on purely advisory
-      // requirements, which would produce a misleading DERIVED_DRAFT_UNCONFIRMED plan.
-      const hasExplicitFileNames = tender.requirements.some((r) => (r.exactFileName ?? "").trim().length > 0);
-      const hasMandatory = tender.requirements.some((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-      if (!hasMandatory && !hasExplicitFileNames) {
-        return NextResponse.json({
-          ok: false,
-          errorCode: "BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS",
-          error: "Cannot auto-build submission plan: all requirements are SCORED or INFORMATIONAL (none are MANDATORY) and no explicit file names are set. Mark at least one requirement as MANDATORY or add exact file names before building the plan.",
-          blockers: [
-            "All requirements are non-MANDATORY — no required submission files can be derived.",
-            "Set at least one requirement priority to MANDATORY, or add exactFileName values, then rebuild.",
-          ],
-          nextAction: "SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES",
-        }, { status: 422 });
-      }
-
-      const derivedEntries = buildDerivedDraftPlan({
-        requirements: tender.requirements.map((r) => ({
-          title: r.title,
-          description: r.description,
-          requirementType: r.requirementType,
-          priority: r.priority,
-        })),
-        submissionMethod: tender.submissionMethod,
-        title: tender.title,
-        tenderCategory: tender.category,
-        analysisExtractionStatus: tender.analysisExtractionStatus,
-      });
-
-      if (derivedEntries.length === 0) {
-        // Requirements exist but derived plan also empty — hard block.
-        return NextResponse.json({
-          errorCode: "BUILD_PLAN_EMPTY",
-          message: "Cannot build a submission plan: no requirements could be mapped to submission documents. Re-run AI Analyze or manually add requirements.",
-          blockers: ["No submission documents could be derived from the current requirements"],
-          nextAction: "RERUN_AI_ANALYZE",
-        }, { status: 400 });
-      }
-
-      // Use derived entries as planned files — store DERIVED_DRAFT note in contentSummary
-      // since the schema generationStatus only has known values (PLANNED, GENERATED, …).
-      plannedFiles = derivedEntries.map((entry, index) => ({
-        canonicalId: `derived-${index + 1}`,
-        exactFileName: `${entry.name}.docx`,
-        documentType: entry.documentType,
-        required: entry.required,
-        exactOrder: index + 1,
-        format: "DOCX" as const,
-        envelope: (entry.documentType === "FINANCIAL" ? "FINANCIAL" : "TECHNICAL") as "TECHNICAL" | "FINANCIAL",
-        sourceRequirementIds: [],
-        pageLimit: null,
-        templateRequired: false,
-        templateSourceFileId: null,
-        brandingAllowed: true,
-        signatureAllowed: true,
-        stampAllowed: true,
-        grouping: null,
-        notes: entry.derivedFrom,
-      }));
-
-      isDerivedDraft = true;
+      // NO HEURISTIC FALLBACK: do not persist a BuildPlan from keyword guesses,
+      // optional-only requirements, or ungrounded exact-file guesses. Return a
+      // hard 422 blocker requiring AI Analyze or manually grounded requirements.
+      return NextResponse.json({
+        ok: false,
+        errorCode: "BUILD_PLAN_NO_GROUNDED_ITEMS",
+        error: "Cannot build a trusted Build Plan: no tender-controlled required submission files could be derived from grounded MANDATORY requirements or exact file naming. Re-run AI Analyze to extract grounded requirements, or manually add exact file names with source evidence.",
+        blockers: ["No grounded plan items — heuristic/derived drafts are not persisted as authoritative BuildPlans."],
+        nextAction: "RERUN_AI_ANALYZE",
+      }, { status: 422 });
     } else if (plannedFiles.length === 0) {
       return NextResponse.json({
         ok: false,

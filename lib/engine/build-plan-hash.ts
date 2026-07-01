@@ -50,6 +50,8 @@ export type BuildPlanHashInput = {
   submissionMethod?: string | null;
   submissionAddress?: string | null;
   submissionEmails?: string | null;
+  submissionEmailSubject?: string | null;
+  deadline?: Date | string | null;
 };
 
 const UNIT = ""; // field separator unlikely to appear in tender text
@@ -97,6 +99,8 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
     `exactFileOrder:${input.exactFileOrder ?? ""}`,
     `submissionMethod:${input.submissionMethod ?? ""}`,
     `submissionAddress:${input.submissionAddress ?? ""}`,
+    `submissionEmailSubject:${input.submissionEmailSubject ?? ""}`,
+    `deadline:${input.deadline ? new Date(input.deadline).toISOString() : ""}`,
     `submissionEmails:${input.submissionEmails ?? ""}`,
   ].join("\n\n");
 
@@ -115,6 +119,8 @@ export function buildPlanHashInputFromTender(tender: {
   submissionMethod?: string | null;
   submissionAddress?: string | null;
   submissionEmails?: string | null;
+  submissionEmailSubject?: string | null;
+  deadline?: Date | string | null;
   files: BuildPlanHashFile[];
   requirements: BuildPlanHashRequirement[];
 }): BuildPlanHashInput {
@@ -126,6 +132,8 @@ export function buildPlanHashInputFromTender(tender: {
     submissionMethod: tender.submissionMethod ?? null,
     submissionAddress: tender.submissionAddress ?? null,
     submissionEmails: tender.submissionEmails ?? null,
+    submissionEmailSubject: tender.submissionEmailSubject ?? null,
+    deadline: tender.deadline ?? null,
   };
 }
 

@@ -12,6 +12,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
   const { id } = await params;
+  // RACE-SAFE CONFIRMATION: use a serializable transaction with optimistic
+  // concurrency. The update includes a WHERE clause that checks id, status=DRAFT,
+  // revision, AND contentHash — so if a concurrent rebuild changes revision or
+  // hash between our read and our update, the update affects 0 rows and we
+  // return a stale/conflict response. This prevents confirming an older revision.
   const result = await prisma.$transaction(async (tx) => {
     const draft = await (tx as any).buildPlan.findFirst({ where: { tenderId: id, status: "DRAFT", tender: { userId: actor.id } }, orderBy: { updatedAt: "desc" } });
     if (!draft) return { status: 404 as const, body: { ok: false, code: "BUILD_PLAN_DRAFT_MISSING", error: "Build Plan draft missing." } };
@@ -23,13 +28,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       await (tx as any).buildPlan.update({ where: { id: draft.id }, data: { validationJson: JSON.stringify({ ok: false, blockers: validation.blockers.concat(staleBlockers) }), contentHash: contentHash ?? draft.contentHash } });
       return { status: 422 as const, body: { ok: false, code: "BUILD_PLAN_CONFIRMATION_BLOCKED", blockers: validation.blockers.concat(staleBlockers), authorizesGeneration: false } };
     }
-    // CONFIRM updates the SAME DRAFT row — never delete a confirmed plan.
-    // The one-row-per-tender constraint (tenderId @unique) guarantees no
-    // duplicate. confirmedRevision/confirmedContentHash snapshot the current
-    // revision+hash so post-confirmation drift is detectable.
-    const confirmed = await (tx as any).buildPlan.update({ where: { id: draft.id }, data: { status: "CONFIRMED", confirmedRevision: draft.revision, confirmedContentHash: contentHash, confirmedById: actor.id, confirmedBy: actor.id, confirmedAt: new Date(), validationJson: JSON.stringify({ ok: true, blockers: [] }) } });
+    // OPTIMISTIC CONCURRENCY: update ONLY if id, status=DRAFT, revision,
+    // AND contentHash still match the values we read. If a concurrent rebuild
+    // changed revision or hash, updateMany returns count=0 and we fail.
+    const updateResult = await (tx as any).buildPlan.updateMany({
+      where: { id: draft.id, status: "DRAFT", revision: draft.revision, contentHash: draft.contentHash },
+      data: { status: "CONFIRMED", confirmedRevision: draft.revision, confirmedContentHash: contentHash, confirmedById: actor.id, confirmedBy: actor.id, confirmedAt: new Date(), validationJson: JSON.stringify({ ok: true, blockers: [] }) },
+    });
+    if (updateResult.count === 0) {
+      return { status: 409 as const, body: { ok: false, code: "BUILD_PLAN_CONFLICT", error: "Build Plan was rebuilt or tender state changed during confirmation. Retry confirmation.", authorizesGeneration: false } };
+    }
+    const confirmed = await (tx as any).buildPlan.findUnique({ where: { id: draft.id } });
     return { status: 200 as const, body: { ok: true, status: confirmed.status, revision: confirmed.revision, confirmedContentHash: confirmed.confirmedContentHash, authorizesGeneration: true } };
-  });
+  }, { isolationLevel: "Serializable" });
   if (result.status === 200) await logAction({ userId: actor.id, action: "SUBMISSION_PLAN_BUILT", entityType: "Tender", entityId: id, description: "Build Plan confirmed after source-grounded validation.", metadata: { tenderId: id, revision: (result.body as any).revision, contentHash: (result.body as any).confirmedContentHash } });
   return NextResponse.json(result.body, { status: result.status });
 }
