@@ -141,15 +141,35 @@ describe("Section C release safety", () => {
     // check in validateBuildPlanForConfirmation, this test fails. The
     // requirement references sourceTenderFileId="foreign-file" which is NOT
     // in the tender's active files map — the gate MUST block.
+    // The mock tender provides FULL metadata evidence so the metadata validator
+    // passes — this isolates the requirement-file check as the sole blocker.
     const prisma = {
       tender: {
         findFirst: async () => ({
           id: "t1",
-          title: "Tender",
+          title: "Tender Title",
           exactFileNaming: "[]",
           exactFileOrder: "[]",
           pageLimit: null,
           submissionMethod: "email",
+          submissionEmails: "submit@example.com",
+          deadline: new Date(Date.now() + 86400000),
+          clientName: "Ministry of Test",
+          titleSourceFileId: "f1",
+          titleSourcePage: 1,
+          titleSourceQuote: "This tender requires a meaningful source quote for the technical proposal.",
+          clientNameSourceFileId: "f1",
+          clientNameSourcePage: 1,
+          clientNameSourceQuote: "This tender requires a meaningful source quote for the technical proposal.",
+          deadlineSourceFileId: "f1",
+          deadlineSourcePage: 1,
+          deadlineSourceQuote: "This tender requires a meaningful source quote for the technical proposal.",
+          submissionMethodSourceFileId: "f1",
+          submissionMethodSourcePage: 1,
+          submissionMethodSourceQuote: "This tender requires a meaningful source quote for the technical proposal.",
+          submissionEmailSourceFileId: "f1",
+          submissionEmailSourcePage: 1,
+          submissionEmailSourceQuote: "This tender requires a meaningful source quote for the technical proposal.",
           files: [
             { id: "f1", deletionStatus: "ACTIVE", extractedText: "This tender requires a meaningful source quote for the technical proposal." },
           ],
