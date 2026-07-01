@@ -36,10 +36,14 @@ export type BuildPlanHashFile = {
 export type BuildPlanHashRequirement = {
   id: string;
   title?: string | null;
+  description?: string | null;
   requirementType?: string | null;
   priority?: string | null;
   exactFileName?: string | null;
   exactOrder?: number | null;
+  sourceTenderFileId?: string | null;
+  sourcePageNumber?: number | null;
+  sourceExactQuote?: string | null;
 };
 
 export type BuildPlanHashItem = {
@@ -61,6 +65,15 @@ export type BuildPlanHashItem = {
   notes?: string | null;
 };
 
+export type BuildPlanHashMetadataEvidence = {
+  fieldKey: string;
+  effectiveValue: string | null;
+  sourceTenderFileId: string | null;
+  sourcePage: number | null;
+  sourceQuote: string | null;
+  evidenceState: string | null;
+};
+
 export type BuildPlanHashInput = {
   activeFiles: BuildPlanHashFile[];
   requirements: BuildPlanHashRequirement[];
@@ -72,6 +85,7 @@ export type BuildPlanHashInput = {
   submissionEmailSubject?: string | null;
   deadline?: Date | string | null;
   items?: BuildPlanHashItem[];
+  metadataEvidence?: BuildPlanHashMetadataEvidence[];
 };
 
 const UNIT = ""; // field separator unlikely to appear in tender text
@@ -104,10 +118,56 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
       [
         r.id,
         r.title ?? "",
+        r.description ?? "",
         r.requirementType ?? "",
         r.priority ?? "",
         r.exactFileName ?? "",
         r.exactOrder ?? "",
+        r.sourceTenderFileId ?? "",
+        r.sourcePageNumber ?? "",
+        r.sourceExactQuote ?? "",
+      ].join(UNIT),
+    )
+    .join("\n");
+
+  // Canonical BuildPlan items — any change to item fields invalidates the hash.
+  const itemSig = (input.items ?? [])
+    .slice()
+    .sort((a, b) => a.exactOrder - b.exactOrder)
+    .map((item) =>
+      [
+        `item:${item.canonicalId}`,
+        `fn:${item.exactFileName}`,
+        `ord:${item.exactOrder}`,
+        `dt:${item.documentType}`,
+        `req:${item.required ? 1 : 0}`,
+        `fmt:${item.format}`,
+        `env:${item.envelope ?? ""}`,
+        `srids:${(item.sourceRequirementIds ?? []).slice().sort().join(",")}`,
+        `pl:${item.pageLimit ?? ""}`,
+        `tpl:${item.templateRequired ? 1 : 0}`,
+        `tplf:${item.templateSourceFileId ?? ""}`,
+        `br:${item.brandingAllowed ? 1 : 0}`,
+        `sig:${item.signatureAllowed ? 1 : 0}`,
+        `stmp:${item.stampAllowed ? 1 : 0}`,
+        `grp:${item.grouping ?? ""}`,
+        `nt:${item.notes ?? ""}`,
+      ].join(UNIT),
+    )
+    .join("\n");
+
+  // Critical metadata evidence — any change to source grounding invalidates hash.
+  const metaSig = (input.metadataEvidence ?? [])
+    .slice()
+    .sort((a, b) => a.fieldKey < b.fieldKey ? -1 : a.fieldKey > b.fieldKey ? 1 : 0)
+    .map((m) =>
+      [
+        `mf:${m.fieldKey}`,
+        `mv:${m.effectiveValue ?? ""}`,
+        `mfid:${m.sourceTenderFileId ?? ""}`,
+        `mpg:${m.sourcePage ?? ""}`,
+        `mq:${m.sourceQuote ?? ""}`,
+        `mes:${m.evidenceState ?? ""}`,
       ].join(UNIT),
     )
     .join("\n");
@@ -115,6 +175,8 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
   const canonical = [
     `files:${fileSig}`,
     `reqs:${reqSig}`,
+    `items:${itemSig}`,
+    `meta:${metaSig}`,
     `exactFileNaming:${input.exactFileNaming ?? ""}`,
     `exactFileOrder:${input.exactFileOrder ?? ""}`,
     `submissionMethod:${input.submissionMethod ?? ""}`,

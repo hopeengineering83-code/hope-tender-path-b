@@ -40,7 +40,7 @@ describe("extraction safety gates", () => {
 
 describe("route source safety checks", () => {
   const aiAnalyze = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"), "utf8");
-  const buildPlan = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/submission-plan/build/route.ts"), "utf8");
+  const buildPlan = readFileSync(resolve(process.cwd(), "lib/engine/build-plan.ts"), "utf8");
   const generate = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"), "utf8");
   const exportRoute = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/export/route.ts"), "utf8");
 
@@ -54,7 +54,7 @@ describe("route source safety checks", () => {
 
   it("keeps downstream extraction gates wired", () => {
     assert.ok(buildPlan.includes("isExtractionAcceptableForGeneration"));
-    assert.ok(buildPlan.includes("EXTRACTION_QUALITY_INSUFFICIENT"));
+    assert.ok(buildPlan.includes("EXTRACTION_NOT_READY"));
     assert.ok(generate.includes("isExtractionAcceptableForGeneration") || generate.includes("EXTRACTION_QUALITY_INSUFFICIENT") || generate.includes("extractionScore"));
     assert.ok(exportRoute.includes("isExtractionAcceptableForExport"));
     assert.ok(exportRoute.includes("EXTRACTION_QUALITY_INSUFFICIENT"));

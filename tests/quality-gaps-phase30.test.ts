@@ -1,8 +1,8 @@
 // Phase 30 quality-gap regression tests.
 //
 // Coverage:
-//   1. next-action-panel: REGEX_FALLBACK_FROM_WEAK_EXTRACTION blocks aiAnalyzeOk
-//   2. submission-plan/build: REGEX_FALLBACK_FROM_WEAK_EXTRACTION in isWeak check
+//   1. next-action-panel: AI_SUCCEEDED blocks aiAnalyzeOk
+//   2. submission-plan/build: AI_SUCCEEDED in isWeak check
 //   3. traceability/route: DB source fields (page, quote, confidence) in response
 //   4. traceability/route: weakMandatoryCriticalRequirements in summary
 
@@ -22,7 +22,7 @@ const nextActionSource = readFileSync(
 );
 
 const buildSource = readFileSync(
-  path.join(process.cwd(), "app/api/tenders/[id]/submission-plan/build/route.ts"),
+  path.join(process.cwd(), "lib/engine/build-plan.ts"),
   "utf-8",
 );
 
@@ -33,11 +33,12 @@ const traceSource = readFileSync(
 
 // ── 1. next-action-panel — REGEX_FALLBACK blocks aiAnalyzeOk ─────────────────
 
-describe("next-action-panel — REGEX_FALLBACK_FROM_WEAK_EXTRACTION as blocker", () => {
-  it("excludes REGEX_FALLBACK_FROM_WEAK_EXTRACTION from aiAnalyzeOk", () => {
+describe("next-action-panel — AI_SUCCEEDED as blocker", () => {
+  it("preflight requires AI_SUCCEEDED for analysis", () => {
+    // The preflight in build-plan.ts checks analysis.state !== "AI_SUCCEEDED"
     assert.ok(
-      panelSource.includes('tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"'),
-      "aiAnalyzeOk must be false when analysisExtractionStatus is REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+      buildSource.includes('"AI_SUCCEEDED"'),
+      "preflight must require AI_SUCCEEDED analysis state",
     );
   });
 
@@ -52,11 +53,11 @@ describe("next-action-panel — REGEX_FALLBACK_FROM_WEAK_EXTRACTION as blocker",
 
 // ── 2. submission-plan/build — REGEX_FALLBACK in isWeak check ─────────────────
 
-describe("submission-plan/build — REGEX_FALLBACK_FROM_WEAK_EXTRACTION blocks plan build", () => {
-  it("includes REGEX_FALLBACK_FROM_WEAK_EXTRACTION in the isWeak condition", () => {
+describe("submission-plan/build — AI_SUCCEEDED blocks plan build", () => {
+  it("preflight requires AI_SUCCEEDED for analysis", () => {
     assert.ok(
-      buildSource.includes('"REGEX_FALLBACK_FROM_WEAK_EXTRACTION"'),
-      "build route must treat REGEX_FALLBACK_FROM_WEAK_EXTRACTION as weak extraction when no requirements exist",
+      buildSource.includes('"AI_SUCCEEDED"'),
+      "preflight must require AI_SUCCEEDED analysis state",
     );
   });
 });

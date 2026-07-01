@@ -56,6 +56,7 @@ type _RequirementRow = {
   sourcePageNumber: number | null;
   sourceExactQuote: string | null;
   title: string | null;
+  description: string | null;
   requirementType: string | null;
   exactFileName: string | null;
   exactOrder: number | null;
@@ -617,7 +618,11 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       select: { contentHash: true, status: true, revision: true, confirmedRevision: true, confirmedContentHash: true, itemsJson: true },
     });
     const { computeBuildPlanHash, buildPlanHashInputFromTender } = await import("./build-plan-hash");
-    const currentPlanHash = computeBuildPlanHash(buildPlanHashInputFromTender({
+    // Use persisted confirmed BuildPlan items for hash — NOT a newly derived
+    // virtual plan. This ensures stale detection compares against the exact
+    // items that were confirmed, not what would be derived now.
+    const persistedItems = recordedBuildPlan?.itemsJson ? JSON.parse(recordedBuildPlan.itemsJson) : [];
+    const gateHashInput = buildPlanHashInputFromTender({
       exactFileNaming: tender.exactFileNaming,
       exactFileOrder: tender.exactFileOrder,
       submissionMethod: tender.submissionMethod,
@@ -627,10 +632,19 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       deadline: (tender as any).deadline ?? null,
       files: activeFiles.map((f) => ({ id: f.id, fileName: f.originalFileName, extractedText: f.extractedText, deletionStatus: "ACTIVE" })),
       requirements: (requirements as _RequirementRow[]).map((r) => ({
-        id: r.id, title: r.title, requirementType: r.requirementType, priority: r.priority,
+        id: r.id, title: r.title, description: r.description, requirementType: r.requirementType, priority: r.priority,
         exactFileName: r.exactFileName, exactOrder: r.exactOrder,
+        sourceTenderFileId: r.sourceTenderFileId, sourcePageNumber: r.sourcePageNumber, sourceExactQuote: r.sourceExactQuote,
       })),
-    }));
+    });
+    gateHashInput.items = persistedItems;
+    gateHashInput.metadataEvidence = [
+      { fieldKey: "clientName", effectiveValue: tender.clientName, sourceTenderFileId: (tender as any).clientNameSourceFileId ?? null, sourcePage: (tender as any).clientNameSourcePage ?? null, sourceQuote: (tender as any).clientNameSourceQuote ?? null, evidenceState: (tender as any).clientNameSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+      { fieldKey: "submissionMethod", effectiveValue: tender.submissionMethod, sourceTenderFileId: (tender as any).submissionMethodSourceFileId ?? null, sourcePage: (tender as any).submissionMethodSourcePage ?? null, sourceQuote: (tender as any).submissionMethodSourceQuote ?? null, evidenceState: (tender as any).submissionMethodSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+      { fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress, sourceTenderFileId: (tender as any).submissionAddressSourceFileId ?? null, sourcePage: (tender as any).submissionAddressSourcePage ?? null, sourceQuote: (tender as any).submissionAddressSourceQuote ?? null, evidenceState: (tender as any).submissionAddressSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+      { fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails, sourceTenderFileId: (tender as any).submissionEmailSourceFileId ?? null, sourcePage: (tender as any).submissionEmailSourcePage ?? null, sourceQuote: null, evidenceState: (tender as any).submissionEmailSourceFileId ? "GROUNDED" : "UNGROUNDED" },
+    ];
+    const currentPlanHash = computeBuildPlanHash(gateHashInput);
     const recordedBuildPlanState: "MISSING" | "STALE" | "VALID" =
       !recordedBuildPlan ? "MISSING"
         : recordedBuildPlan.contentHash !== currentPlanHash ? "STALE"

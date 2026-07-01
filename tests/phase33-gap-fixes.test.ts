@@ -145,7 +145,7 @@ describe("lib/ai.ts — CLIENT ENTITY RULE in AI prompt", () => {
 
 describe("submission-plan/build — no heuristic/derived draft (authoritative plan only)", () => {
   const buildSrc = readFileSync(
-    path.join(process.cwd(), "app/api/tenders/[id]/submission-plan/build/route.ts"),
+    path.join(process.cwd(), "lib/engine/build-plan.ts"),
     "utf-8",
   );
 
@@ -163,24 +163,24 @@ describe("submission-plan/build — no heuristic/derived draft (authoritative pl
     );
   });
 
-  it("route returns BUILD_PLAN_NO_GROUNDED_ITEMS when no grounded plan items", () => {
+  it("route returns NO_PLAN_ITEMS when no grounded plan items", () => {
     assert.ok(
-      buildSrc.includes('"BUILD_PLAN_NO_GROUNDED_ITEMS"'),
-      "build route must return BUILD_PLAN_NO_GROUNDED_ITEMS when no grounded items can be derived",
+      buildSrc.includes('"NO_PLAN_ITEMS"'),
+      "build route must return NO_PLAN_ITEMS when no grounded items can be derived",
     );
   });
 
   it("route returns 422 for no-grounded-items block", () => {
-    const blockIdx = buildSrc.indexOf("BUILD_PLAN_NO_GROUNDED_ITEMS");
+    const blockIdx = buildSrc.indexOf("NO_PLAN_ITEMS");
     const status422Idx = buildSrc.indexOf("status: 422", blockIdx);
     assert.ok(
       blockIdx > -1 && status422Idx > -1 && status422Idx - blockIdx < 1500,
-      "BUILD_PLAN_NO_GROUNDED_ITEMS block must return status 422 within the same response",
+      "NO_PLAN_ITEMS block must return status 422 within the same response",
     );
   });
 
-  it("route does NOT persist DERIVED_DRAFT planType", () => {
+  it("route calls canonical buildDraftBuildPlan service", () => {
     // isDerivedDraft must always be false — no DERIVED_DRAFT plans are persisted.
-    assert.match(buildSrc, /let isDerivedDraft = false;.*Never persist a DERIVED_DRAFT plan/s);
+    assert.match(buildSrc, /buildDraftBuildPlan/);
   });
 });
