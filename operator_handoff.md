@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-02 16:41 UTC — Codex
+
+- **Mode:** follow-up provider-policy gap fix for PR #931
+- **Branch / PR:** `work` / #931 (requested scope; no remote/gh available in container)
+- **Scope:** removed remaining hand-maintained proposal/refinement provider chains, routed monolithic proposal, critique, rewrite, refinement, and section generation through the canonical registry-derived chain, fixed provider attribution for Z.ai/Cerebras and all canonical section sources, and retired a stale repair artifact that could rewrite old provider orders.
+- **Files changed:** `lib/ai.ts`, `scripts/repair-ai-policy-artifact.mjs`, `tests/ai-provider-chain-policy.test.ts`, `operator_handoff.md`
+- **Tests:** `npx tsx --test tests/ai-provider-chain-policy.test.ts tests/ai-provider-registry.test.ts tests/ai-provider-health-order-alignment.test.ts tests/ai-provider-health.test.ts tests/mistral-together-providers.test.ts` passed; `npm run typecheck` passed; `node scripts/repair-ai-policy-artifact.mjs` passed; `git diff --check` passed.
+- **CI / deployment:** GitHub/Vercel CI not checked because `gh` is unavailable and no git remote is configured; no deploy/previews created.
+- **Known risk:** Current checkout branch is named `work`; container lacks PR remote metadata, so PR #931 association could not be independently verified locally.
+- **Next action:** push this commit to PR #931 branch and let CI run.
+- **Merge status:** not reviewed
+
 ### 2026-07-02 16:29 UTC — Codex
 
 - **Mode:** urgent provider-policy correction for PR #931

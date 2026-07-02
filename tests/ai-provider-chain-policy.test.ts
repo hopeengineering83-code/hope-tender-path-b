@@ -96,6 +96,27 @@ describe("no other automatic provider order exists in the repository", () => {
       "legacy mistral→groq→openrouter literal order array must not exist in lib/ai.ts",
     );
   });
+
+  it("proposal, refinement, and section generation all route through generateWithFallback", () => {
+    for (const fnName of ["generateBenchmarkProposalWithAI", "critiqueProposalWithAI", "rewriteProposalWithCritique", "refineProposalWithAI", "generateOneSection"]) {
+      const idx = aiSource.indexOf(`function ${fnName}`) >= 0 ? aiSource.indexOf(`function ${fnName}`) : aiSource.indexOf(`async function ${fnName}`) >= 0 ? aiSource.indexOf(`async function ${fnName}`) : aiSource.indexOf(`export async function ${fnName}`);
+      assert.ok(idx >= 0, `${fnName} must exist`);
+      const nextExport = aiSource.indexOf("export async function", idx + 1);
+      const nextPrivate = aiSource.indexOf("async function", idx + 1);
+      const candidates = [nextExport, nextPrivate].filter((n) => n > idx);
+      const end = candidates.length > 0 ? Math.min(...candidates) : idx + 8000;
+      const body = aiSource.slice(idx, end);
+      assert.ok(body.includes("generateWithFallback") || body.includes("generateProposalTextViaCanonicalChain"), `${fnName} must use the canonical provider chain`);
+    }
+  });
+
+  it("retired repair artifact cannot write a stale provider chain back into source", () => {
+    const artifact = readFileSync("scripts/repair-ai-policy-artifact.mjs", "utf8");
+    assert.ok(artifact.includes("Retired repair artifact"));
+    assert.ok(artifact.includes("verification only"));
+    assert.doesNotMatch(artifact, /writeFileSync|cpSync|replaceBetween/);
+    assert.doesNotMatch(artifact, /Mistral — first tier|Gemini — first tier|OpenAI — second tier/);
+  });
 });
 
 describe("admin provider-chain ping budget", () => {

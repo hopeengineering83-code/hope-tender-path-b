@@ -115,6 +115,30 @@ function providerToProposalSource(provider: AiProviderName): Exclude<AIProvider,
   return provider === "anthropic" ? "claude" : provider;
 }
 
+function setLastProposalProviderFromProvider(provider: AiProviderName): void {
+  lastProposalProvider = providerToProposalSource(provider);
+}
+
+async function generateProposalTextViaCanonicalChain(
+  prompt: string,
+  systemPrompt: string,
+  useCase: AiUseCase = "proposal",
+): Promise<string | null> {
+  let usedProvider: AiProviderName | null = null;
+  const text = await withRefinementTimeout(
+    generateWithFallback(prompt, {
+      systemPrompt,
+      useCase,
+      onProviderUsed: (provider) => { usedProvider = provider; },
+    }),
+  ).catch((err) => {
+    logger.warn(`[ai] canonical provider chain failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
+  if (text && usedProvider) setLastProposalProviderFromProvider(usedProvider);
+  return text;
+}
+
 export function getLastProposalProvider(): AIProvider {
   return lastProposalProvider;
 }
@@ -2836,42 +2860,9 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: 
 
   const prompt = buildCritiquePrompt(input);
   if (useCase === "reasoning") {
-    return generateWithFallback(prompt, { systemPrompt: CRITIC_SYSTEM_PROMPT, useCase: "reasoning" }).catch(() => null);
+    return generateProposalTextViaCanonicalChain(prompt, CRITIC_SYSTEM_PROMPT, "reasoning");
   }
-  try {
-    if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-      const r = await withRefinementTimeout(
-        generateWithOpenAI(prompt, CRITIC_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-      ).catch(() => null);
-      if (r) return r;
-    }
-    if (apiKey && !isProviderCooledDown("gemini")) {
-      try { return await withRefinementTimeout(generateWithBestModel(prompt)); }
-      catch (e) { logger.warn(`[ai] critiqueProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-      const r = await withRefinementTimeout(
-        generateWithMistral(prompt, CRITIC_SYSTEM_PROMPT, undefined, "proposal").then((v) => v ?? Promise.reject(new Error("null"))),
-      ).catch(() => null);
-      if (r) return r;
-    }
-    if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-      const r = await withRefinementTimeout(
-        generateWithDeepSeek(prompt, CRITIC_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-      ).catch(() => null);
-      if (r) return r;
-    }
-    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, CRITIC_SYSTEM_PROMPT)).catch(() => null);
-    if (tail) return tail.text;
-    if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-      const r = await withRefinementTimeout(generateWithClaude(prompt, CRITIC_SYSTEM_PROMPT)).catch(() => null);
-      if (r) return r;
-    }
-  } catch (err) {
-    logger.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-  return null;
+  return generateProposalTextViaCanonicalChain(prompt, CRITIC_SYSTEM_PROMPT, "proposal");
 }
 
 /**
@@ -2887,46 +2878,9 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCa
 
   const prompt = buildRewritePrompt(input);
   if (useCase === "reasoning") {
-    const r = await generateWithFallback(prompt, { systemPrompt: REWRITER_SYSTEM_PROMPT, useCase: "reasoning" }).catch(() => null);
-    if (r) { lastProposalProvider = "openai"; return r; }
+    return generateProposalTextViaCanonicalChain(prompt, REWRITER_SYSTEM_PROMPT, "reasoning");
   }
-  try {
-    if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-      const r = await withRefinementTimeout(
-        generateWithOpenAI(prompt, REWRITER_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-      ).catch(() => null);
-      if (r) { lastProposalProvider = "openai"; return r; }
-    }
-    if (apiKey && !isProviderCooledDown("gemini")) {
-      try {
-        const r = await withRefinementTimeout(generateWithBestModel(prompt));
-        lastProposalProvider = "gemini";
-        return r;
-      } catch (e) { logger.warn(`[ai] rewriteProposalWithCritique Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-      const r = await withRefinementTimeout(
-        generateWithMistral(prompt, REWRITER_SYSTEM_PROMPT, undefined, "proposal").then((v) => v ?? Promise.reject(new Error("null"))),
-      ).catch(() => null);
-      if (r) { lastProposalProvider = "mistral"; return r; }
-    }
-    if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-      const r = await withRefinementTimeout(
-        generateWithDeepSeek(prompt, REWRITER_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-      ).catch(() => null);
-      if (r) { lastProposalProvider = "deepseek"; return r; }
-    }
-    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, REWRITER_SYSTEM_PROMPT)).catch(() => null);
-    if (tail) { lastProposalProvider = tail.provider; return tail.text; }
-    if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-      const r = await withRefinementTimeout(generateWithClaude(prompt, REWRITER_SYSTEM_PROMPT)).catch(() => null);
-      if (r) { lastProposalProvider = "claude"; return r; }
-    }
-  } catch (err) {
-    logger.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-  return null;
+  return generateProposalTextViaCanonicalChain(prompt, REWRITER_SYSTEM_PROMPT, "proposal");
 }
 
 /**
@@ -2992,53 +2946,7 @@ ${input.currentMarkdown}
 ## REFINED PROPOSAL (return the complete document)
 `;
 
-  try {
-    // Proposal chain order: openai → gemini → deepseek → groq → openrouter → anthropic
-    if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-      try {
-        const r = await withRefinementTimeout(
-          generateWithOpenAI(prompt, REFINEMENT_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-        );
-        if (r) { lastProposalProvider = "openai"; return r; }
-      } catch (e) {
-        logger.warn(`[ai] refineProposalWithAI OpenAI failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-    if (apiKey && !isProviderCooledDown("gemini")) {
-      try {
-        const r = await withRefinementTimeout(generateWithBestModel(prompt));
-        lastProposalProvider = "gemini";
-        return r;
-      } catch (e) { logger.warn(`[ai] refineProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-      try {
-        const r = await withRefinementTimeout(
-          generateWithMistral(prompt, REFINEMENT_SYSTEM_PROMPT, undefined, "proposal").then((v) => v ?? Promise.reject(new Error("null"))),
-        );
-        if (r) { lastProposalProvider = "mistral"; return r; }
-      } catch (e) { logger.warn(`[ai] refineProposalWithAI Mistral failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-      try {
-        const r = await withRefinementTimeout(
-          generateWithDeepSeek(prompt, REFINEMENT_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-        );
-        if (r) { lastProposalProvider = "deepseek"; return r; }
-      } catch (e) { logger.warn(`[ai] refineProposalWithAI DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, REFINEMENT_SYSTEM_PROMPT)).catch(() => null);
-    if (tail) { lastProposalProvider = tail.provider; return tail.text; }
-    // Claude last — framed as senior bid REVIEWER (preserve-then-strengthen)
-    if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-      const r = await withRefinementTimeout(generateWithClaude(prompt, REFINEMENT_SYSTEM_PROMPT)).catch(() => null);
-      if (r) { lastProposalProvider = "claude"; return r; }
-    }
-  } catch (err) {
-    logger.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-  return null;
+  return generateProposalTextViaCanonicalChain(prompt, REFINEMENT_SYSTEM_PROMPT, "proposal");
 }
 
 export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput): Promise<string> {
@@ -3816,78 +3724,26 @@ ${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  // Provider chain for proposal generation:
-  // Claude is placed last so Anthropic rate limits do not block proposal generation.
-  // lastProposalProvider is set so callers can surface which provider was used.
-
-    // Gemini — first tier
-  if (apiKey && !isProviderCooledDown("gemini")) {
-    try {
-      const geminiResult = await generateWithBestModel(prompt);
-      recordProviderSuccess("gemini");
-      lastProposalProvider = "gemini";
-      return geminiResult;
-    } catch (geminiErr) {
-      recordProviderFailure("gemini", geminiErr);
-      logger.warn(`[ai] Gemini failed for proposal: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying next provider.`);
-    }
-  }
-
-  // OpenAI — second tier
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    const openAiResult = await generateWithOpenAI(prompt).catch((e) => {
-      logger.warn(`[ai] OpenAI failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("openai", e);
-      return null;
+  // Provider chain for proposal generation is the canonical registry order:
+  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together
+  // → DeepSeek → Anthropic / Claude. Deterministic fallback is handled by
+  // callers after this function fails; it is not an AI provider and is never
+  // eligible for final export by itself.
+  let usedProvider: AiProviderName | null = null;
+  try {
+    const result = await generateWithFallback(prompt, {
+      systemPrompt: DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+      useCase: "proposal",
+      onProviderUsed: (provider) => { usedProvider = provider; },
     });
-    if (openAiResult) { recordProviderSuccess("openai"); lastProposalProvider = "openai"; return openAiResult; }
-  }
-
-  // Mistral — third tier
-  if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-    const mistralResult = await generateWithMistral(prompt).catch((e) => {
-      logger.warn(`[ai] Mistral failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("mistral", e);
-      return null;
-    });
-    if (mistralResult) { recordProviderSuccess("mistral"); lastProposalProvider = "mistral"; return mistralResult; }
-  }
-
-  // Together — fourth tier
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
-    const togetherResult = await generateWithTogether(prompt).catch((e) => { recordProviderFailure("together", e); return null; });
-    if (togetherResult) { recordProviderSuccess("together"); lastProposalProvider = "together"; return togetherResult; }
-  }
-
-  // DeepSeek — fifth tier
-  if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-    const deepSeekResult = await generateWithDeepSeek(prompt).catch((e) => {
-      logger.warn(`[ai] DeepSeek failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("deepseek", e);
-      return null;
-    });
-    if (deepSeekResult) { recordProviderSuccess("deepseek"); lastProposalProvider = "deepseek"; return deepSeekResult; }
-  }
-
-  // Groq/OpenRouter tail — Claude remains last
-  if (isGroqEnabled() && !isProviderCooledDown("groq")) {
-    const groqResult = await generateWithGroq(prompt).catch((e) => { recordProviderFailure("groq", e); return null; });
-    if (groqResult) { recordProviderSuccess("groq"); lastProposalProvider = "groq"; return groqResult; }
-  }
-  if (isOpenRouterEnabled() && !isProviderCooledDown("openrouter")) {
-    const orResult = await generateWithOpenRouter(prompt).catch((e) => { recordProviderFailure("openrouter", e); return null; });
-    if (orResult) { recordProviderSuccess("openrouter"); lastProposalProvider = "openrouter"; return orResult; }
-  }
-
-    // Claude (Anthropic) — last resort
-  if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-    try {
-      // TENDER_TOOL_USE_GENERATION path: when params.toolUse is set,
-      // route through the multi-turn tool-use loop so Claude can call
-      // search_company_knowledge / inspect_expert / inspect_project
-      // mid-write to verify evidence before making claims. Falls
-      // back to the single-call path when tool-use returns null.
-      if (params.toolUse) {
+    if (usedProvider) setLastProposalProviderFromProvider(usedProvider);
+    return result;
+  } catch (err) {
+    // Keep the specialized Claude tool-use path as an emergency-only recovery
+    // path. It runs only after the canonical chain has failed, preserving
+    // Anthropic/Claude as the last AI provider instead of making it preferred.
+    if (params.toolUse && isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
+      try {
         const toolResult = await generateWithClaudeTools(
           prompt,
           DEFAULT_PROPOSAL_SYSTEM_PROMPT,
@@ -3899,41 +3755,15 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
           lastProposalProvider = "claude";
           return toolResult;
         }
-        logger.warn("[ai] tool-use generation returned null — falling back to single-call Claude path.");
+      } catch (toolErr) {
+        recordProviderFailure("anthropic", toolErr);
+        logger.warn(`[ai] Claude tool-use emergency fallback failed for proposal: ${toolErr instanceof Error ? toolErr.message : String(toolErr)}`);
       }
-      const claudeResult = await generateWithClaude(prompt);
-      if (claudeResult) {
-        recordProviderSuccess("anthropic");
-        lastProposalProvider = "claude";
-        return claudeResult;
-      }
-      recordProviderFailure("anthropic", new Error("empty response"));
-    } catch (err) {
-      recordProviderFailure("anthropic", err);
-      logger.warn(`[ai] Claude failed for proposal: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
 
-  lastProposalProvider = null;
-  const configured = [isGeminiEnabled(), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
-  if (!configured.some(Boolean)) {
-    throw new NoAiProviderReadyError({
-      useCase: "proposal",
-      providerAttempts: [],
-      failureDetails: [],
-      errorKind: "NO_PROVIDER_CONFIGURED",
-      nextAction: "CONFIGURE_AI_KEYS",
-      message: "No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in environment variables.",
-    });
+    lastProposalProvider = null;
+    throw err;
   }
-  throw new NoAiProviderReadyError({
-    useCase: "proposal",
-    providerAttempts: [],
-    failureDetails: [],
-    errorKind: "ALL_PROVIDERS_EXHAUSTED",
-    nextAction: "RETRY_AFTER_PROVIDER_FIX",
-    message: "All configured AI providers exhausted for proposal generation. Check provider API keys and rate limits, or wait for cooldown periods to expire.",
-  });
 }
 
 // ─── Section-parallel proposal generation ────────────────────────────────────
@@ -4124,27 +3954,23 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     }
   }
 
-  // Set lastProposalProvider to the dominant successful source. If
-  // ANY section used Claude, label as Claude (Claude is the headline
-  // provider). If all successful sections used Gemini, label as Gemini.
-  // If every section fell back, set null so callers can see total AI
-  // failure.
-  const usedClaude = sections.some((s) => s.source === "claude");
-  const usedGemini = sections.some((s) => s.source === "gemini");
-  const usedOpenAI = sections.some((s) => s.source === "openai");
-  const usedDeepSeek = sections.some((s) => s.source === "deepseek");
-  const allFell = sections.every((s) => s.source === "fallback");
-  if (allFell) {
-    lastProposalProvider = null;
-  } else if (usedClaude) {
-    lastProposalProvider = "claude";
-  } else if (usedGemini && !usedOpenAI && !usedDeepSeek) {
-    lastProposalProvider = "gemini";
-  } else if (usedOpenAI && !usedDeepSeek) {
-    lastProposalProvider = "openai";
-  } else if (usedDeepSeek) {
-    lastProposalProvider = "deepseek";
-  }
+  // Set lastProposalProvider to the highest-ranked successful AI source. If
+  // every section fell back deterministically, set null so callers can see
+  // total AI failure.
+  const successfulSources = sections
+    .map((s) => s.source)
+    .filter((source): source is Exclude<AIProvider, null> => source !== "fallback");
+  lastProposalProvider = successfulSources.find((source) => source === "zai")
+    ?? successfulSources.find((source) => source === "cerebras")
+    ?? successfulSources.find((source) => source === "mistral")
+    ?? successfulSources.find((source) => source === "groq")
+    ?? successfulSources.find((source) => source === "openrouter")
+    ?? successfulSources.find((source) => source === "gemini")
+    ?? successfulSources.find((source) => source === "openai")
+    ?? successfulSources.find((source) => source === "together")
+    ?? successfulSources.find((source) => source === "deepseek")
+    ?? successfulSources.find((source) => source === "claude")
+    ?? null;
 
   // Diagnostic summary line — surfaces in Vercel runtime logs so
   // operators can see which sections completed via Claude vs Gemini vs
