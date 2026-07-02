@@ -56,7 +56,7 @@ function money(value: number, currency: string): string {
   return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
+export function PricingWorkbookPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [workbook, setWorkbook] = useState<PricingWorkbook | null>(null);
   const [loading, setLoading] = useState(false);
@@ -180,7 +180,9 @@ export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
             <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={workbook.noPriceLeakage} onChange={(e) => setWorkbook({ ...workbook, noPriceLeakage: e.target.checked })} /> Technical envelope has no price leakage</label>
+            {canMutate && (
             <button type="button" disabled={saving} onClick={() => void saveHeader({})} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">Save pricing settings</button>
+            )}
           </div>
 
           <div className="grid gap-2 rounded-xl border border-slate-100 bg-white p-3 text-xs md:grid-cols-5">
@@ -202,7 +204,9 @@ export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
             </div>
             <div className="mt-2 flex gap-2">
               <input value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} placeholder="Notes" className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-xs" />
+              {canMutate && (
               <button type="button" disabled={saving} onClick={() => void addLine()} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">Add line</button>
+              )}
             </div>
           </div>
 
@@ -213,7 +217,7 @@ export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
                 <tbody>
                   {workbook.lines.map((line) => (
                     <tr key={line.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2">{line.category}</td><td className="px-3 py-2 font-medium text-slate-900">{line.label}</td><td className="px-3 py-2 text-right">{line.quantity}</td><td className="px-3 py-2">{line.unit}</td><td className="px-3 py-2 text-right">{money(line.rate, workbook.currency)}</td><td className="px-3 py-2 text-right font-semibold">{money(line.total, workbook.currency)}</td><td className="px-3 py-2 text-right"><button type="button" onClick={() => void deleteLine(line.id)} className="text-red-600 hover:underline">Delete</button></td>
+                      <td className="px-3 py-2">{line.category}</td><td className="px-3 py-2 font-medium text-slate-900">{line.label}</td><td className="px-3 py-2 text-right">{line.quantity}</td><td className="px-3 py-2">{line.unit}</td><td className="px-3 py-2 text-right">{money(line.rate, workbook.currency)}</td><td className="px-3 py-2 text-right font-semibold">{money(line.total, workbook.currency)}</td><td className="px-3 py-2 text-right">{canMutate && (<button type="button" onClick={() => void deleteLine(line.id)} className="text-red-600 hover:underline">Delete</button>)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -173,7 +173,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </nav>
 
       <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical metadata." open>
-        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} />
+        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
@@ -221,13 +221,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
-        <PricingWorkbookPanel tenderId={tender.id} />
+        <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
-        <ExportReadinessPanel tenderId={tender.id} />
+        <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
         <TenderSharePanel tenderId={tender.id} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
-      <TenderDownloadActionsPanel tenderId={tender.id} />
+      <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
     </main>
   );
 }

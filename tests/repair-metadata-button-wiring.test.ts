@@ -21,8 +21,10 @@ describe("GenerationActionPanel wires the repair-metadata endpoint", () => {
     assert.match(source, /fields:\s*\["evaluationMethodology"\]/);
   });
 
-  it("renders the repair button only when metadataBlockerPresent is true", () => {
-    assert.match(source, /\{metadataBlockerPresent\s*&&\s*\(/);
+  it("renders the repair button only when metadataBlockerPresent is true (guarded by canMutate)", () => {
+    // The button is now guarded by canMutate AND metadataBlockerPresent so
+    // REVIEWER users never see it.
+    assert.match(source, /\{canMutate\s*&&\s*metadataBlockerPresent\s*&&\s*\(/);
   });
 
   it("surfaces NOT_FOUND, REPAIRED and SKIPPED states from the endpoint", () => {

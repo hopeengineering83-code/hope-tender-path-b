@@ -47,8 +47,10 @@ describe("GenerationActionPanel surfaces a one-click 'Repair all' batch action",
     assert.match(repairedBranch![0], /router\.refresh\(\)/);
   });
 
-  it("the batch button is rendered only when metadataBlockerPresent is true", () => {
-    assert.match(source, /\{metadataBlockerPresent\s*&&\s*\(/);
+  it("the batch button is rendered only when metadataBlockerPresent is true (guarded by canMutate)", () => {
+    // The button is now guarded by canMutate AND metadataBlockerPresent so
+    // REVIEWER users never see it.
+    assert.match(source, /\{canMutate\s*&&\s*metadataBlockerPresent\s*&&\s*\(/);
     assert.match(source, /Repair all empty fields from source/);
   });
 

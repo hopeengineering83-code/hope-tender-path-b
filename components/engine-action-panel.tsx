@@ -298,7 +298,7 @@ export function EngineActionPanel({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {extractionBlocked && (
+          {canMutate && extractionBlocked && (
             <button
               onClick={() => runEngine(true)}
               disabled={running || isPending}
@@ -309,7 +309,7 @@ export function EngineActionPanel({
           )}
           {/* Sync run — only show for small vaults; large vaults should
               always go async+safe to avoid the 60s Vercel cap */}
-          {!isLargeVault && (
+          {canMutate && !isLargeVault && (
             <button
               onClick={() => runEngine(false)}
               disabled={running || isPending}
@@ -322,6 +322,7 @@ export function EngineActionPanel({
           {/* For large vaults, the primary CTA automatically uses safe
               mode (skips AI rematch). This is the only path that reliably
               completes within Vercel's 60s function budget. */}
+          {canMutate && (
           <button
             onClick={() => isLargeVault
               ? runEngineAsync(false, { safe: "true", skipAiRematch: "true" })
@@ -342,6 +343,10 @@ export function EngineActionPanel({
                 ? "⚡ Run Engine (Safe Mode)"
                 : "⏳ Run in background"}
           </button>
+          )}
+          {!canMutate && (
+            <p className="text-xs text-slate-500 italic self-center">Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role</p>
+          )}
         </div>
       </div>
 
