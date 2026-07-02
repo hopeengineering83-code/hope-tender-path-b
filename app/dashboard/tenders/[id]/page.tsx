@@ -179,7 +179,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderIntakeDetailPanel tender={tenderForUi} />
         <MetadataTruthPanel tenderId={tender.id} />
         <MetadataCompletionPanel tenderId={tender.id} />
-        <ClientSubmissionDetailsPanel tenderId={tender.id} />
+        <ClientSubmissionDetailsPanel tenderId={tender.id} canMutate={canMutate} />
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
 
@@ -195,9 +195,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <AIAnalyzeRecoveryPanel tenderId={tender.id} />
-        <RequirementCoveragePanel tenderId={tender.id} />
+        <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
         <AICopilotSuggestionsPanel tenderId={tender.id} />
-        {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
+        {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
         {ai && <TenderAICopilotPanel tenderId={tender.id} />}
       </WorkflowStage>
 
@@ -224,7 +224,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
         <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
-        <TenderSharePanel tenderId={tender.id} />
+        <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
       <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />

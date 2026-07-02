@@ -73,7 +73,7 @@ type TraceabilitySummary = {
   selectedProjectsWithWeakEvidence: number;
 };
 
-export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
+export default function RequirementCoveragePanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -333,6 +333,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
             <button
               type="button"
               onClick={() => void confirmAllSafe()}
+              style={canMutate ? undefined : { display: "none" }}
               disabled={confirmingAll}
               className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
             >
@@ -527,20 +528,26 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                                       <span className="text-[10px] text-red-700 font-medium">{rejectState.success}</span>
                                     ) : (
                                       <>
-                                        <button
-                                          onClick={() => void confirmEvidence(row.id, link)}
-                                          disabled={confirmState?.pending || rejectState?.pending}
-                                          className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800 hover:bg-green-200 disabled:opacity-50"
-                                        >
-                                          {confirmState?.pending ? "…" : "✓ Confirm partial evidence"}
-                                        </button>
-                                        <button
-                                          onClick={() => void rejectEvidence(row.id, link)}
-                                          disabled={confirmState?.pending || rejectState?.pending}
-                                          className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
-                                        >
-                                          {rejectState?.pending ? "…" : "✗ Not applicable"}
-                                        </button>
+                                        {canMutate ? (
+                                          <>
+                                            <button
+                                              onClick={() => void confirmEvidence(row.id, link)}
+                                              disabled={confirmState?.pending || rejectState?.pending}
+                                              className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800 hover:bg-green-200 disabled:opacity-50"
+                                            >
+                                              {confirmState?.pending ? "…" : "✓ Confirm partial evidence"}
+                                            </button>
+                                            <button
+                                              onClick={() => void rejectEvidence(row.id, link)}
+                                              disabled={confirmState?.pending || rejectState?.pending}
+                                              className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
+                                            >
+                                              {rejectState?.pending ? "…" : "✗ Not applicable"}
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <span className="text-[10px] text-slate-400 italic">Read-only</span>
+                                        )}
                                       </>
                                     )}
                                     {(confirmState?.error || rejectState?.error) && (

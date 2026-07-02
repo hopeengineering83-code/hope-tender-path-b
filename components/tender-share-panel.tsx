@@ -12,9 +12,10 @@ interface ShareEntry {
 
 interface TenderSharePanelProps {
   tenderId: string;
+  canMutate?: boolean;
 }
 
-export function TenderSharePanel({ tenderId }: TenderSharePanelProps) {
+export function TenderSharePanel({ tenderId, canMutate = true }: TenderSharePanelProps) {
   const [shares, setShares] = useState<ShareEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -152,9 +153,11 @@ export function TenderSharePanel({ tenderId }: TenderSharePanelProps) {
                     <p className="max-w-[180px] truncate font-mono text-xs text-slate-600">{window.location.origin}/share/{share.token}</p>
                     <p className="text-xs text-slate-400">Created {new Date(share.createdAt).toLocaleDateString()}{share.expiresAt ? ` · Expires ${new Date(share.expiresAt).toLocaleDateString()}` : ""}</p>
                   </div>
+                  {canMutate && (
                   <button onClick={() => handleRevoke(share.id)} disabled={revoking === share.id} className="shrink-0 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50">
                     {revoking === share.id ? "…" : "Revoke"}
                   </button>
+                  )}
                 </div>
               ))}
             </div>
