@@ -430,3 +430,59 @@ Stage Summary:
   (metadataEvidence array). Raw metadata is never read from the tender
   for hashing purposes.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: 8
+Agent: main
+Task: Recheck again and fix all — verify both blocker fixes are complete
+
+Work Log:
+- Verified baseline: 4707/4707 tests pass.
+
+BLOCKER 1 verification (manual-only providers):
+- Searched for ALL AI-enabled checks in lib/ app/ scripts/.
+- Found lib/security/provider-status.ts hasAnyProviderConfigured — verified
+  it uses getCanonicalProviderEntries() which returns ONLY the 6 automatic
+  providers. Correct.
+- Found generateWithFallback uses providerChainForUseCase which returns
+  CANONICAL_AI_PROVIDER_ORDER (6 automatic only). Correct.
+- Found isProviderEnabled uses registryIsProviderConfigured. Correct.
+- Found 4 error messages that listed manual-only providers (MISTRAL_API_KEY,
+  TOGETHER_API_KEY) as valid options for automatic AI:
+  * lib/ai.ts NoAiProviderReadyError message
+  * lib/company-knowledge-ai.ts extraction warning
+  * lib/engine/analysis-fallback-diagnostics.ts fallback nextAction
+  * app/api/company/knowledge/repair/route.ts gap detail
+- FIX: All 4 messages now list ONLY the 6 automatic providers and explicitly
+  state manual-only providers do NOT count.
+- Updated tests/company-knowledge-repair-safety.test.ts to match.
+
+BLOCKER 2 verification (raw metadata in hash):
+- Found buildCanonicalBuildPlanHashInput did its OWN ad-hoc metadata
+  resolution (reading raw tender fields and constructing evidence inline)
+  instead of using the shared resolveCanonicalFieldState resolver.
+- This duplicated resolution logic and could diverge from the gate's resolver.
+- FIX: buildCanonicalBuildPlanHashInput now calls resolveCanonicalFieldState
+  (the ONE shared resolver) and maps its output to BuildPlanHashMetadataEvidence.
+  The hash uses ONLY the resolver's effectiveValue, sourceFileId, sourcePage,
+  sourceQuote, and isGrounded — no raw tender metadata is read directly.
+- Only policy-critical fields are included: title, clientName, deadline,
+  submissionMethod, and the applicable endpoint based on submission method.
+
+Verification:
+- 4707/4707 tests pass
+- typecheck: clean
+- lint: clean (0 warnings)
+- build: succeeds
+- Committed as 70919ea8 and pushed to origin/hotfix/release-safety-consolidation
+
+Stage Summary:
+- Both blockers are now fully fixed and verified.
+- BLOCKER 1: isAIEnabled/isAIConfigured/getAIEnvironmentReadiness/check-env.mjs
+  exclude manual-only providers. All 4 error messages now list ONLY automatic
+  providers. generateWithFallback chain is automatic-only.
+- BLOCKER 2: buildCanonicalBuildPlanHashInput uses resolveCanonicalFieldState
+  (the ONE shared resolver) for effective metadata. No raw tender metadata
+  is read directly for hashing. The hash and the gate use the SAME resolver
+  output — zero possibility of divergence.
+- NOT merged, NOT deployed — awaiting explicit user authorization.
