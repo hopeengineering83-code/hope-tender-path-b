@@ -251,6 +251,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
             Providers cooling down — auto-retrying in {autoRetrySecondsLeft}s
             {willResume ? " (resumes from the last completed chunk)" : ""}
           </span>
+          {canMutate && (
           <button
             onClick={() => { cancelAutoRetry(); handleBackgroundAnalyze(); }}
             disabled={analyzing}
@@ -259,6 +260,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
           >
             Retry now
           </button>
+          )}
           <button onClick={cancelAutoRetry} className="text-xs text-blue-600 underline hover:text-blue-800">
             Cancel
           </button>
@@ -270,6 +272,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
           <p className="font-semibold">Analysis {jobStatus === "PARTIAL_SUCCESS" ? "Incomplete" : "Error"}</p>
           <p className="mt-1 text-red-700">{error}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {canMutate && (
             <button
               onClick={() => { setError(""); handleBackgroundAnalyze(); }}
               disabled={busy}
@@ -277,6 +280,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
             >
               <RefreshIcon /> Retry AI Analyze
             </button>
+            )}
             <button
               onClick={runProviderDiagnostics}
               disabled={diagnosing}

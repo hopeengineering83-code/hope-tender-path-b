@@ -441,7 +441,7 @@ export function EngineActionPanel({
             </button>
           )}
 
-          {result.code === "NETWORK_OR_RUNTIME_ERROR" && result.nextAction === "RETRY_BACKGROUND_JOB" && (
+          {canMutate && result.code === "NETWORK_OR_RUNTIME_ERROR" && result.nextAction === "RETRY_BACKGROUND_JOB" && (
             <button
               type="button"
               onClick={() => { setResult(null); runEngineAsync(); }}
@@ -451,7 +451,7 @@ export function EngineActionPanel({
             </button>
           )}
 
-          {(result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT") && (
+          {canMutate && (result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT") && (
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"

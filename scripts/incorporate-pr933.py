@@ -195,7 +195,7 @@ p = ROOT / "lib/audit.ts"
 content = p.read_text()
 content = content.replace(
     '(Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude)',
-    '(Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude)'
+    '(Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude)'
 )
 p.write_text(content)
 print("  Fixed audit.ts chain comment")
