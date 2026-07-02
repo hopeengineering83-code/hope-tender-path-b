@@ -127,6 +127,7 @@ export function EngineActionPanel({
   const isLargeVault = (vaultReviewedExperts + vaultReviewedProjects) > LARGE_VAULT_THRESHOLD;
 
   async function runEngine(force = false) {
+    if (!canMutate) return;
     setRunning(true);
     setResult(null);
     setAsyncStatus(null);
@@ -188,6 +189,7 @@ export function EngineActionPanel({
   // large tenders where the synchronous engine pipeline would time out.
   // extraParams allows callers to pass ?safe=true or ?skipAiRematch=true.
   async function runEngineAsync(force = false, extraParams: Record<string, string> = {}) {
+    if (!canMutate) return;
     setRunning(true);
     setResult(null);
     setAsyncStatus(null);
@@ -350,7 +352,7 @@ export function EngineActionPanel({
         </div>
       </div>
 
-      {isLargeVault && !result && !running && (
+      {canMutate && isLargeVault && !result && !running && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           <p className="font-semibold">Large vault detected — use Safe Mode for reliable matching</p>
           <p className="mt-1">

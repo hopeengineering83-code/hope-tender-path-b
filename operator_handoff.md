@@ -71,6 +71,27 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03 UTC — Super Z (GLM)
+
+- **Branch:** `hotfix/release-safety-consolidation` (PR #931)
+- **Scope:** Tightly scoped correction — EngineActionPanel REVIEWER mutation leak, real rendered-component test limitation, stale DeepSeek comment.
+- **Files changed:**
+  - `components/engine-action-panel.tsx` — added `if (!canMutate) return;` to `runEngine()` and `runEngineAsync()` handlers; guarded large-vault `Run Safe Mode (recommended)` and `Run full mode anyway` buttons with `canMutate`; verified all other mutation controls already guarded.
+  - `tests/rendered-component-capability.test.ts` (NEW) — 26 tests verifying real component module imports, canMutate gating in TenderAICopilotPanel and EngineActionPanel, handler-level guards, and honest limitation report that true rendered-component tests require Next.js AppRouter context.
+  - `lib/ai.ts` — corrected stale DeepSeek comment to reflect canonical 10-provider chain.
+  - `operator_handoff.md` — this session entry.
+- **Commands run and results:**
+  - `npx tsc --noEmit` — PASS (exit 0)
+  - `RUN_DB_INTEGRATION=true npm test` — 4841/4841 PASS (0 fail)
+  - `npm run lint` — PASS (exit 0, 0 warnings)
+  - `npx prisma validate` — PASS (exit 0)
+  - `npm run build` — PASS (exit 0)
+- **Known remaining risks:**
+  - True rendered-component tests (using `render()` from `@testing-library/react`) require the Next.js AppRouter AsyncLocalStorage context, which is only available inside the Next.js server runtime. The repository's test infrastructure (tsx + Node native test runner) does not provide this context. The current tests import the real modules and verify function bodies — stronger than source-text scans, but not true DOM renders. Upgrading to jest + jest-environment-jsdom with `jest.mock("next/navigation")` is a separate infrastructure task.
+  - Provider order change is a breaking change for existing confirmed BuildPlans — they will become stale (correct behavior).
+- **Next action:** Upgrade test infrastructure to jest + jsdom for true rendered-component tests, OR accept the current module-import verification as sufficient.
+- **Merge status:** `unsafe` — all local checks pass, but true rendered-component tests are not possible with current infrastructure.
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction
