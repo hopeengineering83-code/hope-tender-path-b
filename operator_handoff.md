@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-02 16:46 UTC — Codex
+
+- **Mode:** PR failure fix for provider-policy follow-up
+- **Branch / PR:** `work` / #931 (requested scope; no remote/gh available in container)
+- **Scope:** fixed the section-generation PR failure by threading a bounded per-section `maxOutputTokens` override through the canonical `generateWithFallback` path instead of reverting to a hand-maintained provider chain.
+- **Files changed:** `lib/ai.ts`, `operator_handoff.md`
+- **Tests:** `npx tsx --test tests/proposal-monolithic-call-guard.test.ts tests/deep-reasoning.test.ts tests/deep-reasoning-e2e.test.ts tests/ai-provider-chain-policy.test.ts tests/ai-provider-attempt-budget.test.ts tests/provider-failover-and-single-chunk.test.ts` passed; `npx tsx --test tests/ai-provider-registry.test.ts tests/ai-provider-health-order-alignment.test.ts tests/ai-provider-health.test.ts tests/mistral-together-providers.test.ts` passed; `npm run typecheck` passed; `node scripts/repair-ai-policy-artifact.mjs` passed; `git diff --check` passed.
+- **CI / deployment:** GitHub/Vercel CI not checked because `gh` is unavailable and no git remote is configured; no deploy/previews created.
+- **Known risk:** Current checkout branch is named `work`; container lacks PR remote metadata, so PR #931 association could not be independently verified locally.
+- **Next action:** push this commit to PR #931 branch and let CI run.
+- **Merge status:** not reviewed
+
 ### 2026-07-02 16:41 UTC — Codex
 
 - **Mode:** follow-up provider-policy gap fix for PR #931

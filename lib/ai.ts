@@ -561,10 +561,10 @@ function maxOutputTokensForUseCase(useCase: AiUseCase = "default", provider?: Ai
 async function callProvider(
   name: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase; maxOutputTokens?: number },
 ): Promise<string | null> {
   const useCase = opts?.useCase ?? "default";
-  const maxTokens = maxOutputTokensForUseCase(useCase, name);
+  const maxTokens = opts?.maxOutputTokens ?? maxOutputTokensForUseCase(useCase, name);
   // Request structured JSON output for extraction on providers that support it.
   const wantJson = useCase === "extraction";
   switch (name) {
@@ -753,6 +753,7 @@ export async function generateWithFallback(
       latencyMs: number,
       failureCategory?: string,
     ) => void;
+    maxOutputTokens?: number;
     deadlineAt?: number;
   },
 ): Promise<string> {
@@ -3822,6 +3823,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
       systemPrompt: spec.systemPrompt,
       useCase: "proposal",
       onProviderUsed: (provider) => { usedProvider = provider; },
+      maxOutputTokens: spec.maxOutputTokens ?? 4096,
       deadlineAt: Date.now() + PROPOSAL_SECTION_TIMEOUT_MS,
     });
 
