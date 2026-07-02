@@ -59,7 +59,7 @@ function passingGateInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
     requirementCount: 5,
     requirements: [
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction." },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction.", sourceFileTotalPages: 10 },
     ],
     criticalMetadataOk: true,
     recordedBuildPlanState: "VALID",
@@ -179,6 +179,37 @@ describe("Metadata source attribution — actual file, not earliest", () => {
 });
 
 // ─── 4. Build Plan -> Generate -> Export composition ────────────────────────
+
+describe("Generation gate — requirement sourcePage <= totalPages enforcement", () => {
+  it("blocks when mandatory requirement sourcePage exceeds file totalPages", () => {
+    const r = evaluateGenerationReadiness(passingGateInput({
+      requirements: [
+        { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 99, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction.", sourceFileTotalPages: 10 },
+      ],
+    }));
+    assert.equal(r.ok, false);
+    assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
+    assert.match(r.blockerDetail ?? "", /exceeds the source file's total pages/i);
+  });
+
+  it("allows when sourcePage is within totalPages", () => {
+    const r = evaluateGenerationReadiness(passingGateInput({
+      requirements: [
+        { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction.", sourceFileTotalPages: 10 },
+      ],
+    }));
+    assert.equal(r.ok, true);
+  });
+
+  it("allows when totalPages is null or 0 (not enforced)", () => {
+    const r = evaluateGenerationReadiness(passingGateInput({
+      requirements: [
+        { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 99, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction.", sourceFileTotalPages: null },
+      ],
+    }));
+    assert.equal(r.ok, true, "null totalPages should not block");
+  });
+});
 
 describe("Build Plan -> Generate -> Export succeeds with a valid plan", () => {
   const planInput = {

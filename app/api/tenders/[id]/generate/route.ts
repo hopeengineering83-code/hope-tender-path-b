@@ -854,10 +854,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const plannedFileKeys = explicitSubmissionScope ? plannedSubmissionTargetKeys(submissionPlan) : undefined;
 
   // NOTE: The pre-generation SUBMISSION_PLAN_INCOMPLETE check that required
-  // generated rows before generation has been REMOVED. A valid virtual Build
-  // Plan now satisfies the plan prerequisite for generation (the gate checks
-  // hasValidVirtualSubmissionPlan). PLANNED/virtual rows are not required
-  // and must not be created before readiness.
+  // generated rows before generation has been REMOVED. A persisted DRAFT
+  // BuildPlan now satisfies the plan prerequisite for generation (the gate
+  // checks recordedBuildPlanState + hasCurrentConfirmedBuildPlan). PLANNED/
+  // virtual rows are not required and must not be created before readiness.
   // Export and final-ZIP still require real generated files (checked by the
   // gate via exportReadyDocumentCount).
 
@@ -909,10 +909,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const beforeDocCount = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const afterDocCount = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const planRowsCreated = 0; // planOnly never creates GeneratedDocument rows
-    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `planOnly: DRAFT BuildPlan built (revision ${draftPlan.revision}); ${plannedFiles.length} required file(s) identified; ${afterDocCount - beforeDocCount} GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, virtualOnly: true, draftRevision: draftPlan.revision, draftContentHash: draftPlan.contentHash } });
+    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `planOnly: DRAFT BuildPlan built (revision ${draftPlan.revision}); ${plannedFiles.length} required file(s) identified; ${afterDocCount - beforeDocCount} GeneratedDocument rows created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length, planOnlyDryRun: true, draftRevision: draftPlan.revision, draftContentHash: draftPlan.contentHash } });
     return NextResponse.json({
       planBuilt: true,
-      virtualOnly: true,
+      planOnlyDryRun: true,
       authorizesGeneration: false,
       planRowsCreated,
       plannedFileCount: plannedFiles.length,

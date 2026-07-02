@@ -135,6 +135,8 @@ export interface ReadinessRequirement {
   sourceFileActiveInTender: boolean;
   /** Extracted text of the source TenderFile — used for quote containment verification. */
   sourceFileExtractedText?: string | null;
+  /** Total pages of the source TenderFile — used for sourcePage <= totalPages enforcement. */
+  sourceFileTotalPages?: number | null;
 }
 
 export interface GenerationReadinessInput {
@@ -288,6 +290,17 @@ export function evaluateGenerationReadiness(
       quote.length >= MIN_MEANINGFUL_QUOTE_CHARS;
     if (!hasStructuralGrounding) {
       return fail("REQUIREMENT_SOURCE_UNGROUNDED", "At least one mandatory requirement is missing a valid source reference (active source file, page number, and a meaningful verbatim quote). Re-run AI Analyze to ground requirements.");
+    }
+    // ENFORCE sourcePage <= totalPages when totalPages exists — same rule as
+    // the metadata evidence validator. A page beyond the file's actual page
+    // count is fabricated evidence and must be blocked.
+    if (
+      typeof r.sourcePageNumber === "number" &&
+      typeof r.sourceFileTotalPages === "number" &&
+      r.sourceFileTotalPages > 0 &&
+      r.sourcePageNumber > r.sourceFileTotalPages
+    ) {
+      return fail("REQUIREMENT_SOURCE_UNGROUNDED", `Mandatory requirement source page ${r.sourcePageNumber} exceeds the source file's total pages ${r.sourceFileTotalPages}. Re-run AI Analyze to ground requirements with valid page references.`);
     }
     // QUOTE CONTAINMENT: the normalized quote MUST actually appear in the
     // extracted text of the referenced ACTIVE TenderFile. Without this, a
@@ -454,6 +467,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             extractionScore: true,
             createdAt: true,
             deletionStatus: true,
+            totalPages: true,
           },
         },
         metadataOverrides: {
@@ -526,14 +540,18 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       },
     });
     const activeFileIds = new Set(activeFiles.map((f) => f.id));
-    const mappedRequirements: ReadinessRequirement[] = (requirements as _RequirementRow[]).map((r) => ({
-      priority: r.priority,
-      sourceTenderFileId: r.sourceTenderFileId,
-      sourcePageNumber: r.sourcePageNumber,
-      sourceExactQuote: r.sourceExactQuote,
-      sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
-      sourceFileExtractedText: r.sourceTenderFileId ? (activeFiles.find((f) => f.id === r.sourceTenderFileId)?.extractedText ?? null) : null,
-    }));
+    const mappedRequirements: ReadinessRequirement[] = (requirements as _RequirementRow[]).map((r) => {
+      const sourceFile = r.sourceTenderFileId ? activeFiles.find((f) => f.id === r.sourceTenderFileId) : null;
+      return {
+        priority: r.priority,
+        sourceTenderFileId: r.sourceTenderFileId,
+        sourcePageNumber: r.sourcePageNumber,
+        sourceExactQuote: r.sourceExactQuote,
+        sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
+        sourceFileExtractedText: sourceFile?.extractedText ?? null,
+        sourceFileTotalPages: (sourceFile as any)?.totalPages ?? null,
+      };
+    });
 
     // G — canonical field-state resolver: every critical field must pass validation
     //     before generation/export is authorized. No parallel metadata check needed —
