@@ -106,6 +106,8 @@ export class SectionedGenerationEngine {
         spec.userPrompt,
         {
           systemPrompt: spec.systemPrompt,
+          useCase: "proposal",
+          maxOutputTokens: spec.maxOutputTokens ?? 4096,
         }
       );
 

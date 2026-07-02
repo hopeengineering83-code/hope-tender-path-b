@@ -300,6 +300,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const { generateWithFallback } = await import("../../../../../lib/ai");
       sectionMarkdown = await generateWithFallback(spec.userPrompt, {
         systemPrompt: spec.systemPrompt,
+        useCase: "proposal",
+        maxOutputTokens: spec.maxOutputTokens ?? 4096,
         // OBS-004 — fire-and-forget per-tenant AI usage tracking.
         onProviderAttempt: (provider, success, latencyMs, failureCategory) => {
           void recordAiUsage({

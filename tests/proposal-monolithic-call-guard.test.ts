@@ -54,4 +54,14 @@ describe("proposal generation stays section-based (no monolithic 16K call)", () 
     // And the default ternary resolves to parallel.
     assert.match(src, /const useParallel = generationMode === "parallel"/);
   });
+
+  it("all direct section regeneration paths pass the bounded per-section budget", () => {
+    const route = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
+    const engine = readFileSync("lib/engine/sectioned-generation-engine.ts", "utf8");
+    for (const source of [route, engine]) {
+      assert.match(source, /generateWithFallback/);
+      assert.match(source, /useCase:\s*"proposal"/);
+      assert.match(source, /maxOutputTokens:\s*spec\.maxOutputTokens \?\? 4096/);
+    }
+  });
 });

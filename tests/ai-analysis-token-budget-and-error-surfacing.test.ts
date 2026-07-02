@@ -40,8 +40,10 @@ describe("AI analysis output-token budget", () => {
     const match = source.match(/async function callProvider[\s\S]*?export async function generateWithFallback/);
     assert.ok(match, "callProvider not found");
     const body = match[0];
-    // Budget is now computed per-provider via the registry caps.
-    assert.match(body, /const maxTokens = maxOutputTokensForUseCase\(useCase, name\)/);
+    // Budget is computed per-provider via the registry caps, with an explicit
+    // caller override for bounded section-generation calls.
+    assert.match(body, /maxOutputTokensForUseCase\(useCase, name\)/);
+    assert.match(body, /opts\?\.maxOutputTokens \?\?/);
     // Each OpenAI-compatible provider call must pass maxTokens, never undefined.
     assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens\)/);
     assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens\)/);

@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-02 16:51 UTC — Codex
+
+- **Mode:** continued PR #931 provider/section-budget failure fixes
+- **Branch / PR:** `work` / #931 (requested scope; no remote/gh available in container)
+- **Scope:** added bounded per-section `maxOutputTokens` overrides to the regenerate-section route and sectioned generation engine, and updated regression tests to verify every direct section-generation path uses the bounded budget while preserving registry-derived provider caps.
+- **Files changed:** `app/api/tenders/[id]/regenerate-section/route.ts`, `lib/engine/sectioned-generation-engine.ts`, `tests/ai-analysis-token-budget-and-error-surfacing.test.ts`, `tests/proposal-monolithic-call-guard.test.ts`, `operator_handoff.md`
+- **Tests:** `npx tsx --test tests/ai-analysis-token-budget-and-error-surfacing.test.ts tests/proposal-monolithic-call-guard.test.ts tests/ai-provider-chain-policy.test.ts tests/provider-failover-and-single-chunk.test.ts` passed; `npx tsx --test tests/ai-provider-registry.test.ts tests/ai-provider-health-order-alignment.test.ts tests/ai-provider-health.test.ts tests/mistral-together-providers.test.ts tests/deep-reasoning.test.ts tests/deep-reasoning-e2e.test.ts tests/ai-provider-attempt-budget.test.ts` passed; `npm run typecheck` passed; `node scripts/repair-ai-policy-artifact.mjs` passed; `git diff --check` passed.
+- **CI / deployment:** GitHub/Vercel CI not checked because `gh` is unavailable and no git remote is configured; no deploy/previews created.
+- **Known risk:** Current checkout branch is named `work`; container lacks PR remote metadata, so PR #931 association could not be independently verified locally.
+- **Next action:** push this commit to PR #931 branch and let CI run.
+- **Merge status:** not reviewed
+
 ### 2026-07-02 16:46 UTC — Codex
 
 - **Mode:** PR failure fix for provider-policy follow-up
