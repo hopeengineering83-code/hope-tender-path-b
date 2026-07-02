@@ -331,21 +331,32 @@ export function buildCanonicalBuildPlanHashInput(
 
   // Map the resolver output to the hash evidence format. Only include
   // policy-critical fields (title, clientName, deadline, submissionMethod,
-  // and the applicable endpoint based on submission method policy).
-  const method = tender.submissionMethod;
+  // and the applicable endpoint based on the EFFECTIVE submission method
+  // from the resolver — NOT raw tender.submissionMethod).
+  //
+  // Using the resolver's effective submissionMethod ensures that a
+  // USER_EDITED / USER_CONFIRMED override on submissionMethod changes
+  // which endpoint evidence is included in the hash. For example, if the
+  // raw tender has submissionMethod="email" but the user overrides it to
+  // "physical", the hash MUST switch from submissionEmails evidence to
+  // submissionAddress evidence — otherwise the override would not stale
+  // the confirmed BuildPlan.
+  const submissionMethodField = fieldState.fields.find((f: any) => f.fieldKey === "submissionMethod");
+  const effectiveMethod = submissionMethodField?.effectiveValue ?? null;
   const criticalFieldKeys = new Set(["title", "clientName", "deadline", "submissionMethod"]);
-  // Add the applicable endpoint field(s) based on submission method policy.
-  if (isEmailSubmissionMethod(method)) {
+  // Add the applicable endpoint field(s) based on the EFFECTIVE submission
+  // method from the resolver.
+  if (isEmailSubmissionMethod(effectiveMethod)) {
     criticalFieldKeys.add("submissionEmails");
-  } else if (isPhysicalSubmissionMethod(method)) {
+  } else if (isPhysicalSubmissionMethod(effectiveMethod)) {
     criticalFieldKeys.add("submissionAddress");
-  } else if (isPortalSubmissionMethod(method)) {
+  } else if (isPortalSubmissionMethod(effectiveMethod)) {
     criticalFieldKeys.add("submissionEmails");
     criticalFieldKeys.add("submissionAddress");
   }
-  // Unknown submission method: only the 4 core fields are included. The
-  // validator (validateCriticalMetadataEvidenceForBuildPlan) will block
-  // unknown methods — the hash does not need endpoint evidence for them.
+  // Unknown/empty effective submission method: only the 4 core fields are
+  // included. The validator (validateCriticalMetadataEvidenceForBuildPlan)
+  // will block unknown methods — the hash does not need endpoint evidence.
 
   const evidence: BuildPlanHashMetadataEvidence[] = fieldState.fields
     .filter((f: any) => criticalFieldKeys.has(f.fieldKey))

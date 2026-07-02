@@ -313,4 +313,240 @@ describe("Canonical metadata evidence — real PostgreSQL proof", () => {
     assert.ok(!confirmed.ok, "Removing a metadata override MUST stale the confirmed plan");
     await cleanup(tender.id, user.id);
   });
+
+  // ─── REGRESSION: submission-method override changes endpoint evidence ─────
+  // This test proves that buildCanonicalBuildPlanHashInput derives the
+  // applicable endpoint from the resolver's EFFECTIVE submissionMethod
+  // (which includes overrides), NOT from raw tender.submissionMethod.
+  //
+  // Without this fix, a USER_EDITED override on submissionMethod (email →
+  // physical) would NOT stale the confirmed BuildPlan because the hash
+  // builder would still read raw tender.submissionMethod="email" and include
+  // submissionEmails evidence instead of submissionAddress evidence.
+  //
+  // Setup: create a tender with BOTH email and physical endpoint evidence
+  // (so validation passes regardless of which method is effective), build
+  // and confirm with email as the effective method, then add a USER_EDITED
+  // override changing submissionMethod to "sealed envelope" (physical).
+  // The hash MUST change because the applicable endpoint evidence switches
+  // from submissionEmails to submissionAddress.
+
+  it("changing submission-method override from email to physical stales the confirmed plan (endpoint evidence switches)", async () => {
+    const nonce = `${Date.now()}-override-method-physical-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({ data: { email: `method-override-${nonce}@example.test`, name: `Test override-method-physical`, passwordHash: "test-hash" } });
+
+    // Create a tender with email submission method AND both endpoint evidence
+    const tender = await prisma.tender.create({
+      data: {
+        userId: user.id,
+        title: `Method Override Tender ${nonce}`,
+        clientName: "Ministry of Test Infrastructure",
+        reference: `MO-${nonce}`,
+        country: "Ethiopia",
+        status: "DRAFT",
+        stage: "TENDER_INTAKE",
+        exactFileNaming: '["Technical Proposal.docx"]',
+        exactFileOrder: '[1]',
+        submissionMethod: "email submission required",
+        submissionEmails: "submit@example.com",
+        submissionAddress: "123 Test Street, Addis Ababa",
+        submissionEmailSubject: "Tender Submission",
+        deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        clientNameSourcePage: 1,
+        clientNameSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionMethodSourcePage: 1,
+        submissionMethodSourceQuote: "This tender requires a Technical Proposal for the project.",
+        titleSourcePage: 1,
+        titleSourceQuote: "This tender requires a Technical Proposal for the project.",
+        deadlineSourcePage: 1,
+        deadlineSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionEmailSourcePage: 1,
+        submissionEmailSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionAddressSourcePage: 1,
+        submissionAddressSourceQuote: "This tender requires a Technical Proposal for the project.",
+      },
+    });
+    const file = await prisma.tenderFile.create({
+      data: {
+        tenderId: tender.id,
+        fileName: `tender-${nonce}.pdf`,
+        originalFileName: `Tender-${nonce}.pdf`,
+        mimeType: "application/pdf",
+        size: 1024,
+        extractedText: "This tender requires a Technical Proposal for the project.",
+        totalPages: 3,
+        extractedPages: 3,
+        failedPages: 0,
+        extractionScore: 100,
+        extractionMethod: "text",
+      },
+    });
+    await prisma.tender.update({
+      where: { id: tender.id },
+      data: {
+        clientNameSourceFileId: file.id,
+        submissionMethodSourceFileId: file.id,
+        titleSourceFileId: file.id,
+        deadlineSourceFileId: file.id,
+        submissionEmailSourceFileId: file.id,
+        submissionAddressSourceFileId: file.id,
+      },
+    });
+    await prisma.tenderRequirement.create({
+      data: {
+        tenderId: tender.id,
+        title: "Technical Proposal",
+        description: "Submit a technical proposal document.",
+        requirementType: "TECHNICAL",
+        priority: "MANDATORY",
+        exactFileName: "Technical Proposal.docx",
+        exactOrder: 1,
+        sourceTenderFileId: file.id,
+        sourcePageNumber: 1,
+        sourceExactQuote: "This tender requires a Technical Proposal for the project.",
+      },
+    });
+    const tfh = await prisma.tender.findUnique({
+      where: { id: tender.id },
+      select: { title: true, description: true, intakeSummary: true, files: { select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true, deletionStatus: true } } },
+    });
+    const ch = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tfh!.title, description: tfh!.description, intakeSummary: tfh!.intakeSummary, files: tfh!.files as any[] }, undefined));
+    await prisma.aiJob.create({
+      data: { tenderId: tender.id, userId: user.id, jobType: "AI_ANALYZE", status: "SUCCEEDED", analysisInputHash: ch, startedAt: new Date(), finishedAt: new Date(), promotedAt: new Date() },
+    });
+
+    // Build and confirm with email as the effective method (raw value)
+    await buildDraftBuildPlan(prisma, tender.id, user.id);
+    await confirmPlan(tender.id, user.id);
+
+    // Add a USER_EDITED override changing submissionMethod to "sealed envelope"
+    // (physical). The resolver's effective submissionMethod becomes "sealed
+    // envelope", so the hash builder MUST switch from submissionEmails
+    // evidence to submissionAddress evidence — changing the hash and
+    // staling the confirmed plan.
+    await prisma.tenderMetadataOverride.create({
+      data: {
+        tenderId: tender.id,
+        field: "submissionMethod",
+        fieldState: "USER_EDITED",
+        overrideValue: "sealed envelope delivery",
+        overriddenBy: user.id,
+      },
+    });
+
+    const confirmed = await getCurrentConfirmedBuildPlan(prisma, tender.id, user.id);
+    assert.ok(!confirmed.ok, "Changing submission-method override from email to physical MUST stale the confirmed plan (endpoint evidence switches)");
+    if (!confirmed.ok) {
+      // The stale detection should be due to hash mismatch, not evidence failure
+      assert.match(confirmed.blocker, /stale|hash/i, `Override should cause stale/hash mismatch: ${confirmed.blocker}`);
+    }
+    await cleanup(tender.id, user.id);
+  });
+
+  it("changing submission-method override from email to portal stales the confirmed plan (endpoint evidence switches)", async () => {
+    const nonce = `${Date.now()}-override-method-portal-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({ data: { email: `method-portal-${nonce}@example.test`, name: `Test override-method-portal`, passwordHash: "test-hash" } });
+
+    const tender = await prisma.tender.create({
+      data: {
+        userId: user.id,
+        title: `Method Override Portal Tender ${nonce}`,
+        clientName: "Ministry of Test Infrastructure",
+        reference: `MOP-${nonce}`,
+        country: "Ethiopia",
+        status: "DRAFT",
+        stage: "TENDER_INTAKE",
+        exactFileNaming: '["Technical Proposal.docx"]',
+        exactFileOrder: '[1]',
+        submissionMethod: "email submission required",
+        submissionEmails: "submit@example.com",
+        submissionAddress: "123 Test Street, Addis Ababa",
+        submissionEmailSubject: "Tender Submission",
+        deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        clientNameSourcePage: 1,
+        clientNameSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionMethodSourcePage: 1,
+        submissionMethodSourceQuote: "This tender requires a Technical Proposal for the project.",
+        titleSourcePage: 1,
+        titleSourceQuote: "This tender requires a Technical Proposal for the project.",
+        deadlineSourcePage: 1,
+        deadlineSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionEmailSourcePage: 1,
+        submissionEmailSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionAddressSourcePage: 1,
+        submissionAddressSourceQuote: "This tender requires a Technical Proposal for the project.",
+      },
+    });
+    const file = await prisma.tenderFile.create({
+      data: {
+        tenderId: tender.id,
+        fileName: `tender-${nonce}.pdf`,
+        originalFileName: `Tender-${nonce}.pdf`,
+        mimeType: "application/pdf",
+        size: 1024,
+        extractedText: "This tender requires a Technical Proposal for the project.",
+        totalPages: 3,
+        extractedPages: 3,
+        failedPages: 0,
+        extractionScore: 100,
+        extractionMethod: "text",
+      },
+    });
+    await prisma.tender.update({
+      where: { id: tender.id },
+      data: {
+        clientNameSourceFileId: file.id,
+        submissionMethodSourceFileId: file.id,
+        titleSourceFileId: file.id,
+        deadlineSourceFileId: file.id,
+        submissionEmailSourceFileId: file.id,
+        submissionAddressSourceFileId: file.id,
+      },
+    });
+    await prisma.tenderRequirement.create({
+      data: {
+        tenderId: tender.id,
+        title: "Technical Proposal",
+        description: "Submit a technical proposal document.",
+        requirementType: "TECHNICAL",
+        priority: "MANDATORY",
+        exactFileName: "Technical Proposal.docx",
+        exactOrder: 1,
+        sourceTenderFileId: file.id,
+        sourcePageNumber: 1,
+        sourceExactQuote: "This tender requires a Technical Proposal for the project.",
+      },
+    });
+    const tfh = await prisma.tender.findUnique({
+      where: { id: tender.id },
+      select: { title: true, description: true, intakeSummary: true, files: { select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true, deletionStatus: true } } },
+    });
+    const ch = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tfh!.title, description: tfh!.description, intakeSummary: tfh!.intakeSummary, files: tfh!.files as any[] }, undefined));
+    await prisma.aiJob.create({
+      data: { tenderId: tender.id, userId: user.id, jobType: "AI_ANALYZE", status: "SUCCEEDED", analysisInputHash: ch, startedAt: new Date(), finishedAt: new Date(), promotedAt: new Date() },
+    });
+
+    await buildDraftBuildPlan(prisma, tender.id, user.id);
+    await confirmPlan(tender.id, user.id);
+
+    // Override submissionMethod to "portal" — portal includes BOTH endpoints,
+    // so the hash MUST change (endpoint evidence set grows from just
+    // submissionEmails to both submissionEmails + submissionAddress).
+    await prisma.tenderMetadataOverride.create({
+      data: {
+        tenderId: tender.id,
+        field: "submissionMethod",
+        fieldState: "USER_EDITED",
+        overrideValue: "online portal submission",
+        overriddenBy: user.id,
+      },
+    });
+
+    const confirmed = await getCurrentConfirmedBuildPlan(prisma, tender.id, user.id);
+    assert.ok(!confirmed.ok, "Changing submission-method override from email to portal MUST stale the confirmed plan (endpoint evidence set changes)");
+    if (!confirmed.ok) {
+      assert.match(confirmed.blocker, /stale|hash/i, `Override should cause stale/hash mismatch: ${confirmed.blocker}`);
+    }
+    await cleanup(tender.id, user.id);
+  });
 });
