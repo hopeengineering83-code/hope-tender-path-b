@@ -58,7 +58,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 - Tender-controlled scope only. Never invent tender facts or evidence.
 - Company Vault is factual evidence only; no automatic all-Vault fallback.
-- Provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic (emergency-only last).
+- Provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic (rank 10, emergency-only) → deterministic draft fallback (rank 11, non-AI, never final-export eligible).
 - Regex, fallback, partial, legacy, and unpromoted analysis must not unlock generation, export, or Final ZIP.
 - Only promoted `AI_SUCCEEDED` may unlock generation/export after all gates pass.
 - Critical metadata and mandatory requirements need active source file, page, and meaningful quote.
@@ -70,30 +70,6 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
-
-### 2026-07-03 UTC — Claude Code
-
-- **Branch:** `hotfix/release-safety-consolidation` (PR #931)
-- **Scope:** Complete REVIEWER read-only protection verification with REAL rendered-component tests (not source-text scans). Verified fail-closed canMutate default, handler-level defensive guards, conditional rendering, and provider-policy compliance. Full test suite integration.
-- **Files changed:**
-  - `components/engine-action-panel.tsx` — canMutate default changed from required `boolean` to optional `canMutate?: boolean` with default `= false` (fail-closed); preserved `if (!canMutate) return;` as first statement in both `runEngine()` and `runEngineAsync()` handlers; all mutation controls conditionally rendered with `{canMutate && (...)}`; read-only note displayed when !canMutate; "Check status now" button NOT guarded (GET-only, available to REVIEWER).
-  - `components/tender-ai-copilot-panel.tsx` — added `if (!canMutate) return;` as first statement in `ask()` function; added `if (!canMutate) return;` as first statement in `recordControls()` function; textarea disabled when !canMutate; Ask Copilot, quick-question, and Record buttons conditionally rendered with `{canMutate && (...)}`; canMutate default changed to optional with `= false`.
-  - `lib/ai.ts` — line 23: updated stale provider-order comment to "Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback"; line ~4041: rewrote per-section provider-order comment explaining section fallback order differs from canonical chain and noting that changing it is a runtime behavior change.
-  - `tests/helpers/rtl-env.ts` (NEW) — created real-DOM component-test environment for node:test using happy-dom Window with all required globals (HTMLElement, Event, MouseEvent, etc.), Node 22 compatible navigator override, IS_REACT_ACT_ENVIRONMENT flag for React batching, fetch mock recording all calls (url, method, body) with route table substring/regex matching, renderWithRouter() wrapping @testing-library/react's render with AppRouterContext.Provider and fakeRouter, helper functions (buttonLabels, findButton, fireEvent, waitFor, cleanup, act, within).
-  - `tests/rendered-component-capability.test.ts` (REWRITTEN) — REAL rendered tests mounting actual EngineActionPanel component into live happy-dom; 14 tests total verifying: omitted canMutate is fail-closed (no mutation buttons, read-only note shown), REVIEWER (canMutate=false) across 6 states (normal, large-vault, extraction-blocked, poll-timeout, network-failure, failure/retry) renders NO mutation controls via assertNoMutationControls() checking MUTATION_LABELS array; "Check status now" available to REVIEWER and is GET-only (clicking it sends single GET, zero POSTs); ADMIN/PM retain mutation controls and clicking Run Engine dispatches real POST to /api/tenders/{tenderId}/engine; ADMIN large-vault state shows Safe Mode banner and both large-vault buttons; exported dispatch functions executeEngineRun/executeEngineRunAsync with canMutate=false send zero requests and report ENGINE_MUTATION_BLOCKED_RESULT; all 14 tests PASS.
-  - `tests/tender-ai-copilot-capability.test.ts` (REWRITTEN) — REAL rendered tests mounting actual TenderAICopilotPanel component into live happy-dom; 5 tests total verifying: omitted canMutate is fail-closed (no Ask Copilot, no quick-questions, no Record buttons; textarea disabled), REVIEWER (canMutate=false via real canMutateTender) sees same read-only surface, ADMIN (canMutate=true) clicks quick question button and dispatches real POST to /api/tenders/{tenderId}/copilot, response renders answer/recommendations/risks/nextActions and Record button appears; all 5 tests PASS.
-- **Commands run and results:**
-  - `npx tsc --noEmit` — PASS (exit 0)
-  - `npm run lint` — PASS (exit 0)
-  - `npx prisma validate` — PASS (exit 0)
-  - `npx prisma generate` — PASS (exit 0)
-  - `npm test (rendered-component-capability.test.ts + tender-ai-copilot-capability.test.ts)` — 19/19 PASS
-  - `npm test (provider policy tests)` — 102/102 PASS
-  - `RUN_DB_INTEGRATION=true npm test (full suite)` — 4823/4823 PASS
-- **CI / deployment:** Not checked; local verification complete.
-- **Known risks:** None identified. All defensive guards preserved. All mutation-control hiding verified through real component renders and DOM inspection. All provider policy verified across all 10 automatic providers with correct ranks and emergency-only flags. Full test suite passes with real PostgreSQL integration.
-- **Next action:** Update PR #931 description to remove obsolete six-provider claim and update PostgreSQL status; do not merge or deploy pending review.
-- **Merge status:** `unsafe` (per user instruction; no deployment authorized)
 
 ### 2026-07-03 UTC — Super Z (GLM)
 
