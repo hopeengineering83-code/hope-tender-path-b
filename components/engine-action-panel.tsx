@@ -107,10 +107,12 @@ export function EngineActionPanel({
   vaultReviewedExperts = 0,
   vaultReviewedProjects = 0,
   lifecycleBlockersExist = false,
+  canMutate = true,
 }: {
   tenderId: string;
   vaultReviewedExperts?: number;
   vaultReviewedProjects?: number;
+  canMutate?: boolean;
   /** When true, the success message notes that readiness blockers remain so the
    *  user doesn't mistake "engine completed" for "ready to generate". */
   lifecycleBlockersExist?: boolean;

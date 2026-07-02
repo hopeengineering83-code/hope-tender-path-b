@@ -10,6 +10,7 @@ type Props = {
   tenderId: string;
   initialContinueJobId?: string | null;
   aiEnabled: boolean;
+  canMutate?: boolean;
 };
 
 const POLL_INTERVAL_MS = 3_000;
@@ -19,7 +20,7 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
+export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = true }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);
@@ -207,7 +208,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {aiEnabled ? (
+          {aiEnabled && canMutate ? (
             <button
               onClick={handleBackgroundAnalyze}
               disabled={busy}
@@ -216,6 +217,8 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
               <SparklesIcon />
               {analyzing ? (phase || "Analyzing…") : "Run AI Analyze"}
             </button>
+          ) : aiEnabled && !canMutate ? (
+            <span className="text-xs text-slate-500 font-medium italic">Read-only — AI Analyze requires ADMIN or PROPOSAL_MANAGER role</span>
           ) : (
             <span className="text-xs text-red-600 font-medium italic">AI providers not configured</span>
           )}

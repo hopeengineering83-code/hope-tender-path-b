@@ -184,13 +184,14 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
-        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} />
+        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
         <AIHealthPanel />
         <EngineActionPanel
           tenderId={tender.id}
           vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
           vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
           lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
+          canMutate={canMutate}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <AIAnalyzeRecoveryPanel tenderId={tender.id} />
@@ -210,7 +211,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
         <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
-        <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} />
+        <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
         <SubmissionPlanReconciliationPanel tenderId={tender.id} />
         <AuthorityReviewTruthPanel tenderId={tender.id} />

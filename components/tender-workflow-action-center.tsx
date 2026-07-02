@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
-import { isMutationAction } from "@/lib/recovery-command-actions";
+
 
 export interface WorkflowStageInfo {
   stage: number;
@@ -13,6 +13,11 @@ export interface WorkflowStageInfo {
   actionLabel?: string;
   actionUrl?: string;
   actionMethod?: string;
+  /** Server-provided action name (recovery-command action key). */
+  actionName?: string;
+  /** Server-provided classification: "mutation" or "readonly". The UI uses
+   * this to HIDE mutation controls for REVIEWER — no client-side inference. */
+  actionKind?: "mutation" | "readonly";
 }
 
 export function TenderWorkflowActionCenter({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
@@ -77,7 +82,7 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = true }: { ten
                 </p>
               )}
             </div>
-            {s.actionLabel && (canMutate || !isMutationAction(s.actionLabel && s.actionUrl ? _inferActionFromUrl(s.actionUrl, s.actionMethod) : "")) && (
+            {s.actionLabel && (canMutate || s.actionKind === "readonly" || (!s.actionKind && !s.actionUrl)) && (
               <div className="shrink-0 self-center">
                 <button
                   onClick={() => handleAction(s)}
@@ -93,31 +98,6 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = true }: { ten
       </div>
     </section>
   );
-}
-
-// Infer the recovery-command action name from a workflow stage's action URL
-// and method. Used to classify whether the action is a mutation.
-function _inferActionFromUrl(url: string, method?: string): string {
-  if (!url) return "";
-  // Map known API paths to action names
-  if (url.includes("/ai-analyze")) return method === "POST" ? "RUN_AI_ANALYZE" : "";
-  if (url.includes("/engine")) return "RUN_ENGINE";
-  if (url.includes("/submission-plan/build")) return "BUILD_SUBMISSION_PLAN";
-  if (url.includes("/repair-source-grounding")) return "REPAIR_SOURCE_REFERENCES";
-  if (url.includes("/repair-metadata")) return "REPAIR_METADATA";
-  if (url.includes("/re-extract-metadata")) return "RE_EXTRACT_METADATA";
-  if (url.includes("/link-vault-evidence-auto")) return "LINK_VAULT_EVIDENCE";
-  if (url.includes("/generate-missing-plan-files")) return "GENERATE_REQUIRED_DOCUMENTS";
-  if (url.includes("/validate")) return "VALIDATE_DOCS";
-  if (url.includes("/auto-finalize")) return "AUTO_FINALIZE";
-  if (url.includes("/supersede-outside-plan")) return "RECONCILE_OUTSIDE_PLAN_DOCS";
-  if (url.includes("/repair-export-gaps")) return "REPAIR_DOCUMENT_QUALITY";
-  if (url.includes("/approve-analysis")) return "APPROVE_FALLBACK_WITH_NOTE";
-  if (url.includes("/download")) return "DOWNLOAD_FINAL_ZIP";
-  if (url.includes("/export-readiness")) return "EXPORT_READINESS";
-  // If it's a POST/DELETE to an API path, treat as mutation
-  if (method === "POST" || method === "DELETE") return "MUTATION";
-  return "";
 }
 
 function StatusBadge({ status }: { status: WorkflowStageInfo["status"] }) {
