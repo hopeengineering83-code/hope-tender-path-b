@@ -284,37 +284,79 @@ export function buildCanonicalBuildPlanHashInput(
   const input = buildPlanHashInputFromTender(tender);
   input.items = items;
 
-  // Derive metadata evidence from ALL policy-critical source fields.
-  // Only include APPLICABLE endpoint fields based on submission method policy.
-  // Evidence state is GROUNDED only when file ID + page + quote all exist.
+  // ─── ONE CANONICAL RESOLVED EFFECTIVE-METADATA RESULT ───────────────────
+  // The hash uses ONLY the output of resolveCanonicalFieldState (the shared
+  // resolver) for metadata — it does NOT read raw tender metadata fields
+  // directly. This ensures the hash and the gate use the SAME resolved
+  // effective values, source grounding, and override state, with zero
+  // possibility of divergence.
+  const { resolveCanonicalFieldState } = require("./canonical-field-state");
+  const fieldState = resolveCanonicalFieldState({
+    tender: {
+      ...tender,
+      deadline: tender.deadline ?? null,
+      clientNameSourcePage: tender.clientNameSourcePage ?? null,
+      clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+      clientNameSourceFileId: tender.clientNameSourceFileId ?? null,
+      submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
+      submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+      submissionMethodSourceFileId: tender.submissionMethodSourceFileId ?? null,
+      submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
+      submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+      submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
+      submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+      submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
+      submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+      titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+      titleSourcePage: (tender as any).titleSourcePage ?? null,
+      titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+      deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+      deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+      deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+      contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+      metadataContaminated: (tender as any).metadataContaminated ?? false,
+    },
+    overrides: ((tender as any).metadataOverrides ?? []).map((o: any) => ({
+      field: o.field,
+      fieldState: o.fieldState,
+      overrideValue: o.overrideValue,
+      reason: o.reason ?? null,
+      overriddenBy: o.overriddenBy ?? null,
+      createdAt: o.createdAt ?? new Date(0),
+    })),
+    hasExtractedRequirements: (tender.requirements ?? []).length > 0,
+    submissionMethodContext: tender.submissionMethod ?? undefined,
+    activeTenderFileIds: new Set((tender.files ?? []).map((f: any) => f.id)),
+  });
+
+  // Map the resolver output to the hash evidence format. Only include
+  // policy-critical fields (title, clientName, deadline, submissionMethod,
+  // and the applicable endpoint based on submission method policy).
   const method = tender.submissionMethod;
-  const evidence: BuildPlanHashMetadataEvidence[] = [
-    { fieldKey: "title", effectiveValue: tender.title ?? null, sourceTenderFileId: (tender as any).titleSourceFileId ?? null, sourcePage: (tender as any).titleSourcePage ?? null, sourceQuote: (tender as any).titleSourceQuote ?? null, evidenceState: ((tender as any).titleSourceFileId && (tender as any).titleSourcePage && (tender as any).titleSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
-    { fieldKey: "clientName", effectiveValue: tender.clientName ?? null, sourceTenderFileId: tender.clientNameSourceFileId ?? null, sourcePage: tender.clientNameSourcePage ?? null, sourceQuote: tender.clientNameSourceQuote ?? null, evidenceState: (tender.clientNameSourceFileId && tender.clientNameSourcePage && tender.clientNameSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
-    { fieldKey: "deadline", effectiveValue: tender.deadline ? new Date(tender.deadline).toISOString() : null, sourceTenderFileId: (tender as any).deadlineSourceFileId ?? null, sourcePage: (tender as any).deadlineSourcePage ?? null, sourceQuote: (tender as any).deadlineSourceQuote ?? null, evidenceState: ((tender as any).deadlineSourceFileId && (tender as any).deadlineSourcePage && (tender as any).deadlineSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
-    { fieldKey: "submissionMethod", effectiveValue: tender.submissionMethod ?? null, sourceTenderFileId: tender.submissionMethodSourceFileId ?? null, sourcePage: tender.submissionMethodSourcePage ?? null, sourceQuote: tender.submissionMethodSourceQuote ?? null, evidenceState: (tender.submissionMethodSourceFileId && tender.submissionMethodSourcePage && tender.submissionMethodSourceQuote) ? "GROUNDED" : "UNGROUNDED" },
-  ];
-  // Only include APPLICABLE endpoint fields — changing a non-applicable
-  // endpoint must NOT stale the plan.
+  const criticalFieldKeys = new Set(["title", "clientName", "deadline", "submissionMethod"]);
+  // Add the applicable endpoint field(s) based on submission method policy.
   if (isEmailSubmissionMethod(method)) {
-    evidence.push({ fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails ?? null, sourceTenderFileId: tender.submissionEmailSourceFileId ?? null, sourcePage: tender.submissionEmailSourcePage ?? null, sourceQuote: (tender as any).submissionEmailSourceQuote ?? null, evidenceState: (tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage && (tender as any).submissionEmailSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+    criticalFieldKeys.add("submissionEmails");
   } else if (isPhysicalSubmissionMethod(method)) {
-    evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
+    criticalFieldKeys.add("submissionAddress");
   } else if (isPortalSubmissionMethod(method)) {
-    // Portal: include whichever endpoint exists
-    if (tender.submissionEmails) {
-      evidence.push({ fieldKey: "submissionEmails", effectiveValue: tender.submissionEmails ?? null, sourceTenderFileId: tender.submissionEmailSourceFileId ?? null, sourcePage: tender.submissionEmailSourcePage ?? null, sourceQuote: (tender as any).submissionEmailSourceQuote ?? null, evidenceState: (tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage && (tender as any).submissionEmailSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
-    }
-    if (tender.submissionAddress) {
-      evidence.push({ fieldKey: "submissionAddress", effectiveValue: tender.submissionAddress ?? null, sourceTenderFileId: tender.submissionAddressSourceFileId ?? null, sourcePage: tender.submissionAddressSourcePage ?? null, sourceQuote: tender.submissionAddressSourceQuote ?? null, evidenceState: (tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage && tender.submissionAddressSourceQuote) ? "GROUNDED" : "UNGROUNDED" });
-    }
-  } else {
-    // Unknown/empty/malformed submission method: do NOT add endpoint evidence.
-    // The validator (validateCriticalMetadataEvidenceForBuildPlan) will block
-    // unknown methods anyway, so the hash only needs the 4 core fields above.
-    // Adding fallback address evidence here would be inconsistent with the
-    // fail-closed policy.
+    criticalFieldKeys.add("submissionEmails");
+    criticalFieldKeys.add("submissionAddress");
   }
+  // Unknown submission method: only the 4 core fields are included. The
+  // validator (validateCriticalMetadataEvidenceForBuildPlan) will block
+  // unknown methods — the hash does not need endpoint evidence for them.
+
+  const evidence: BuildPlanHashMetadataEvidence[] = fieldState.fields
+    .filter((f: any) => criticalFieldKeys.has(f.fieldKey))
+    .map((f: any) => ({
+      fieldKey: f.fieldKey,
+      effectiveValue: f.effectiveValue ?? null,
+      sourceTenderFileId: f.sourceFileId ?? null,
+      sourcePage: f.sourcePage ?? null,
+      sourceQuote: f.sourceQuote ?? null,
+      evidenceState: f.isGrounded ? "GROUNDED" : "UNGROUNDED",
+    }));
   input.metadataEvidence = evidence;
   // Include metadata overrides in hash so override changes stale the plan
   input.metadataOverrides = (tender as any).metadataOverrides ?? [];

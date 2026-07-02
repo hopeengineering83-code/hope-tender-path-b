@@ -484,7 +484,7 @@ export class NoAiProviderReadyError extends Error {
     const failureDetails = params.failureDetails ?? [];
     const message = params.message ?? (
       params.errorKind === "NO_PROVIDER_CONFIGURED"
-        ? `No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.`
+        ? `No automatic AI provider configured — set GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY. Manual-only providers (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY) do NOT count.`
         : params.errorKind === "ALL_PROVIDERS_COOLING"
           // Preserve the AI_PROVIDERS_RATE_LIMITED prefix so legacy diagnostics
           // (lib/engine/analysis-fallback-diagnostics.ts in PR #775/#778) that
@@ -3963,7 +3963,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       failureDetails: [],
       errorKind: "NO_PROVIDER_CONFIGURED",
       nextAction: "CONFIGURE_AI_KEYS",
-      message: "No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in environment variables.",
+      message: "No automatic AI provider configured — set GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY in environment variables. Manual-only providers (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY) do NOT count.",
     });
   }
   throw new NoAiProviderReadyError({
