@@ -58,7 +58,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 - Tender-controlled scope only. Never invent tender facts or evidence.
 - Company Vault is factual evidence only; no automatic all-Vault fallback.
-- Provider order: Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic last.
+- Provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude → deterministic draft fallback. Z.ai is rank 1 and automatic; Anthropic is rank 10 and emergency-only; deterministic fallback is rank 11, non-AI, and never eligible for final proposal generation or export.
 - Regex, fallback, partial, legacy, and unpromoted analysis must not unlock generation, export, or Final ZIP.
 - Only promoted `AI_SUCCEEDED` may unlock generation/export after all gates pass.
 - Critical metadata and mandatory requirements need active source file, page, and meaningful quote.
@@ -70,6 +70,18 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
+
+### 2026-07-02 16:29 UTC — Codex
+
+- **Mode:** urgent provider-policy correction for PR #931
+- **Branch / PR:** `work` / #931 (requested scope; no remote/gh available in container)
+- **Scope:** restored authoritative 10-provider automatic order in runtime section generation path and provider diagnostics copy; added regression tests for exact order, automatic inclusion, and Anthropic rank/emergency-only status; updated shared handoff provider rule.
+- **Files changed:** `lib/ai.ts`, `tests/ai-provider-chain-policy.test.ts`, `operator_handoff.md`
+- **Tests:** `npx tsx --test tests/ai-provider-chain-policy.test.ts tests/ai-provider-registry.test.ts tests/ai-provider-health-order-alignment.test.ts tests/ai-provider-health.test.ts tests/mistral-together-providers.test.ts` passed; `npm run typecheck` passed; `git diff --check` passed. An accidental `npm test -- --run ...` invoked the broader suite because the runner ignored the filter; it was manually stopped after provider-policy coverage had passed and before completion.
+- **CI / deployment:** GitHub/Vercel CI not checked because `gh` is unavailable and no git remote is configured; no deploy/previews created.
+- **Known risk:** Current checkout branch is named `work`; container lacks PR remote metadata, so PR #931 association could not be independently verified locally.
+- **Next action:** push this commit to PR #931 branch and let CI run.
+- **Merge status:** not reviewed
 
 ### 2026-06-29 UTC — Jules
 

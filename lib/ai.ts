@@ -20,7 +20,8 @@ const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
 const REASONING_MODELS = ["o3-mini", "o1-preview", "gpt-4o"];
 const CLAUDE_REASONING_MODELS = ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest"];
 
-// Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic
+// Provider chain for proposal generation is derived from CANONICAL_AI_PROVIDER_ORDER:
+// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic.
 // Claude models in preference order when the last-resort Anthropic provider
 // is reached, keeping Anthropic last so rate limits do not block the app when earlier
 // providers are available.
@@ -107,8 +108,12 @@ export function isGeminiEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | null;
+type AIProvider = "zai" | "cerebras" | "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | null;
 let lastProposalProvider: AIProvider = null;
+
+function providerToProposalSource(provider: AiProviderName): Exclude<AIProvider, null> {
+  return provider === "anthropic" ? "claude" : provider;
+}
 
 export function getLastProposalProvider(): AIProvider {
   return lastProposalProvider;
@@ -478,7 +483,7 @@ export class NoAiProviderReadyError extends Error {
     const failureDetails = params.failureDetails ?? [];
     const message = params.message ?? (
       params.errorKind === "NO_PROVIDER_CONFIGURED"
-        ? `No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.`
+        ? `No AI provider configured — set ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY.`
         : params.errorKind === "ALL_PROVIDERS_COOLING"
           // Preserve the AI_PROVIDERS_RATE_LIMITED prefix so legacy diagnostics
           // (lib/engine/analysis-fallback-diagnostics.ts in PR #775/#778) that
@@ -861,7 +866,7 @@ export async function generateWithFallback(
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
-// Second-tier provider in the canonical default/proposal/validation chains.
+// OpenAI-compatible provider in the canonical chain (rank 7).
 // Uses fetch() directly (no SDK dependency) so it works in any serverless runtime.
 // Returns null when OPENAI_API_KEY is not configured, so callers can proceed to
 // the next tier without throwing.
@@ -958,7 +963,7 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the default chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude).
+// DeepSeek provider in the canonical chain (rank 9, immediately before Anthropic / Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each
@@ -1329,8 +1334,7 @@ async function generateWithCerebras(
   });
 }
 
-// Shared tail of the proposal/section fallback chain: Together → Groq →
-// OpenRouter. Honours per-provider
+// Legacy helper retained for focused fallback probes; the authoritative proposal/section chain is CANONICAL_AI_PROVIDER_ORDER. Honours per-provider
 // cooldown and records health so the AI Health panel and AI Analyze
 // diagnostics stay accurate. Returns the text + which provider produced it.
 async function tryTailFallbackProviders(prompt: string, systemPrompt?: string, opts?: { skipTogether?: boolean }): Promise<{ text: string; provider: "together" | "groq" | "openrouter" } | null> {
@@ -3974,136 +3978,34 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | "fallback";
+  source: "zai" | "cerebras" | "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | "fallback";
   error?: string;
   durationMs: number;
 }
 
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
   const t0 = Date.now();
+  let usedProvider: AiProviderName | null = null;
 
-  // Per-section timeout factory — creates a FRESH promise each time so
-  // that the Gemini fallback is not immediately rejected by an already-
-  // settled timeout from a prior Claude attempt (a settled-rejected
-  // promise in Promise.race resolves the race instantly).
-  function makeSectionTimeout() {
-    return new Promise<null>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
-        PROPOSAL_SECTION_TIMEOUT_MS,
-      )
-    );
-  }
+  try {
+    const text = await generateWithFallback(spec.userPrompt, {
+      systemPrompt: spec.systemPrompt,
+      useCase: "proposal",
+      onProviderUsed: (provider) => { usedProvider = provider; },
+      deadlineAt: Date.now() + PROPOSAL_SECTION_TIMEOUT_MS,
+    });
 
-  // Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic
-  // Claude is tried last so Anthropic rate limits don't block parallel section generation.
-
-    // Gemini — first tier
-  if (apiKey && !isProviderCooledDown("gemini")) {
-    try {
-      // Prepend the section's system-prompt persona to the user prompt so
-      // Gemini approximates the per-section role.
-      const geminiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
-      const text = await Promise.race([
-        generateWithBestModel(geminiPrompt),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "gemini", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying OpenAI.`);
+    if (text && text.trim().length > 0 && usedProvider) {
+      return {
+        id: spec.id,
+        title: spec.title,
+        markdown: text,
+        source: providerToProposalSource(usedProvider),
+        durationMs: Date.now() - t0,
+      };
     }
-  }
-
-  // OpenAI — second tier
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    try {
-      const text = await Promise.race([
-        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "openai", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Mistral.`);
-    }
-  }
-
-  // Mistral — third tier
-  if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-    try {
-      const text = await Promise.race([
-        generateWithMistral(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "mistral", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Mistral failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
-    }
-  }
-
-  // Together — fourth tier
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
-    try {
-      const text = await Promise.race([
-        generateWithTogether(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "together", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Together failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
-    }
-  }
-
-  // DeepSeek — fifth tier
-  if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-    try {
-      const text = await Promise.race([
-        generateWithDeepSeek(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "deepseek", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" DeepSeek failed (${err instanceof Error ? err.message : String(err)}) — trying Groq/OpenRouter.`);
-    }
-  }
-
-  // Groq/OpenRouter section tail.
-  if (!isProviderCooledDown("groq") || !isProviderCooledDown("openrouter")) {
-    try {
-      const tail = await Promise.race([
-        tryTailFallbackProviders(spec.userPrompt, spec.systemPrompt, { skipTogether: true }),
-        makeSectionTimeout(),
-      ]);
-      if (tail && tail.text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: tail.text, source: tail.provider, durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
-    }
-  }
-
-    // Claude — last resort (system prompts in proposal-sections.ts are tuned for Claude)
-  if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-    try {
-      const claudeResult = await Promise.race([
-        generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens),
-        makeSectionTimeout(),
-      ]);
-      if (claudeResult && claudeResult.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: claudeResult, source: "claude", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Claude failed (${err instanceof Error ? err.message : String(err)}) — using deterministic fallback.`);
-    }
+  } catch (err) {
+    logger.warn(`[ai] section "${spec.id}" canonical provider chain failed (${err instanceof Error ? err.message : String(err)}) — using deterministic fallback.`);
   }
 
   // All providers failed (or unavailable). Use the deterministic per-section fallback.

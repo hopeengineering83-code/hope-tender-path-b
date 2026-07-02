@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   CANONICAL_AI_PROVIDER_ORDER,
   getCanonicalProviderEntries,
+  getProviderEntry,
 } from "../lib/ai-provider-registry";
 import { CANONICAL_PROVIDER_CHAIN } from "../lib/ai";
 import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
@@ -48,10 +49,22 @@ describe("AI provider chain policy — canonical order", () => {
     });
   });
 
-  it("zai is first, cerebras second, anthropic last", () => {
+  it("zai is first, cerebras second, anthropic is rank 10 and the last AI provider", () => {
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
+    const anthropic = getProviderEntry("anthropic");
+    assert.equal(anthropic.rank, 10);
+    assert.equal(anthropic.emergencyOnly, true);
+  });
+
+  it("no canonical AI provider is manual-only or removed from automatic fallback", () => {
+    const entries = getCanonicalProviderEntries();
+    assert.equal(entries.length, 10);
+    assert.deepEqual(entries.map((entry) => entry.provider), [...REQUIRED_ORDER]);
+    for (const provider of ["zai", "cerebras", "mistral", "together"] as const) {
+      assert.equal(getProviderEntry(provider).emergencyOnly, false, `${provider} must stay automatic, not emergency/manual-only`);
+    }
   });
 
   it("the inactive providers remain supported after OpenRouter in the required order", () => {
@@ -74,6 +87,7 @@ describe("no other automatic provider order exists in the repository", () => {
     assert.ok(!/PROVIDER_CHAINS\s*:\s*Record/.test(aiSource), "PROVIDER_CHAINS literal map must not exist");
     assert.ok(aiSource.includes("CANONICAL_AI_PROVIDER_ORDER"), "lib/ai.ts must derive order from the registry");
     assert.ok(aiSource.includes("providerChainForUseCase"), "lib/ai.ts must use providerChainForUseCase()");
+    assert.ok(aiSource.includes("providerToProposalSource"), "proposal source labeling must include all canonical providers");
   });
 
   it("does not contain the legacy 'mistral'-first literal order array", () => {
