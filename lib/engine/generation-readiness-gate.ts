@@ -48,6 +48,7 @@ type _TenderFileRow = {
   classification: string | null;
   createdAt: Date;
   deletionStatus: string | null;
+  totalPages: number | null;
 };
 type _RequirementRow = {
   id: string;
