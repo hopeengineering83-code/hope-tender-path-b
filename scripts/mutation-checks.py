@@ -167,7 +167,7 @@ def main():
     backup_path = backup(target)
     mutated = mutate_file(
         target,
-        'const CANONICAL_AI_PROVIDER_ORDER = [\n  "gemini",\n  "openrouter",\n  "openai",\n  "groq",\n  "deepseek",\n  "anthropic",\n];',
+        'const CANONICAL_AI_PROVIDER_ORDER = [\n  "zai",\n  "cerebras",\n  "mistral",\n  "groq",\n  "openrouter",\n  "gemini",\n  "openai",\n  "together",\n  "deepseek",\n  "anthropic",\n];',
         'const CANONICAL_AI_PROVIDER_ORDER = [\n  "anthropic",\n  "openrouter",\n  "openai",\n  "groq",\n  "deepseek",\n  "gemini",\n];',
     )
     if mutated:

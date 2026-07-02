@@ -49,7 +49,7 @@ afterEach(() => {
 
 // 1. Canonical order
 describe("1. canonical provider order", () => {
-  it("is exactly gemini → openrouter → openai → groq → deepseek → anthropic", () => {
+  it("is exactly zai → cerebras → mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [
       "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
     ]);
