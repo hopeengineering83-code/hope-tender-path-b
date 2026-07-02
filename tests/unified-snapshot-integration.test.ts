@@ -3,7 +3,11 @@ import { test, describe } from "node:test";
 import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import { prisma } from "../lib/prisma";
 
-const dbDescribe = process.env.RUN_DB_INTEGRATION === "true" ? describe : describe.skip;
+if (process.env.RUN_DB_INTEGRATION !== "true") {
+  console.error("FATAL: RUN_DB_INTEGRATION=true is required for unified snapshot integration tests.");
+  process.exit(1);
+}
+const dbDescribe = describe;
 
 dbDescribe("unified snapshot integration (requires PostgreSQL)", () => {
   test("unified snapshot: manually entered ungrounded deadline is BLOCKED identically across all panels", async () => {

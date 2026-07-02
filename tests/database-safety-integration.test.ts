@@ -3,7 +3,11 @@ import { strict as assert } from "node:assert";
 import { prisma, prismaReady } from "../lib/prisma";
 import { checkTenderLevelExportBlockers } from "../lib/engine/export-readiness";
 
-const dbDescribe = process.env.RUN_DB_INTEGRATION === "true" ? describe : describe.skip;
+if (process.env.RUN_DB_INTEGRATION !== "true") {
+  console.error("FATAL: RUN_DB_INTEGRATION=true is required for database safety integration tests.");
+  process.exit(1);
+}
+const dbDescribe = describe;
 
 const SOURCE_QUOTE = "The financial proposal must be enclosed in a separate sealed envelope.";
 
