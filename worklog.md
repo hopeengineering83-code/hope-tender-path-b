@@ -299,3 +299,86 @@ Stage Summary:
 - All 11 audit areas verified clean.
 - 3 gaps found and fixed (gate requirement totalPages, virtualOnly remnants, type stub).
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: 6
+Agent: main
+Task: Recheck again and fix all gaps
+
+Work Log:
+- Verified baseline: 4705/4705 tests pass.
+
+AUDIT AREAS CHECKED (all verified clean — NO gaps found this round):
+
+1. next/headers mock in route integration test:
+   - Investigated the apparent typo `require.cacheockModulePath` in
+     tests/build-plan-route-integration.test.ts line 58.
+   - Used `od -c` to verify the actual bytes: the line IS
+     `require.cache[mockModulePath]` — the `[` is present but was not
+     visible in terminal output due to rendering.
+   - The mock IS correctly injected into require.cache.
+   - Verified the mock works: ADMIN gets 200, unauthenticated gets 401,
+     REVIEWER gets 403, foreign user gets 404 — all through real auth.
+
+2. Confirm route race safety:
+   - Verified original-candidate capture (ID+revision+hash) BEFORE retry loop.
+   - Verified findUnique by original ID inside transaction.
+   - Verified conditional updateMany with revision+hash check.
+   - Verified valUpdate.count === 0 → 409 (not 422).
+   - No stale DRAFT reread anywhere.
+
+3. metadataOverrides loading consistency:
+   - computeTenderBuildPlanHash loads overrides and attaches to tender.
+   - Gate loads overrides via tender select (metadataOverrides: { select: ... }).
+   - Confirm route calls computeTenderBuildPlanHash which handles this.
+   - All 3 hash callers consistent.
+
+4. SQL injection risks:
+   - No raw SQL in release-safety code (build-plan, gate, confirm, routes).
+   - Raw SQL in lib/prisma.ts uses parameterized queries ($1, $2).
+   - ensureColumn interpolates table/column/definition but ALL callers use
+     hardcoded values (no user input).
+   - No unsafe raw SQL anywhere.
+
+5. Error sanitization:
+   - Gate: raw error to console.error (server-only), redacted response.
+   - build-plan route: hardcoded error messages.
+   - confirm route: hardcoded error messages.
+   - submission-plan/build route: uses sanitizeError() which redacts
+     connection strings, API keys, Bearer tokens.
+   - No raw error leakage to clients.
+
+6. Console output:
+   - Only 1 console.error in release-safety code (gate GATE_INTERNAL_ERROR).
+   - Logs raw error message to server logs only — standard practice.
+   - Response is redacted. No sensitive data leak.
+
+7. Mock DB in tests:
+   - Unit tests (auto-fill, durable-deletion) use mock Prisma — fine for
+     testing pure functions.
+   - All 6 integration tests use real PostgreSQL (build-plan-db-integration,
+     metadata-evidence-proof, ai-promotion-evidence-persistence,
+     build-plan-route-integration, database-safety-integration,
+     unified-snapshot-integration).
+   - No mock DB in release-safety integration tests.
+
+8. Source field selects:
+   - All hash callers load all source fields (include or explicit select).
+   - validateBuildPlanForConfirmation uses include: { files: true, requirements: true }.
+   - getCurrentConfirmedBuildPlan uses include: { files: { where: ACTIVE } }.
+   - assertTenderReadyToDraftBuildPlan uses include with files + requirements.
+   - All consistent.
+
+Verification:
+- 4705/4705 tests pass
+- typecheck: clean
+- lint: clean (0 warnings)
+- build: succeeds
+- NO new commits — no gaps found this round.
+
+Stage Summary:
+- Comprehensive recheck of 9 audit areas complete. All verified clean.
+- The route integration test's next/headers mock is correctly implemented
+  (the apparent typo was a terminal rendering issue, confirmed via od -c).
+- All release-safety code is consistent, sanitized, and race-safe.
+- NOT merged, NOT deployed — awaiting explicit user authorization.
