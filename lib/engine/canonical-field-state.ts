@@ -380,12 +380,23 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
   let groundedCount = 0;
   let blockedCount = 0;
 
+  // Pre-compute the EFFECTIVE submissionMethod so conditionally-critical
+  // fields (submissionAddress, submissionEmailSubject) use the override-
+  // applied value, not the raw tender.submissionMethod. Without this, a
+  // USER_EDITED override changing submissionMethod from email to physical
+  // would NOT make submissionAddress conditionally critical.
+  const submissionMethodOverride = overrideMap.get("submissionMethod");
+  let effectiveSubmissionMethod = tender.submissionMethod ?? null;
+  if (submissionMethodOverride && (submissionMethodOverride.fieldState === "USER_EDITED" || submissionMethodOverride.fieldState === "USER_CONFIRMED")) {
+    effectiveSubmissionMethod = submissionMethodOverride.overrideValue ?? effectiveSubmissionMethod;
+  }
+
   for (const fieldKey of FIELDS_TO_EVALUATE) {
     const rawValue = getRawValue(tender, fieldKey);
     const override = overrideMap.get(fieldKey);
     const evidence = getSourceEvidence(tender, fieldKey, contactDetails);
     const label = fieldDisplayLabel(fieldKey);
-    const isCritical = ALWAYS_CRITICAL_FIELDS.has(fieldKey) || isCriticalField(fieldKey, { submissionMethod: tender.submissionMethod ?? undefined });
+    const isCritical = ALWAYS_CRITICAL_FIELDS.has(fieldKey) || isCriticalField(fieldKey, { submissionMethod: effectiveSubmissionMethod ?? undefined });
     const criticality: CanonicalFieldState["criticality"] = ALWAYS_CRITICAL_FIELDS.has(fieldKey)
       ? "always-critical"
       : isCritical ? "conditionally-critical" : "non-critical";

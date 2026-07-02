@@ -13,6 +13,7 @@ import {
   computeBuildPlanHash,
   isBuildPlanValid,
   buildPlanHashInputFromTender,
+  buildCanonicalBuildPlanHashInput,
   type BuildPlanHashInput,
 } from "../lib/engine/build-plan-hash";
 
@@ -191,5 +192,116 @@ describe("buildPlanHashInputFromTender", () => {
     const { metadataEvidence, ...baseWithoutMeta } = baseInput();
     void metadataEvidence;
     assert.equal(computeBuildPlanHash(buildPlanHashInputFromTender(tender)), computeBuildPlanHash(baseWithoutMeta));
+  });
+});
+
+// ─── REGRESSION: buildCanonicalBuildPlanHashInput uses EFFECTIVE submissionMethod ──
+// This test directly verifies that buildCanonicalBuildPlanHashInput derives the
+// applicable endpoint from resolveCanonicalFieldState's EFFECTIVE submissionMethod
+// (which includes USER_EDITED overrides), NOT from raw tender.submissionMethod.
+//
+// Without this fix, a USER_EDITED override on submissionMethod would NOT change
+// which endpoint evidence is included in metadataEvidence — the hash builder
+// would read raw tender.submissionMethod and include the wrong endpoint.
+
+describe("buildCanonicalBuildPlanHashInput — effective submissionMethod drives endpoint evidence", () => {
+  const baseTender = {
+    exactFileNaming: "[]",
+    exactFileOrder: "[]",
+    submissionMethod: "email submission required",
+    submissionAddress: "123 Test Street",
+    submissionEmails: "submit@example.com",
+    submissionEmailSubject: "Subject",
+    deadline: new Date("2026-12-31"),
+    title: "Test Tender",
+    clientName: "Test Client",
+    procuringEntityName: null,
+    reference: "REF-1",
+    country: null,
+    currency: null,
+    clientContactName: null,
+    clientContactEmail: null,
+    metadataContaminated: false,
+    clientNameSourcePage: 1,
+    clientNameSourceQuote: "client name quote",
+    clientNameSourceFileId: "f1",
+    submissionMethodSourcePage: 1,
+    submissionMethodSourceQuote: "method quote",
+    submissionMethodSourceFileId: "f1",
+    submissionAddressSourcePage: 1,
+    submissionAddressSourceQuote: "address quote",
+    submissionAddressSourceFileId: "f1",
+    submissionEmailSourcePage: 1,
+    submissionEmailSourceQuote: "email quote",
+    submissionEmailSourceFileId: "f1",
+    titleSourceFileId: "f1",
+    titleSourcePage: 1,
+    titleSourceQuote: "title quote",
+    deadlineSourceFileId: "f1",
+    deadlineSourcePage: 1,
+    deadlineSourceQuote: "deadline quote",
+    contactDetailsSourceJson: null,
+    files: [
+      { id: "f1", fileName: "Tender.pdf", extractedText: "title quote client name quote method quote email quote address quote deadline quote", deletionStatus: "ACTIVE" },
+    ],
+    requirements: [],
+  };
+
+  it("includes submissionEmails evidence (NOT submissionAddress) when effective method is email", () => {
+    const input = buildCanonicalBuildPlanHashInput(baseTender as any, []);
+    const fieldKeys = (input.metadataEvidence ?? []).map((m) => m.fieldKey);
+    assert.ok(fieldKeys.includes("submissionEmails"), "submissionEmails MUST be in evidence for email method");
+    assert.ok(!fieldKeys.includes("submissionAddress"), "submissionAddress must NOT be in evidence for email method");
+  });
+
+  it("switches to submissionAddress evidence when USER_EDITED override changes method to physical", () => {
+    // Override submissionMethod from "email submission required" to "sealed envelope delivery"
+    const tenderWithOverride = {
+      ...baseTender,
+      metadataOverrides: [
+        { field: "submissionMethod", fieldState: "USER_EDITED", overrideValue: "sealed envelope delivery" },
+      ],
+    };
+    const input = buildCanonicalBuildPlanHashInput(tenderWithOverride as any, []);
+    const fieldKeys = (input.metadataEvidence ?? []).map((m) => m.fieldKey);
+    assert.ok(fieldKeys.includes("submissionAddress"), "submissionAddress MUST be in evidence when override changes method to physical");
+    assert.ok(!fieldKeys.includes("submissionEmails"), "submissionEmails must NOT be in evidence when override changes method to physical");
+  });
+
+  it("includes BOTH endpoints when USER_EDITED override changes method to portal", () => {
+    const tenderWithOverride = {
+      ...baseTender,
+      metadataOverrides: [
+        { field: "submissionMethod", fieldState: "USER_EDITED", overrideValue: "online portal submission" },
+      ],
+    };
+    const input = buildCanonicalBuildPlanHashInput(tenderWithOverride as any, []);
+    const fieldKeys = (input.metadataEvidence ?? []).map((m) => m.fieldKey);
+    assert.ok(fieldKeys.includes("submissionEmails"), "submissionEmails MUST be in evidence for portal method");
+    assert.ok(fieldKeys.includes("submissionAddress"), "submissionAddress MUST be in evidence for portal method");
+  });
+
+  it("produces DIFFERENT hashes for email vs physical override (endpoint evidence switches)", () => {
+    const emailHash = computeBuildPlanHash(buildCanonicalBuildPlanHashInput(baseTender as any, []));
+    const physicalTender = {
+      ...baseTender,
+      metadataOverrides: [
+        { field: "submissionMethod", fieldState: "USER_EDITED", overrideValue: "sealed envelope delivery" },
+      ],
+    };
+    const physicalHash = computeBuildPlanHash(buildCanonicalBuildPlanHashInput(physicalTender as any, []));
+    assert.notEqual(emailHash, physicalHash, "Hashes MUST differ — endpoint evidence switched from submissionEmails to submissionAddress");
+  });
+
+  it("produces DIFFERENT hashes for email vs portal override (endpoint evidence set grows)", () => {
+    const emailHash = computeBuildPlanHash(buildCanonicalBuildPlanHashInput(baseTender as any, []));
+    const portalTender = {
+      ...baseTender,
+      metadataOverrides: [
+        { field: "submissionMethod", fieldState: "USER_EDITED", overrideValue: "online portal submission" },
+      ],
+    };
+    const portalHash = computeBuildPlanHash(buildCanonicalBuildPlanHashInput(portalTender as any, []));
+    assert.notEqual(emailHash, portalHash, "Hashes MUST differ — portal includes both endpoints, email includes only submissionEmails");
   });
 });
