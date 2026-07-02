@@ -14,7 +14,55 @@ export type RecoveryCommandActionSpec = {
   anchorId?: string;
   message?: string;
   aliases?: string[];
+  /**
+   * True when this action dispatches a tender mutation (POST/DELETE/custom
+   * mutation). Read-only actions (GET, scroll, navigate, refresh, download)
+   * are NOT mutations. The UI uses this to HIDE mutation controls for
+   * REVIEWER users — never merely disable them.
+   */
+  isMutation?: boolean;
 };
+
+// ─── canMutateTender: server-derived capability ────────────────────────────
+//
+// ONE server-derived capability that gates every tender mutation in the UI.
+// true ONLY for ADMIN and PROPOSAL_MANAGER. false for REVIEWER (and any
+// other role). The UI MUST call this before rendering any mutation control.
+//
+// This is NOT a replacement for API route authorization — every mutation
+// route still calls requireRole("ADMIN", "PROPOSAL_MANAGER"). This capability
+// only controls UI visibility so REVIEWER users never see mutation controls
+// they cannot use.
+export type TenderMutationRole = "ADMIN" | "PROPOSAL_MANAGER" | "REVIEWER" | "VIEWER" | string;
+
+export function canMutateTender(role: TenderMutationRole | null | undefined): boolean {
+  return role === "ADMIN" || role === "PROPOSAL_MANAGER";
+}
+
+// ─── Action classification ─────────────────────────────────────────────────
+//
+// Every action in RECOVERY_COMMAND_ACTIONS is classified as mutation or
+// read-only ONCE here. The UI filters actions through isMutationAction so
+// new actions cannot be missed. An action is a mutation when:
+//   - kind === "api" AND method === "POST" or "DELETE", OR
+//   - kind === "custom" (custom actions dispatch mutations via fetch)
+// Read-only actions: kind === "api" with method "GET", scroll, navigate,
+// refresh, download.
+
+export function isMutationAction(action: string): boolean {
+  const spec = getRecoveryCommandActionSpec(action);
+  if (!spec) return false;
+  // Explicit isMutation flag wins if set
+  if (spec.isMutation !== undefined) return spec.isMutation;
+  // Auto-classify: api POST/DELETE and custom are mutations
+  if (spec.kind === "api" && (spec.method === "POST" || spec.method === "DELETE")) return true;
+  if (spec.kind === "custom") return true;
+  return false;
+}
+
+export function isReadOnlyAction(action: string): boolean {
+  return !isMutationAction(action);
+}
 
 export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec> = {
   UPLOAD_TENDER_DOCUMENT: {
@@ -59,6 +107,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     kind: "custom",
     path: "/api/tenders/{tenderId}/approve-analysis",
     aliases: ["APPROVE_FALLBACK"],
+    isMutation: true,
   },
   REVOKE_FALLBACK_APPROVAL: {
     label: "Revoke Fallback Approval",

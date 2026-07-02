@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath } from "../lib/recovery-command-actions";
+import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
 import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon } from "./icons";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
@@ -122,7 +122,7 @@ function submissionBadge(status: "BLOCKED" | "PARTIAL" | "READY") {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: string }) {
+export default function TenderRecoveryCommandCenter({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<LifecycleResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -422,7 +422,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Primary Next Action</p>
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
           <p className="text-sm font-semibold text-blue-900">{actionLabel}</p>
-          {data.primaryNextAction !== "DOWNLOAD_FINAL_ZIP" && (
+          {data.primaryNextAction !== "DOWNLOAD_FINAL_ZIP" && (canMutate && !isMutationAction(data.primaryNextAction) ? (
             <button
               onClick={() => void executeAction(data.primaryNextAction)}
               disabled={actioning}
@@ -430,7 +430,15 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             >
               <PlayIcon /> {actioning ? "Working…" : "Execute"}
             </button>
-          )}
+          ) : canMutate && isMutationAction(data.primaryNextAction) ? (
+            <button
+              onClick={() => void executeAction(data.primaryNextAction)}
+              disabled={actioning}
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <PlayIcon /> {actioning ? "Working…" : "Execute"}
+            </button>
+          ) : null)}
           {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
             <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
               <DownloadIcon /> Download ZIP
@@ -444,7 +452,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
             </div>
           </div>
         )}
-        {data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
+        {canMutate && data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
           <div className="mt-2 flex gap-2">
             <input
               type="text"
@@ -473,7 +481,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
                 <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
                 {/* Quick-action shortcuts for specific blocker codes */}
-                {b.code === "METADATA_INCOMPLETE" && (
+                {canMutate && b.code === "METADATA_INCOMPLETE" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <button onClick={() => void executeAction("REPAIR_METADATA")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Repair Metadata</button>
                     <select value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} className="rounded border border-red-300 bg-white px-1.5 py-0.5 text-xs text-red-700" title="OCR provider for re-extraction">
@@ -486,17 +494,17 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
                     <button onClick={() => scrollToPanel("tender-edit-form", "Open the Tender Metadata form to fill missing fields.")} className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-100">Edit Manually</button>
                   </div>
                 )}
-                {b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
+                {canMutate && b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Retry AI Analyze</button>
                   </div>
                 )}
-                {b.code === "EVIDENCE_NOT_ASSESSED" && (
+                {canMutate && b.code === "EVIDENCE_NOT_ASSESSED" && (
                   <div className="mt-1.5">
                     <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Run Engine</button>
                   </div>
                 )}
-                {b.code === "MANDATORY_EVIDENCE_WEAK" && (
+                {canMutate && b.code === "MANDATORY_EVIDENCE_WEAK" && (
                   <div className="mt-1.5">
                     <button onClick={() => void executeAction("LINK_VAULT_EVIDENCE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Link Vault Evidence</button>
                   </div>
@@ -632,13 +640,13 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
           )}
 
           {/* Allowed actions */}
-          {data.allowedActions.length > 0 && (
+          {(canMutate ? data.allowedActions : data.allowedActions.filter((a) => !isMutationAction(a))).length > 0 && (
             <div className="px-5 py-3">
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">
-                Allowed Actions ({data.allowedActions.length})
+                Allowed Actions ({canMutate ? data.allowedActions.length : data.allowedActions.filter((a) => !isMutationAction(a)).length})
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {data.allowedActions.map((a) => (
+                {(canMutate ? data.allowedActions : data.allowedActions.filter((a) => !isMutationAction(a))).map((a) => (
                   <span key={a} className="inline-flex items-center gap-1 rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800">
                     <CheckIcon /> {ACTION_LABELS[a] ?? a}
                   </span>

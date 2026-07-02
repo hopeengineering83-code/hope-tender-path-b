@@ -7,7 +7,8 @@ import { RequirementTruthBanner } from "../../../../components/requirement-truth
 import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
 import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
-import { getSession } from "../../../../lib/auth";
+import { getSession, getCurrentUser } from "../../../../lib/auth";
+import { canMutateTender } from "../../../../lib/recovery-command-actions";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
@@ -85,6 +86,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const userId = await getSession();
   if (!userId) redirect("/login");
   await prismaReady;
+  const currentUser = await getCurrentUser();
+  const canMutate = canMutateTender(currentUser?.role);
 
   const { id } = await params;
   const tender = await prismaClient.tender.findFirst({
@@ -156,10 +159,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       }} />
 
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
-      <TenderWorkflowActionCenter tenderId={tender.id} />
+      <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
-      <TenderRecoveryCommandCenter tenderId={tender.id} />
+      <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
       <TenderHealthScorePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
       <BidControlVerdictPanel tenderId={tender.id} />
