@@ -382,3 +382,51 @@ Stage Summary:
   (the apparent typo was a terminal rendering issue, confirmed via od -c).
 - All release-safety code is consistent, sanitized, and race-safe.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: 7
+Agent: main
+Task: Fix two reported blockers — manual-only providers + raw metadata in hash
+
+Work Log:
+BLOCKER 1: Manual-only providers making automatic AI appear enabled.
+- Found isAIEnabled() in lib/ai.ts included ALL 10 providers (including
+  Z.ai, Cerebras, Mistral, Together) in its OR check.
+- Found isAIConfigured() in lib/env-check.ts with the same issue.
+- Found getAIEnvironmentReadiness() in lib/ai-environment-readiness.ts
+  checked anyProviderConfigured across ALL providers.
+- Found scripts/check-env.mjs used ALL_PROVIDER_API_KEY_ENVS (10 providers).
+- FIX: All 4 locations now check ONLY the 6 automatic providers
+  (Gemini, OpenRouter, OpenAI, Groq, DeepSeek, Anthropic).
+- Added 2 new tests proving manual-only providers do NOT satisfy the check.
+
+BLOCKER 2: BuildPlan hash still reading raw metadata fields.
+- Found BuildPlanHashInput type had raw metadata fields:
+  submissionMethod, submissionAddress, submissionEmails,
+  submissionEmailSubject, deadline, title.
+- Found buildPlanHashInputFromTender set these from the tender.
+- Even though computeBuildPlanHash no longer used them in the canonical
+  string, the raw metadata was still READ from the tender and placed on
+  the input — violating 'one canonical resolved effective-metadata result'.
+- FIX: Removed raw metadata fields from BuildPlanHashInput type.
+  buildPlanHashInputFromTender now sets ONLY plan-driving fields.
+  The hash uses ONLY metadataEvidence + metadataOverrides for metadata.
+- Updated tests to not include raw metadata fields.
+
+Verification:
+- 4707/4707 tests pass (was 4705; +2 new manual-only provider tests)
+- typecheck: clean
+- lint: clean (0 warnings)
+- build: succeeds
+- Committed as 6e609d91 and pushed to origin/hotfix/release-safety-consolidation
+
+Stage Summary:
+- Both user-reported blockers are fixed.
+- BLOCKER 1: isAIEnabled/isAIConfigured/getAIEnvironmentReadiness/check-env.mjs
+  now exclude manual-only providers. A user with ONLY ZAI_API_KEY will see
+  automatic AI as DISABLED (correct).
+- BLOCKER 2: BuildPlanHashInput type no longer has raw metadata fields.
+  The hash uses ONE canonical resolved effective-metadata result
+  (metadataEvidence array). Raw metadata is never read from the tender
+  for hashing purposes.
+- NOT merged, NOT deployed — awaiting explicit user authorization.
