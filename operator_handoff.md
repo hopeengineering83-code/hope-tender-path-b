@@ -58,7 +58,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 - Tender-controlled scope only. Never invent tender facts or evidence.
 - Company Vault is factual evidence only; no automatic all-Vault fallback.
-- Provider order: Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic last.
+- Provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic (emergency-only last).
 - Regex, fallback, partial, legacy, and unpromoted analysis must not unlock generation, export, or Final ZIP.
 - Only promoted `AI_SUCCEEDED` may unlock generation/export after all gates pass.
 - Critical metadata and mandatory requirements need active source file, page, and meaningful quote.

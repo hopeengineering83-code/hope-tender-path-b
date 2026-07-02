@@ -105,7 +105,7 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       category: "NO_PROVIDER_CONFIGURED",
       risk: "HIGH",
       message: message || "No AI provider is configured.",
-      nextAction: "Set GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY in Vercel, redeploy, then run AI Analyze. Manual-only providers (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY) do NOT count.",
+      nextAction: "Set any AI provider key (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY) in Vercel, redeploy, then run AI Analyze. All 10 providers are automatic.",
       retryRecommended: false,
     };
   }

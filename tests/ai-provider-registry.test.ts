@@ -228,7 +228,7 @@ describe("13. ATTEMPT_BUDGET_EXHAUSTED is distinct", () => {
 
 // 16. Inactive providers remain supported after OpenRouter
 describe("16. inactive providers remain supported after OpenRouter", () => {
-  it("all 6 automatic providers in correct order", () => {
+  it("all 10 automatic providers in correct order", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
     for (const p of ["zai", "cerebras", "mistral", "together"] as const) {
       assert.ok(getProviderEntry(p), `${p} must remain in the registry for manual use`);

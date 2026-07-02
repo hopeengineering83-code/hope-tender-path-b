@@ -9,7 +9,7 @@
 ## Branch Status
 
 - Branch `audit/consolidate-prs-733-736` was 1 commit ahead of main.
-- That commit (`b1b51b9`) introduced `lib/ai-provider-policy.ts` with the WRONG Gemini-first 6-provider chain.
+- That commit (`b1b51b9`) introduced `lib/ai-provider-policy.ts` with the WRONG Gemini-first 6-provider chain. (Now superseded by the authoritative 10-provider chain: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic.)
 - This audit replaces it with the correct Mistral-first 8-provider chain and hardens health, error classification, and timeout handling.
 
 ---
@@ -49,7 +49,7 @@
 ## Files Changed
 
 ### New file
-- `lib/ai-provider-policy.ts` — Canonical Mistral-first 8-provider policy (replaces wrong Gemini-first 6-provider version)
+- `lib/ai-provider-policy.ts` — Canonical 10-provider policy: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic (replaces wrong Gemini-first 6-provider version)
 
 ### Modified files
 - `lib/ai-provider-health.ts` — Added BILLING error category, `lastPingSucceededAt` / `lastGenerationSucceededAt` tracking, `recordProviderPingSuccess` function
