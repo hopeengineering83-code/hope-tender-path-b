@@ -48,15 +48,14 @@ describe("AI provider chain policy — canonical order", () => {
     });
   });
 
-  it("zai is first, cerebras second, anthropic last", () => {
+  it("zai is first, anthropic is last", () => {
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
   });
 
   it("the inactive providers remain supported after OpenRouter in the required order", () => {
-    const afterOpenRouter = REQUIRED_ORDER.slice(REQUIRED_ORDER.indexOf("openrouter") + 1);
-    assert.deepEqual([...afterOpenRouter], ["gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [...REQUIRED_ORDER]);
   });
 
   it("display-name chain matches the required display order", () => {

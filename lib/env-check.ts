@@ -5,15 +5,15 @@ import { logger } from "./observability";
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: at least one AI provider key is required in production:
- *   - ZAI_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / GROQ_API_KEY /
- *     OPENROUTER_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY /
- *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical chain (single source of
- *     truth: lib/ai-provider-registry.ts) is Z.ai GLM → Cerebras → Mistral → Groq
- *     → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude, with
- *     Claude last so Anthropic rate limits do not block the app.
+ * ARCHITECTURE: at least one automatic AI provider key is required in production:
+ *   - GEMINI_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / GROQ_API_KEY /
+ *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical automatic chain
+ *     (single source of truth: lib/ai-provider-registry.ts) is Gemini →
+ *     OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude. Z.ai,
+ *     Cerebras, Mistral, and Together are manual diagnostics/adapters only and
+ *     must not satisfy automatic runtime readiness.
  *
- * Without EITHER key:
+ * Without an automatic provider key:
  *   - Every imported expert/project is classified as REGEX_DRAFT
  *   - REGEX_DRAFT records are BLOCKED from use in final proposal generation
  *   - A deployment with no AI key can never complete the proposal workflow
@@ -27,52 +27,22 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
 ];
 
-// Canonical provider key order — mirrors lib/ai-provider-registry.ts
-// CANONICAL_AI_PROVIDER_ORDER (zai → cerebras → mistral → groq → openrouter →
-// gemini → openai → together → deepseek → anthropic).
+// ALL 10 AI provider keys in canonical order — mirrors
+// lib/ai-provider-catalog.cjs CANONICAL_AI_PROVIDER_ORDER.
+// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+// Together → DeepSeek → Anthropic.
+// All are automatic; Anthropic is emergency-only (last resort).
 const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
-  {
-    name: "ZAI_API_KEY",
-    description: "Z.ai GLM API key. First-tier provider in the canonical chain (general OpenAI-compatible endpoint).",
-  },
-  {
-    name: "CEREBRAS_API_KEY",
-    description: "Cerebras API key. Second-tier provider (OpenAI-compatible, uses max_completion_tokens).",
-  },
-  {
-    name: "MISTRAL_API_KEY",
-    description: "Mistral API key. Third-tier proposal/validation provider and analysis fallback.",
-  },
-  {
-    name: "GROQ_API_KEY",
-    description: "Groq API key. Fourth-tier proposal fallback provider.",
-  },
-  {
-    name: "OPENROUTER_API_KEY",
-    description: "OpenRouter API key. Fifth-tier aggregator — requires an explicit ':free' model.",
-  },
-  {
-    name: "GEMINI_API_KEY",
-    description:
-      "Google Gemini API key (AIza...). Sixth-tier provider in the canonical chain. " +
-      "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
-  },
-  {
-    name: "OPENAI_API_KEY",
-    description: "OpenAI API key (sk-...). Seventh-tier provider in the canonical chain.",
-  },
-  {
-    name: "TOGETHER_API_KEY",
-    description: "Together API key. Eighth-tier proposal fallback provider.",
-  },
-  {
-    name: "DEEPSEEK_API_KEY",
-    description: "DeepSeek API key. Ninth-tier fallback via OpenAI-compatible endpoint.",
-  },
-  {
-    name: "ANTHROPIC_API_KEY",
-    description: "Anthropic Claude API key (sk-ant-...). Last-resort, emergency-only provider; Claude must remain last in the chain.",
-  },
+  { name: "ZAI_API_KEY", description: "Z.ai GLM API key. Rank 1 automatic provider." },
+  { name: "CEREBRAS_API_KEY", description: "Cerebras API key. Rank 2 automatic provider." },
+  { name: "MISTRAL_API_KEY", description: "Mistral API key. Rank 3 automatic provider." },
+  { name: "GROQ_API_KEY", description: "Groq API key. Rank 4 automatic provider." },
+  { name: "OPENROUTER_API_KEY", description: "OpenRouter API key. Rank 5 automatic aggregator — requires an explicit ':free' model." },
+  { name: "GEMINI_API_KEY", description: "Google Gemini API key. Rank 6 automatic provider." },
+  { name: "OPENAI_API_KEY", description: "OpenAI API key. Rank 7 automatic provider." },
+  { name: "TOGETHER_API_KEY", description: "Together API key. Rank 8 automatic provider." },
+  { name: "DEEPSEEK_API_KEY", description: "DeepSeek API key. Rank 9 automatic provider." },
+  { name: "ANTHROPIC_API_KEY", description: "Anthropic Claude API key. Rank 10 emergency-only (last resort) provider." },
 ];
 
 const INSECURE_DEFAULTS: Record<string, string> = {
@@ -152,7 +122,7 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
     }
   }
 
-  // At least one AI provider key.
+  // At least one AI provider key (any of the 10 automatic providers).
   const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
   if (!hasAnyAIKey) {
     const message =
@@ -203,17 +173,21 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
+  // ALL 10 AI providers are part of the automatic fallback chain:
+  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+  // Together → DeepSeek → Anthropic.
+  // Any configured provider counts as "AI configured".
   return Boolean(
     process.env.ZAI_API_KEY ||
     process.env.CEREBRAS_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
+    process.env.MISTRAL_API_KEY ||
+    process.env.GROQ_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
     process.env.GEMINI_API_KEY ||
     process.env.OPENAI_API_KEY ||
-    process.env.MISTRAL_API_KEY ||
-    process.env.DEEPSEEK_API_KEY ||
-    process.env.GROQ_API_KEY ||
     process.env.TOGETHER_API_KEY ||
-    process.env.OPENROUTER_API_KEY,
+    process.env.DEEPSEEK_API_KEY ||
+    process.env.ANTHROPIC_API_KEY,
   );
 }
 

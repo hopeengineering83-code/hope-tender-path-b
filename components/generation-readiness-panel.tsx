@@ -113,7 +113,6 @@ export async function GenerationReadinessPanel({
           </div>
           <div className="flex items-center gap-3">
             <ScoreGauge score={score} />
-            <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Open JSON</Link>
           </div>
         </div>
 

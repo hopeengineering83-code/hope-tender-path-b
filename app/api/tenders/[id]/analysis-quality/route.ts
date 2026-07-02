@@ -33,7 +33,11 @@ function analysisSourceFromResolved(source: AnalysisSource, notes?: string | nul
   const line = text.split(/\n+/).find((item) => item.toLowerCase().startsWith("analysis source:"));
   const detail = line ? line.replace(/^Analysis source:\s*/i, "") : "No persisted analysis-source line was found. Re-run Engine if the tender was analyzed before source tracking was added.";
   if (source === "AI") return { label: "AI", risk: "LOW", detail };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM", detail };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return {
+    label: "Regex fallback (approved — audit-only)",
+    risk: "HIGH",
+    detail: detail + " | Human approval is AUDIT-ONLY and does NOT authorize generation, export, download, regeneration, AI proposal, missing-file generation, or ZIP. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis."
+  };
   if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH", detail };
   return { label: "Unknown", risk: "MEDIUM", detail };
 }

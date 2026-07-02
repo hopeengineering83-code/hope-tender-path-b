@@ -58,19 +58,20 @@ type GatingResult = {
   lifecycleState: string;
   primaryNextAction: string;
   allowedActions: string[];
-  blockedActions: Array<{ action: string; reason: string }>;
+  blockedActions: Array<{ action: string; reason: string; code?: string; message?: string }>;
 };
 
 function simulateLifecycle(input: GatingInput): GatingResult {
   const allowed: string[] = [];
-  const blocked: Array<{ action: string; reason: string }> = [];
+  const blocked: Array<{ action: string; reason: string; code?: string; message?: string }> = [];
   let lifecycleState: string;
   let primaryNextAction: string;
 
-  const analysisOk =
-    input.analysisSource === "AI" ||
-    input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
-  const fallbackUnapproved = input.analysisSource === "REGEX_FALLBACK_AI_ERROR";
+  // PERMANENT BLOCK: only genuine AI authorizes release actions.
+  // HUMAN_APPROVED_REGEX_FALLBACK is audit-only — it MUST NEVER be treated
+  // as analysisOk. This mirrors the production tender-lifecycle-orchestrator.
+  const analysisOk = input.analysisSource === "AI";
+  const fallbackUnapproved = input.analysisSource === "REGEX_FALLBACK_AI_ERROR" || input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
   const hasAnalysis = analysisOk || fallbackUnapproved;
   const noFinalDocs = input.finalExportCandidates === 0;
   const finalExportReady =
@@ -97,9 +98,14 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   } else if (!hasAnalysis) {
     lifecycleState = "AI_ANALYSIS_REQUIRED";
     primaryNextAction = "RUN_AI_ANALYZE";
-  } else if (fallbackUnapproved) {
+  } else if (input.analysisSource === "REGEX_FALLBACK_AI_ERROR") {
     lifecycleState = "ANALYSIS_FALLBACK_UNAPPROVED";
     primaryNextAction = input.hasAnyProvider ? "RETRY_AI_ANALYZE" : "APPROVE_FALLBACK_WITH_NOTE";
+  } else if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
+    // 5b. Analysis used regex fallback and WAS human-approved — but human
+    //     approval is now AUDIT-ONLY. It does not authorize release.
+    lifecycleState = "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY";
+    primaryNextAction = "RETRY_AI_ANALYZE";
   } else if (input.criticalMetadataMissing > 0) {
     lifecycleState = "METADATA_INCOMPLETE";
     primaryNextAction = "COMPLETE_METADATA";
@@ -134,7 +140,7 @@ function simulateLifecycle(input: GatingInput): GatingResult {
 
   // Action gating
   if (input.hasFiles && input.hasAnyProvider) allowed.push("AI_ANALYZE");
-  if (fallbackUnapproved) allowed.push("APPROVE_FALLBACK");
+  if (input.analysisSource === "REGEX_FALLBACK_AI_ERROR") allowed.push("APPROVE_FALLBACK");
   if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") allowed.push("REVOKE_FALLBACK_APPROVAL");
   allowed.push("COMPLETE_METADATA");
   allowed.push("BUILD_SUBMISSION_PLAN");
@@ -143,7 +149,15 @@ function simulateLifecycle(input: GatingInput): GatingResult {
     allowed.push("RUN_ENGINE");
     allowed.push("GENERATE_DOCS");
   } else {
-    blocked.push({ action: "GENERATE_DOCS", reason: fallbackUnapproved ? "Analysis source is unapproved regex fallback. Retry AI Analyze or approve the fallback with a note first." : "No approved analysis exists. Run AI Analyze first." });
+    const isAuditOnly = input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
+    blocked.push({
+      action: "GENERATE_DOCS",
+      reason: isAuditOnly
+        ? "Analysis was human-approved as audit-only. Human approval no longer authorizes release. Re-run AI Analyze."
+        : "Analysis source is unapproved regex fallback. Retry AI Analyze first.",
+      code: isAuditOnly ? "ANALYSIS_FALLBACK_AUDIT_ONLY" : "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+      message: isAuditOnly ? "Audit-only approval does not authorize release." : "Unapproved fallback.",
+    });
     if (!analysisOk) blocked.push({ action: "RUN_ENGINE", reason: "No approved analysis exists." });
   }
 
@@ -263,16 +277,35 @@ describe("Scenario C — Regex fallback unapproved", () => {
   });
 });
 
-describe("Scenario D — Fallback approved by human", () => {
-  it("GENERATE_DOCS is allowed after human approval", () => {
+describe("Scenario D — Fallback approved by human (AUDIT-ONLY — does NOT authorize release)", () => {
+  // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK is audit-only. Human
+  // approval MUST NEVER authorize GENERATE_DOCS, EXPORT, DOWNLOAD_ZIP,
+  // AUTO_FINALIZE, or any release action. The previous test asserted the
+  // OLD broken contract (GENERATE_DOCS allowed after human approval) — that
+  // was the false-green we removed. These tests now verify the new contract:
+  // release actions are BLOCKED even when the fallback is human-approved.
+  it("GENERATE_DOCS is BLOCKED even after human approval (audit-only)", () => {
     const r = simulateLifecycle({ ...BASE, analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
-    assert.ok(r.allowedActions.includes("GENERATE_DOCS"), "GENERATE_DOCS must be allowed when fallback is human-approved");
-    assert.ok(!r.blockedActions.some((b) => b.action === "GENERATE_DOCS"), "GENERATE_DOCS must NOT be blocked");
+    assert.ok(!r.allowedActions.includes("GENERATE_DOCS"), "GENERATE_DOCS MUST NOT be allowed when fallback is human-approved (audit-only)");
+    assert.ok(r.blockedActions.some((b) => b.action === "GENERATE_DOCS"), "GENERATE_DOCS MUST be blocked when fallback is human-approved (audit-only)");
   });
 
-  it("REVOKE_FALLBACK_APPROVAL is allowed", () => {
+  it("REVOKE_FALLBACK_APPROVAL is allowed (audit trail management)", () => {
     const r = simulateLifecycle({ ...BASE, analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
     assert.ok(r.allowedActions.includes("REVOKE_FALLBACK_APPROVAL"));
+  });
+
+  it("lifecycleState is ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY", () => {
+    const r = simulateLifecycle({ ...BASE, analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
+    assert.equal(r.lifecycleState, "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY");
+  });
+
+  it("blockers include ANALYSIS_FALLBACK_AUDIT_ONLY code", () => {
+    const r = simulateLifecycle({ ...BASE, analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
+    assert.ok(
+      r.blockedActions.some((b) => b.code === "ANALYSIS_FALLBACK_AUDIT_ONLY" || /audit-only/i.test(b.message || "")),
+      "Blockers MUST include the audit-only code/message when fallback is human-approved",
+    );
   });
 });
 

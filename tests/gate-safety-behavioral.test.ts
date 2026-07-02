@@ -24,14 +24,18 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
     requirementCount: 5,
     requirements: [
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true },
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 2, sourceExactQuote: "Another meaningful source quote for grounding", sourceFileActiveInTender: true },
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 3, sourceExactQuote: "Third requirement source quote for testing", sourceFileActiveInTender: true },
-      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 4, sourceExactQuote: "Fourth requirement quote for grounding", sourceFileActiveInTender: true },
-      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "Fifth requirement quote for grounding test", sourceFileActiveInTender: true },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction." },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 2, sourceExactQuote: "Another meaningful source quote for grounding", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Another meaningful source quote for grounding. Additional context for the tender file extraction." },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 3, sourceExactQuote: "Third requirement source quote for testing", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Third requirement source quote for testing. Additional context for the tender file extraction." },
+      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 4, sourceExactQuote: "Fourth requirement quote for grounding", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Fourth requirement quote for grounding. Additional context for the tender file extraction." },
+      { priority: null, sourceTenderFileId: "f1", sourcePageNumber: 5, sourceExactQuote: "Fifth requirement quote for grounding test", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: Fifth requirement quote for grounding test. Additional context for the tender file extraction." },
     ],
-    criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 3,
+    criticalMetadataOk: true, exportReadyDocumentCount: 3,
+    // BuildPlan enforcement is fail-closed: default to true so the "passing"
+    // base case passes; tests that exercise the BuildPlan blocker override.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
+    recordedBuildPlanState: "VALID" as const,
     ...overrides,
   };
 }
@@ -101,11 +105,11 @@ describe("Gate blocks corrupted/weak extraction", () => {
   });
 });
 
-describe("Gate blocks missing/stale submission plan", () => {
-  it("blocks when submissionPlanDocumentCount is 0 (virtual plan only)", () => {
-    const r = evaluateGenerationReadiness(makePassingInput({ hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0 }));
+describe("Gate blocks missing/stale BuildPlan", () => {
+  it("blocks when BuildPlan is missing", () => {
+    const r = evaluateGenerationReadiness(makePassingInput({ hasCurrentConfirmedBuildPlan: false, recordedBuildPlanState: "MISSING" as const, exportReadyDocumentCount: 0 }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "BUILD_PLAN_MISSING");
   });
 });
 
@@ -135,21 +139,21 @@ describe("Gate blocks ungrounded mandatory requirements", () => {
   });
   it("blocks when MANDATORY req has no page", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: null, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true }],
+      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: null, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: meaningful quote text here. Additional context for the tender file extraction." }],
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
   it("blocks when MANDATORY req has no quote", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: null, sourceFileActiveInTender: true }],
+      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: null, sourceFileActiveInTender: true, sourceFileExtractedText: "This tender requires a meaningful source quote for the technical proposal. Another meaningful source quote for grounding. Third requirement source quote for testing." }],
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
   it("blocks when MANDATORY req has short quote", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "short", sourceFileActiveInTender: true }],
+      requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "short", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: short. Additional context for the tender file extraction." }],
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
@@ -183,13 +187,12 @@ describe("Gate allows when all conditions pass", () => {
 });
 
 describe("Gate blocks for export purpose too", () => {
-  it("blocks export when submissionPlanDocumentCount is 0", () => {
+  it("blocks export when no export-ready documents", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      purpose: "export",
-      hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0,
+      purpose: "export", exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
   it("blocks export when corrupted extraction", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
@@ -202,12 +205,11 @@ describe("Gate blocks for export purpose too", () => {
 });
 
 describe("Gate blocks for final-zip purpose", () => {
-  it("blocks final-zip when submissionPlanDocumentCount is 0", () => {
+  it("blocks final-zip when no export-ready documents", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
-      purpose: "final-zip",
-      hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0,
+      purpose: "final-zip", exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 });

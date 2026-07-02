@@ -28,10 +28,10 @@ describe("link-vault-evidence-auto — authorization", () => {
     );
   });
 
-  it("includes REVIEWER in allowed roles", () => {
+  it("excludes REVIEWER from mutation roles", () => {
     assert.ok(
-      routeSource.includes('"REVIEWER"'),
-      "REVIEWER role must be allowed so Recovery Command Center works for reviewers",
+      !routeSource.includes('"REVIEWER"'),
+      "REVIEWER role must NOT be allowed for mutation routes",
     );
   });
 

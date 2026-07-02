@@ -182,11 +182,15 @@ export async function getTenderReleaseSnapshot(
       metadataContaminated: true,
       clientNameSourcePage: true,
       clientNameSourceQuote: true,
+      clientNameSourceFileId: true,
       submissionMethodSourcePage: true,
       submissionMethodSourceQuote: true,
+      submissionMethodSourceFileId: true,
       submissionAddressSourcePage: true,
       submissionAddressSourceQuote: true,
+      submissionAddressSourceFileId: true,
       submissionEmailSourcePage: true,
+      submissionEmailSourceFileId: true,
       contactDetailsSourceJson: true,
       // Extended panel fields
       legalClientName: true,
@@ -355,11 +359,15 @@ export async function getTenderReleaseSnapshot(
       metadataContaminated: tender.metadataContaminated ?? false,
       clientNameSourcePage: tender.clientNameSourcePage,
       clientNameSourceQuote: tender.clientNameSourceQuote,
+      clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
       submissionMethodSourcePage: tender.submissionMethodSourcePage,
       submissionMethodSourceQuote: tender.submissionMethodSourceQuote,
+      submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
       submissionAddressSourcePage: tender.submissionAddressSourcePage,
       submissionAddressSourceQuote: tender.submissionAddressSourceQuote,
+      submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
       submissionEmailSourcePage: tender.submissionEmailSourcePage,
+      submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
       contactDetailsSourceJson: tender.contactDetailsSourceJson,
       // Extended panel fields
       evaluationMethodology: tender.evaluationMethodology,
@@ -386,6 +394,9 @@ export async function getTenderReleaseSnapshot(
     })),
     hasExtractedRequirements: tender.requirements.length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,
+    // Same canonical active-file grounding rule as the gates so the release
+    // snapshot's metadata states match generation/export exactly.
+    activeTenderFileIds: new Set(activeFiles.map((f) => f.id)),
   });
 
   // Requirements grounding.

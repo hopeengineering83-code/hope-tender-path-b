@@ -443,15 +443,36 @@ describe("Recovery Command Center — REVIEWER role parity on Execute-path route
     assert.ok(src.includes('"REVIEWER"'), "lifecycle route must allow REVIEWER role");
   });
 
+  // Mutation routes must NOT allow REVIEWER — release-safety policy.
+  const MUTATION_ACTIONS = new Set([
+    "BUILD_SUBMISSION_PLAN",
+    "APPROVE_FALLBACK_WITH_NOTE",
+    "AUTO_FINALIZE",
+    "GENERATE_REQUIRED_DOCUMENTS",
+    "RECONCILE_OUTSIDE_PLAN_DOCS",
+    "REPAIR_DOCUMENT_QUALITY",
+    "REPAIR_METADATA",
+    "REPAIR_SOURCE_REFERENCES",
+    "VALIDATE_DOCS",
+    "LINK_VAULT_EVIDENCE",
+  ]);
+
   for (const { action, file } of EXECUTE_PATH_ROUTES) {
-    it(`${action} → ${file} allows REVIEWER`, () => {
+    it(`${action} → ${file} ${MUTATION_ACTIONS.has(action) ? "excludes" : "allows"} REVIEWER`, () => {
       const filePath = resolve(process.cwd(), file);
       assert.ok(existsSync(filePath), `Route file must exist: ${file}`);
       const src = readFileSync(filePath, "utf8");
-      assert.ok(
-        src.includes('"REVIEWER"'),
-        `${action} route must include requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER") so REVIEWER users can execute it via the Recovery Command Center`,
-      );
+      if (MUTATION_ACTIONS.has(action)) {
+        assert.ok(
+          !src.includes('"REVIEWER"'),
+          `${action} route must NOT allow REVIEWER — mutation authority is ADMIN/PROPOSAL_MANAGER only`,
+        );
+      } else {
+        assert.ok(
+          src.includes('"REVIEWER"'),
+          `${action} route must include requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER") so REVIEWER users can execute it via the Recovery Command Center`,
+        );
+      }
     });
   }
 });

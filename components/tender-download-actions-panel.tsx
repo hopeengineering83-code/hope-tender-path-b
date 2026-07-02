@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function TenderDownloadActionsPanel({ tenderId }: { tenderId: string }) {
+export function TenderDownloadActionsPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [deleting, setDeleting] = useState(false);
   const router = useRouter();
 
@@ -44,6 +44,7 @@ export function TenderDownloadActionsPanel({ tenderId }: { tenderId: string }) {
       >
         ↓ Compliance Report
       </a>
+      {canMutate && (
       <button
         onClick={handleDelete}
         disabled={deleting}
@@ -51,6 +52,7 @@ export function TenderDownloadActionsPanel({ tenderId }: { tenderId: string }) {
       >
         {deleting ? "Deleting…" : "Delete tender"}
       </button>
+      )}
     </div>
   );
 }

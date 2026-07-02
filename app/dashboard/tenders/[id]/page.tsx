@@ -7,7 +7,8 @@ import { RequirementTruthBanner } from "../../../../components/requirement-truth
 import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
 import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
-import { getSession } from "../../../../lib/auth";
+import { getSession, getCurrentUser } from "../../../../lib/auth";
+import { canMutateTender } from "../../../../lib/recovery-command-actions";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
@@ -85,6 +86,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const userId = await getSession();
   if (!userId) redirect("/login");
   await prismaReady;
+  const currentUser = await getCurrentUser();
+  const canMutate = canMutateTender(currentUser?.role);
 
   const { id } = await params;
   const tender = await prismaClient.tender.findFirst({
@@ -156,10 +159,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       }} />
 
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
-      <TenderWorkflowActionCenter tenderId={tender.id} />
+      <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
-      <TenderRecoveryCommandCenter tenderId={tender.id} />
+      <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
       <TenderHealthScorePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
       <BidControlVerdictPanel tenderId={tender.id} />
@@ -170,31 +173,32 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </nav>
 
       <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical metadata." open>
-        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} />
+        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
         <MetadataTruthPanel tenderId={tender.id} />
         <MetadataCompletionPanel tenderId={tender.id} />
-        <ClientSubmissionDetailsPanel tenderId={tender.id} />
+        <ClientSubmissionDetailsPanel tenderId={tender.id} canMutate={canMutate} />
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
-        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} />
+        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
         <AIHealthPanel />
         <EngineActionPanel
           tenderId={tender.id}
           vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
           vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
           lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
+          canMutate={canMutate}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <AIAnalyzeRecoveryPanel tenderId={tender.id} />
-        <RequirementCoveragePanel tenderId={tender.id} />
+        <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
         <AICopilotSuggestionsPanel tenderId={tender.id} />
-        {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
-        {ai && <TenderAICopilotPanel tenderId={tender.id} />}
+        {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
+        {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
       </WorkflowStage>
 
       <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
@@ -207,7 +211,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
         <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
-        <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} />
+        <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
         <SubmissionPlanReconciliationPanel tenderId={tender.id} />
         <AuthorityReviewTruthPanel tenderId={tender.id} />
@@ -217,13 +221,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
-        <PricingWorkbookPanel tenderId={tender.id} />
+        <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
-        <ExportReadinessPanel tenderId={tender.id} />
-        <TenderSharePanel tenderId={tender.id} />
+        <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
+        <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
-      <TenderDownloadActionsPanel tenderId={tender.id} />
+      <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
     </main>
   );
 }

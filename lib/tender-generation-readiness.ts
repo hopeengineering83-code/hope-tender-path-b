@@ -439,9 +439,21 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // "Full proposal generation gate: passes" / a green button while the
   // analysis came from an unapproved regex/deterministic fallback. The
   // generate route returns 409 in that state; the UI must reflect the same
-  // truth instead of contradicting it. Defensive try/catch: test fakes may
-  // not implement complianceGap.findFirst.
-  const analysisGate = await assertAnalysisReadyForFinalGeneration(client, tenderId, tender).catch(() => ({ ok: true as const }));
+  // truth instead of contradicting it. FAIL-CLOSED: if the gate throws, we
+  // MUST NOT default to ok:true — that would silently authorize generation
+  // when the gate could not be evaluated. The previous `.catch(() => ({ ok:
+  // true }))` was fail-open and contradicted the release-safety principle.
+  let analysisGate: { ok: true } | { ok: false; code: string; message: string; nextAction: string };
+  try {
+    analysisGate = await assertAnalysisReadyForFinalGeneration(client, tenderId, tender);
+  } catch {
+    analysisGate = {
+      ok: false,
+      code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+      message: "Analysis readiness gate could not be evaluated (database or resolver error). Generation is blocked until the gate can run successfully.",
+      nextAction: "RERUN_AI_ANALYZE",
+    };
+  }
   if (!analysisGate.ok) {
     fullProposalBlockers.push({
       code: analysisGate.code,

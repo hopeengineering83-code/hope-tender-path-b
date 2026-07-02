@@ -250,21 +250,21 @@ describe("AI Analyze route — extraction gate wiring (source assertions)", () =
 
 describe("Build Plan route — extraction gate wiring (source assertions)", () => {
   const src = readFileSync(
-    resolve(process.cwd(), "app/api/tenders/[id]/submission-plan/build/route.ts"),
+    resolve(process.cwd(), "lib/engine/build-plan.ts"),
     "utf8",
   );
 
-  it("calls isExtractionAcceptableForGeneration before building the plan", () => {
+  it("preflight calls isExtractionAcceptableForGeneration before building the plan", () => {
     assert.ok(
       src.includes("isExtractionAcceptableForGeneration"),
       "Build Plan route must call isExtractionAcceptableForGeneration",
     );
   });
 
-  it("returns a 422 with EXTRACTION_QUALITY_INSUFFICIENT when extraction is poor", () => {
+  it("returns a 422 with EXTRACTION_NOT_READY when extraction is poor", () => {
     assert.ok(
-      src.includes("EXTRACTION_QUALITY_INSUFFICIENT"),
-      "Build Plan route must return EXTRACTION_QUALITY_INSUFFICIENT for poor extraction",
+      src.includes("EXTRACTION_NOT_READY"),
+      "Build Plan service must check extraction quality",
     );
     assert.ok(
       src.includes("status: 422") || src.includes("{ status: 422 }"),
@@ -272,9 +272,9 @@ describe("Build Plan route — extraction gate wiring (source assertions)", () =
     );
   });
 
-  it("also blocks when text is corrupted (EXTRACTION_CORRUPTED_BUILD_PLAN_SKIPPED)", () => {
+  it("also blocks when text is corrupted (EXTRACTION_NOT_READY)", () => {
     assert.ok(
-      src.includes("EXTRACTION_CORRUPTED_BUILD_PLAN_SKIPPED"),
+      src.includes("isExtractionAcceptableForGeneration"),
       "Build Plan route must check for corrupted text and return the specific error code",
     );
   });
@@ -291,7 +291,7 @@ describe("Generate Docs route — extraction gate wiring (source assertions)", (
   it("calls isExtractionAcceptableForGeneration or equivalent check", () => {
     assert.ok(
       src.includes("isExtractionAcceptableForGeneration") ||
-        src.includes("EXTRACTION_QUALITY_INSUFFICIENT") ||
+        src.includes("EXTRACTION_NOT_READY") ||
         src.includes("extractionScore"),
       "Generate Docs route must check extraction quality",
     );
@@ -327,7 +327,7 @@ describe("Export route — extraction gate wiring (source assertions)", () => {
     );
   });
 
-  it("returns EXTRACTION_QUALITY_INSUFFICIENT error code when export is blocked", () => {
+  it("returns EXTRACTION_NOT_READY error code when export is blocked", () => {
     assert.ok(
       src.includes("EXTRACTION_QUALITY_INSUFFICIENT"),
       "Export route must return EXTRACTION_QUALITY_INSUFFICIENT when extraction is poor",

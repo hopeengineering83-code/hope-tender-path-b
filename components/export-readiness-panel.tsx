@@ -91,7 +91,7 @@ const ADVISORY_RESOLUTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "ADDED_TO_TECHNICAL", label: "Already added to technical proposal" },
 ];
 
-export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
+export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
@@ -462,12 +462,12 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               {ok ? "READY" : `${readiness.summary.totalBlockers} blocker(s)`}
             </span>
           )}
-          {readiness && !ok && hasDocumentBlockers && (
+          {canMutate && readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void generateMissingPlanned()} disabled={busy} className="rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-50" title="Convert PLANNED document rows into draft control records so the export gate can proceed.">
               {generatingMissing ? "Generating…" : "Generate missing planned docs"}
             </button>
           )}
-          {readiness && !ok && hasDocumentBlockers && (
+          {canMutate && readiness && !ok && hasDocumentBlockers && (
             <div className="flex flex-col items-start gap-1">
               <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50">
                 {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
@@ -475,17 +475,17 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               <p className="text-[10px] text-slate-500 max-w-xs">Auto-finalize cleans 1–3 documents per click. Click multiple times until remaining = 0. Official original files still require manual attachment.</p>
             </div>
           )}
-          {readiness && !ok && hasDocumentBlockers && (
+          {canMutate && readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void repair()} disabled={busy} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50" title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually.">
               {repairing ? "Repairing…" : "Repair safe document gaps"}
             </button>
           )}
-          {readiness && !ok && hasDocumentBlockers && (
+          {canMutate && readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void linkVaultEvidence()} disabled={busy} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50">
               {linkingVault ? "Linking vault…" : "Use vault evidence"}
             </button>
           )}
-          {readiness && !ok && (
+          {canMutate && readiness && !ok && (
             <button
               type="button"
               onClick={() => void repairSourceGrounding()}
@@ -496,7 +496,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               {repairingSource ? "Repairing…" : "Repair source references"}
             </button>
           )}
-          {readiness && !ok && (
+          {canMutate && readiness && !ok && (
             <button
               type="button"
               onClick={() => void reclassifyDocuments()}
@@ -507,7 +507,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               {reclassifying ? "Reclassifying…" : "Fix document types"}
             </button>
           )}
-          {readiness && !ok && (
+          {canMutate && readiness && !ok && (
             <button
               type="button"
               onClick={() => void deduplicateDocuments()}

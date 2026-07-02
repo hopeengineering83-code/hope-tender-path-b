@@ -44,8 +44,18 @@ describe("generation-readiness mirrors the analysis-source gate (Part 5)", () =>
     assert.match(source, /fullProposalBlockers\.push\(\{[\s\S]*?analysisGate\.code/);
   });
 
-  it("is defensive against test fakes lacking complianceGap.findFirst", () => {
-    assert.match(source, /\.catch\(\(\)\s*=>\s*\(\{\s*ok:\s*true/);
+  it("FAIL-CLOSED: if assertAnalysisReadyForFinalGeneration throws, the helper blocks (not ok:true)", () => {
+    // PERMANENT BLOCK: the previous fail-open `.catch(() => ({ ok: true }))`
+    // silently authorized generation when the gate could not be evaluated.
+    // The new code MUST fail-closed — a thrown gate produces a blocker, not
+    // an authorization. This test verifies the fail-closed pattern is in
+    // place; if anyone re-introduces the fail-open catch, this test fails.
+    assert.ok(
+      !/\.catch\(\(\)\s*=>\s*\(\{\s*ok:\s*true/.test(source),
+      "tender-generation-readiness MUST NOT use fail-open .catch(() => ({ ok: true })) — fail-closed is required",
+    );
+    // The new code MUST have a try/catch that produces ok:false on error.
+    assert.match(source, /catch\s*\{[\s\S]*?ok:\s*false/);
   });
 });
 
@@ -107,7 +117,7 @@ describe("bid strategy confidence cap under unapproved fallback (Part 12)", () =
 
 describe("corrupted extraction blocks pipeline before stale-score bypasses", () => {
   const analyzeRoute = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-  const buildPlanRoute = readFileSync("app/api/tenders/[id]/submission-plan/build/route.ts", "utf8");
+  const buildPlanRoute = readFileSync("lib/engine/build-plan.ts", "utf8");
   const generateRoute = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
 
   it("AI Analyze marks corrupted extraction as skipped, not provider failure", () => {
@@ -116,10 +126,9 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
     assert.match(analyzeRoute, /not an AI provider failure/);
   });
 
-  it("Build Plan recomputes quality from extracted text instead of trusting stored extractionScore", () => {
-    assert.match(buildPlanRoute, /assessExtractionQuality\(file\.extractedText/);
-    assert.match(buildPlanRoute, /Math\.min\(file\.extractionScore \?\? quality\.score, quality\.score\)/);
-    assert.match(buildPlanRoute, /EXTRACTION_CORRUPTED_BUILD_PLAN_SKIPPED/);
+  it("Build Plan preflight checks extraction quality", () => {
+    assert.match(buildPlanRoute, /isExtractionAcceptableForGeneration/);
+    assert.match(buildPlanRoute, /Math\.min\(f\.extractionScore \?\? quality\.score, quality\.score\)/);
   });
 
   it("Generate Docs recomputes quality before any generatedDocument rows are created", () => {
@@ -128,7 +137,7 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
     assert.ok(gateIndex > -1, "missing corrupted generation blocker");
     assert.ok(createIndex > -1, "missing generation call");
     assert.ok(gateIndex < createIndex, "corrupted extraction gate must run before document generation");
-    assert.match(generateRoute, /assessExtractionQuality\(file\.extractedText/);
+    assert.match(generateRoute, /isExtractionAcceptableForGeneration/);
   });
 
   it("Run Engine uses the shared extraction gate and cannot be force-bypassed", () => {

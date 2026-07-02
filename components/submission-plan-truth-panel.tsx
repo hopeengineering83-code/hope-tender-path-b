@@ -10,7 +10,7 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
     fetch(`/api/tenders/${tenderId}/workflow-center`)
       .then(res => res.json())
       .then(json => setData(json.plan))
-      .catch(console.error);
+      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
   }, [tenderId]);
 
   if (!data) return null;

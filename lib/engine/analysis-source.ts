@@ -78,6 +78,13 @@ export function detectAnalysisSource(tender: TenderAnalysisSourceLike): Analysis
 /** Returns the analysis source taking human approval into account.
  * Looks up an ANALYSIS_APPROVAL ComplianceGap row to decide whether
  * a regex-fallback analysis has been explicitly approved by a human.
+ *
+ * NOTE: As of the release-safety consolidation, human approval is AUDIT-ONLY.
+ * `HUMAN_APPROVED_REGEX_FALLBACK` is still returned here so panels can display
+ * the audit trail, but it MUST NEVER be treated as ready/ok by any release
+ * path (generate, export, download, regenerate, AI proposal, missing-file
+ * generation, ZIP). The release paths use `assertAnalysisReadyForFinalGeneration`
+ * below, which only authorizes on `AI` / `AI_SUCCEEDED`.
  */
 export async function detectAnalysisSourceWithApproval(
   client: PrismaClient,
@@ -99,7 +106,11 @@ export type AnalysisGateResult =
 
 /** Throws/returns the standard "regex fallback unapproved" blocker for
  * routes that must not produce final-quality output from regex fallback
- * analysis. Returns {ok: true} when the analysis is AI or human-approved.
+ * analysis. Returns {ok: true} ONLY when the analysis is genuine AI
+ * (AI_SUCCEEDED / "AI"). HUMAN_APPROVED_FALLBACK and
+ * HUMAN_APPROVED_REGEX_FALLBACK are PERMANENTLY BLOCKED — human approval is
+ * audit-only and MUST NEVER authorize generation, export, download,
+ * regeneration, AI proposal, missing-file generation, or ZIP.
  *
  * FM-009 FIX: Tries the canonical resolver (resolveTenderAnalysisState)
  * first, which checks both tender.notes AND AiJob/AiAnalyzeChunk rows.
@@ -124,21 +135,31 @@ export async function assertAnalysisReadyForFinalGeneration(
       // which the catch below swallowed — silently demoting this gate to the
       // notes-only legacy path and defeating the canonical AiJob/chunk checks.
       const detail = await resolveTenderAnalysisState(client, tenderId, tenderRow.userId);
-      if (detail.state === "AI_SUCCEEDED" || detail.state === "HUMAN_APPROVED_FALLBACK") {
+      // ONLY AI_SUCCEEDED authorizes release. HUMAN_APPROVED_FALLBACK is
+      // permanently blocked — human approval is audit-only.
+      if (detail.state === "AI_SUCCEEDED") {
         return { ok: true };
+      }
+      if (detail.state === "HUMAN_APPROVED_FALLBACK") {
+        return {
+          ok: false,
+          code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+          message: "Latest analysis used the regex fallback (AI providers failed) and was human-approved as audit-only. Human approval no longer authorizes final proposal generation, export, download, regeneration, AI proposal, missing-file generation, or ZIP. Re-run AI Analyze with healthy providers to produce a genuine AI analysis.",
+          nextAction: "RERUN_AI_ANALYZE",
+        };
       }
       if (detail.state === "NOT_STARTED") {
         return {
           ok: false,
           code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-          message: "Analysis source has not been confirmed. Run AI analysis before final proposal generation, or approve the current analysis as sufficient.",
+          message: "Analysis source has not been confirmed. Run AI analysis before final proposal generation. You may also approve the current regex-fallback analysis as audit-only — approval is recorded but does NOT authorize release.",
           nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
         };
       }
       return {
         ok: false,
         code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-        message: "Latest analysis used the regex fallback (AI providers failed). Final proposal generation is blocked until AI analysis is re-run successfully, or a human explicitly approves the fallback analysis as sufficient.",
+        message: "Latest analysis used the regex fallback (AI providers failed). Final proposal generation is blocked until AI analysis is re-run successfully. You may approve the current regex-fallback analysis as audit-only — approval is recorded but does NOT authorize release.",
         nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
       };
     }
@@ -147,20 +168,30 @@ export async function assertAnalysisReadyForFinalGeneration(
   }
 
   // Legacy fallback: notes-based detection only.
+  // ONLY "AI" authorizes release. HUMAN_APPROVED_REGEX_FALLBACK is permanently
+  // blocked — human approval is audit-only.
   const source = await detectAnalysisSourceWithApproval(client, tenderId, tender);
-  if (source === "AI" || source === "HUMAN_APPROVED_REGEX_FALLBACK") return { ok: true };
+  if (source === "AI") return { ok: true };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") {
+    return {
+      ok: false,
+      code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+      message: "Latest analysis used the regex fallback and was human-approved as audit-only. Human approval no longer authorizes final proposal generation, export, download, regeneration, AI proposal, missing-file generation, or ZIP. Re-run AI Analyze with healthy providers to produce a genuine AI analysis.",
+      nextAction: "RERUN_AI_ANALYZE",
+    };
+  }
   if (source === "UNKNOWN") {
     return {
       ok: false,
       code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-      message: "Analysis source has not been confirmed. Run AI analysis before final proposal generation, or approve the current analysis as sufficient.",
+      message: "Analysis source has not been confirmed. Run AI analysis before final proposal generation. You may also approve the current regex-fallback analysis as audit-only — approval is recorded but does NOT authorize release.",
       nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
     };
   }
   return {
     ok: false,
     code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-    message: "Latest analysis used the regex fallback (AI providers failed). Final proposal generation is blocked until AI analysis is re-run successfully, or a human explicitly approves the fallback analysis as sufficient.",
+    message: "Latest analysis used the regex fallback (AI providers failed). Final proposal generation is blocked until AI analysis is re-run successfully. You may approve the current regex-fallback analysis as audit-only — approval is recorded but does NOT authorize release.",
     nextAction: "RUN_ENGINE_OR_APPROVE_ANALYSIS",
   };
 }

@@ -141,74 +141,46 @@ describe("lib/ai.ts — CLIENT ENTITY RULE in AI prompt", () => {
   });
 });
 
-// ─── Criterion 8: all-optional-requirements gate in build/route.ts ───────────
+// ─── Criterion 8: no heuristic/derived draft — hard 422 block ───────────────
 
-describe("submission-plan/build — all-optional-requirements gate", () => {
+describe("submission-plan/build — no heuristic/derived draft (authoritative plan only)", () => {
   const buildSrc = readFileSync(
-    path.join(process.cwd(), "app/api/tenders/[id]/submission-plan/build/route.ts"),
+    path.join(process.cwd(), "lib/engine/build-plan.ts"),
     "utf-8",
   );
 
-  it("route checks hasMandatory before allowing derived draft", () => {
+  it("route does NOT import buildDerivedDraftPlan", () => {
     assert.ok(
-      buildSrc.includes("hasMandatory"),
-      "build route must check hasMandatory before falling through to derived draft",
+      !buildSrc.includes("buildDerivedDraftPlan"),
+      "build route MUST NOT import or use buildDerivedDraftPlan — heuristic drafts are not authoritative",
     );
   });
 
-  it("route returns BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS error code", () => {
+  it("route does NOT import buildSubmissionPlanWithDerivedFallback", () => {
     assert.ok(
-      buildSrc.includes('"BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS"'),
-      "build route must return BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS when all reqs are non-MANDATORY",
+      !buildSrc.includes("buildSubmissionPlanWithDerivedFallback"),
+      "build route MUST NOT import buildSubmissionPlanWithDerivedFallback — derived fallback is not authoritative",
     );
   });
 
-  it("route returns 422 for all-optional-requirements block", () => {
-    const blockIdx = buildSrc.indexOf("BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS");
+  it("route returns NO_PLAN_ITEMS when no grounded plan items", () => {
+    assert.ok(
+      buildSrc.includes('"NO_PLAN_ITEMS"'),
+      "build route must return NO_PLAN_ITEMS when no grounded items can be derived",
+    );
+  });
+
+  it("route returns 422 for no-grounded-items block", () => {
+    const blockIdx = buildSrc.indexOf("NO_PLAN_ITEMS");
     const status422Idx = buildSrc.indexOf("status: 422", blockIdx);
     assert.ok(
       blockIdx > -1 && status422Idx > -1 && status422Idx - blockIdx < 1500,
-      "BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS block must return status 422 within the same response",
+      "NO_PLAN_ITEMS block must return status 422 within the same response",
     );
   });
 
-  it("gate allows build when at least one requirement is MANDATORY", () => {
-    // Simulate the gate logic
-    const requirements = [
-      { priority: "SCORED", exactFileName: null },
-      { priority: "MANDATORY", exactFileName: null },
-    ];
-    const hasMandatory = requirements.some((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-    const hasExplicitFileNames = requirements.some((r) => (r.exactFileName ?? "").trim().length > 0);
-    const blocked = !hasMandatory && !hasExplicitFileNames;
-    assert.equal(blocked, false, "Gate must not block when at least one req is MANDATORY");
-  });
-
-  it("gate blocks when ALL requirements are SCORED (none MANDATORY)", () => {
-    const requirements = [
-      { priority: "SCORED", exactFileName: null },
-      { priority: "INFORMATIONAL", exactFileName: null },
-    ];
-    const hasMandatory = requirements.some((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-    const hasExplicitFileNames = requirements.some((r) => (r.exactFileName ?? "").trim().length > 0);
-    const blocked = !hasMandatory && !hasExplicitFileNames;
-    assert.equal(blocked, true, "Gate must block when all reqs are non-MANDATORY and no exactFileName is set");
-  });
-
-  it("gate allows build when all reqs are non-MANDATORY but exactFileName is set", () => {
-    const requirements = [
-      { priority: "SCORED", exactFileName: "Technical Proposal.docx" },
-    ];
-    const hasMandatory = requirements.some((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-    const hasExplicitFileNames = requirements.some((r) => (r.exactFileName ?? "").trim().length > 0);
-    const blocked = !hasMandatory && !hasExplicitFileNames;
-    assert.equal(blocked, false, "exactFileName on any req must allow the build to proceed");
-  });
-
-  it("nextAction is SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES", () => {
-    assert.ok(
-      buildSrc.includes('"SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES"'),
-      "build route must suggest SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES as nextAction",
-    );
+  it("route calls canonical buildDraftBuildPlan service", () => {
+    // isDerivedDraft must always be false — no DERIVED_DRAFT plans are persisted.
+    assert.match(buildSrc, /buildDraftBuildPlan/);
   });
 });

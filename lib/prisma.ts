@@ -591,12 +591,24 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Tender", "submissionMethodSourceQuote", "TEXT");
   await ensureColumn(client, "Tender", "submissionAddressSourcePage", "INTEGER");
   await ensureColumn(client, "Tender", "submissionAddressSourceQuote", "TEXT");
+  // Source file IDs for metadata grounding (migration 20260629300000)
+  await ensureColumn(client, "Tender", "clientNameSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "submissionMethodSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "submissionAddressSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmailSourceFileId", "TEXT");
   await ensureColumn(client, "Tender", "evaluationCriteriaSourceJson", "TEXT");
   await ensureColumn(client, "Tender", "analysisExtractionStatus", "TEXT");
   // Extended client fields — Gap A (CLAUDE.md items 8-20)
   await ensureColumn(client, "Tender", "clientCity", "TEXT");
   await ensureColumn(client, "Tender", "clientWebsite", "TEXT");
   await ensureColumn(client, "Tender", "submissionEmailSubject", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmailSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "deadlineSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "deadlineSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "deadlineSourceFileId", "TEXT");
+  await ensureColumn(client, "Tender", "titleSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "titleSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "titleSourceFileId", "TEXT");
   await ensureColumn(client, "Tender", "preBidChannel", "TEXT");
   await ensureColumn(client, "Tender", "clientRepresentative", "TEXT");
   // Soft-delete for Expert + Project
@@ -1040,6 +1052,37 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  // BuildPlan: persisted submission plan bound to tender content hash + file list.
+  // Plan becomes invalid when files are added/removed/renamed (contentHash moves).
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "BuildPlan" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL UNIQUE,
+    "contentHash" TEXT NOT NULL,
+    "filesList" TEXT NOT NULL DEFAULT '[]',
+    "plannedDocuments" TEXT NOT NULL DEFAULT '[]',
+    "planType" TEXT NOT NULL DEFAULT 'DERIVED',
+    "createdBy" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  // ─── BuildPlan DRAFT/CONFIRMED service columns ───────────────────────────
+  // The unified service (lib/engine/build-plan.ts) writes status, revision,
+  // itemsJson, validationJson, builtById, confirmedById, confirmedBy (legacy
+  // alias), confirmedRevision, confirmedContentHash, confirmedAt. These are
+  // additive ALTERs wrapped in ensureColumn so an unmigrated dev DB still
+  // boots without a `prisma migrate deploy` step. In production, migrations
+  // 20260629300000 + 20260701000000 provide the same columns idempotently.
+  await ensureColumn(client, "BuildPlan", "status", "TEXT NOT NULL DEFAULT 'DRAFT'");
+  await ensureColumn(client, "BuildPlan", "revision", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn(client, "BuildPlan", "validationJson", "TEXT");
+  await ensureColumn(client, "BuildPlan", "itemsJson", "TEXT NOT NULL DEFAULT '[]'");
+  await ensureColumn(client, "BuildPlan", "builtById", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedById", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedBy", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedRevision", "INTEGER");
+  await ensureColumn(client, "BuildPlan", "confirmedContentHash", "TEXT");
+  await ensureColumn(client, "BuildPlan", "confirmedAt", "TIMESTAMPTZ");
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -1109,6 +1152,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_tenderFileId_key" ON "ExtractionQualityOverride"("tenderId", "tenderFileId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_idx" ON "ExtractionQualityOverride"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderFileId_idx" ON "ExtractionQualityOverride"("tenderFileId")`,
+    `CREATE INDEX IF NOT EXISTS "BuildPlan_contentHash_idx" ON "BuildPlan"("contentHash")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {

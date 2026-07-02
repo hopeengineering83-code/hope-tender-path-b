@@ -71,7 +71,7 @@ export function GenerationActionButton({ canonicalGenerationState, fullProposalR
   );
 }
 
-export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null }) {
+export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness, canMutate = false }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null; canMutate?: boolean }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
@@ -235,13 +235,17 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
             </div>
           </div>
           {/* Generate Docs disable invariant: disabled={!fullProposalReady || running || isPending} */}
-          <GenerationActionButton
-            canonicalGenerationState={canonicalGenerationState}
-            fullProposalReady={fullProposalReady}
-            busy={running || isPending}
-            blockedReason={blocked ? canonicalReadiness?.modules.generation.reason : undefined}
-            onClick={runGenerate}
-          />
+          {canMutate ? (
+            <GenerationActionButton
+              canonicalGenerationState={canonicalGenerationState}
+              fullProposalReady={fullProposalReady}
+              busy={running || isPending}
+              blockedReason={blocked ? canonicalReadiness?.modules.generation.reason : undefined}
+              onClick={runGenerate}
+            />
+          ) : (
+            <p className="text-xs text-slate-500 italic">Read-only — generation requires ADMIN or PROPOSAL_MANAGER role</p>
+          )}
         </div>
 
         {!fullProposalReady && fullProposalBlockers.length > 0 && (
@@ -265,7 +269,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
           </ul>
         )}
 
-        {metadataBlockerPresent && (
+        {canMutate && metadataBlockerPresent && (
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
             <p className="text-xs font-semibold text-amber-700">Metadata incomplete — source-grounded repair available</p>
             <p className="mt-1 text-xs text-amber-600">Use the source-grounded repair to extract missing metadata fields directly from the tender document.</p>

@@ -1,0 +1,484 @@
+import { createHash } from "node:crypto";
+import type { PrismaClient } from "@prisma/client";
+import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
+import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
+
+export type BuildPlanItem = SubmissionPlanFile;
+export type BuildPlanValidation = { ok: boolean; blockers: string[] };
+
+export type BuildPlanDraftResult =
+  | { ok: true; plan: any; items: BuildPlanItem[] }
+  | { ok: false; code: string; message: string; status: number };
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRICT METADATA EVIDENCE VALIDATOR
+// ═══════════════════════════════════════════════════════════════════════════
+// For every policy-critical metadata field, requires:
+// - valid non-placeholder value
+// - ACTIVE TenderFile ID belonging to this tender
+// - valid page number
+// - meaningful source quote
+// - normalized quote actually contained in that same ACTIVE TenderFile extracted text
+// Used in: BuildPlan preflight, confirmation, generation readiness, export, final ZIP.
+
+export type MetadataEvidenceValidation = { ok: boolean; blockers: string[] };
+
+export function validateCriticalMetadataEvidenceForBuildPlan(
+  tender: {
+    title?: string | null;
+    titleSourceFileId?: string | null;
+    titleSourcePage?: number | null;
+    titleSourceQuote?: string | null;
+    clientName?: string | null;
+    clientNameSourceFileId?: string | null;
+    clientNameSourcePage?: number | null;
+    clientNameSourceQuote?: string | null;
+    deadline?: Date | string | null;
+    deadlineSourceFileId?: string | null;
+    deadlineSourcePage?: number | null;
+    deadlineSourceQuote?: string | null;
+    submissionMethod?: string | null;
+    submissionMethodSourceFileId?: string | null;
+    submissionMethodSourcePage?: number | null;
+    submissionMethodSourceQuote?: string | null;
+    submissionAddress?: string | null;
+    submissionAddressSourceFileId?: string | null;
+    submissionAddressSourcePage?: number | null;
+    submissionAddressSourceQuote?: string | null;
+    submissionEmails?: string | null;
+    submissionEmailSourceFileId?: string | null;
+    submissionEmailSourcePage?: number | null;
+    submissionEmailSourceQuote?: string | null;
+  },
+  activeFiles: Array<{ id: string; extractedText?: string | null; totalPages?: number | null }>,
+): MetadataEvidenceValidation {
+  const blockers: string[] = [];
+  const activeFileMap = new Map(activeFiles.map((f) => [f.id, f]));
+  const activeFileIds = new Set(activeFiles.map((f) => f.id));
+
+  function checkField(
+    label: string,
+    value: string | null | undefined,
+    sourceFileId: string | null | undefined,
+    sourcePage: number | null | undefined,
+    sourceQuote: string | null | undefined,
+    requireQuote: boolean = true,
+  ) {
+    if (!value || !value.trim()) {
+      blockers.push(`Critical metadata field ${label} has no value.`);
+      return;
+    }
+    if (!sourceFileId || !activeFileIds.has(sourceFileId)) {
+      blockers.push(`Critical metadata field ${label} has no active TenderFile source evidence.`);
+      return;
+    }
+    if (typeof sourcePage !== "number" || sourcePage < 1) {
+      blockers.push(`Critical metadata field ${label} has invalid source page.`);
+      return;
+    }
+    // ENFORCE sourcePage <= totalPages when totalPages exists
+    const file = activeFileMap.get(sourceFileId!);
+    const totalPages = (file as any)?.totalPages;
+    if (typeof totalPages === "number" && totalPages > 0 && sourcePage > totalPages) {
+      blockers.push(`Critical metadata field ${label} source page ${sourcePage} exceeds file total pages ${totalPages}.`);
+      return;
+    }
+    if (requireQuote) {
+      const quote = (sourceQuote ?? "").trim();
+      if (quote.length < 10) {
+        blockers.push(`Critical metadata field ${label} has no meaningful source quote.`);
+        return;
+      }
+      // QUOTE CONTAINMENT: normalized quote must be in the file's extracted text
+      const file = activeFileMap.get(sourceFileId!);
+      const fileText = String(file?.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+      const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+      if (fileText.length === 0 || !fileText.includes(normalizedQuote)) {
+        blockers.push(`Critical metadata field ${label} source quote is not contained in the referenced active TenderFile extracted text.`);
+      }
+    }
+  }
+
+  // POLICY-DRIVEN: always check title, clientName, deadline, submissionMethod.
+  checkField("title", tender.title, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote);
+  checkField("clientName", tender.clientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote);
+  checkField("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote);
+  checkField("submissionMethod", tender.submissionMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
+
+  // SUBMISSION-METHOD-DRIVEN: use policy helpers, not substring heuristics.
+  const method = tender.submissionMethod;
+  if (isEmailSubmissionMethod(method)) {
+    checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+  } else if (isPhysicalSubmissionMethod(method)) {
+    checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+  } else if (isPortalSubmissionMethod(method)) {
+    // Portal: require one fully grounded declared endpoint
+    const hasEmail = tender.submissionEmails && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage;
+    const hasAddress = tender.submissionAddress && tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage;
+    if (!hasEmail && !hasAddress) {
+      blockers.push("Portal submission requires at least one fully grounded endpoint (email or address with source file + page).");
+    } else if (hasEmail) {
+      checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+    } else {
+      checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+    }
+  } else {
+    // Unknown/empty/malformed submission method: BLOCK — do not fall back.
+    blockers.push(`Unsupported or unknown submission method: "${tender.submissionMethod ?? ""}". Only email, physical, or portal methods are supported.`);
+  }
+
+  return { ok: blockers.length === 0, blockers };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PREFLIGHT: assertTenderReadyToDraftBuildPlan
+// ═══════════════════════════════════════════════════════════════════════════
+// Runs BEFORE any BuildPlan DRAFT is created or rebuilt. Used by:
+// - POST /api/tenders/[id]/build-plan
+// - POST /api/tenders/[id]/submission-plan/build
+// - generate route planOnly mode
+// Creates ZERO GeneratedDocument rows.
+
+export type BuildPlanPreflightResult =
+  | { ok: true; tender: any; items: BuildPlanItem[] }
+  | { ok: false; code: string; message: string; status: number };
+
+export async function assertTenderReadyToDraftBuildPlan(
+  prisma: PrismaClient,
+  tenderId: string,
+  userId: string,
+): Promise<BuildPlanPreflightResult> {
+  // 1. Authenticated tender owner
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: {
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true } },
+      requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+    },
+  });
+  if (!tender) return { ok: false, code: "TENDER_NOT_FOUND", message: "Tender not found or not owned by actor.", status: 404 };
+
+  // 2. At least one ACTIVE TenderFile
+  if (!tender.files || tender.files.length === 0) {
+    return { ok: false, code: "NO_ACTIVE_FILE", message: "No active tender file exists. Upload and extract the tender document first.", status: 422 };
+  }
+
+  // 3. Acceptable extraction quality
+  const { isExtractionAcceptableForGeneration } = await import("./extraction-quality-gate");
+  const { assessExtractionQuality } = await import("../extraction-quality");
+  const effectiveExtractionFiles = tender.files.map((f: any) => {
+    const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
+    return { ...f, extractionScore: Math.min(f.extractionScore ?? quality.score, quality.score), quality };
+  });
+  if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles as any)) {
+    return { ok: false, code: "EXTRACTION_NOT_READY", message: "Tender file extraction quality is too poor to build a trusted Build Plan.", status: 422 };
+  }
+
+  // 4. Canonical promoted AI_SUCCEEDED analysis only
+  const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
+  const analysis = await resolveTenderAnalysisState(prisma, tenderId, userId);
+  if (analysis.state !== "AI_SUCCEEDED") {
+    return { ok: false, code: "ANALYSIS_NOT_READY", message: `AI Analyze is not in AI_SUCCEEDED state (current: ${analysis.state}). Regex, heuristic, partial, failed, weak, or human-approved fallback analysis cannot authorize a Build Plan draft.`, status: 422 };
+  }
+  if (!analysis.canonicalJobId) {
+    return { ok: false, code: "NO_PROMOTED_JOB", message: "No promoted AI Analyze job found. Re-run AI Analyze.", status: 422 };
+  }
+
+  // 5. Current analysis hash + completed chunks
+  const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");
+  const company = await prisma.company.findUnique({ where: { userId }, select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } } }).catch(() => null);
+  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }, company ?? undefined));
+  const latestJob = await prisma.aiJob.findFirst({ where: { tenderId, jobType: "AI_ANALYZE", tender: { userId } }, orderBy: { createdAt: "desc" }, select: { id: true, analysisInputHash: true } });
+  if (latestJob?.analysisInputHash && latestJob.analysisInputHash !== currentContentHash) {
+    return { ok: false, code: "ANALYSIS_HASH_MISMATCH", message: "Tender content changed since the last analysis. Re-run AI Analyze.", status: 422 };
+  }
+
+  // 6. STRICT CRITICAL METADATA EVIDENCE — must be present, non-placeholder,
+  // AND source-grounded with ACTIVE TenderFile + valid page + meaningful quote
+  // actually contained in that file's extracted text.
+  // Uses validateCriticalMetadataEvidenceForBuildPlan — one shared strict
+  // validator for BuildPlan preflight, confirmation, and release gates.
+  const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(tender as any, tender.files as any[]);
+  if (!metaValidation.ok) {
+    return { ok: false, code: "METADATA_CRITICAL_FIELD_INVALID", message: `Critical metadata evidence validation failed: ${metaValidation.blockers.join("; ")}`, status: 422 };
+  }
+
+  // 7. Mandatory requirements grounded by ACTIVE TenderFile + valid page + meaningful quote contained in file text
+  const mandatoryReqs = tender.requirements.filter((r: any) => (r.priority ?? "").toUpperCase() === "MANDATORY");
+  if (mandatoryReqs.length === 0) {
+    return { ok: false, code: "NO_MANDATORY_REQUIREMENTS", message: "No MANDATORY requirements found. Re-run AI Analyze or manually mark critical requirements as MANDATORY.", status: 422 };
+  }
+  const activeFileMap = new Map(tender.files.map((f: any) => [f.id, f]));
+  for (const req of mandatoryReqs) {
+    if (!req.sourceTenderFileId || !activeFileMap.has(req.sourceTenderFileId)) {
+      return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has no active source TenderFile.`, status: 422 };
+    }
+    if (typeof req.sourcePageNumber !== "number" || req.sourcePageNumber < 1) {
+      return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has invalid source page.`, status: 422 };
+    }
+    const reqFile = activeFileMap.get(req.sourceTenderFileId);
+    const reqTotalPages = (reqFile as any)?.totalPages;
+    if (typeof reqTotalPages === "number" && reqTotalPages > 0 && req.sourcePageNumber > reqTotalPages) {
+      return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} source page ${req.sourcePageNumber} exceeds file total pages ${reqTotalPages}.`, status: 422 };
+    }
+    const quote = String(req.sourceExactQuote ?? "").trim();
+    if (quote.length < 10) {
+      return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has no meaningful source quote.`, status: 422 };
+    }
+    const file = activeFileMap.get(req.sourceTenderFileId)!;
+    const fileText = String(file.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!fileText.includes(normalizedQuote)) {
+      return { ok: false, code: "REQUIREMENT_QUOTE_NOT_IN_FILE", message: `Mandatory requirement ${req.id} source quote is not contained in the referenced active TenderFile extracted text.`, status: 422 };
+    }
+  }
+
+  // 8. Tender-controlled exact scope with no missing required documents
+  const planItems = plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
+  if (planItems.length === 0) {
+    return { ok: false, code: "NO_PLAN_ITEMS", message: "No tender-controlled required submission files could be derived. Re-run AI Analyze or add exact file naming.", status: 422 };
+  }
+
+  return { ok: true, tender, items: planItems };
+}
+
+
+function normalizeText(value: unknown): string {
+  return String(value ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function normalizePlanName(value: unknown): string {
+  return normalizeText(value);
+}
+
+function planItemKey(item: Pick<BuildPlanItem, "exactFileName" | "exactOrder" | "documentType">): string {
+  return `${Number(item.exactOrder)}::${normalizePlanName(item.exactFileName)}::${normalizeText(item.documentType)}`;
+}
+
+function quoteSupported(extractedText: unknown, quote: string): boolean {
+  return normalizeText(extractedText).includes(normalizeText(quote));
+}
+
+export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId: string, userId: string, items?: BuildPlanItem[]): Promise<string | null> {
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      id: true, title: true, reference: true, exactFileNaming: true, exactFileOrder: true, submissionMethod: true, submissionAddress: true, submissionEmails: true, submissionEmailSubject: true, deadline: true,
+      procuringEntityName: true,
+      clientName: true, clientNameSourceFileId: true, clientNameSourcePage: true, clientNameSourceQuote: true,
+      submissionMethodSourceFileId: true, submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
+      submissionAddressSourceFileId: true, submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
+      submissionEmailSourceFileId: true, submissionEmailSourcePage: true, submissionEmailSourceQuote: true,
+      titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true,
+      deadlineSourceFileId: true, deadlineSourcePage: true, deadlineSourceQuote: true,
+      files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true } },
+      requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+    },
+  });
+  if (!tender) return null;
+  // Load metadata overrides to resolve effective values for canonical hash
+  const metadataOverrides = await prisma.tenderMetadataOverride.findMany({
+    where: { tenderId },
+    select: { field: true, fieldState: true, overrideValue: true },
+  }).catch(() => []);
+  // ATTACH overrides to the tender object so buildCanonicalBuildPlanHashInput
+  // can read them via tender.metadataOverrides. Without this, overrides have
+  // ZERO effect on the hash (override changes would not stale the plan).
+  (tender as any).metadataOverrides = metadataOverrides;
+  const planItems = items ?? plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
+  // CANONICAL HASH: uses buildCanonicalBuildPlanHashInput — the ONE shared
+  // builder. No caller may manually construct a reduced hash input or append
+  // items/metadata after calling this.
+  const { buildCanonicalBuildPlanHashInput, computeBuildPlanHash } = await import("./build-plan-hash");
+  const hashItems = planItems.map((item) => ({
+    canonicalId: item.canonicalId,
+    exactFileName: item.exactFileName,
+    exactOrder: item.exactOrder,
+    documentType: item.documentType,
+    required: item.required,
+    format: item.format,
+    envelope: item.envelope,
+    sourceRequirementIds: item.sourceRequirementIds,
+    pageLimit: item.pageLimit,
+    templateRequired: item.templateRequired,
+    templateSourceFileId: item.templateSourceFileId,
+    brandingAllowed: item.brandingAllowed,
+    signatureAllowed: item.signatureAllowed,
+    stampAllowed: item.stampAllowed,
+    grouping: item.grouping,
+    notes: item.notes,
+  }));
+  return computeBuildPlanHash(buildCanonicalBuildPlanHashInput(tender as any, hashItems));
+}
+
+export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string, userId: string): Promise<BuildPlanDraftResult> {
+  // SERIALIZABLE REBUILD: preflight + hash + persistence inside a PostgreSQL
+  // Serializable transaction with bounded P2034 retry.
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        // PREFLIGHT inside transaction — checks current state under isolation.
+        const preflight = await assertTenderReadyToDraftBuildPlan(tx as PrismaClient, tenderId, userId);
+        if (!preflight.ok) {
+          return { ok: false as const, code: preflight.code, message: preflight.message, status: preflight.status };
+        }
+        const { tender, items } = preflight;
+        const contentHash = await computeTenderBuildPlanHash(tx as PrismaClient, tenderId, userId, items);
+        if (!contentHash) {
+          return { ok: false as const, code: "HASH_COMPUTE_FAILED", message: "Could not compute BuildPlan content hash.", status: 500 };
+        }
+
+        const itemsJson = JSON.stringify(items);
+        const validationJson = JSON.stringify({ ok: false, blockers: ["Draft build plan requires confirmation."] });
+        const plan = await (tx as any).buildPlan.upsert({
+          where: { tenderId },
+          update: {
+            status: "DRAFT",
+            revision: { increment: 1 },
+            contentHash,
+            itemsJson,
+            validationJson,
+            builtById: userId,
+            confirmedRevision: null,
+            confirmedContentHash: null,
+            confirmedById: null,
+            confirmedBy: null,
+            confirmedAt: null,
+          },
+          create: {
+            tenderId,
+            status: "DRAFT",
+            revision: 1,
+            contentHash,
+            itemsJson,
+            validationJson,
+            builtById: userId,
+          },
+        });
+        return { ok: true as const, plan, items };
+      }, { isolationLevel: "Serializable" });
+    } catch (err: any) {
+      if (err?.code === "P2034" && attempt < MAX_RETRIES) {
+        continue; // Serialization conflict — retry
+      }
+      // Non-concurrency failure — sanitized 500, not fake conflict
+      return { ok: false as const, code: "BUILD_PLAN_INTERNAL_ERROR", message: "BuildPlan draft failed due to an internal error.", status: 500 };
+    }
+  }
+  return { ok: false as const, code: "BUILD_PLAN_CONFLICT", message: "BuildPlan draft failed after retries due to concurrent modification.", status: 409 };
+}
+
+export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {
+  const blockers: string[] = [];
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: true } });
+  if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
+  const activeFiles = new Map(tender.files.filter((f: any) => f.deletionStatus === "ACTIVE").map((f: any) => [f.id, f]));
+  const reqs = new Map(tender.requirements.map((r: any) => [r.id, r]));
+  const authoritativeItems = plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
+  const authoritativeKeys = new Set(authoritativeItems.map(planItemKey));
+  const seen = new Set<string>();
+  if (items.length === 0) blockers.push("Build Plan has no tender-controlled required files.");
+  if (items.length !== authoritativeItems.length) blockers.push("Build Plan item count does not match current tender-controlled submission scope.");
+  for (const item of items) {
+    const key = planItemKey(item);
+    if (!authoritativeKeys.has(key)) blockers.push(`${item.exactFileName} order/type/name is not in current tender-controlled scope.`);
+    const orderNameKey = `${Number(item.exactOrder)}:${normalizePlanName(item.exactFileName)}`;
+    if (seen.has(orderNameKey)) blockers.push(`Duplicate/conflicting plan item: ${item.exactOrder} ${item.exactFileName}`);
+    seen.add(orderNameKey);
+    if (!item.exactFileName?.trim() || !Number.isInteger(item.exactOrder) || item.exactOrder < 1) blockers.push(`Invalid filename/order for ${item.canonicalId ?? item.exactFileName}`);
+    if (item.required && item.sourceRequirementIds.length === 0 && !String(item.canonicalId ?? "").startsWith("exact-")) blockers.push(`${item.exactFileName} is missing linked tender requirement IDs.`);
+    for (const reqId of item.sourceRequirementIds) {
+      const req: any = reqs.get(reqId);
+      if (!req) { blockers.push(`${item.exactFileName} references missing/foreign requirement ${reqId}.`); continue; }
+      const file: any = req.sourceTenderFileId ? activeFiles.get(req.sourceTenderFileId) : null;
+      const quote = String(req.sourceExactQuote ?? "").trim();
+      if (!file) blockers.push(`Requirement ${reqId} evidence is not an ACTIVE TenderFile on this tender.`);
+      if (!Number.isInteger(req.sourcePageNumber) || req.sourcePageNumber < 1) blockers.push(`Requirement ${reqId} has invalid source page.`);
+      const confirmTotalPages = (file as any)?.totalPages;
+      if (typeof confirmTotalPages === "number" && confirmTotalPages > 0 && req.sourcePageNumber > confirmTotalPages) blockers.push(`Requirement ${reqId} source page ${req.sourcePageNumber} exceeds file total pages ${confirmTotalPages}.`);
+      if (quote.length < 10) blockers.push(`Requirement ${reqId} has no meaningful source quote.`);
+      if (file && quote.length >= 10 && !quoteSupported(file.extractedText, quote)) blockers.push(`Requirement ${reqId} quote is not supported by active file text.`);
+    }
+  }
+  for (const authoritative of authoritativeItems) {
+    if (!items.some((item) => planItemKey(item) === planItemKey(authoritative))) blockers.push(`${authoritative.exactFileName} is missing from the Build Plan.`);
+  }
+  // STRICT CRITICAL METADATA EVIDENCE: run the same shared validator.
+  const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(tender as any, tender.files.filter((f: any) => f.deletionStatus === "ACTIVE"));
+  if (!metaValidation.ok) {
+    blockers.push(...metaValidation.blockers);
+  }
+  return { ok: blockers.length === 0, blockers };
+}
+
+export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderId: string, userId: string) {
+  const plan = await (prisma as any).buildPlan.findFirst({ where: { tenderId, status: "CONFIRMED", tender: { userId } }, orderBy: { updatedAt: "desc" } });
+  if (!plan) return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+  const items = JSON.parse(plan.itemsJson || "[]") as BuildPlanItem[];
+  const currentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
+  const hashOk = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
+  if (!hashOk) return { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
+  // STRICT CRITICAL METADATA EVIDENCE: even if hash matches, reject if
+  // metadata evidence is no longer valid (e.g., source file was deleted).
+  const fullTender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: { files: { where: { deletionStatus: "ACTIVE" } } },
+  });
+  if (fullTender) {
+    const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[]);
+    if (!metaValidation.ok) {
+      return { ok: false as const, blocker: `Confirmed Build Plan metadata evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
+    }
+  }
+  return { ok: true as const, plan, currentHash };
+}
+
+
+export type ConfirmedPlanDocumentValidation = { ok: boolean; blockers: string[]; exportReadyDocumentCount: number };
+
+function generatedDocumentHasContent(doc: { fileContent?: string | null; storagePath?: string | null }): boolean {
+  return Boolean(String(doc.fileContent ?? "").trim() || String(doc.storagePath ?? "").trim());
+}
+
+export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<ConfirmedPlanDocumentValidation> {
+  const blockers: string[] = [];
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } });
+  if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."], exportReadyDocumentCount: 0 };
+
+  const requiredItems = items.filter((item) => item.required);
+  const requiredKeys = new Set(requiredItems.map(planItemKey));
+  const docs = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, format: true, fileContent: true, storagePath: true, generationStatus: true, validationStatus: true, reviewStatus: true },
+  });
+  let exportReadyDocumentCount = 0;
+  const docsByKey = new Map<string, typeof docs>();
+  for (const doc of docs) {
+    const key = planItemKey({ exactFileName: doc.exactFileName ?? doc.name, exactOrder: doc.exactOrder ?? -1, documentType: doc.documentType });
+    const bucket = docsByKey.get(key) ?? [];
+    bucket.push(doc);
+    docsByKey.set(key, bucket);
+    if (!requiredKeys.has(key) && doc.generationStatus === "GENERATED") blockers.push(`Generated document ${doc.name} is not in the confirmed Build Plan.`);
+  }
+
+  for (const item of requiredItems) {
+    const key = planItemKey(item);
+    const matches = docsByKey.get(key) ?? [];
+    const ready = matches.filter((doc) =>
+      doc.generationStatus === "GENERATED" &&
+      generatedDocumentHasContent(doc) &&
+      ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) &&
+      ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(doc.reviewStatus),
+    );
+    if (matches.length === 0) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is missing.`);
+    if (matches.length > 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} has duplicate generated rows.`);
+    if (matches.some((doc) => !generatedDocumentHasContent(doc))) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is empty.`);
+    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated, validated, and approved for export.`);
+    exportReadyDocumentCount += ready.length;
+  }
+
+  return { ok: blockers.length === 0, blockers, exportReadyDocumentCount };
+}

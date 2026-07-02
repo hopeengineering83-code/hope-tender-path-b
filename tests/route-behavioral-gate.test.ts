@@ -96,10 +96,15 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
     requirementCount: 5,
     requirements: [
-      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true },
+      { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "This is a meaningful quote exceeding minimum length", sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: This is a meaningful quote exceeding minimum length. Additional context for the tender file extraction." },
     ],
     criticalMetadataOk: true,
-    hasValidVirtualSubmissionPlan: true,
+    // BuildPlan enforcement is fail-closed: undefined blocks the same as false.
+    // Default to true so the "passing" base case actually passes; tests that
+    // exercise the BuildPlan-confirmed blocker override these to false.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
+    recordedBuildPlanState: "VALID" as const,
     exportReadyDocumentCount: 3,
     ...overrides,
   };
@@ -148,7 +153,6 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan (hasValidVirtualSubmissionPlan=true, exportReady=0) allows generation", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "generate",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 0, // no real generated files
     }));
     assert.equal(r.ok, true, "Virtual plan must allow generation");
@@ -157,7 +161,6 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan + zero export-ready files blocks export", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
@@ -167,7 +170,6 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan + zero export-ready files blocks final-zip", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "final-zip",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
@@ -177,7 +179,6 @@ describe("Route behavioral — virtual plan allows generation but blocks export/
   it("virtual plan + real export-ready files allows export", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 3,
     }));
     assert.equal(r.ok, true);
@@ -191,7 +192,6 @@ describe("Route behavioral — legacy PLANNED rows cannot unlock any gate", () =
     // The gate uses exportReadyDocumentCount which only counts GENERATED+content+validated+reviewed.
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "export",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 0, // PLANNED rows don't count
     }));
     assert.equal(r.ok, false);
@@ -201,21 +201,21 @@ describe("Route behavioral — legacy PLANNED rows cannot unlock any gate", () =
   it("PLANNED rows (exportReadyDocumentCount=0) block final-zip", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "final-zip",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 
-  it("missing virtual plan blocks generation (PLANNED is not a plan proof)", () => {
+  it("missing BuildPlan blocks generation", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "generate",
-      hasValidVirtualSubmissionPlan: false,
+      hasCurrentConfirmedBuildPlan: false,
+      recordedBuildPlanState: "MISSING" as const,
       exportReadyDocumentCount: 0,
     }));
     assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+    assert.equal(r.blockerCode, "BUILD_PLAN_MISSING");
   });
 });
 
@@ -271,9 +271,57 @@ describe("Route behavioral — export and final-zip require real generated files
   it("generation does NOT require export-ready files (only virtual plan)", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       purpose: "generate",
-      hasValidVirtualSubmissionPlan: true,
       exportReadyDocumentCount: 0, // generation doesn't need export-ready files
     }));
     assert.equal(r.ok, true, "Generation only needs virtual plan, not export-ready files");
+  });
+});
+
+// ─── Mutation guards: source-code contracts that protect against regressions ──
+
+describe("Route behavioral — mutation guards for GeneratedDocument proxy + ensurePlanned stub", () => {
+  const { readFileSync } = require("node:fs");
+
+  it("generate route MUST NOT import or call hasValidSubmissionPlan (proxy removed)", () => {
+    // Mutation guard: if anyone re-imports hasValidSubmissionPlan or re-adds
+    // a `hasValidSubmissionPlan(prisma, ...)` call in the generate route,
+    // this test fails. GeneratedDocument rows must NEVER be used as a
+    // BuildPlan proxy.
+    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    // The import may not appear anywhere in the file.
+    assert.ok(
+      !/import\s*\{[^}]*\bhasValidSubmissionPlan\b[^}]*\}\s*from/.test(src),
+      "generate route MUST NOT import hasValidSubmissionPlan — GeneratedDocument rows are not a BuildPlan proxy",
+    );
+    // The call may not appear anywhere except inside the no-op stub comment.
+    // Strip the comment block first, then check.
+    const withoutComments = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.ok(
+      !/hasValidSubmissionPlan\s*\(/.test(withoutComments),
+      "generate route MUST NOT call hasValidSubmissionPlan — GeneratedDocument rows are not a BuildPlan proxy",
+    );
+  });
+
+  it("generate route ensurePlannedGeneratedDocumentRecords is a no-op stub that returns 0", () => {
+    // Mutation guard: if anyone re-enables ensurePlannedGeneratedDocumentRecords
+    // to actually create GeneratedDocument rows before preflight, this test
+    // fails. The function body MUST be `return 0;` with no other logic.
+    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    // Find the function body.
+    const m = src.match(/async function ensurePlannedGeneratedDocumentRecords\([^)]*\):\s*Promise<number>\s*\{([^}]*)\}/);
+    assert.ok(m, "ensurePlannedGeneratedDocumentRecords function must exist");
+    const body = m[1].trim();
+    assert.equal(body, "return 0;", `ensurePlannedGeneratedDocumentRecords MUST be a no-op stub returning 0. Got: "${body}"`);
+  });
+
+  it("generate route planOnly path returns authorizesGeneration:false", () => {
+    // Mutation guard: if anyone changes the planOnly response to
+    // authorizesGeneration:true, this test fails. planOnly MUST NEVER
+    // authorize generation — it only proves the tender CAN be planned.
+    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    const planOnlyIdx = src.indexOf('url.searchParams.get("planOnly") === "true"');
+    assert.ok(planOnlyIdx > -1, "planOnly path must exist");
+    const planOnlyBlock = src.slice(planOnlyIdx, planOnlyIdx + 4000);
+    assert.match(planOnlyBlock, /authorizesGeneration:\s*false/, "planOnly MUST return authorizesGeneration:false");
   });
 });

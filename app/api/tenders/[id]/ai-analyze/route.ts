@@ -13,6 +13,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
+import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -39,6 +40,34 @@ import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
+
+// Resolve the per-field metadata source file IDs from the ACTUAL extraction
+// evidence: each field is bound to the active file whose extracted text contains
+// the field's supporting quote (or null → ungrounded). Previously only
+// clientName, submissionMethod, and submissionAddress had quotes to attribute.
+// Now title and deadline also carry source quotes (tenderTitleSourceQuote,
+// deadlineSourceQuote), and submissionEmail is attributed from its own
+// submissionEmailSourceQuote (no longer left null).
+function resolveMetadataSourceFileIds(
+  aiResult: AIAnalysisResult,
+  files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
+): {
+  clientNameSourceFileId: string | null;
+  submissionMethodSourceFileId: string | null;
+  submissionAddressSourceFileId: string | null;
+  submissionEmailSourceFileId: string | null;
+  titleSourceFileId: string | null;
+  deadlineSourceFileId: string | null;
+} {
+  return {
+    clientNameSourceFileId: attributeMetadataSourceFileId(aiResult.clientNameSourceQuote, files),
+    submissionMethodSourceFileId: attributeMetadataSourceFileId(aiResult.submissionMethodSourceQuote, files),
+    submissionAddressSourceFileId: attributeMetadataSourceFileId(aiResult.submissionAddressSourceQuote, files),
+    submissionEmailSourceFileId: attributeMetadataSourceFileId(aiResult.submissionEmailSourceQuote, files),
+    titleSourceFileId: attributeMetadataSourceFileId(aiResult.tenderTitleSourceQuote, files),
+    deadlineSourceFileId: attributeMetadataSourceFileId(aiResult.deadlineSourceQuote, files),
+  };
+}
 
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
   stepName: string;
@@ -308,7 +337,7 @@ async function handleStreamingAnalyze(
                   id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
                   classification: true, extractedText: true, createdAt: true,
                   totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-                  extractionScore: true, extractionMethod: true,
+                  extractionScore: true, extractionMethod: true, deletionStatus: true,
                 },
               },
             },
@@ -325,13 +354,20 @@ async function handleStreamingAnalyze(
           return;
         }
         const tenderRecord = tender;
-        // Pre-build the set of real TenderFile IDs so we can validate the
+        // Pre-build the set of real ACTIVE TenderFile IDs so we can validate the
         // AI-returned sourceFileToken before storing it as sourceTenderFileId.
         // The AI prompt embeds [FILE_ID:{uuid}] markers and asks the model to
         // copy the exact UUID, but LLMs sometimes return garbled values or file
         // names instead. Storing a garbage ID would make the export-readiness
         // SOURCE_REFERENCES_MISSING gate pass when it should block.
-        const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
+        // ONLY ACTIVE files are accepted — deleted/foreign file IDs are rejected
+        // so a requirement cannot be grounded against a file that no longer
+        // exists in the tender.
+        const validTenderFileIds = new Set(
+          tenderRecord.files
+            .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+            .map((f) => f.id),
+        );
 
         const extractionReports = tenderRecord.files.map((file) => ({
           fileName: file.originalFileName || file.fileName,
@@ -623,6 +659,7 @@ async function handleStreamingAnalyze(
                 submissionMethod: tenderRecord.submissionMethod,
                 submissionEmails: tenderRecord.submissionEmails,
                 notes: tenderRecord.notes,
+                ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -998,7 +1035,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
             classification: true, extractedText: true, createdAt: true,
             totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-            extractionScore: true, extractionMethod: true,
+            extractionScore: true, extractionMethod: true, deletionStatus: true,
           },
         },
       },
@@ -1010,7 +1047,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const tenderRecord = tender;
-  const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
+  // ONLY ACTIVE TenderFile IDs are accepted as valid sourceTenderFileId values.
+  // Deleted/foreign file IDs are rejected so a requirement cannot be grounded
+  // against a file that no longer exists in the tender.
+  const validTenderFileIds = new Set(
+    tenderRecord.files
+      .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+      .map((f) => f.id),
+  );
 
   const extractionReports = tenderRecord.files.map((file) => ({
     fileName: file.originalFileName || file.fileName,
@@ -1307,6 +1351,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             submissionMethod: tenderRecord.submissionMethod,
             submissionEmails: tenderRecord.submissionEmails,
             notes: tenderRecord.notes,
+            ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.

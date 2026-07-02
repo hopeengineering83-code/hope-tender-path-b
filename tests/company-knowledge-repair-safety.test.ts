@@ -7,10 +7,10 @@ const aiExtractor = fs.readFileSync("lib/company-knowledge-ai.ts", "utf8");
 const diagnosticsRoute = fs.readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
 
 describe("company knowledge repair safety copy and diagnostics", () => {
-  it("does not claim Gemini is the only knowledge extraction provider", () => {
+  it("lists all 10 providers (not just Gemini)", () => {
     assert.ok(!/GEMINI_API_KEY is required/.test(repairRoute));
-    assert.match(repairRoute, /OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY/);
-    assert.match(repairRoute, /Claude\/Anthropic remains last-resort/);
+    assert.match(repairRoute, /ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY/);
+    assert.match(repairRoute, /emergency-only last resort/);
   });
 
   it("downgrades missing dedicated CV/project docs to LOW when reviewed records exist", () => {

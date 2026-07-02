@@ -16,6 +16,7 @@
 
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
+  ALL_CONFIGURED_PROVIDERS as CATALOG_ALL_PROVIDERS,
   PROVIDER_API_KEY_ENV,
 } from "./ai-provider-catalog.cjs";
 
@@ -369,8 +370,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     outputCaps: STANDARD_CAPS,
     timeoutMs: 10_000,
     retry: FALLBACK_RETRY,
-    // Last-resort emergency provider — kept last so rate limits never block the
-    // app when earlier providers are available.
+    // Last AI provider — emergency-only (rank 10). All earlier providers are automatic; Anthropic is the emergency-only last resort.
     emergencyOnly: true,
     supportsStructuredJson: false,
   },
@@ -389,6 +389,12 @@ export function getProviderEntry(provider: AiProviderName): ProviderRegistryEntr
 /** Canonical ordered list of registry entries (rank ascending). */
 export function getCanonicalProviderEntries(): ProviderRegistryEntry[] {
   return CANONICAL_AI_PROVIDER_ORDER.map((p) => REGISTRY[p]);
+}
+
+export const ALL_CONFIGURED_PROVIDERS: readonly AiProviderName[] = CATALOG_ALL_PROVIDERS;
+
+export function getAllConfiguredProviderEntries(): ProviderRegistryEntry[] {
+  return ALL_CONFIGURED_PROVIDERS.map((p) => REGISTRY[p]);
 }
 
 export function providerDisplayName(provider: AiProviderName): string {

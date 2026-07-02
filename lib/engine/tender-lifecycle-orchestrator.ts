@@ -58,6 +58,7 @@ export type LifecycleState =
   | "AI_ANALYSIS_REQUIRED"
   | "AI_ANALYSIS_FAILED"
   | "ANALYSIS_FALLBACK_UNAPPROVED"
+  | "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY"
   | "ANALYSIS_READY_FOR_REVIEW"
   | "ANALYSIS_APPROVED"
   | "METADATA_INCOMPLETE"
@@ -388,6 +389,11 @@ export async function computeTenderLifecycle(
   const hasText = files.some(
     (f) => (f.extractedText ?? "").trim().length > 100,
   );
+  // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK is audit-only and MUST
+  // NEVER be treated as a valid analysis for lifecycle "hasAnalysis" — only
+  // genuine AI (or even REGEX_FALLBACK_AI_ERROR, which merely proves an
+  // analysis attempt was made) counts. The release authorization check
+  // (analysisOk below) is what blocks HUMAN_APPROVED from authorizing actions.
   const hasAnalysis =
     analysisSource === "AI" ||
     analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK" ||
@@ -495,7 +501,10 @@ export async function computeTenderLifecycle(
     (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
   );
   const finalExportReady =
-    (analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") &&
+    // PERMANENT BLOCK: only genuine AI authorizes final export. HUMAN_APPROVED
+    // _REGEX_FALLBACK is audit-only and MUST NEVER mark the tender as final-
+    // export-ready. Re-run AI Analyze to obtain a genuine AI analysis.
+    analysisSource === "AI" &&
     meta.missingCritical.length === 0 &&
     meta.invalidFields.length === 0 &&
     !tender.metadataContaminated &&
@@ -546,8 +555,22 @@ export async function computeTenderLifecycle(
     primaryNextAction = providers.hasAnyProvider ? "RETRY_AI_ANALYZE" : "APPROVE_FALLBACK_WITH_NOTE";
     blockers.push({
       code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-      message: "Analysis used the regex fallback (all AI providers failed). Generate Docs, Auto-finalize, and Download ZIP are blocked until AI analysis succeeds or a human explicitly approves this fallback.",
-      action: providers.hasAnyProvider ? "Retry AI Analyze — providers may be available again." : "Approve fallback analysis with a note explaining why it is sufficient.",
+      message: "Analysis used the regex fallback (all AI providers failed). Generate Docs, Auto-finalize, and Download ZIP are blocked until AI analysis succeeds. Human approval is audit-only and does NOT authorize release.",
+      action: providers.hasAnyProvider ? "Retry AI Analyze — providers may be available again." : "Re-run AI Analyze after restoring provider access.",
+    });
+  }
+  // 5b. Analysis used regex fallback and WAS human-approved — but human approval
+  //     is now AUDIT-ONLY. It does not authorize release. The lifecycle state
+  //     still shows "approved" so the audit trail is preserved, but the
+  //     blockers explicitly tell the user that release remains blocked until
+  //     AI Analyze is re-run with healthy providers.
+  else if (analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
+    lifecycleState = "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY";
+    primaryNextAction = "RETRY_AI_ANALYZE";
+    blockers.push({
+      code: "ANALYSIS_FALLBACK_AUDIT_ONLY",
+      message: "Analysis used the regex fallback and was human-approved as audit-only. Human approval no longer authorizes Generate Docs, Auto-finalize, Export, Download ZIP, or any release action. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis.",
+      action: "Retry AI Analyze — providers may be available again. The audit-only approval is preserved for record-keeping.",
     });
   }
   // 6. Metadata incomplete (critical fields missing or placeholders)
@@ -649,8 +672,10 @@ export async function computeTenderLifecycle(
   const allowed: AllowedAction[] = [];
   const blocked: BlockedAction[] = [];
 
-  const analysisOk = analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
-  const fallbackUnapproved = analysisSource === "REGEX_FALLBACK_AI_ERROR";
+  // PERMANENT BLOCK: only genuine AI authorizes release actions. HUMAN_APPROVED
+  // _REGEX_FALLBACK is audit-only — it MUST NEVER be treated as analysisOk.
+  const analysisOk = analysisSource === "AI";
+  const fallbackUnapproved = analysisSource === "REGEX_FALLBACK_AI_ERROR" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
   const noFinalDocs = counts.finalExportCandidates === 0;
 
   // AI Analyze — always available if files exist and provider is configured

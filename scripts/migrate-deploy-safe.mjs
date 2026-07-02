@@ -159,13 +159,16 @@ if (initialResult === "failed-init") {
   throw new Error(`Migration deployment did not complete safely: ${initialResult}`);
 }
 
-// Final verification of the applied state
+// Final verification of the applied state — FAIL-CLOSED (port #861 behavior).
+// Post-migration retroactive-init verification MUST throw on failure so a
+// broken migration never silently deploys. The previous non-fatal warnings
+// allowed production to run with an incomplete schema.
 try {
   command(process.execPath, ["scripts/verify-retroactive-init.mjs"]);
 } catch (error) {
-  console.warn("Final retroactive init verification encountered an issue (may be transient)");
-  console.warn("Error:", errorText(error).slice(0, 500));
-  // Don't throw - migrations are deployed; verification warnings are non-fatal
+  console.error("FAIL-CLOSED: Final retroactive init verification FAILED.");
+  console.error("Error:", errorText(error).slice(0, 500));
+  throw new Error("Migration deployment FAILED: retroactive init verification did not pass. Database schema is not in a safe state.");
 }
 
 try {
@@ -173,9 +176,9 @@ try {
     env: { ...process.env, REQUIRE_MIGRATION_HISTORY: "true" },
   });
 } catch (error) {
-  console.warn("Critical schema check encountered an issue");
-  console.warn("Error:", errorText(error).slice(0, 500));
-  // Non-fatal for Vercel build - schema is already deployed
+  console.error("FAIL-CLOSED: Critical schema check FAILED.");
+  console.error("Error:", errorText(error).slice(0, 500));
+  throw new Error("Migration deployment FAILED: critical schema verification did not pass. Database schema is not in a safe state.");
 }
 
 console.log("Database migration deployment completed.");

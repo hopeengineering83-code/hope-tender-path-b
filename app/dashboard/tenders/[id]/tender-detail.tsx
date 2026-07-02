@@ -1691,14 +1691,22 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   // Use clientName || procuringEntityName to match the server-side gate.
   const clientNameInvalid = getClientNameStatus(tender.clientName || tender.procuringEntityName) !== "VALID";
   const metadataContaminatedBlock = tender.metadataContaminated === true;
-  // Mirror server-side hasValidSubmissionPlan gate: at least one non-SUPERSEDED doc row must exist.
-  const hasValidPlan = tender.generatedDocuments.some((d) => d.generationStatus !== "SUPERSEDED");
+  // BuildPlan is the AUTHORITATIVE plan. GeneratedDocument rows MUST NEVER be
+  // used as a proxy for plan existence — that was the legacy hasValidSubmission
+  // path which counted any non-SUPERSEDED row (including PLANNED/pending rows)
+  // as proof of a plan. The server-side gate (assertTenderReadyForGeneration
+  // AndExport) enforces hasCurrentConfirmedBuildPlan + recordedBuildPlanState.
+  // The UI cannot cheaply know the confirmed-plan state without an extra API
+  // call, so it does NOT block on plan here — the server gate is authoritative.
+  // The UI still blocks on the other hard gates (extraction, metadata, analysis,
+  // requirements, evidence) so the button is disabled for genuinely unready
+  // tenders; if the user clicks it on a tender without a confirmed BuildPlan,
+  // the server returns BUILD_PLAN_NOT_CONFIRMED with nextAction BUILD_SUBMISSION_PLAN.
 
   const canGenerateDocs = !analysisIsFallbackUnapproved
     && !extractionCorrupted
     && !clientNameInvalid
     && !metadataContaminatedBlock
-    && hasValidPlan
     && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
@@ -1712,19 +1720,17 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       : clientNameInvalid
         ? "Client/procuring entity name is missing or invalid — run AI Analyze or enter it manually before generating"
         : analysisIsFallbackUnapproved
-          ? "Analysis used regex fallback — re-extract and re-run AI Analyze or approve the fallback before generating"
+          ? "Analysis used regex fallback — re-extract and re-run AI Analyze before generating (human approval is audit-only and does not authorize generation)"
           : tender.requirements.length === 0
             ? "Run AI Analyze or Run Engine first to extract requirements"
-            : !hasValidPlan
-              ? "Build the submission plan first (click Build Plan or Run Engine) before generating documents"
-              : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-                ? "Run Engine first to generate expert matches"
-                : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-                  ? "Run Engine first to generate project matches"
-                  : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-                    ? "Select at least one reviewed expert match before generating"
-                    : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-                      ? "Select at least one reviewed project match before generating"
+            : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+              ? "Run Engine first to generate expert matches"
+              : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+                ? "Run Engine first to generate project matches"
+                : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+                  ? "Select at least one reviewed expert match before generating"
+                  : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+                    ? "Select at least one reviewed project match before generating"
                       : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
                         ? "Review at least one selected expert before generating"
                         : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
@@ -1940,7 +1946,6 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                 onClick={() => window.open(`/api/tenders/${tender.id}/matching-diagnostics`, "_blank")}
                 className="rounded-md border border-indigo-300 px-2 py-1 text-[11px] text-indigo-800 hover:bg-indigo-100"
               >
-                Open JSON
               </button>
             </div>
           </div>

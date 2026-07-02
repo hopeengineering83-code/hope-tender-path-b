@@ -10,6 +10,7 @@ type Props = {
   tenderId: string;
   initialContinueJobId?: string | null;
   aiEnabled: boolean;
+  canMutate?: boolean;
 };
 
 const POLL_INTERVAL_MS = 3_000;
@@ -19,7 +20,7 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
+export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);
@@ -207,7 +208,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {aiEnabled ? (
+          {aiEnabled && canMutate ? (
             <button
               onClick={handleBackgroundAnalyze}
               disabled={busy}
@@ -216,6 +217,8 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
               <SparklesIcon />
               {analyzing ? (phase || "Analyzing…") : "Run AI Analyze"}
             </button>
+          ) : aiEnabled && !canMutate ? (
+            <span className="text-xs text-slate-500 font-medium italic">Read-only — AI Analyze requires ADMIN or PROPOSAL_MANAGER role</span>
           ) : (
             <span className="text-xs text-red-600 font-medium italic">AI providers not configured</span>
           )}
@@ -248,6 +251,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
             Providers cooling down — auto-retrying in {autoRetrySecondsLeft}s
             {willResume ? " (resumes from the last completed chunk)" : ""}
           </span>
+          {canMutate && (
           <button
             onClick={() => { cancelAutoRetry(); handleBackgroundAnalyze(); }}
             disabled={analyzing}
@@ -256,6 +260,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
           >
             Retry now
           </button>
+          )}
           <button onClick={cancelAutoRetry} className="text-xs text-blue-600 underline hover:text-blue-800">
             Cancel
           </button>
@@ -267,6 +272,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
           <p className="font-semibold">Analysis {jobStatus === "PARTIAL_SUCCESS" ? "Incomplete" : "Error"}</p>
           <p className="mt-1 text-red-700">{error}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {canMutate && (
             <button
               onClick={() => { setError(""); handleBackgroundAnalyze(); }}
               disabled={busy}
@@ -274,6 +280,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled }: Props) {
             >
               <RefreshIcon /> Retry AI Analyze
             </button>
+            )}
             <button
               onClick={runProviderDiagnostics}
               disabled={diagnosing}

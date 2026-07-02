@@ -165,9 +165,14 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
   if ((input.evidenceCoverage ?? 0) <= 0) applicableCaps.push({ dimension: "evidenceCoverage", capScore: 35, reason: "Evidence coverage is 0% — readiness is capped at 35 until mandatory/critical requirements are mapped to reviewed evidence." });
   if (reqDocs.gapCount > 0) applicableCaps.push({ dimension: "requiredDocumentCompleteness", capScore: 50, reason: `${reqDocs.gapCount} required submission document(s) are missing from current outputs — readiness is capped at 50.` });
   if (input.analysisSource === "REGEX_FALLBACK_AI_ERROR") applicableCaps.push({ dimension: "analysisSource", capScore: 45, reason: "Analysis came from regex fallback. Readiness is capped at 45 until AI analysis is re-run." });
+  // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK is audit-only — it MUST
+  // NEVER authorize release. Cap at 45 (same as unapproved regex fallback)
+  // regardless of verification status, because the release path is blocked
+  // at the gate level anyway. The previous "fullyVerified → no cap" branch
+  // was misleading: it suggested the tender was release-ready when in fact
+  // the gate would still block it.
   if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
-    const fullyVerified = (input.sourceReferenceCoverage ?? 0) >= 0.8 && (input.complianceMatrixCoverage ?? 0) >= 0.8;
-    if (!fullyVerified) applicableCaps.push({ dimension: "analysisSource", capScore: 70, reason: "Human-approved regex fallback is draft-review only unless explicit final admin override exists." });
+    applicableCaps.push({ dimension: "analysisSource", capScore: 45, reason: "Human-approved regex fallback is AUDIT-ONLY and does NOT authorize release. Readiness is capped at 45 until AI analysis is re-run with healthy providers." });
   }
   if (input.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") applicableCaps.push({ dimension: "analysisSource", capScore: 30, reason: "AI Analyze was skipped because tender extraction was corrupted." });
   if (input.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") applicableCaps.push({ dimension: "analysisSource", capScore: 40, reason: "AI analysis used regex fallback due to weak extraction." });

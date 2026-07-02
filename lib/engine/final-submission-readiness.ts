@@ -407,11 +407,15 @@ export async function getFinalSubmissionReadiness(
       // the same field decisions as the generate gate (single source of truth).
       clientNameSourcePage: true,
       clientNameSourceQuote: true,
+      clientNameSourceFileId: true,
       submissionMethodSourcePage: true,
       submissionMethodSourceQuote: true,
+      submissionMethodSourceFileId: true,
       submissionAddressSourcePage: true,
       submissionAddressSourceQuote: true,
+      submissionAddressSourceFileId: true,
       submissionEmailSourcePage: true,
+      submissionEmailSourceFileId: true,
       contactDetailsSourceJson: true,
       metadataOverrides: {
         select: { field: true, fieldState: true, overrideValue: true, reason: true, overriddenBy: true, createdAt: true },
@@ -483,6 +487,8 @@ export async function getFinalSubmissionReadiness(
       // export readiness gate so the panel shows the blocker before export.
       files: {
         select: {
+          id: true,
+          deletionStatus: true,
           extractionScore: true,
           totalPages: true,
           extractedPages: true,
@@ -707,6 +713,10 @@ export async function getFinalSubmissionReadiness(
       submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
       submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
       submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+      clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+      submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
+      submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
+      submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
       contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
     },
     overrides: (tender.metadataOverrides ?? []).map((o) => ({
@@ -719,6 +729,13 @@ export async function getFinalSubmissionReadiness(
     })),
     hasExtractedRequirements: tender.requirements.length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,
+    // Same canonical active-file grounding rule as the generation gate so the
+    // export/Final-ZIP readiness can never disagree with the gate.
+    activeTenderFileIds: new Set(
+      (tender.files ?? [])
+        .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+        .map((f: any) => f.id),
+    ),
   });
   if (canonicalExportState.hasExportBlocker) {
     const blockingFields = canonicalExportState.fields
@@ -813,7 +830,20 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
       severity: "HIGH",
       title: "Tender analysis came from the regex fallback (AI providers failed) and has not been human-approved.",
-      recommendedAction: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis if you have manually verified the fallback analysis is correct.",
+      recommendedAction: "Re-run AI Analyze with healthy providers. Human approval is audit-only and does NOT authorize release.",
+    });
+  }
+  // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK is audit-only — it MUST
+  // NEVER authorize final submission / export. Even though a human approved
+  // the fallback, the release path remains blocked until a genuine AI
+  // analysis is re-run. This closes the gap where human approval silently
+  // unlocked the final-submission-readiness panel.
+  if (analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
+    tenderLevelBlockers.push({
+      category: "ANALYSIS_FALLBACK_AUDIT_ONLY",
+      severity: "HIGH",
+      title: "Tender analysis was human-approved as audit-only. Human approval no longer authorizes final submission or export.",
+      recommendedAction: "Re-run AI Analyze with healthy providers to obtain a genuine AI analysis. The audit-only approval is preserved for record-keeping but does NOT unblock release.",
     });
   }
   // Mirror the export-readiness.ts gate: block when analysisExtractionStatus

@@ -97,7 +97,7 @@ export type AuditAction =
   // demoted-count + inspected-count in description.
   | "QUALITY_REASSESSMENT"
   // AI provider chain failed over from one provider to the next
-  // (Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude). Tracked so
+  // (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic). Tracked so
   // an operator can confirm a fallback was attempted before regex was used.
   | "AI_PROVIDER_FAILOVER"
   // Knowledge vault — expert and project lifecycle events.
@@ -111,6 +111,7 @@ export type AuditAction =
   | "SUBMISSION_PLAN_ROW_ACTION"
   // Explicit plan and evidence-confirmation workflow actions.
   | "SUBMISSION_PLAN_BUILT"
+  | "SUBMISSION_PLAN_CONFIRMED"
   | "SUBMISSION_PLAN_AUTO_CLASSIFY"
   | "TENDER_PLAN_BUILT"
   | "REQUIREMENT_EVIDENCE_CONFIRMED"

@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
 
+
 export interface WorkflowStageInfo {
   stage: number;
   label: string;
@@ -12,16 +13,21 @@ export interface WorkflowStageInfo {
   actionLabel?: string;
   actionUrl?: string;
   actionMethod?: string;
+  /** Server-provided action name (recovery-command action key). */
+  actionName?: string;
+  /** Server-provided classification: "mutation" or "readonly". The UI uses
+   * this to HIDE mutation controls for REVIEWER — no client-side inference. */
+  actionKind?: "mutation" | "readonly";
 }
 
-export function TenderWorkflowActionCenter({ tenderId }: { tenderId: string }) {
+export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [stages, setStages] = useState<WorkflowStageInfo[] | null>(null);
 
   const fetchStages = useCallback(() => {
     fetch(`/api/tenders/${tenderId}/workflow-center`)
       .then(res => res.json())
       .then(json => setStages(json.stages))
-      .catch(console.error);
+      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
   }, [tenderId]);
 
   useEffect(() => {
@@ -76,7 +82,7 @@ export function TenderWorkflowActionCenter({ tenderId }: { tenderId: string }) {
                 </p>
               )}
             </div>
-            {s.actionLabel && (
+            {s.actionLabel && (canMutate || s.actionKind === "readonly" || (!s.actionKind && !s.actionUrl)) && (
               <div className="shrink-0 self-center">
                 <button
                   onClick={() => handleAction(s)}

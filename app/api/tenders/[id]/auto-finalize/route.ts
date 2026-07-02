@@ -16,6 +16,7 @@ import { logAction } from "../../../../../lib/audit";
 import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { validateDocumentQuality } from "../../../../../lib/engine/document-quality-validator";
 import { POLISH_TIMEOUT_MS } from "../../../../../lib/timeout-config";
@@ -150,7 +151,7 @@ function isSensitiveDocument(doc: { name?: string | null; exactFileName?: string
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   const requestId = extractRequestId(req);
   const rl = rateLimit(`auto-finalize:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
@@ -245,6 +246,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Resolve analysis source once (includes DB approval check) so the seven-pass
   // gate correctly honours human approval of regex-fallback analyses.
   const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);
+
+  // ── Central readiness gate (MANDATORY) ───────────────────────────────────
+  // Auto-finalize marks documents as READY_FOR_EXPORT — a release-grade
+  // status. It MUST NOT run unless the tender passes the central gate
+  // (confirmed BuildPlan, AI_SUCCEEDED analysis, grounded mandatory
+  // requirements, critical metadata, etc.). Without this, auto-finalize
+  // could mark docs as export-ready on a tender with no confirmed BuildPlan
+  // or on a human-approved-fallback analysis (audit-only).
+  const centralGate = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId,
+    userId: actor.id,
+    purpose: "final-zip",
+  });
+  if (!centralGate.ok) {
+    return NextResponse.json({
+      error: `Auto-finalize blocked: ${centralGate.blockerDetail ?? centralGate.blockerCode}`,
+      code: centralGate.blockerCode,
+      blockers: [centralGate.blockerDetail ?? "Tender is not ready for finalization."],
+      nextAction: centralGate.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" ? "BUILD_SUBMISSION_PLAN" : "RERUN_AI_ANALYZE",
+    }, { status: 422 });
+  }
 
   const plan = buildSubmissionPlanWithDerivedFallback(tender);
   const planEmpty = plan.files.length === 0;

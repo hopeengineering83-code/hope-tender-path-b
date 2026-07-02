@@ -22,7 +22,7 @@ const scoreOption = (rowName: string, category: string, fileName: string) => {
 async function extractedTextDocx(title: string, text: string) { const lines = text.replace(/[\u0000-\u001F\u007F]/g, " ").split(/\n+/).filter(Boolean).slice(0, 200); const buf = await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph({ children: [new TextRun({ text: title, bold: true })] }), ...lines.map((line) => new Paragraph({ text: line.slice(0, 3000) }))] }] })); return buf.toString("base64"); }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  let actor; try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  let actor; try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady; const { id } = await params;
   const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" }, reviewStatus: { in: ["REPLACE_WITH_ORIGINAL", "PENDING", "CHANGES_REQUESTED"] } }, select: { id: true, name: true, exactFileName: true, documentType: true } } } });
   const company = await prisma.company.findUnique({ where: { userId: actor.id }, select: { id: true } });
@@ -35,7 +35,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  let actor; try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  let actor; try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   const rl = rateLimit(`link-vault:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   await prismaReady; const { id } = await params; const body = await req.json().catch(() => ({}));

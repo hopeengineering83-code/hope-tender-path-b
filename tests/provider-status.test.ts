@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { AI_PROVIDER_ORDER, getSafeProviderStatus, hasAnyProviderConfigured } from "../lib/security/provider-status";
 
 describe("safe provider status", () => {
-  it("keeps Anthropic / Claude last in provider order", () => {
+  it("keeps Anthropic last in provider order", () => {
     assert.equal(AI_PROVIDER_ORDER.at(-1)?.provider, "Anthropic / Claude");
     assert.equal(AI_PROVIDER_ORDER.at(-1)?.order, 10);
   });

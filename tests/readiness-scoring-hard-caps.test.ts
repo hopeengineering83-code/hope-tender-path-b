@@ -69,24 +69,30 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
     assert.ok(r.score <= 45, `expected ≤45, got ${r.score}`);
     assert.equal(r.appliedCap?.dimension, "analysisSource");
   });
-  it("does NOT cap when analysis source is HUMAN_APPROVED_REGEX_FALLBACK and fully verified", () => {
+  it("PERMANENT BLOCK: caps HUMAN_APPROVED_REGEX_FALLBACK at 45 even when fully verified (audit-only)", () => {
+    // Human approval is AUDIT-ONLY — it must NEVER authorize release. The
+    // readiness score MUST reflect this by capping at 45 (same as unapproved
+    // regex fallback) regardless of verification status. The previous test
+    // asserted "no cap when fully verified" — that was the false-green we
+    // removed.
     const r = computeReadinessScore({ ...fullyHealthyInput(), analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
-    // Approved fallback still scores lower in the dimension but no cap kicks in
-    // because fullyHealthyInput() has full source/compliance/doc coverage.
-    assert.equal(r.applicableCaps.find((c) => c.dimension === "analysisSource"), undefined);
+    const cap = r.applicableCaps.find((c) => c.dimension === "analysisSource");
+    assert.ok(cap, "expected an analysisSource cap for HUMAN_APPROVED_REGEX_FALLBACK");
+    assert.equal(cap?.capScore, 45, "HUMAN_APPROVED_REGEX_FALLBACK MUST be capped at 45 (audit-only, same as unapproved)");
+    assert.match(cap?.reason ?? "", /audit-only/i, "Cap reason MUST mention audit-only");
   });
-  it("caps human-approved fallback at 70 when not fully verified", () => {
+  it("caps human-approved fallback at 45 when not fully verified", () => {
     const r = computeReadinessScore({
       ...fullyHealthyInput(),
       analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK",
       sourceReferenceCoverage: 0.5, // source refs incomplete → not fully verified
     });
-    assert.ok(r.score <= 70, `expected ≤70, got ${r.score}`);
+    assert.ok(r.score <= 45, `expected ≤45, got ${r.score}`);
     const cap = r.applicableCaps.find((c) => c.dimension === "analysisSource");
     assert.ok(cap, "expected an analysisSource cap");
-    assert.equal(cap?.capScore, 70);
+    assert.equal(cap?.capScore, 45);
   });
-  it("caps human-approved fallback at 70 when required documents are incomplete", () => {
+  it("caps human-approved fallback at 45 when required documents are incomplete", () => {
     const r = computeReadinessScore({
       ...fullyHealthyInput(),
       analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK",
@@ -96,7 +102,7 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
     });
     const cap = r.applicableCaps.find((c) => c.dimension === "analysisSource");
     assert.ok(cap, "expected an analysisSource cap");
-    assert.equal(cap?.capScore, 70);
+    assert.equal(cap?.capScore, 45);
   });
 });
 

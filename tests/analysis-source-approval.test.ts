@@ -108,12 +108,22 @@ describe("assertAnalysisReadyForFinalGeneration", () => {
     assert.equal(gate.ok, true);
   });
 
-  it('returns {ok: true} for human-approved regex fallback', async () => {
+  it('returns {ok: false} for human-approved regex fallback (audit-only, never authorizes release)', async () => {
+    // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK must NEVER authorize
+    // generation, export, download, regeneration, AI proposal, missing-file
+    // generation, or ZIP. Human approval is audit-only. A passing test here
+    // proves the block is in place; if anyone re-allows human-approved
+    // fallback in assertAnalysisReadyForFinalGeneration, this test fails.
     const client = makeFakeClient(true);
     const gate = await assertAnalysisReadyForFinalGeneration(client, TENDER_ID, {
       notes: "Analysis source: regex fallback (REGEX_FALLBACK_AI_ERROR).",
     });
-    assert.equal(gate.ok, true);
+    assert.equal(gate.ok, false);
+    if (!gate.ok) {
+      assert.equal(gate.code, "ANALYSIS_REGEX_FALLBACK_UNAPPROVED");
+      assert.match(gate.message, /audit-only/i);
+      assert.ok(gate.nextAction.length > 0);
+    }
   });
 
   it('returns {ok: false} for unapproved regex fallback', async () => {

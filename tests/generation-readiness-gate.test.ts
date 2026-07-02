@@ -15,7 +15,7 @@ function groundedMandatory(): ReadinessRequirement {
     sourceTenderFileId: "file-1",
     sourcePageNumber: 3,
     sourceExactQuote: "The bidder shall submit audited financial statements.",
-    sourceFileActiveInTender: true,
+    sourceFileActiveInTender: true, sourceFileExtractedText: "This tender document contains the following: The bidder shall submit audited financial statements.. Additional context for the tender file extraction.",
   };
 }
 
@@ -35,9 +35,13 @@ function ready(overrides: Partial<GenerationReadinessInput> = {}): GenerationRea
       { status: "SUCCEEDED", totalChunks: 2 },
     ],
     requirementCount: 1,
-    requirements: [groundedMandatory()],
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    requirements: [groundedMandatory()], exportReadyDocumentCount: 5,
     criticalMetadataOk: true,
+    // BuildPlan enforcement is fail-closed: undefined blocks the same as false.
+    // Default to true so the "ready" base case actually passes; tests that
+    // exercise the BuildPlan-confirmed blocker override this to false.
+    hasCurrentConfirmedBuildPlan: true,
+    confirmedPlanDocumentsOk: true,
     ...overrides,
   };
 }
@@ -145,9 +149,9 @@ test("14. zero requirements block generation", () => {
 });
 
 // 15. Missing Build Plan blocks generation (no plan/generated documents).
-test("15. no submission-plan documents block generation", () => {
-  const r = evaluateGenerationReadiness(ready({ hasValidVirtualSubmissionPlan: false, exportReadyDocumentCount: 0 }));
-  assert.equal(r.blockerCode, "SUBMISSION_PLAN_MISSING");
+test("15. no BuildPlan blocks generation", () => {
+  const r = evaluateGenerationReadiness(ready({ hasCurrentConfirmedBuildPlan: false, recordedBuildPlanState: "MISSING", exportReadyDocumentCount: 0 }));
+  assert.equal(r.blockerCode, "BUILD_PLAN_MISSING");
 });
 
 // 16. Unapproved regex fallback blocks generation.
@@ -190,8 +194,7 @@ test("18. HUMAN_APPROVED_FALLBACK blocked even when fallbackApprovalBound=true",
 test("18b. HUMAN_APPROVED_FALLBACK blocks before submission-plan check", () => {
   const r = evaluateGenerationReadiness(ready({
     analysisState: "HUMAN_APPROVED_FALLBACK",
-    fallbackApprovalBound: true,
-    hasValidVirtualSubmissionPlan: true, exportReadyDocumentCount: 5,
+    fallbackApprovalBound: true, exportReadyDocumentCount: 5,
   }));
   assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
 });

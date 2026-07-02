@@ -54,7 +54,7 @@ function extensionOf(fileName: string): string {
   return dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : "";
 }
 
-export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: string; initialFiles: TenderSourceFile[] }) {
+export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = false }: { tenderId: string; initialFiles: TenderSourceFile[]; canMutate?: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [files, setFiles] = useState(initialFiles);
@@ -186,6 +186,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
         />
         <p className="text-sm font-medium text-slate-700">Drop tender documents here</p>
         <p className="mt-1 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, and CSV only. Convert legacy DOC/XLS files before upload.</p>
+        {canMutate && (
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
@@ -194,6 +195,10 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
         >
           {uploading ? "Uploading…" : "Choose files"}
         </button>
+        )}
+        {!canMutate && (
+          <p className="mt-3 text-xs text-slate-500 italic">Read-only — file upload requires ADMIN or PROPOSAL_MANAGER role</p>
+        )}
       </div>
 
       {message && (
@@ -234,9 +239,11 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
                   <td className="px-3 py-3">
                     <div className="flex justify-end gap-2">
                       <button type="button" onClick={() => downloadFile(file)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Download</button>
+                      {canMutate && (
                       <button type="button" onClick={() => void removeFile(file)} disabled={deletingId === file.id} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">
                         {deletingId === file.id ? "Deleting…" : "Delete"}
                       </button>
+                      )}
                     </div>
                   </td>
                 </tr>

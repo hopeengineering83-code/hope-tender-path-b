@@ -358,6 +358,16 @@ model Tender {
   clientNameSourcePage     Int?
   clientNameSourceQuote    String?
   submissionEmailSourcePage Int?
+  // Title source evidence (Blocker 2 — policy-critical but missing durable storage)
+  titleSourceFileId       String?
+  titleSourcePage          Int?
+  titleSourceQuote         String?
+  // Deadline source evidence (Blocker 2 — value was hashed but evidence was not)
+  deadlineSourceFileId     String?
+  deadlineSourcePage       Int?
+  deadlineSourceQuote      String?
+  // Email endpoint source quote (Blocker 2 — sourceFileId/Page existed but quote was missing)
+  submissionEmailSourceQuote String?
   // JSON map of per-field source provenance for contact/location fields extracted
   // by AI Analyze. Shape: { [fieldName]: { page: number|null, quote: string|null } }
   // Covers: clientContactName, clientContactTitle, clientContactEmail,
@@ -366,8 +376,13 @@ model Tender {
   // Source traceability for submission method and submission address
   submissionMethodSourcePage    Int?
   submissionMethodSourceQuote   String?
+  submissionMethodSourceFileId  String?
   submissionAddressSourcePage   Int?
   submissionAddressSourceQuote  String?
+  submissionAddressSourceFileId String?
+  // Source file IDs for other metadata fields
+  clientNameSourceFileId        String?
+  submissionEmailSourceFileId   String?
   // Per-criterion source traceability for evaluation criteria
   // JSON array: [{ criterion, weight, sourcePage, sourceQuote }]
   evaluationCriteriaSourceJson  String?
@@ -403,6 +418,7 @@ model Tender {
   metadataOverrides     TenderMetadataOverride[]
   submissionPlanState   SubmissionPlanState?
   aiUsageRecords        AiUsageRecord[]
+  buildPlan             BuildPlan?
 
   // Audit DB-002 (2026-06-20): the single most-queried column in the app
   // (every "list my tenders" dashboard query filters on userId). Was a
@@ -1206,4 +1222,48 @@ model ExtractionQualityOverride {
   @@unique([tenderId, tenderFileId])
   @@index([tenderId])
   @@index([tenderFileId])
+}
+
+// Persisted submission plan bound to tender content hash and file list.
+// When the tender content changes (files added/removed/modified) or the file
+// order changes, the contentHash will no longer match and the plan becomes
+// invalid. Generation requires a plan whose contentHash matches the current
+// tender state.
+//
+// Separate from GeneratedDocument rows, which track actual output files.
+// PLANNED files in GeneratedDocument are virtual/readiness-only and never
+// count as "part of the plan". Only a BuildPlan record binds the actual
+// submission requirements to concrete document targets.
+model BuildPlan {
+  id                String   @id @default(uuid())
+  tenderId          String   @unique
+  tender            Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  // DRAFT | CONFIRMED | SUPERSEDED
+  status            String   @default("DRAFT")
+  revision          Int      @default(1)
+  // Hash of tender file IDs + names (detects file additions, deletions, renames)
+  contentHash       String
+  // JSON array of file metadata at plan time: [{ fileId, fileName, order }]
+  filesList         String   @default("[]")
+  // JSON array of planned documents from buildSubmissionPlan()
+  plannedDocuments  String   @default("[]")
+  // JSON validation results
+  validationJson    String?
+  // Plan type: "EXPLICIT" (from exactFileNaming/exactFileOrder) or
+  // "DERIVED" (from requirements) or "DERIVED_DRAFT" (fallback heuristic)
+  planType          String   @default("DERIVED")
+  // Items JSON (for #930 compatibility)
+  itemsJson         String   @default("[]")
+  // Audit trail — DRAFT/CONFIRMED service authoritative columns.
+  builtById            String?
+  createdBy            String?
+  confirmedById        String?
+  confirmedBy          String?
+  confirmedRevision    Int?
+  confirmedContentHash String?
+  confirmedAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([contentHash])
 }

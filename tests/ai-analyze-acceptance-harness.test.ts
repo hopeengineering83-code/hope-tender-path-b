@@ -159,8 +159,15 @@ describe("PATH 1: Digital multi-page tender — success path", () => {
     // We verify the gate's source code contract here (no DB needed — the
     // detectAnalysisSourceWithApproval function is the DB-backed part, but
     // the gate's BRANCH LOGIC is what we're asserting).
+    //
+    // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK must NEVER appear in the
+    // ok:true path. Only `source === "AI"` may return ok:true. The previous
+    // test asserted the OLD broken contract that allowed human-approved
+    // fallback to authorize release — that was the false-green we removed.
     const gateSrc = read("lib/engine/analysis-source.ts");
-    assert.match(gateSrc, /source\s*===\s*"AI"\s*\|\|\s*source\s*===\s*"HUMAN_APPROVED_REGEX_FALLBACK"\s*\)\s*return\s*\{\s*ok:\s*true\s*\}/);
+    assert.match(gateSrc, /source\s*===\s*"AI"\s*\)\s*return\s*\{\s*ok:\s*true\s*\}/);
+    // HUMAN_APPROVED_REGEX_FALLBACK must explicitly return ok:false.
+    assert.match(gateSrc, /source\s*===\s*"HUMAN_APPROVED_REGEX_FALLBACK"\s*\)\s*\{[\s\S]*?ok:\s*false/);
     assert.match(gateSrc, /code:\s*"ANALYSIS_REGEX_FALLBACK_UNAPPROVED"/);
   });
 
@@ -460,9 +467,15 @@ describe("PATH 4: Failed retry after prior AI success — prior success preserve
     // assertAnalysisReadyForFinalGeneration calls detectAnalysisSourceWithApproval
     // which reads tender.notes at call time. If the notes say "REGEX_FALLBACK",
     // the gate blocks — even if a prior run had succeeded.
+    //
+    // PERMANENT BLOCK: HUMAN_APPROVED_REGEX_FALLBACK must NEVER appear in the
+    // ok:true path. Only `source === "AI"` may return ok:true. The previous
+    // test asserted the OLD broken contract that allowed human-approved
+    // fallback to authorize release — that was the false-green we removed.
     const gateSrc = read("lib/engine/analysis-source.ts");
     assert.match(gateSrc, /detectAnalysisSourceWithApproval/);
-    assert.match(gateSrc, /source\s*===\s*"AI"\s*\|\|\s*source\s*===\s*"HUMAN_APPROVED_REGEX_FALLBACK"\s*\)\s*return\s*\{\s*ok:\s*true\s*\}/);
+    assert.match(gateSrc, /source\s*===\s*"AI"\s*\)\s*return\s*\{\s*ok:\s*true\s*\}/);
+    assert.match(gateSrc, /source\s*===\s*"HUMAN_APPROVED_REGEX_FALLBACK"\s*\)\s*\{[\s\S]*?ok:\s*false/);
   });
 
   it("human approval of a prior regex fallback is preserved across re-runs (idempotent upsert)", () => {

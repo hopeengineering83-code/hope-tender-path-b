@@ -44,10 +44,12 @@ function FieldActionMenu({
   field,
   saving,
   onAction,
+  canMutate = false,
 }: {
   field: CanonicalFieldState;
   saving: boolean;
   onAction: (action: string) => void;
+  canMutate?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -67,6 +69,9 @@ function FieldActionMenu({
   const canReviewSource = field.permittedActions.includes("review_source");
 
   if (!canEdit && !canConfirm && !canNotApplicable && !canNotStated && !canReviewSource) {
+    return null;
+  }
+  if (!canMutate) {
     return null;
   }
 
@@ -141,7 +146,7 @@ function FieldActionMenu({
   );
 }
 
-export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string }) {
+export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -378,6 +383,7 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
                         void save(field, action);
                       }
                     }}
+                    canMutate={canMutate}
                   />
                 </div>
               </div>

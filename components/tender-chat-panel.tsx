@@ -29,7 +29,7 @@ type AnyMessage = ChatMessage | OptimisticMessage;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function TenderChatPanel({ tenderId }: { tenderId: string }) {
+export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [messages, setMessages] = useState<AnyMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -235,12 +235,13 @@ export function TenderChatPanel({ tenderId }: { tenderId: string }) {
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question… (Enter to send, Shift+Enter for newline)"
+            placeholder={canMutate ? "Ask a question… (Enter to send, Shift+Enter for newline)" : "Read-only — chat requires ADMIN or PROPOSAL_MANAGER role"}
             rows={1}
-            disabled={loading}
+            disabled={loading || !canMutate}
             className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400 disabled:opacity-50"
             style={{ maxHeight: "120px", overflowY: "auto" }}
           />
+          {canMutate && (
           <button
             type="button"
             onClick={() => void sendMessage()}
@@ -249,6 +250,7 @@ export function TenderChatPanel({ tenderId }: { tenderId: string }) {
           >
             {loading ? "…" : "Send"}
           </button>
+          )}
         </div>
         <p className="mt-1.5 text-[10px] text-slate-400">
           Enter to send · Shift+Enter for newline

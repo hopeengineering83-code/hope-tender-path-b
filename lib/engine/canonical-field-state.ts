@@ -24,7 +24,7 @@ import {
   isAmbiguousDateString,
 } from "./metadata-validators";
 import { isPhysicalSubmissionMethod, isEmailSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
-import { isGroundedEvidence as isGroundedSourceEvidence } from "./evidence-grounding";
+import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck } from "./evidence-grounding";
 // The export/completeness gate's placeholder set is broader than the validators'
 // (e.g. "not available", "to be provided", mid-text "TBA", "fill in here"). The
 // resolver consults it too so the Client & Submission panel never shows a value
@@ -141,11 +141,24 @@ export type CanonicalResolverInput = {
     metadataContaminated: boolean;
     clientNameSourcePage: number | null;
     clientNameSourceQuote: string | null;
+    clientNameSourceFileId?: string | null;
     submissionMethodSourcePage: number | null;
     submissionMethodSourceQuote: string | null;
+    submissionMethodSourceFileId?: string | null;
     submissionAddressSourcePage: number | null;
     submissionAddressSourceQuote: string | null;
+    submissionAddressSourceFileId?: string | null;
     submissionEmailSourcePage: number | null;
+    submissionEmailSourceFileId?: string | null;
+    submissionEmailSourceQuote?: string | null;
+    // Title + deadline source evidence — required for full source-grounding
+    // verification of these critical fields.
+    titleSourceFileId?: string | null;
+    titleSourcePage?: number | null;
+    titleSourceQuote?: string | null;
+    deadlineSourceFileId?: string | null;
+    deadlineSourcePage?: number | null;
+    deadlineSourceQuote?: string | null;
     contactDetailsSourceJson: any;
     // Extended client/submission fields surfaced in the Client & Submission
     // Details panel. Optional so existing gate call sites (which only need the
@@ -175,6 +188,8 @@ export type CanonicalResolverInput = {
   }>;
   hasExtractedRequirements: boolean;
   submissionMethodContext?: string;
+  /** Set of ACTIVE TenderFile IDs for validating evidence source files. */
+  activeTenderFileIds?: Set<string>;
 };
 
 // ─── Resolver ──────────────────────────────────────────────────────────────
@@ -265,10 +280,12 @@ function getSourceEvidence(
   contactDetails: Record<string, { page: number | null; quote: string | null }>,
 ) {
   const dedicated: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {
-    clientName: { page: tender.clientNameSourcePage, quote: tender.clientNameSourceQuote, fileId: null },
-    submissionMethod: { page: tender.submissionMethodSourcePage, quote: tender.submissionMethodSourceQuote, fileId: null },
-    submissionAddress: { page: tender.submissionAddressSourcePage, quote: tender.submissionAddressSourceQuote, fileId: null },
-    submissionEmails: { page: tender.submissionEmailSourcePage, quote: null, fileId: null },
+    clientName: { page: tender.clientNameSourcePage, quote: tender.clientNameSourceQuote, fileId: tender.clientNameSourceFileId ?? null },
+    submissionMethod: { page: tender.submissionMethodSourcePage, quote: tender.submissionMethodSourceQuote, fileId: tender.submissionMethodSourceFileId ?? null },
+    submissionAddress: { page: tender.submissionAddressSourcePage, quote: tender.submissionAddressSourceQuote, fileId: tender.submissionAddressSourceFileId ?? null },
+    submissionEmails: { page: tender.submissionEmailSourcePage, quote: tender.submissionEmailSourceQuote ?? null, fileId: tender.submissionEmailSourceFileId ?? null },
+    title: { page: tender.titleSourcePage ?? null, quote: tender.titleSourceQuote ?? null, fileId: tender.titleSourceFileId ?? null },
+    deadline: { page: tender.deadlineSourcePage ?? null, quote: tender.deadlineSourceQuote ?? null, fileId: tender.deadlineSourceFileId ?? null },
   };
   if (dedicated[field]) return dedicated[field];
   // Fall back to the structured contactDetailsSource map for the extended fields.
@@ -297,9 +314,16 @@ function validateValue(field: string, value: string): { valid: boolean; reason: 
   return { valid: true, reason: null };
 }
 
-function isGroundedEvidence(evidence: { page: number | null; quote: string | null; fileId: string | null }): boolean {
-  // Grounded requires page AND a non-trivial quote — via the shared predicate so
-  // this resolver and the Metadata Truth resolver can never disagree.
+function isGroundedEvidence(
+  evidence: { page: number | null; quote: string | null; fileId: string | null },
+  activeTenderFileIds?: Set<string>,
+): boolean {
+  // Grounded requires page AND a non-trivial quote + valid TenderFile ID.
+  // If activeTenderFileIds is provided, enforce that the fileId points to an
+  // active (non-deleted) TenderFile. If not provided, fall back to basic check.
+  if (activeTenderFileIds) {
+    return isGroundedEvidenceWithFileCheck(evidence.page, evidence.quote, evidence.fileId, activeTenderFileIds);
+  }
   return isGroundedSourceEvidence(evidence.page, evidence.quote);
 }
 
@@ -345,7 +369,7 @@ function normalizeFieldValue(fieldKey: string, value: string): string {
 }
 
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
-  const { tender, overrides, hasExtractedRequirements } = input;
+  const { tender, overrides, hasExtractedRequirements, activeTenderFileIds } = input;
   const overrideMap = new Map(overrides.map(o => [o.field, o]));
   const contactDetails = parseContactDetailsSource(tender.contactDetailsSourceJson);
   const fields: CanonicalFieldState[] = [];
@@ -356,12 +380,23 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
   let groundedCount = 0;
   let blockedCount = 0;
 
+  // Pre-compute the EFFECTIVE submissionMethod so conditionally-critical
+  // fields (submissionAddress, submissionEmailSubject) use the override-
+  // applied value, not the raw tender.submissionMethod. Without this, a
+  // USER_EDITED override changing submissionMethod from email to physical
+  // would NOT make submissionAddress conditionally critical.
+  const submissionMethodOverride = overrideMap.get("submissionMethod");
+  let effectiveSubmissionMethod = tender.submissionMethod ?? null;
+  if (submissionMethodOverride && (submissionMethodOverride.fieldState === "USER_EDITED" || submissionMethodOverride.fieldState === "USER_CONFIRMED")) {
+    effectiveSubmissionMethod = submissionMethodOverride.overrideValue ?? effectiveSubmissionMethod;
+  }
+
   for (const fieldKey of FIELDS_TO_EVALUATE) {
     const rawValue = getRawValue(tender, fieldKey);
     const override = overrideMap.get(fieldKey);
     const evidence = getSourceEvidence(tender, fieldKey, contactDetails);
     const label = fieldDisplayLabel(fieldKey);
-    const isCritical = ALWAYS_CRITICAL_FIELDS.has(fieldKey) || isCriticalField(fieldKey, { submissionMethod: tender.submissionMethod ?? undefined });
+    const isCritical = ALWAYS_CRITICAL_FIELDS.has(fieldKey) || isCriticalField(fieldKey, { submissionMethod: effectiveSubmissionMethod ?? undefined });
     const criticality: CanonicalFieldState["criticality"] = ALWAYS_CRITICAL_FIELDS.has(fieldKey)
       ? "always-critical"
       : isCritical ? "conditionally-critical" : "non-critical";
@@ -395,10 +430,10 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       override != null &&
       (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
       validation.valid &&
-      isGroundedEvidence(evidence) &&
+      isGroundedEvidence(evidence, activeTenderFileIds) &&
       normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
       normalizeFieldValue(fieldKey, effectiveStr) !== "";
-    const isGrounded = (validation.valid && isGroundedEvidence(evidence) && !override) || overrideMatchesGroundedForIsGrounded;
+    const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds) && !override) || overrideMatchesGroundedForIsGrounded;
 
     // Determine status
     let status: CanonicalFieldStatus;
@@ -433,7 +468,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         override != null &&
         (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
         validation.valid &&
-        isGroundedEvidence(evidence) &&
+        isGroundedEvidence(evidence, activeTenderFileIds) &&
         normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
         normalizeFieldValue(fieldKey, effectiveStr) !== "";
       if (overrideMatchesGroundedSource) {
@@ -466,16 +501,16 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
       const confirmedMatchesGroundedSource =
         validation.valid &&
-        isGroundedEvidence(evidence) &&
+        isGroundedEvidence(evidence, activeTenderFileIds) &&
         normalizedConfirmed === normalizedRaw &&
         normalizedConfirmed !== "";
       if (confirmedMatchesGroundedSource) {
         status = "EXTRACTED_AND_GROUNDED";
       } else {
         status = "MANUAL_CONFIRMED";
-        if (isCritical && !isGroundedEvidence(evidence)) {
-          blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote). Link to an active tender source to unblock generation.`;
-        } else if (isCritical && isGroundedEvidence(evidence) && normalizedConfirmed !== normalizedRaw) {
+        if (isCritical && !isGroundedEvidence(evidence, activeTenderFileIds)) {
+          blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Link to an active tender source to unblock generation.`;
+        } else if (isCritical && isGroundedEvidence(evidence, activeTenderFileIds) && normalizedConfirmed !== normalizedRaw) {
           blockerReason = `Field "${label}" was manually confirmed with a value that does not match the active tender-source evidence. The confirmed value must exactly match the extracted source value.`;
         }
       }
@@ -488,7 +523,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
       const editedMatchesGroundedSource =
         validation.valid &&
-        isGroundedEvidence(evidence) &&
+        isGroundedEvidence(evidence, activeTenderFileIds) &&
         normalizedEdited === normalizedRaw &&
         normalizedEdited !== "";
       if (editedMatchesGroundedSource) {

@@ -36,6 +36,7 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import type { BuildPlanItem } from "./build-plan";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
@@ -47,12 +48,19 @@ type _TenderFileRow = {
   classification: string | null;
   createdAt: Date;
   deletionStatus: string | null;
+  totalPages: number | null;
 };
 type _RequirementRow = {
+  id: string;
   priority: string | null;
   sourceTenderFileId: string | null;
   sourcePageNumber: number | null;
   sourceExactQuote: string | null;
+  title: string | null;
+  description: string | null;
+  requirementType: string | null;
+  exactFileName: string | null;
+  exactOrder: number | null;
 };
 type _MetadataOverrideRow = {
   field: string;
@@ -88,9 +96,14 @@ export type GenerationBlockerCode =
   | "CHUNKS_INCOMPLETE"
   | "REQUIREMENTS_MISSING"
   | "REQUIREMENT_SOURCE_UNGROUNDED"
+  | "REQUIREMENT_QUOTE_NOT_IN_FILE"
   | "METADATA_CRITICAL_FIELD_INVALID"
   | "SUBMISSION_PLAN_MISSING"
+  | "BUILD_PLAN_MISSING"
+  | "BUILD_PLAN_STALE"
   | "NO_EXPORT_READY_DOCUMENTS"
+  | "BUILD_PLAN_NOT_CONFIRMED"
+  | "CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE"
   | "GATE_INTERNAL_ERROR";
 
 export interface GenerationReadinessResult {
@@ -121,6 +134,10 @@ export interface ReadinessRequirement {
   sourceExactQuote: string | null;
   // True only when sourceTenderFileId resolves to an ACTIVE file in THIS tender.
   sourceFileActiveInTender: boolean;
+  /** Extracted text of the source TenderFile — used for quote containment verification. */
+  sourceFileExtractedText?: string | null;
+  /** Total pages of the source TenderFile — used for sourcePage <= totalPages enforcement. */
+  sourceFileTotalPages?: number | null;
 }
 
 export interface GenerationReadinessInput {
@@ -149,13 +166,28 @@ export interface GenerationReadinessInput {
   //     this prerequisite. This is true when the submission plan has been built
   //     (virtual or real) and identifies at least one required file.
   //     PLANNED, SUPERSEDED, virtual, or legacy planned rows do NOT count as
-  //     generated/export-ready — they only satisfy the plan prerequisite.
-  hasValidVirtualSubmissionPlan: boolean;
+  //     generated/export-ready.
+  // H2 — Recorded (persisted) Build Plan state. A persisted BuildPlan is
+  //      MANDATORY for generation/export: it is bound to the shared content hash
+  //      of the tender's ACTIVE files + requirements + exact naming/order +
+  //      submission instructions at build time.
+  //        - "MISSING": no recorded plan exists → block (must Build Plan first).
+  //        - "STALE":   recorded plan's hash no longer matches the tender's
+  //                     current state (files/requirements/naming changed) → block.
+  //        - "VALID":   recorded plan matches the current state → allowed.
+  //      The async gate always sets this from the database. Left undefined only
+  //      in pure unit tests that are not exercising the plan condition.
+  recordedBuildPlanState?: "MISSING" | "STALE" | "VALID";
   // I — EXPORT/FINAL-ZIP readiness: count of real current generated files with
   //     content, validation, review, and exact-plan reconciliation. Only these
   //     rows satisfy export and final-ZIP gates. PLANNED/SUPERSEDED/virtual/
   //     missing-content/unvalidated/unreviewed rows never count here.
   exportReadyDocumentCount: number;
+  // K — CONFIRMED BuildPlan: a current CONFIRMED BuildPlan with matching hash.
+  hasCurrentConfirmedBuildPlan?: boolean;
+  // L — Confirmed plan document reconciliation for export/ZIP.
+  confirmedPlanDocumentsOk?: boolean;
+  confirmedPlanDocumentBlockers?: string[];
 }
 
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
@@ -238,13 +270,10 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // G — Critical metadata: every critical field (clientName, title, deadline,
-  //     submissionMethod, submissionEndpoint, requiredDocuments) must be valid,
-  //     non-placeholder, non-contaminated, and either source-grounded or
-  //     source-confirmed. Manual candidates (USER_EDITED) and ungrounded
-  //     USER_CONFIRMED values are not sufficient for critical fields.
+  // G — Critical metadata: validated by validateCriticalMetadataEvidenceForBuildPlan
+  //     in the DB-backed assembly. If criticalMetadataOk is false, block.
   if (!input.criticalMetadataOk) {
-    return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, contaminated, or a manual candidate without active tender-source evidence. Resolve all critical fields before generating or exporting.");
+    return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, or not source-grounded with active tender file evidence (page + quote + containment). Resolve all critical fields before generating or exporting.");
   }
 
   // F — Requirement and source grounding.
@@ -254,30 +283,63 @@ export function evaluateGenerationReadiness(
   const mandatory = input.requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
   for (const r of mandatory) {
     const quote = (r.sourceExactQuote ?? "").trim();
-    const grounded =
+    const hasStructuralGrounding =
       !!r.sourceTenderFileId &&
       r.sourceFileActiveInTender &&
       typeof r.sourcePageNumber === "number" &&
       r.sourcePageNumber >= 1 &&
       quote.length >= MIN_MEANINGFUL_QUOTE_CHARS;
-    if (!grounded) {
+    if (!hasStructuralGrounding) {
       return fail("REQUIREMENT_SOURCE_UNGROUNDED", "At least one mandatory requirement is missing a valid source reference (active source file, page number, and a meaningful verbatim quote). Re-run AI Analyze to ground requirements.");
+    }
+    // ENFORCE sourcePage <= totalPages when totalPages exists — same rule as
+    // the metadata evidence validator. A page beyond the file's actual page
+    // count is fabricated evidence and must be blocked.
+    if (
+      typeof r.sourcePageNumber === "number" &&
+      typeof r.sourceFileTotalPages === "number" &&
+      r.sourceFileTotalPages > 0 &&
+      r.sourcePageNumber > r.sourceFileTotalPages
+    ) {
+      return fail("REQUIREMENT_SOURCE_UNGROUNDED", `Mandatory requirement source page ${r.sourcePageNumber} exceeds the source file's total pages ${r.sourceFileTotalPages}. Re-run AI Analyze to ground requirements with valid page references.`);
+    }
+    // QUOTE CONTAINMENT: the normalized quote MUST actually appear in the
+    // extracted text of the referenced ACTIVE TenderFile. Without this, a
+    // foreign/guessed/unsupported quote could pass the structural check.
+    const fileText = (r.sourceFileExtractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    if (quote.length >= MIN_MEANINGFUL_QUOTE_CHARS && (fileText.length === 0 || !fileText.includes(normalizedQuote))) {
+      return fail("REQUIREMENT_QUOTE_NOT_IN_FILE", "At least one mandatory requirement has a source quote that is not contained in the extracted text of the referenced active TenderFile. Foreign, guessed, or unsupported evidence is blocked. Re-run AI Analyze to ground requirements.");
     }
   }
 
-  // H — Build/Submission plan prerequisite for GENERATION.
-  //     A valid virtual Build Plan satisfies this — it proves the tender
-  //     requires at least one file. PLANNED/SUPERSEDED/virtual rows do NOT
-  //     count as generated/export-ready; they only satisfy the plan prerequisite.
-  if (!input.hasValidVirtualSubmissionPlan) {
-    return fail("SUBMISSION_PLAN_MISSING", "No submission/build plan exists. Build the submission plan before generating/exporting.");
+  // H2 — A persisted Build Plan is mandatory and must match the tender's current
+  //      state. No recorded plan → block (build it first). A recorded plan whose
+  //      shared content hash no longer matches (files/requirements/exact naming
+  //      changed after it was built) is stale → block until rebuilt.
+  if (input.recordedBuildPlanState === "MISSING") {
+    return fail("BUILD_PLAN_MISSING", "No submission/build plan has been recorded for this tender. Build (and persist) the submission plan before generating or exporting.");
+  }
+  if (input.recordedBuildPlanState === "STALE") {
+    return fail("BUILD_PLAN_STALE", "The recorded submission/build plan is out of date because the tender's files, requirements, or exact naming/order changed after it was built. Rebuild the submission plan before generating/exporting.");
   }
 
   // I — EXPORT/FINAL-ZIP readiness: require real current generated files.
   //     PLANNED, virtual, SUPERSEDED, missing-content, unvalidated, or
   //     unreviewed rows never count. Only real generated files with content,
   //     validation, review, and exact-plan reconciliation satisfy export/ZIP.
+  // K — Confirmed BuildPlan is mandatory for all release actions.
+  //     Fail-closed: undefined (caller did not compute it) blocks the same as
+  //     false. Without this, a caller that forgets to pass the field would
+  //     silently bypass the confirmed-plan requirement.
+  if (input.hasCurrentConfirmedBuildPlan !== true) {
+    return fail("BUILD_PLAN_NOT_CONFIRMED", "No current confirmed Build Plan exists. Build and confirm the Build Plan before any release action.");
+  }
+
   if (input.purpose === "export" || input.purpose === "final-zip") {
+    if (input.confirmedPlanDocumentsOk !== true) {
+      return fail("CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE", "Confirmed plan documents are incomplete, missing, or mismatched.");
+    }
     if (input.exportReadyDocumentCount < 1) {
       return fail("NO_EXPORT_READY_DOCUMENTS",
         "No export-ready documents exist. Generate and validate real documents before exporting or creating a final ZIP. PLANNED, virtual, and superseded rows do not count.");
@@ -373,12 +435,30 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         metadataContaminated: true,
         clientNameSourcePage: true,
         clientNameSourceQuote: true,
+        clientNameSourceFileId: true,
         submissionMethodSourcePage: true,
         submissionMethodSourceQuote: true,
+        submissionMethodSourceFileId: true,
         submissionAddressSourcePage: true,
         submissionAddressSourceQuote: true,
+        submissionAddressSourceFileId: true,
         submissionEmailSourcePage: true,
+        submissionEmailSourceFileId: true,
+        submissionEmailSourceQuote: true,
+        // Title + deadline source evidence — required by the canonical
+        // field-state resolver and validateCriticalMetadataEvidenceForBuildPlan
+        // for full source-grounding verification. Without these, the gate's
+        // criticalMetadataOk check would be incomplete.
+        titleSourceFileId: true,
+        titleSourcePage: true,
+        titleSourceQuote: true,
+        deadlineSourceFileId: true,
+        deadlineSourcePage: true,
+        deadlineSourceQuote: true,
         contactDetailsSourceJson: true,
+        // Plan-driving fields for the shared Build Plan hash.
+        exactFileNaming: true,
+        exactFileOrder: true,
         files: {
           select: {
             id: true,
@@ -388,6 +468,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             extractionScore: true,
             createdAt: true,
             deletionStatus: true,
+            totalPages: true,
           },
         },
         metadataOverrides: {
@@ -451,18 +532,27 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     });
 
     // F — requirements + source-file activeness resolved against THIS tender.
+    //     Includes the plan-driving fields needed for the shared Build Plan hash.
     const requirements = await prisma.tenderRequirement.findMany({
       where: { tenderId },
-      select: { priority: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true },
+      select: {
+        id: true, priority: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true,
+        title: true, requirementType: true, exactFileName: true, exactOrder: true,
+      },
     });
     const activeFileIds = new Set(activeFiles.map((f) => f.id));
-    const mappedRequirements: ReadinessRequirement[] = (requirements as _RequirementRow[]).map((r) => ({
-      priority: r.priority,
-      sourceTenderFileId: r.sourceTenderFileId,
-      sourcePageNumber: r.sourcePageNumber,
-      sourceExactQuote: r.sourceExactQuote,
-      sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
-    }));
+    const mappedRequirements: ReadinessRequirement[] = (requirements as _RequirementRow[]).map((r) => {
+      const sourceFile = r.sourceTenderFileId ? activeFiles.find((f) => f.id === r.sourceTenderFileId) : null;
+      return {
+        priority: r.priority,
+        sourceTenderFileId: r.sourceTenderFileId,
+        sourcePageNumber: r.sourcePageNumber,
+        sourceExactQuote: r.sourceExactQuote,
+        sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
+        sourceFileExtractedText: sourceFile?.extractedText ?? null,
+        sourceFileTotalPages: (sourceFile as any)?.totalPages ?? null,
+      };
+    });
 
     // G — canonical field-state resolver: every critical field must pass validation
     //     before generation/export is authorized. No parallel metadata check needed —
@@ -473,11 +563,22 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         deadline: tender.deadline ?? null,
         clientNameSourcePage: tender.clientNameSourcePage ?? null,
         clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+        clientNameSourceFileId: tender.clientNameSourceFileId ?? null,
         submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
         submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+        submissionMethodSourceFileId: tender.submissionMethodSourceFileId ?? null,
         submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
         submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+        submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
+        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+        titleSourcePage: (tender as any).titleSourcePage ?? null,
+        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
@@ -491,6 +592,11 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       })),
       hasExtractedRequirements: requirements.length > 0,
       submissionMethodContext: tender.submissionMethod ?? undefined,
+      // Enforce stricter metadata grounding: a USER_EDITED/USER_CONFIRMED
+      // critical field only counts as grounded when its evidence points to an
+      // ACTIVE tender file (page + quote + valid file). Stale/deleted-file
+      // evidence cannot unblock generation.
+      activeTenderFileIds: activeFileIds,
     });
 
     // H — Build/Submission plan prerequisite for GENERATION.
@@ -503,14 +609,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     one required file. If there's no explicit scope, any tender with
     //     extracted requirements has a valid plan by default.
     const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
-    const submissionPlan = buildSubmissionPlan(tender as any);
-    const plannedFiles = hasExplicitSubmissionScope(tender as any)
-      ? plannedSubmissionTargetFiles(submissionPlan)
-      : [];
-    const hasValidVirtualSubmissionPlan = requirements.length > 0
-      ? (hasExplicitSubmissionScope(tender as any) ? plannedFiles.length > 0 : true)
-      : false;
-
+    // Virtual submission plan authority removed — release depends only on
+    // persisted confirmed BuildPlan.
     // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
     //     with content, validation, and review. PLANNED/SUPERSEDED/virtual/
     //     missing-content/unvalidated/unreviewed rows never count.
@@ -526,6 +626,55 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       },
     });
 
+    // H2 — recorded Build Plan state (MANDATORY). A persisted BuildPlan is bound
+    //      to the SINGLE shared content hash over the tender's ACTIVE files +
+    //      requirements + exact naming/order + submission instructions. No
+    //      recorded plan → MISSING (block); recorded hash != current → STALE
+    //      (block); match → VALID. Uses the same helper as the Build Plan route,
+    //      so the recorded plan and this check can never disagree.
+    const recordedBuildPlan = await prisma.buildPlan.findUnique({
+      where: { tenderId },
+      select: { contentHash: true, status: true, revision: true, confirmedRevision: true, confirmedContentHash: true, itemsJson: true },
+    });
+    // CANONICAL HASH: call computeTenderBuildPlanHash — the ONE shared service
+    // that loads tender data and builds the canonical hash input internally.
+    // No manual file/requirement/metadata/item mapping in the gate.
+    const persistedItems = recordedBuildPlan?.itemsJson ? JSON.parse(recordedBuildPlan.itemsJson) : [];
+    const { computeTenderBuildPlanHash } = await import("./build-plan");
+    const currentPlanHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, persistedItems);
+    const recordedBuildPlanState: "MISSING" | "STALE" | "VALID" =
+      !recordedBuildPlan ? "MISSING"
+        : recordedBuildPlan.contentHash !== currentPlanHash ? "STALE"
+        : "VALID";
+
+    // K — Confirmed BuildPlan (MANDATORY for all release actions). Uses the
+    //     unified service (lib/engine/build-plan.ts getCurrentConfirmedBuildPlan)
+    //     so the gate's definition of "confirmed" matches the confirmation
+    //     route's definition exactly: status=CONFIRMED, confirmedRevision =
+    //     current revision, confirmedContentHash = current contentHash, and the
+    //     live computed hash still equals confirmedContentHash. Any drift
+    //     (files added/removed/renamed, requirements changed, submission
+    //     instructions changed, plan rebuilt but not re-confirmed) → false.
+    let hasCurrentConfirmedBuildPlan = false;
+    let confirmedPlanDocumentsOk: boolean | undefined;
+    let confirmedPlanDocumentBlockers: string[] | undefined;
+    if (recordedBuildPlan && recordedBuildPlanState === "VALID") {
+      const buildPlanModule: typeof import("./build-plan") = await import("./build-plan");
+      const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+      if (confirmed.ok) {
+        hasCurrentConfirmedBuildPlan = true;
+        // For export/final-zip, also validate that every required plan item has
+        // a matching generated, validated, approved document with content — and
+        // no extra/foreign documents exist outside the confirmed plan.
+        if (purpose === "export" || purpose === "final-zip") {
+          const items = JSON.parse(confirmed.plan.itemsJson || "[]") as BuildPlanItem[];
+          const docValidation = await buildPlanModule.validateConfirmedPlanDocuments(prisma, tenderId, userId, items);
+          confirmedPlanDocumentsOk = docValidation.ok;
+          confirmedPlanDocumentBlockers = docValidation.blockers;
+        }
+      }
+    }
+
     return evaluateGenerationReadiness({
       purpose,
       tenderExistsAndOwned: true,
@@ -539,13 +688,31 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       currentHashChunks,
       requirementCount: requirements.length,
       requirements: mappedRequirements,
-      criticalMetadataOk: !fieldStates.hasGenerationBlocker,
-      hasValidVirtualSubmissionPlan,
+      criticalMetadataOk: !fieldStates.hasGenerationBlocker && (await (async () => {
+        try {
+          const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
+          const fullTender = await prisma.tender.findFirst({
+            where: { id: tenderId, userId },
+            include: {
+              files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true, deletionStatus: true, totalPages: true } },
+            },
+          });
+          if (!fullTender) return false;
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[]);
+          return metaValidation.ok;
+        } catch { return false; }
+      })()),
+      recordedBuildPlanState,
+      hasCurrentConfirmedBuildPlan,
+      confirmedPlanDocumentsOk,
+      confirmedPlanDocumentBlockers,
       exportReadyDocumentCount,
     });
   } catch (err) {
     // Fail closed — never let a thrown error read as authorization.
-    const detail = err instanceof Error ? err.message.slice(0, 200) : "unknown error";
-    return { ok: false, blockerCode: "GATE_INTERNAL_ERROR", blockerDetail: `Readiness gate failed to evaluate: ${detail}`, purpose };
+    // Log technical details server-side only; return only stable public-safe code.
+    const detail = err instanceof Error ? err.message : "unknown error";
+    console.error("[generation-readiness-gate] GATE_INTERNAL_ERROR:", detail);
+    return { ok: false, blockerCode: "GATE_INTERNAL_ERROR", blockerDetail: "Readiness gate failed to evaluate. Check server logs for details.", purpose };
   }
 }

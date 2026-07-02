@@ -13,7 +13,7 @@ type ExtractionBlocker = {
   };
 };
 
-type EngineResponse = {
+export type EngineResponse = {
   success?: boolean;
   error?: string;
   code?: string;
@@ -34,6 +34,8 @@ type EngineResponse = {
   reused?: boolean;
   inputStats?: { fileCount?: number; totalChars?: number; safeModeAvailable?: boolean };
 };
+
+export type EngineAsyncStatus = { jobId: string; message: string };
 
 // Async polling — escapes the 60s Vercel Hobby cap by enqueuing an
 // ENGINE_RUN AiJob and watching it from the browser.
@@ -102,183 +104,271 @@ async function parseEngineResponse(res: Response): Promise<EngineResponse> {
 // Vercel's 60 s function cap during matching — safe mode is recommended.
 const LARGE_VAULT_THRESHOLD = 30;
 
+// Returned (and rendered) when a read-only role's callback is invoked
+// anyway — e.g. via a stale closure, devtools, or a future code path that
+// forgets the conditional rendering. No network request is made.
+export const ENGINE_MUTATION_BLOCKED_RESULT: EngineResponse = {
+  error: "Engine actions are read-only for your role. No request was sent.",
+  code: "ROLE_READ_ONLY_MUTATION_BLOCKED",
+  detail: "Engine runs require the ADMIN or PROPOSAL_MANAGER role. The server enforces this independently; this client-side guard exists so a read-only session can never dispatch the request in the first place.",
+};
+
+export type EngineRunCallbacks = {
+  setRunning: (running: boolean) => void;
+  setResult: (result: EngineResponse | null) => void;
+  setAsyncStatus: (status: EngineAsyncStatus | null) => void;
+  /** Called after a confirmed successful run (sync postconditions passed or async job SUCCEEDED). */
+  onSuccess: () => void;
+};
+
+export type EngineRunOptions = {
+  tenderId: string;
+  /** Server-derived role capability. When false, no POST is ever dispatched. */
+  canMutate: boolean;
+  force?: boolean;
+  lifecycleBlockersExist?: boolean;
+  callbacks: EngineRunCallbacks;
+};
+
+export type EngineAsyncRunOptions = EngineRunOptions & {
+  extraParams?: Record<string, string>;
+  /** Test/preview overrides — production callers use the defaults. */
+  pollIntervalMs?: number;
+  maxPollDurationMs?: number;
+};
+
+// The ACTUAL dispatch path behind the "Run Engine" / "Force run once"
+// buttons. Exported so tests can prove that a manually triggered callback
+// cannot send a POST when canMutate is false.
+export async function executeEngineRun(options: EngineRunOptions): Promise<void> {
+  const { tenderId, canMutate, force = false, callbacks } = options;
+  if (!canMutate) {
+    callbacks.setResult(ENGINE_MUTATION_BLOCKED_RESULT);
+    return;
+  }
+  callbacks.setRunning(true);
+  callbacks.setResult(null);
+  callbacks.setAsyncStatus(null);
+  try {
+    const res = await fetch(`/api/tenders/${tenderId}/engine${force ? "?force=true" : ""}`, { method: "POST" });
+    const data = await parseEngineResponse(res);
+    if (!res.ok) {
+      // ─── Auto-promote to background on Vercel function timeout ──────
+      // The 60s Hobby cap is the single biggest source of "Run Engine
+      // didn't work" pain. The user-merged production tender showed
+      // FUNCTION_INVOCATION_TIMEOUT three runs in a row before the
+      // user remembered to click "Run in background" manually. When
+      // we detect the timeout signature, transparently retry in async
+      // mode — same click, same expectation, just with the path that
+      // actually works on Hobby for large tenders.
+      const isVercelTimeout = data.code === "ENGINE_VERCEL_TIMEOUT" || data.code === "GENERATION_TIMEOUT" || res.status === 504;
+      if (isVercelTimeout) {
+        callbacks.setResult({
+          ...data,
+          error: `${data.error ?? "Engine hit the 60s Vercel cap."} Auto-retrying in background mode…`,
+          code: "AUTO_PROMOTING_TO_BACKGROUND",
+          nextAction: "RETRY_AS_BACKGROUND_JOB",
+        });
+        // Fire the async path. The setRunning(false) in the finally
+        // below releases the button; executeEngineRunAsync re-asserts
+        // it and drives its own state machine until the poll completes.
+        await executeEngineRunAsync({ ...options, force });
+        return;
+      }
+      callbacks.setResult(data);
+      return;
+    }
+    // "Engine succeeded" here means the engine HTTP run passed its
+    // postconditions — it does NOT mean tender readiness is green. Downstream
+    // blockers (regex fallback unapproved, metadata incomplete, submission
+    // plan not built, evidence uncoverage) still apply. Make the label honest
+    // so the user is steered to the readiness panels below.
+    const warningCount = Array.isArray(data?.extractionWarnings) ? data.extractionWarnings.length : 0;
+    callbacks.setResult({
+      ...data,
+      success: true,
+      error: warningCount > 0
+        ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, metadata, submission plan, evidence) still apply.`
+        : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, metadata, submission plan, evidence) still apply before Generate Docs.",
+    });
+    callbacks.onSuccess();
+  } catch (error) {
+    callbacks.setResult({
+      error: error instanceof Error ? `Engine run failed: ${error.message}` : "Engine run failed due to a network/runtime error.",
+      code: "NETWORK_OR_RUNTIME_ERROR",
+      nextAction: "RETRY_OR_REDUCE_INPUT",
+    });
+  } finally {
+    callbacks.setRunning(false);
+  }
+}
+
+// Async mode — enqueue + worker + poll. Escapes the 60s Hobby cap for
+// large tenders where the synchronous engine pipeline would time out.
+// extraParams allows callers to pass ?safe=true or ?skipAiRematch=true.
+// Exported for the same reason as executeEngineRun: the read-only guard
+// must be provable on the real dispatch path, not a simulation.
+export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Promise<void> {
+  const {
+    tenderId,
+    canMutate,
+    force = false,
+    extraParams = {},
+    lifecycleBlockersExist = false,
+    callbacks,
+    pollIntervalMs = POLL_INTERVAL_MS,
+    maxPollDurationMs = MAX_POLL_DURATION_MS,
+  } = options;
+  if (!canMutate) {
+    callbacks.setResult(ENGINE_MUTATION_BLOCKED_RESULT);
+    return;
+  }
+  callbacks.setRunning(true);
+  callbacks.setResult(null);
+  callbacks.setAsyncStatus(null);
+  try {
+    // 1. Enqueue the job — returns 202 with { jobId }
+    const qs = new URLSearchParams({ async: "true", ...extraParams });
+    if (force) qs.set("force", "true");
+    const enqueueRes = await fetch(`/api/tenders/${tenderId}/engine?${qs.toString()}`, { method: "POST" });
+    const enqueueData = await parseEngineResponse(enqueueRes);
+    if (!enqueueRes.ok || !enqueueData.jobId) {
+      callbacks.setResult(enqueueData);
+      return;
+    }
+    const jobId = enqueueData.jobId;
+    callbacks.setAsyncStatus({ jobId, message: "Engine queued. Kicking off worker…" });
+
+    // 2. Kick off the worker (fire-and-forget — separate 60s function invocation)
+    fetch("/api/ai-jobs/run-next", { method: "POST" }).catch(() => {
+      // worker may already be running; not fatal — polling will still observe progress
+    });
+
+    // 3. Poll status every 3s until SUCCEEDED / FAILED / timeout
+    const startedAt = Date.now();
+    let finalStatus: "SUCCEEDED" | "FAILED" | null = null;
+    let finalJob: {
+      errorMessage?: string | null;
+      output?: Record<string, unknown> | null;
+      steps?: Array<{ stepName?: string; message?: string }>;
+    } | null = null;
+    while (Date.now() - startedAt < maxPollDurationMs) {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      const pollRes = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
+      if (!pollRes.ok) continue; // transient — keep polling
+      const { job } = await pollRes.json() as {
+        job: {
+          status: string;
+          errorMessage?: string | null;
+          output?: Record<string, unknown> | null;
+          steps?: Array<{ stepName?: string; message?: string }>;
+        };
+      };
+      const lastStep = job.steps?.[job.steps.length - 1];
+      callbacks.setAsyncStatus({ jobId, message: lastStep?.message ?? `Worker status: ${job.status}` });
+      if (job.status === "SUCCEEDED" || job.status === "FAILED") {
+        finalStatus = job.status;
+        finalJob = job;
+        break;
+      }
+    }
+
+    if (finalStatus === "SUCCEEDED") {
+      callbacks.setResult({ success: true, async: true, jobId, error: lifecycleBlockersExist ? "Engine run completed; blockers remain — review readiness panels." : "Engine completed successfully (background)." });
+      callbacks.onSuccess();
+    } else if (finalStatus === "FAILED") {
+      const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
+      const engineCode = typeof jobOutput?.code === "string" ? jobOutput.code : "ASYNC_ENGINE_FAILED";
+      const failedStage = typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined;
+      const engineNextAction = typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_OR_REDUCE_INPUT";
+      callbacks.setResult({
+        error: `Engine background run failed: ${finalJob?.errorMessage ?? "unknown worker error"}`,
+        code: engineCode,
+        nextAction: engineNextAction,
+        failedStage,
+        safeModeAvailable: jobOutput?.safeModeAvailable === true,
+        jobId,
+      });
+    } else {
+      // A poll timeout is NOT a failure — the worker is still running
+      // on Vercel and will complete the job in the background. The
+      // user just needs to refresh (the page will pick up the new
+      // matches + analysis as soon as the worker writes them).
+      // Display a calm, actionable message instead of an error.
+      callbacks.setResult({
+        error: "Engine is still running in the background (10 min poll window elapsed). The worker continues — refresh in 1-2 minutes to see the completed engine run.",
+        code: "ASYNC_POLL_TIMEOUT",
+        nextAction: "REFRESH_TO_CHECK_STATUS",
+        jobId,
+      });
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "";
+    const isNetworkFailure = msg === "Failed to fetch" || msg.toLowerCase().includes("network") || msg.toLowerCase().includes("connection");
+    callbacks.setResult({
+      error: isNetworkFailure
+        ? "Connection failed — the server could not be reached. This is usually a temporary network issue."
+        : `Engine async run failed: ${msg || "unknown error"}`,
+      code: "NETWORK_OR_RUNTIME_ERROR",
+      nextAction: isNetworkFailure ? "RETRY_BACKGROUND_JOB" : "RETRY_OR_REDUCE_INPUT",
+    });
+  } finally {
+    callbacks.setRunning(false);
+    callbacks.setAsyncStatus(null);
+  }
+}
+
 export function EngineActionPanel({
   tenderId,
   vaultReviewedExperts = 0,
   vaultReviewedProjects = 0,
   lifecycleBlockersExist = false,
+  canMutate = false,
+  initialResult = null,
+  initialAsyncStatus = null,
 }: {
   tenderId: string;
   vaultReviewedExperts?: number;
   vaultReviewedProjects?: number;
+  /** Server-derived role capability. Fail-closed: a caller that omits
+   *  this prop gets a read-only panel, never an exposed mutation. */
+  canMutate?: boolean;
   /** When true, the success message notes that readiness blockers remain so the
    *  user doesn't mistake "engine completed" for "ready to generate". */
   lifecycleBlockersExist?: boolean;
+  /** Initial-state seams so render tests (and previews) can exercise the
+   *  timeout/failure/retry states without a live engine run. */
+  initialResult?: EngineResponse | null;
+  initialAsyncStatus?: EngineAsyncStatus | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<EngineResponse | null>(null);
+  const [result, setResult] = useState<EngineResponse | null>(initialResult);
   // Async-mode UX — when null we're in sync mode; otherwise this is the
   // active jobId being polled and the latest progress message.
-  const [asyncStatus, setAsyncStatus] = useState<{ jobId: string; message: string } | null>(null);
+  const [asyncStatus, setAsyncStatus] = useState<EngineAsyncStatus | null>(initialAsyncStatus);
   const isLargeVault = (vaultReviewedExperts + vaultReviewedProjects) > LARGE_VAULT_THRESHOLD;
 
+  const callbacks: EngineRunCallbacks = {
+    setRunning,
+    setResult,
+    setAsyncStatus,
+    onSuccess: () => startTransition(() => router.refresh()),
+  };
+
+  // Both wrappers delegate to the exported dispatchers, which re-check
+  // canMutate before any network call — conditional rendering hides these
+  // controls for read-only roles, and this guard holds even if a callback
+  // is somehow invoked anyway.
   async function runEngine(force = false) {
-    setRunning(true);
-    setResult(null);
-    setAsyncStatus(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/engine${force ? "?force=true" : ""}`, { method: "POST" });
-      const data = await parseEngineResponse(res);
-      if (!res.ok) {
-        // ─── Auto-promote to background on Vercel function timeout ──────
-        // The 60s Hobby cap is the single biggest source of "Run Engine
-        // didn't work" pain. The user-merged production tender showed
-        // FUNCTION_INVOCATION_TIMEOUT three runs in a row before the
-        // user remembered to click "Run in background" manually. When
-        // we detect the timeout signature, transparently retry in async
-        // mode — same click, same expectation, just with the path that
-        // actually works on Hobby for large tenders.
-        const isVercelTimeout = data.code === "ENGINE_VERCEL_TIMEOUT" || data.code === "GENERATION_TIMEOUT" || res.status === 504;
-        if (isVercelTimeout) {
-          setResult({
-            ...data,
-            error: `${data.error ?? "Engine hit the 60s Vercel cap."} Auto-retrying in background mode…`,
-            code: "AUTO_PROMOTING_TO_BACKGROUND",
-            nextAction: "RETRY_AS_BACKGROUND_JOB",
-          });
-          // Fire the async path. The setRunning(false) in the finally
-          // below releases the button; runEngineAsync re-asserts it
-          // and drives its own state machine until the poll completes.
-          await runEngineAsync(force);
-          return;
-        }
-        setResult(data);
-        return;
-      }
-      // "Engine succeeded" here means the engine HTTP run passed its
-       // postconditions — it does NOT mean tender readiness is green. Downstream
-       // blockers (regex fallback unapproved, metadata incomplete, submission
-       // plan not built, evidence uncoverage) still apply. Make the label honest
-       // so the user is steered to the readiness panels below.
-      const warningCount = Array.isArray(data?.extractionWarnings) ? data.extractionWarnings.length : 0;
-      setResult({
-        ...data,
-        success: true,
-        error: warningCount > 0
-          ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, metadata, submission plan, evidence) still apply.`
-          : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, metadata, submission plan, evidence) still apply before Generate Docs.",
-      });
-      startTransition(() => router.refresh());
-    } catch (error) {
-      setResult({
-        error: error instanceof Error ? `Engine run failed: ${error.message}` : "Engine run failed due to a network/runtime error.",
-        code: "NETWORK_OR_RUNTIME_ERROR",
-        nextAction: "RETRY_OR_REDUCE_INPUT",
-      });
-    } finally {
-      setRunning(false);
-    }
+    if (!canMutate) return;
+    await executeEngineRun({ tenderId, canMutate, force, lifecycleBlockersExist, callbacks });
   }
 
-  // Async mode — enqueue + worker + poll. Escapes the 60s Hobby cap for
-  // large tenders where the synchronous engine pipeline would time out.
-  // extraParams allows callers to pass ?safe=true or ?skipAiRematch=true.
   async function runEngineAsync(force = false, extraParams: Record<string, string> = {}) {
-    setRunning(true);
-    setResult(null);
-    setAsyncStatus(null);
-    try {
-      // 1. Enqueue the job — returns 202 with { jobId }
-      const qs = new URLSearchParams({ async: "true", ...extraParams });
-      if (force) qs.set("force", "true");
-      const enqueueRes = await fetch(`/api/tenders/${tenderId}/engine?${qs.toString()}`, { method: "POST" });
-      const enqueueData = await parseEngineResponse(enqueueRes);
-      if (!enqueueRes.ok || !enqueueData.jobId) {
-        setResult(enqueueData);
-        return;
-      }
-      const jobId = enqueueData.jobId;
-      setAsyncStatus({ jobId, message: "Engine queued. Kicking off worker…" });
-
-      // 2. Kick off the worker (fire-and-forget — separate 60s function invocation)
-      fetch("/api/ai-jobs/run-next", { method: "POST" }).catch(() => {
-        // worker may already be running; not fatal — polling will still observe progress
-      });
-
-      // 3. Poll status every 3s until SUCCEEDED / FAILED / timeout
-      const startedAt = Date.now();
-      let finalStatus: "SUCCEEDED" | "FAILED" | null = null;
-      let finalJob: {
-        errorMessage?: string | null;
-        output?: Record<string, unknown> | null;
-        steps?: Array<{ stepName?: string; message?: string }>;
-      } | null = null;
-      while (Date.now() - startedAt < MAX_POLL_DURATION_MS) {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-        const pollRes = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
-        if (!pollRes.ok) continue; // transient — keep polling
-        const { job } = await pollRes.json() as {
-          job: {
-            status: string;
-            errorMessage?: string | null;
-            output?: Record<string, unknown> | null;
-            steps?: Array<{ stepName?: string; message?: string }>;
-          };
-        };
-        const lastStep = job.steps?.[job.steps.length - 1];
-        setAsyncStatus({ jobId, message: lastStep?.message ?? `Worker status: ${job.status}` });
-        if (job.status === "SUCCEEDED" || job.status === "FAILED") {
-          finalStatus = job.status;
-          finalJob = job;
-          break;
-        }
-      }
-
-      if (finalStatus === "SUCCEEDED") {
-        setResult({ success: true, async: true, jobId, error: lifecycleBlockersExist ? "Engine run completed; blockers remain — review readiness panels." : "Engine completed successfully (background)." });
-        startTransition(() => router.refresh());
-      } else if (finalStatus === "FAILED") {
-        const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
-        const engineCode = typeof jobOutput?.code === "string" ? jobOutput.code : "ASYNC_ENGINE_FAILED";
-        const failedStage = typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined;
-        const engineNextAction = typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_OR_REDUCE_INPUT";
-        setResult({
-          error: `Engine background run failed: ${finalJob?.errorMessage ?? "unknown worker error"}`,
-          code: engineCode,
-          nextAction: engineNextAction,
-          failedStage,
-          safeModeAvailable: jobOutput?.safeModeAvailable === true,
-          jobId,
-        });
-      } else {
-        // A poll timeout is NOT a failure — the worker is still running
-        // on Vercel and will complete the job in the background. The
-        // user just needs to refresh (the page will pick up the new
-        // matches + analysis as soon as the worker writes them).
-        // Display a calm, actionable message instead of an error.
-        setResult({
-          error: "Engine is still running in the background (10 min poll window elapsed). The worker continues — refresh in 1-2 minutes to see the completed engine run.",
-          code: "ASYNC_POLL_TIMEOUT",
-          nextAction: "REFRESH_TO_CHECK_STATUS",
-          jobId,
-        });
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "";
-      const isNetworkFailure = msg === "Failed to fetch" || msg.toLowerCase().includes("network") || msg.toLowerCase().includes("connection");
-      setResult({
-        error: isNetworkFailure
-          ? "Connection failed — the server could not be reached. This is usually a temporary network issue."
-          : `Engine async run failed: ${msg || "unknown error"}`,
-        code: "NETWORK_OR_RUNTIME_ERROR",
-        nextAction: isNetworkFailure ? "RETRY_BACKGROUND_JOB" : "RETRY_OR_REDUCE_INPUT",
-      });
-    } finally {
-      setRunning(false);
-      setAsyncStatus(null);
-    }
+    if (!canMutate) return;
+    await executeEngineRunAsync({ tenderId, canMutate, force, extraParams, lifecycleBlockersExist, callbacks });
   }
 
   const ok = result?.success === true;
@@ -296,7 +386,7 @@ export function EngineActionPanel({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {extractionBlocked && (
+          {canMutate && extractionBlocked && (
             <button
               onClick={() => runEngine(true)}
               disabled={running || isPending}
@@ -307,7 +397,7 @@ export function EngineActionPanel({
           )}
           {/* Sync run — only show for small vaults; large vaults should
               always go async+safe to avoid the 60s Vercel cap */}
-          {!isLargeVault && (
+          {canMutate && !isLargeVault && (
             <button
               onClick={() => runEngine(false)}
               disabled={running || isPending}
@@ -320,6 +410,7 @@ export function EngineActionPanel({
           {/* For large vaults, the primary CTA automatically uses safe
               mode (skips AI rematch). This is the only path that reliably
               completes within Vercel's 60s function budget. */}
+          {canMutate && (
           <button
             onClick={() => isLargeVault
               ? runEngineAsync(false, { safe: "true", skipAiRematch: "true" })
@@ -340,10 +431,14 @@ export function EngineActionPanel({
                 ? "⚡ Run Engine (Safe Mode)"
                 : "⏳ Run in background"}
           </button>
+          )}
+          {!canMutate && (
+            <p className="text-xs text-slate-500 italic self-center">Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role</p>
+          )}
         </div>
       </div>
 
-      {isLargeVault && !result && !running && (
+      {canMutate && isLargeVault && !result && !running && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           <p className="font-semibold">Large vault detected — use Safe Mode for reliable matching</p>
           <p className="mt-1">
@@ -398,7 +493,8 @@ export function EngineActionPanel({
               more and either resolves (showing success/failure) or
               prompts a page refresh. Avoids the user having to know
               that "the worker may still be running" means "click
-              refresh to see the result". */}
+              refresh to see the result". GET-only — stays available to
+              read-only roles. */}
           {result.code === "ASYNC_POLL_TIMEOUT" && result.jobId && (
             <button
               type="button"
@@ -434,17 +530,17 @@ export function EngineActionPanel({
             </button>
           )}
 
-          {result.code === "NETWORK_OR_RUNTIME_ERROR" && result.nextAction === "RETRY_BACKGROUND_JOB" && (
+          {canMutate && result.code === "NETWORK_OR_RUNTIME_ERROR" && result.nextAction === "RETRY_BACKGROUND_JOB" && (
             <button
               type="button"
-              onClick={() => { setResult(null); runEngineAsync(); }}
+              onClick={() => { setResult(null); void runEngineAsync(); }}
               className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50"
             >
               Retry background run
             </button>
           )}
 
-          {(result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT") && (
+          {canMutate && (result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT") && (
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -475,6 +571,10 @@ export function EngineActionPanel({
                 </span>
               )}
             </div>
+          )}
+
+          {!canMutate && (result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT" || result.nextAction === "RETRY_BACKGROUND_JOB") && (
+            <p className="mt-3 text-xs text-slate-500 italic">Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role</p>
           )}
 
           {Array.isArray(result.blockers) && result.blockers.length > 0 && (

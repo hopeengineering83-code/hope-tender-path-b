@@ -131,7 +131,7 @@ function nextActionFor(row: {
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`req-coverage:${actor.id}`, API_RATE_LIMIT);

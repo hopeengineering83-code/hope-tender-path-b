@@ -36,6 +36,21 @@ export type CanonicalAnalysisExisting = {
   submissionMethod?: string | null;
   submissionEmails?: string | null;
   notes?: string | null;
+  // Per-field source file IDs, resolved by the caller from the ACTUAL extraction
+  // evidence (the active file whose extracted text contains the field's
+  // supporting quote — see attributeMetadataSourceFileId). Each is the real
+  // source file id, or null when the quote is missing / not found in any active
+  // file (→ ungrounded). A key left undefined leaves that column untouched.
+  clientNameSourceFileId?: string | null;
+  submissionMethodSourceFileId?: string | null;
+  submissionAddressSourceFileId?: string | null;
+  submissionEmailSourceFileId?: string | null;
+  // Source file IDs for title and deadline evidence — resolved by the caller
+  // from the AI's tenderTitleSourceQuote and deadlineSourceQuote via
+  // attributeMetadataSourceFileId. Without these, BuildPlan preflight cannot
+  // pass source-evidence validation for title or deadline.
+  titleSourceFileId?: string | null;
+  deadlineSourceFileId?: string | null;
 };
 
 export type CanonicalAnalysisUpdate = {
@@ -95,6 +110,21 @@ export function buildCanonicalAnalysisTenderUpdate(
   const data: Record<string, unknown> = {
     analysisSummary: aiResult.summary,
     ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
+    // Source evidence for title (page/quote extracted by AI, source file ID
+    // resolved by the caller from the quote). Persisted so BuildPlan preflight
+    // can verify quote containment against the active file.
+    ...(aiResult.tenderTitleSourcePage !== undefined ? { titleSourcePage: aiResult.tenderTitleSourcePage } : {}),
+    ...(aiResult.tenderTitleSourceQuote !== undefined ? { titleSourceQuote: aiResult.tenderTitleSourceQuote } : {}),
+    ...(existing.titleSourceFileId !== undefined ? { titleSourceFileId: existing.titleSourceFileId } : {}),
+    // Deadline value (ISO date string) — persisted as Tender.deadline so
+    // downstream gates can read it without re-running AI. Validated to ISO
+    // YYYY-MM-DD format by the parser before reaching here.
+    ...(aiResult.deadline ? { deadline: new Date(aiResult.deadline) } : {}),
+    // Source evidence for deadline (page/quote extracted by AI, source file ID
+    // resolved by the caller from the quote).
+    ...(aiResult.deadlineSourcePage !== undefined ? { deadlineSourcePage: aiResult.deadlineSourcePage } : {}),
+    ...(aiResult.deadlineSourceQuote !== undefined ? { deadlineSourceQuote: aiResult.deadlineSourceQuote } : {}),
+    ...(existing.deadlineSourceFileId !== undefined ? { deadlineSourceFileId: existing.deadlineSourceFileId } : {}),
     evaluationMethodology: aiResult.evaluationMethodology || null,
     exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
     exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
@@ -128,11 +158,23 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
     ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
     ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
+    // Persist the submission email source quote so BuildPlan preflight can
+    // verify quote containment against the active file (previously only the
+    // file ID and page were stored, so email evidence could not be verified).
+    ...(aiResult.submissionEmailSourceQuote !== undefined ? { submissionEmailSourceQuote: aiResult.submissionEmailSourceQuote } : {}),
     ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
     ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
     ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
     ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
     ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
+    // Bind each metadata field's source evidence to the ACTUAL file the caller
+    // resolved from the supporting quote (attributeMetadataSourceFileId). The
+    // value is the real source file id or null (ungrounded); a column is only
+    // written when the caller supplied that key.
+    ...(existing.clientNameSourceFileId !== undefined ? { clientNameSourceFileId: existing.clientNameSourceFileId } : {}),
+    ...(existing.submissionMethodSourceFileId !== undefined ? { submissionMethodSourceFileId: existing.submissionMethodSourceFileId } : {}),
+    ...(existing.submissionAddressSourceFileId !== undefined ? { submissionAddressSourceFileId: existing.submissionAddressSourceFileId } : {}),
+    ...(existing.submissionEmailSourceFileId !== undefined ? { submissionEmailSourceFileId: existing.submissionEmailSourceFileId } : {}),
     ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
     metadataContaminated,
   };
