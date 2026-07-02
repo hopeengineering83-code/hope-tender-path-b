@@ -4038,14 +4038,14 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // ACTUAL per-section attempt order in the code below: Gemini → OpenAI →
-  // Mistral → Together → DeepSeek → Groq/OpenRouter → Anthropic → deterministic
-  // fallback. NOTE: this legacy per-section order predates and DIFFERS from the
-  // canonical automatic chain (Z.ai → Cerebras → Mistral → Groq → OpenRouter →
-  // Gemini → OpenAI → Together → DeepSeek → Anthropic) defined in
-  // lib/ai-provider-registry.ts; reordering it is a runtime behavior change
-  // and is intentionally not done here. Anthropic stays last so its rate
-  // limits don't block parallel section generation.
+  // Provider chain for sections: ACTUAL per-section attempt order in the code
+  // below is Gemini → OpenAI → Mistral → Together → DeepSeek → Groq/OpenRouter →
+  // Anthropic → deterministic fallback. NOTE: this legacy per-section order
+  // predates and DIFFERS from the canonical automatic chain (Z.ai → Cerebras →
+  // Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek →
+  // Anthropic) defined in lib/ai-provider-registry.ts; reordering it is a
+  // runtime behavior change and is intentionally not done here. Anthropic stays
+  // last so its rate limits don't block parallel section generation.
 
     // Gemini — first tier
   if (apiKey && !isProviderCooledDown("gemini")) {
