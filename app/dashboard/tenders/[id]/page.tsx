@@ -198,7 +198,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
         <AICopilotSuggestionsPanel tenderId={tender.id} />
         {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
-        {ai && <TenderAICopilotPanel tenderId={tender.id} />}
+        {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
       </WorkflowStage>
 
       <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
