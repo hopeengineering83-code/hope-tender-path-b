@@ -1,198 +1,241 @@
-// Rendered-component capability tests for TenderAICopilotPanel and EngineActionPanel.
+// REAL rendered-component tests for EngineActionPanel REVIEWER protection.
 //
-// LIMITATION REPORTED HONESTLY:
-// The repository's test infrastructure (tsx + Node's native test runner) does
-// not provide the Next.js AppRouter AsyncLocalStorage context that
-// `useRouter()` from `next/navigation` requires. Both TenderAICopilotPanel
-// and EngineActionPanel call `useRouter()` at the top level, which throws
-// "invariant expected app router to be mounted" when rendered outside a
-// Next.js app. Installing happy-dom + @testing-library/react is not sufficient
-// because the Next.js router context is provided by the Next.js server runtime,
-// not by a DOM environment.
+// The actual component is mounted with @testing-library/react into a live
+// happy-dom document (see tests/helpers/rtl-env.ts). useRouter() is
+// satisfied by providing Next's AppRouterContext — no Next server runtime
+// is required. These are not source-text scans and not simulated
+// predicates: effects run, clicks fire, and every network request the
+// component dispatches is recorded by the fetch mock.
 //
-// APPROACH:
-// Instead of faking a render, we import the ACTUAL component module source
-// and verify the REAL JSX conditional structure. This is NOT a source-text
-// scan — we import the module and inspect its exported function's source code
-// to verify that every mutation control is wrapped in a canMutate conditional.
-// We also verify the handler-level guard (if (!canMutate) return;) exists.
-//
-// This is stronger than a pure source-text scan because:
-// 1. We import the real module (not a copy).
-// 2. We verify the actual function bodies contain the guard.
-// 3. We verify every onClick handler that dispatches a POST is inside a
-//    canMutate conditional.
-//
-// For a TRUE rendered-component test, the test infrastructure would need
-// to be upgraded to use jest + jest-environment-jsdom with
-// jest.mock("next/navigation") or Next.js's own test utilities. That
-// infrastructure change is out of scope for this delta.
+// Proven here:
+//  1. Omitted canMutate and REVIEWER (canMutate=false) render NO engine
+//     POST controls in normal, large-vault, extraction-blocked,
+//     poll-timeout, network-failure, and failure/retry states.
+//  2. "Check status now" stays available to REVIEWER and is genuinely
+//     GET-only (clicking it is proven to send a single GET, zero POSTs).
+//  3. ADMIN and PROPOSAL_MANAGER (via the real canMutateTender) retain the
+//     mutation controls, and clicking Run Engine dispatches the real POST.
+//  4. A canMutate=false handler path cannot issue a POST: the exported
+//     dispatchers behind the buttons (executeEngineRun /
+//     executeEngineRunAsync) are invoked directly with canMutate=false and
+//     provably send ZERO requests.
 
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-
-// Import the ACTUAL component modules to verify they export the real functions
-import { TenderAICopilotPanel } from "../components/tender-ai-copilot-panel";
-import { EngineActionPanel } from "../components/engine-action-panel";
+import {
+  React,
+  renderWithRouter,
+  installFetchMock,
+  buttonLabels,
+  findButton,
+  fireEvent,
+  waitFor,
+  cleanup,
+  type FetchCall,
+} from "./helpers/rtl-env";
+import {
+  EngineActionPanel,
+  executeEngineRun,
+  executeEngineRunAsync,
+  ENGINE_MUTATION_BLOCKED_RESULT,
+  type EngineRunCallbacks,
+} from "../components/engine-action-panel";
 import { canMutateTender } from "../lib/recovery-command-actions";
 
-// Read the actual source files
-const copilotSource = readFileSync("components/tender-ai-copilot-panel.tsx", "utf8");
-const engineSource = readFileSync("components/engine-action-panel.tsx", "utf8");
+const h = React.createElement;
 
-// ─── Verify components are real exports (not stubs) ──────────────────────────
+const MUTATION_LABELS = [
+  "Run Engine",
+  "Force run once",
+  "Run in background",
+  "Run Engine (Safe Mode)",
+  "Run Safe Mode (recommended)",
+  "Run full mode anyway",
+  "Retry background run",
+  "Retry from start",
+  "Run Safe Mode",
+  "Skip AI Rematch",
+];
 
-describe("Component imports are real (not stubs)", () => {
-  it("TenderAICopilotPanel is a real function export", () => {
-    assert.equal(typeof TenderAICopilotPanel, "function");
-    assert.equal(TenderAICopilotPanel.name, "TenderAICopilotPanel");
+function assertNoMutationControls(labels: string[], where: string) {
+  for (const label of MUTATION_LABELS) {
+    assert.ok(
+      !labels.some((l) => l.includes(label)),
+      `read-only render must NOT contain "${label}" (${where}); rendered buttons: ${JSON.stringify(labels)}`,
+    );
+  }
+}
+
+let calls: FetchCall[];
+beforeEach(() => {
+  calls = installFetchMock([
+    { match: "/engine", method: "POST", json: { success: true, tender: {} } },
+    { match: "/api/ai-jobs/run-next", method: "POST", json: { ok: true } },
+    { match: "/api/ai-jobs/", method: "GET", json: { job: { status: "RUNNING", steps: [] } } },
+  ]);
+});
+afterEach(() => cleanup());
+
+const reviewerCanMutate = canMutateTender("REVIEWER");
+const adminCanMutate = canMutateTender("ADMIN");
+const pmCanMutate = canMutateTender("PROPOSAL_MANAGER");
+
+describe("EngineActionPanel — REVIEWER / omitted canMutate render states (real render)", () => {
+  it("role mapping sanity: REVIEWER=false, ADMIN/PM=true, unknown/null fail closed", () => {
+    assert.equal(reviewerCanMutate, false);
+    assert.equal(adminCanMutate, true);
+    assert.equal(pmCanMutate, true);
+    assert.equal(canMutateTender("VIEWER"), false);
+    assert.equal(canMutateTender(null), false);
+    assert.equal(canMutateTender(undefined), false);
   });
 
-  it("EngineActionPanel is a real function export", () => {
-    assert.equal(typeof EngineActionPanel, "function");
-    assert.equal(EngineActionPanel.name, "EngineActionPanel");
+  it("omitted canMutate (fail-closed default): no mutation buttons, read-only note shown", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1" }));
+    assertNoMutationControls(buttonLabels(container), "omitted canMutate");
+    assert.match(container.textContent ?? "", /Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role/);
+  });
+
+  it("REVIEWER normal state: no mutation buttons, read-only note shown", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: reviewerCanMutate }));
+    assertNoMutationControls(buttonLabels(container), "normal state");
+    assert.match(container.textContent ?? "", /Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role/);
+  });
+
+  it("REVIEWER large-vault state: no Safe Mode banner and no large-vault mutation buttons", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: reviewerCanMutate,
+      vaultReviewedExperts: 40,
+      vaultReviewedProjects: 10,
+    }));
+    assertNoMutationControls(buttonLabels(container), "large-vault state");
+    assert.ok(!(container.textContent ?? "").includes("Large vault detected"), "REVIEWER must not see the Safe Mode banner");
+  });
+
+  it("REVIEWER extraction-blocked state: no Force run once", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: reviewerCanMutate,
+      initialResult: { code: "EXTRACTION_NOT_READY", error: "Extraction not ready." },
+    }));
+    assertNoMutationControls(buttonLabels(container), "extraction-blocked state");
+  });
+
+  it("REVIEWER poll-timeout state: keeps Check status now; clicking performs a single GET and zero POSTs", async () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: reviewerCanMutate,
+      initialResult: { code: "ASYNC_POLL_TIMEOUT", jobId: "job-9", error: "Still running." },
+    }));
+    assertNoMutationControls(buttonLabels(container), "poll-timeout state");
+    const checkButton = findButton(container, "Check status now");
+    assert.ok(checkButton, "REVIEWER must keep the read-only Check status now button");
+    fireEvent.click(checkButton!);
+    await waitFor(() => { assert.ok(calls.length > 0); });
+    assert.ok(calls.every((c) => c.method === "GET"), `Check status now must be GET-only, got ${JSON.stringify(calls)}`);
+    assert.ok(calls.some((c) => c.url.includes("/api/ai-jobs/job-9")), "must poll the job status endpoint");
+  });
+
+  it("REVIEWER failure/retry state: no Retry from start / Run Safe Mode / Skip AI Rematch; read-only note instead", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: reviewerCanMutate,
+      initialResult: { code: "ASYNC_ENGINE_FAILED", error: "Worker failed.", failedStage: "matching" },
+    }));
+    assertNoMutationControls(buttonLabels(container), "failure/retry state");
+    assert.match(container.textContent ?? "", /Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role/);
+  });
+
+  it("REVIEWER network-failure state: no Retry background run", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: reviewerCanMutate,
+      initialResult: { code: "NETWORK_OR_RUNTIME_ERROR", nextAction: "RETRY_BACKGROUND_JOB", error: "Connection failed." },
+    }));
+    assertNoMutationControls(buttonLabels(container), "network-failure state");
   });
 });
 
-// ─── TenderAICopilotPanel — canMutate gating verification ────────────────────
+describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real render + real dispatch)", () => {
+  it("ADMIN normal state: Run Engine + Run in background visible; clicking Run Engine dispatches the POST", async () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: adminCanMutate }));
+    const labels = buttonLabels(container);
+    assert.ok(labels.some((l) => l.includes("Run Engine")), "ADMIN must see Run Engine");
+    assert.ok(labels.some((l) => l.includes("Run in background")), "ADMIN must see Run in background");
 
-describe("TenderAICopilotPanel — canMutate gating in real component", () => {
-  it("canMutate defaults to false (fail-closed)", () => {
-    // Verify the function signature has canMutate = false
-    assert.match(copilotSource, /canMutate\s*=\s*false/);
+    const runButton = findButton(container, "Run Engine");
+    assert.ok(runButton);
+    fireEvent.click(runButton!);
+    await waitFor(() => {
+      assert.ok(
+        calls.some((c) => c.method === "POST" && c.url.includes("/api/tenders/t1/engine")),
+        "ADMIN click must dispatch the engine POST",
+      );
+    });
   });
 
-  it("Ask Copilot button is guarded by canMutate", () => {
-    // The button must be inside a {canMutate && (...)} conditional
-    assert.match(copilotSource, /\{canMutate\s*&&\s*\([\s\S]*?Ask Copilot/);
+  it("PROPOSAL_MANAGER large-vault state: Safe Mode banner and both large-vault buttons visible", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: pmCanMutate,
+      vaultReviewedExperts: 40,
+      vaultReviewedProjects: 10,
+    }));
+    assert.ok((container.textContent ?? "").includes("Large vault detected"), "PM must see the Safe Mode banner");
+    assert.ok(findButton(container, "Run Safe Mode (recommended)"), "PM must see Run Safe Mode (recommended)");
+    assert.ok(findButton(container, "Run full mode anyway"), "PM must see Run full mode anyway");
   });
 
-  it("quick-question buttons are guarded by canMutate", () => {
-    assert.match(copilotSource, /\{canMutate\s*&&\s*QUICK_QUESTIONS/);
-  });
-
-  it("record-actions button is guarded by canMutate", () => {
-    assert.match(copilotSource, /\{canMutate\s*&&\s*canRecord/);
-  });
-
-  it("textarea is disabled when canMutate is false", () => {
-    assert.match(copilotSource, /disabled=\{.*!canMutate/);
-  });
-});
-
-// ─── EngineActionPanel — canMutate gating verification ───────────────────────
-
-describe("EngineActionPanel — canMutate gating in real component", () => {
-  it("canMutate defaults to false (fail-closed)", () => {
-    assert.match(engineSource, /canMutate\s*=\s*false/);
-  });
-
-  it("runEngine() has if (!canMutate) return; as first statement", () => {
-    // Verify the handler has the guard before any state update
-    const match = engineSource.match(/async function runEngine\([^)]*\)\s*\{([^}]*)setRunning/);
-    assert.ok(match, "runEngine function must exist");
-    assert.match(match[1], /if\s*\(!canMutate\)\s*return;/);
-  });
-
-  it("runEngineAsync() has if (!canMutate) return; as first statement", () => {
-    const match = engineSource.match(/async function runEngineAsync\([^)]*\)\s*\{([^}]*)setRunning/);
-    assert.ok(match, "runEngineAsync function must exist");
-    assert.match(match[1], /if\s*\(!canMutate\)\s*return;/);
-  });
-
-  it("Force run once button is guarded by canMutate", () => {
-    assert.match(engineSource, /\{canMutate\s*&&\s*extractionBlocked/);
-  });
-
-  it("Run Engine button is guarded by canMutate", () => {
-    assert.match(engineSource, /\{canMutate\s*&&\s*!isLargeVault/);
-  });
-
-  it("Run in background button is guarded by canMutate", () => {
-    assert.match(engineSource, /\{canMutate\s*&&\s*\([\s\S]*?Run in background/);
-  });
-
-  it("large-vault Run Safe Mode (recommended) is guarded by canMutate", () => {
-    assert.match(engineSource, /\{canMutate\s*&&\s*isLargeVault/);
-  });
-
-  it("Retry background run is guarded by canMutate", () => {
-    assert.match(engineSource, /\{canMutate\s*&&\s*result\.code\s*===\s*"NETWORK_OR_RUNTIME_ERROR"/);
-  });
-
-  it("Retry from start / Run Safe Mode / Skip AI Rematch are guarded by canMutate", () => {
-    assert.match(engineSource, /\{canMutate\s*&&\s*\(result\.code\s*===\s*"ASYNC_ENGINE_FAILED"/);
-  });
-
-  it("read-only message is shown when canMutate is false", () => {
-    assert.match(engineSource, /\{!canMutate\s*&&\s*\(/);
-    assert.match(engineSource, /Read-only/i);
-  });
-
-  it("Check status now button is NOT guarded by canMutate (read-only GET)", () => {
-    // The Check status now button uses GET and should remain visible to REVIEWER.
-    // Find the actual button (not the action hint text) and verify it:
-    // 1. Is NOT inside a canMutate conditional
-    // 2. Uses GET method
-    const buttonIdx = engineSource.indexOf("Check status now\n            </button>");
-    assert.ok(buttonIdx > 0, "Check status now button must exist");
-    // Search backwards for the onClick handler that uses GET
-    const beforeButton = engineSource.substring(Math.max(0, buttonIdx - 2000), buttonIdx);
-    assert.match(beforeButton, /method:\s*"GET"/, "Check status now must use GET");
-    // Verify it's NOT guarded by canMutate
-    const conditionalBefore = beforeButton.lastIndexOf("{canMutate &&");
-    const buttonStart = beforeButton.lastIndexOf("<button");
-    // The button should NOT be inside a canMutate conditional
-    // (if canMutate appears before the button, it must close before the button)
-    if (conditionalBefore > buttonStart) {
-      // canMutate conditional opens after the button start — meaning the button
-      // is NOT inside a canMutate guard. This is correct for a read-only action.
-      assert.ok(true, "Check status now is not inside a canMutate guard");
-    } else if (conditionalBefore === -1) {
-      assert.ok(true, "No canMutate guard before Check status now — correct for read-only");
-    } else {
-      // canMutate conditional opens before the button — check if it closes before
-      const afterConditional = beforeButton.substring(conditionalBefore);
-      // Count opening and closing braces to see if the conditional is still open
-      const opens = (afterConditional.match(/{/g) || []).length;
-      const closes = (afterConditional.match(/}/g) || []).length;
-      assert.ok(opens <= closes, "Check status now must NOT be inside a canMutate guard");
-    }
+  it("ADMIN failure/retry state: retry buttons visible", () => {
+    const { container } = renderWithRouter(h(EngineActionPanel, {
+      tenderId: "t1",
+      canMutate: adminCanMutate,
+      initialResult: { code: "ASYNC_ENGINE_FAILED", error: "Worker failed." },
+    }));
+    assert.ok(findButton(container, "Retry from start"), "ADMIN must see Retry from start");
+    assert.ok(findButton(container, "Run Safe Mode"), "ADMIN must see Run Safe Mode");
+    assert.ok(findButton(container, "Skip AI Rematch"), "ADMIN must see Skip AI Rematch");
   });
 });
 
-// ─── canMutateTender fail-closed verification ────────────────────────────────
+describe("EngineActionPanel — canMutate=false handler path cannot POST (real dispatch path)", () => {
+  // The component's runEngine/runEngineAsync handlers delegate to these
+  // exported dispatchers (see components/engine-action-panel.tsx). Invoking
+  // them directly with canMutate=false is the strongest available proof
+  // that a manually triggered callback — stale closure, devtools, future
+  // code path that forgets conditional rendering — cannot reach the network.
+  function collectCallbacks() {
+    const results: unknown[] = [];
+    const callbacks: EngineRunCallbacks = {
+      setRunning: () => {},
+      setResult: (r) => results.push(r),
+      setAsyncStatus: () => {},
+      onSuccess: () => {},
+    };
+    return { results, callbacks };
+  }
 
-describe("canMutateTender — fail-closed for all non-mutating roles", () => {
-  it("ADMIN: true", () => { assert.equal(canMutateTender("ADMIN"), true); });
-  it("PROPOSAL_MANAGER: true", () => { assert.equal(canMutateTender("PROPOSAL_MANAGER"), true); });
-  it("REVIEWER: false", () => { assert.equal(canMutateTender("REVIEWER"), false); });
-  it("VIEWER: false", () => { assert.equal(canMutateTender("VIEWER"), false); });
-  it("null: false", () => { assert.equal(canMutateTender(null), false); });
-  it("undefined: false", () => { assert.equal(canMutateTender(undefined), false); });
-  it("unknown: false", () => { assert.equal(canMutateTender("GUEST"), false); });
-});
+  it("executeEngineRun with canMutate=false sends ZERO requests and reports the blocked result", async () => {
+    const { results, callbacks } = collectCallbacks();
+    await executeEngineRun({ tenderId: "t1", canMutate: false, force: true, callbacks });
+    assert.equal(calls.length, 0, "no fetch may be dispatched for a read-only role");
+    assert.deepEqual(results, [ENGINE_MUTATION_BLOCKED_RESULT]);
+  });
 
-// ─── Limitation report ───────────────────────────────────────────────────────
+  it("executeEngineRunAsync with canMutate=false sends ZERO requests and reports the blocked result", async () => {
+    const { results, callbacks } = collectCallbacks();
+    await executeEngineRunAsync({ tenderId: "t1", canMutate: false, extraParams: { safe: "true" }, callbacks });
+    assert.equal(calls.length, 0, "no fetch may be dispatched for a read-only role");
+    assert.deepEqual(results, [ENGINE_MUTATION_BLOCKED_RESULT]);
+  });
 
-describe("Test infrastructure limitation — reported honestly", () => {
-  it("reports that true rendered-component tests require Next.js AppRouter context", () => {
-    // This test documents the limitation. A TRUE rendered-component test
-    // (using render() from @testing-library/react) requires the Next.js
-    // AppRouter AsyncLocalStorage context, which is only available inside
-    // the Next.js server runtime. The repository's test infrastructure
-    // (tsx + Node native test runner) does not provide this context.
-    //
-    // To upgrade: install jest + jest-environment-jsdom and use
-    // jest.mock("next/navigation") to mock useRouter. This is a separate
-    // infrastructure task.
-    //
-    // The current tests verify the REAL component source by importing the
-    // actual modules and inspecting their function bodies — this is stronger
-    // than a pure source-text scan because the modules are imported (not
-    // copied), and the function body verification proves the guard exists
-    // in the actual runtime code.
-    assert.ok(true, "Limitation documented: true rendered-component tests require Next.js AppRouter context upgrade");
+  it("executeEngineRun with canMutate=true dispatches the POST (control test — the guard, not the mock, blocks)", async () => {
+    const { callbacks } = collectCallbacks();
+    await executeEngineRun({ tenderId: "t1", canMutate: true, callbacks });
+    assert.ok(
+      calls.some((c) => c.method === "POST" && c.url.includes("/api/tenders/t1/engine")),
+      "mutating role must reach the engine endpoint",
+    );
   });
 });

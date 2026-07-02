@@ -47,6 +47,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
   const [error, setError] = useState<string | null>(null);
 
   async function ask(q = question) {
+    if (!canMutate) return;
     const trimmed = q.trim();
     if (trimmed.length < 3) return;
     setLoading(true);
@@ -70,6 +71,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
   }
 
   async function recordControls() {
+    if (!canMutate) return;
     if (!response) return;
     setRecording(true);
     setError(null);
