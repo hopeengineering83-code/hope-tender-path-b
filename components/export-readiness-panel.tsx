@@ -91,7 +91,7 @@ const ADVISORY_RESOLUTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "ADDED_TO_TECHNICAL", label: "Already added to technical proposal" },
 ];
 
-export function ExportReadinessPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);

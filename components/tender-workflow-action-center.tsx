@@ -20,7 +20,7 @@ export interface WorkflowStageInfo {
   actionKind?: "mutation" | "readonly";
 }
 
-export function TenderWorkflowActionCenter({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [stages, setStages] = useState<WorkflowStageInfo[] | null>(null);
 
   const fetchStages = useCallback(() => {

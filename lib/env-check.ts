@@ -27,37 +27,22 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
 ];
 
-// AUTOMATIC provider key order — mirrors lib/ai-provider-catalog.cjs
-// CANONICAL_AI_PROVIDER_ORDER (Gemini → OpenRouter → OpenAI → Groq →
-// DeepSeek → Anthropic). Manual-only providers (Z.ai, Cerebras, Mistral,
-// Together) are NOT listed here because they are emergencyOnly and never
-// part of the automatic fallback chain — they MUST NOT satisfy automatic
-// runtime readiness.
+// ALL 10 AI provider keys in canonical order — mirrors
+// lib/ai-provider-catalog.cjs CANONICAL_AI_PROVIDER_ORDER.
+// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+// Together → DeepSeek → Anthropic.
+// All are automatic; Anthropic is emergency-only (last resort).
 const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
-  {
-    name: "GEMINI_API_KEY",
-    description: "Google Gemini API key (AIza...). FIRST-tier automatic provider in the canonical chain.",
-  },
-  {
-    name: "OPENROUTER_API_KEY",
-    description: "OpenRouter API key. SECOND-tier automatic aggregator — requires an explicit ':free' model.",
-  },
-  {
-    name: "OPENAI_API_KEY",
-    description: "OpenAI API key (sk-...). THIRD-tier automatic provider in the canonical chain.",
-  },
-  {
-    name: "GROQ_API_KEY",
-    description: "Groq API key. FOURTH-tier automatic provider.",
-  },
-  {
-    name: "DEEPSEEK_API_KEY",
-    description: "DeepSeek API key. FIFTH-tier automatic provider via OpenAI-compatible endpoint.",
-  },
-  {
-    name: "ANTHROPIC_API_KEY",
-    description: "Anthropic Claude API key (sk-ant-...). SIXTH-tier (last-resort) automatic provider; Claude must remain last in the chain.",
-  },
+  { name: "ZAI_API_KEY", description: "Z.ai GLM API key. Rank 1 automatic provider." },
+  { name: "CEREBRAS_API_KEY", description: "Cerebras API key. Rank 2 automatic provider." },
+  { name: "MISTRAL_API_KEY", description: "Mistral API key. Rank 3 automatic provider." },
+  { name: "GROQ_API_KEY", description: "Groq API key. Rank 4 automatic provider." },
+  { name: "OPENROUTER_API_KEY", description: "OpenRouter API key. Rank 5 automatic aggregator — requires an explicit ':free' model." },
+  { name: "GEMINI_API_KEY", description: "Google Gemini API key. Rank 6 automatic provider." },
+  { name: "OPENAI_API_KEY", description: "OpenAI API key. Rank 7 automatic provider." },
+  { name: "TOGETHER_API_KEY", description: "Together API key. Rank 8 automatic provider." },
+  { name: "DEEPSEEK_API_KEY", description: "DeepSeek API key. Rank 9 automatic provider." },
+  { name: "ANTHROPIC_API_KEY", description: "Anthropic Claude API key. Rank 10 emergency-only (last resort) provider." },
 ];
 
 const INSECURE_DEFAULTS: Record<string, string> = {
@@ -137,14 +122,12 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
     }
   }
 
-  // At least one AUTOMATIC AI provider key.
-  // Manual-only providers (Z.ai, Cerebras, Mistral, Together) do NOT count.
+  // At least one AI provider key (any of the 10 automatic providers).
   const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
   if (!hasAnyAIKey) {
     const message =
-      `At least one AUTOMATIC AI provider key is required (${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}). ` +
-      "Manual-only providers (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY) do NOT count — they are emergencyOnly and never part of the automatic fallback chain. " +
-      "Without any automatic AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
+      `At least one AI provider key is required (${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}). ` +
+      "Without any AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
     if (isProd) errors.push(message);
     else if (isVercelPreview && strictPreview) errors.push(message);
     else warnings.push(message);
@@ -190,15 +173,19 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  // ONLY automatic providers count as "AI configured" for the purpose of
-  // deciding whether automatic AI analysis/generation can proceed.
-  // Manual-only providers (Z.ai, Cerebras, Mistral, Together) are
-  // emergencyOnly and MUST NOT make automatic AI appear enabled.
+  // ALL 10 AI providers are part of the automatic fallback chain:
+  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+  // Together → DeepSeek → Anthropic.
+  // Any configured provider counts as "AI configured".
   return Boolean(
-    process.env.GEMINI_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    process.env.OPENAI_API_KEY ||
+    process.env.ZAI_API_KEY ||
+    process.env.CEREBRAS_API_KEY ||
+    process.env.MISTRAL_API_KEY ||
     process.env.GROQ_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.TOGETHER_API_KEY ||
     process.env.DEEPSEEK_API_KEY ||
     process.env.ANTHROPIC_API_KEY,
   );

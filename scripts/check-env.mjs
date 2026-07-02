@@ -222,18 +222,18 @@ for (const spec of ALWAYS_REQUIRED) {
   }
 }
 
-// Gap 5 — match lib/env-check.ts: at least one AUTOMATIC AI provider key is
-// required in production. Manual-only providers (Z.ai, Cerebras, Mistral,
-// Together) do NOT count — they are emergencyOnly and never part of the
-// automatic fallback chain. Preview deployments warn unless
-// STRICT_PREVIEW_ENV_CHECK=true. Development is unaffected (warn-only).
-const AUTOMATIC_AI_PROVIDER_KEYS = AI_PROVIDER_API_KEY_ENVS.map((name) => ({ name }));
-const hasAnyAutomaticAIKey = AUTOMATIC_AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
-if (!hasAnyAutomaticAIKey) {
+// Gap 5 — match lib/env-check.ts: at least one AI provider key is required
+// in production. All 10 providers are automatic:
+// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+// Together → DeepSeek → Anthropic (emergency-only last resort).
+// Preview deployments warn unless STRICT_PREVIEW_ENV_CHECK=true.
+// Development is unaffected (warn-only).
+const AI_PROVIDER_KEYS_CHECK = AI_PROVIDER_API_KEY_ENVS.map((name) => ({ name }));
+const hasAnyAIKey = AI_PROVIDER_KEYS_CHECK.some(({ name }) => Boolean(process.env[name]));
+if (!hasAnyAIKey) {
   const message =
-    `At least one AUTOMATIC AI provider key is required: ${AUTOMATIC_AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}. ` +
-    "Manual-only providers (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY) do NOT count — they are emergencyOnly and never part of the automatic fallback chain. " +
-    "Without any automatic AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
+    `At least one AI provider key is required: ${AI_PROVIDER_KEYS_CHECK.map((k) => k.name).join(", ")}. ` +
+    "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);
   } else if (isVercelPreview && strictPreviewEnvCheck) {

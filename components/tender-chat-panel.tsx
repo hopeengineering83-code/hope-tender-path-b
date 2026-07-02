@@ -29,7 +29,7 @@ type AnyMessage = ChatMessage | OptimisticMessage;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function TenderChatPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [messages, setMessages] = useState<AnyMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);

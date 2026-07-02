@@ -15,7 +15,7 @@ interface TenderSharePanelProps {
   canMutate?: boolean;
 }
 
-export function TenderSharePanel({ tenderId, canMutate = true }: TenderSharePanelProps) {
+export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePanelProps) {
   const [shares, setShares] = useState<ShareEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);

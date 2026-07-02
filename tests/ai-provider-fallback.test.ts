@@ -119,35 +119,36 @@ describe("isAIEnabled — 8-provider awareness", () => {
     assert.equal(isAIConfigured(), false);
   });
 
-  it("returns FALSE when ONLY manual-only providers are set (ZAI + Cerebras + Mistral + Together)", async () => {
-    // Delete ALL automatic provider keys
+  it("returns TRUE when ONLY ZAI is set (Z.ai is now automatic rank 1)", async () => {
+    // Delete ALL other provider keys
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.GROQ_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
-    // Set ONLY manual-only provider keys
+    delete process.env.CEREBRAS_API_KEY;
+    delete process.env.MISTRAL_API_KEY;
+    delete process.env.TOGETHER_API_KEY;
+    // Set ONLY ZAI — it is now automatic rank 1
     process.env.ZAI_API_KEY = "zai-test-key";
-    process.env.CEREBRAS_API_KEY = "cerebras-test-key";
-    process.env.MISTRAL_API_KEY = "mistral-test-key";
-    process.env.TOGETHER_API_KEY = "together-test-key";
     const { isAIConfigured } = await import("../lib/env-check");
-    // Manual-only providers MUST NOT make automatic AI appear enabled.
-    assert.equal(isAIConfigured(), false, "Manual-only providers (Z.ai, Cerebras, Mistral, Together) must NOT satisfy isAIConfigured");
+    assert.equal(isAIConfigured(), true, "Z.ai is automatic rank 1 and MUST satisfy isAIConfigured");
   });
 
-  it("returns TRUE when an automatic provider is set alongside manual-only providers", async () => {
+  it("returns TRUE when ANY of the 10 providers is set", async () => {
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.GROQ_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
-    process.env.ZAI_API_KEY = "zai-test-key";
-    process.env.CEREBRAS_API_KEY = "cerebras-test-key";
-    process.env.GEMINI_API_KEY = "gemini-test-key";
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
+    delete process.env.TOGETHER_API_KEY;
+    process.env.MISTRAL_API_KEY = "mistral-test-key";
     const { isAIConfigured } = await import("../lib/env-check");
-    assert.equal(isAIConfigured(), true, "An automatic provider (Gemini) must satisfy isAIConfigured even when manual-only providers are also set");
+    assert.equal(isAIConfigured(), true, "Mistral is automatic rank 3 and MUST satisfy isAIConfigured");
   });
 });
 
@@ -192,41 +193,34 @@ describe("evaluateEnv — preview + DeepSeek only", () => {
 
 // ─── check-env.mjs alignment ─────────────────────────────────────────────────
 
-describe("check-env.mjs — 6-provider automatic policy alignment", () => {
+describe("check-env.mjs — 10-provider automatic policy alignment", () => {
   it("includes all provider keys in the env-check descriptions (all 10 providers documented)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    // check-env.mjs documents ALL providers (automatic + manual-only) in its
-    // ENV_VARS descriptions, but only AUTOMATIC providers satisfy the
-    // hasAnyAutomaticAIKey check.
     for (const key of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
       assert.match(src, new RegExp(key));
     }
   });
 
-  it("uses AI_PROVIDER_API_KEY_ENVS (automatic-only) for hasAnyAutomaticAIKey check", async () => {
+  it("uses AI_PROVIDER_API_KEY_ENVS for hasAnyAIKey check (all 10 providers)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    // check-env.mjs MUST import AI_PROVIDER_API_KEY_ENVS (automatic-only) and
-    // use it for the hasAnyAutomaticAIKey check. Manual-only providers
-    // (Z.ai, Cerebras, Mistral, Together) MUST NOT satisfy the check.
-    assert.match(src, /import { ALL_PROVIDER_API_KEY_ENVS, AI_PROVIDER_API_KEY_ENVS } from "\.\.\/lib\/ai-provider-catalog\.cjs"/);
-    assert.match(src, /AI_PROVIDER_API_KEY_ENVS\.map\(\(name\) => \(\{ name \}\)\)/);
-    assert.match(src, /hasAnyAutomaticAIKey/);
-    // The automatic-only catalog is the 6-provider chain.
+    // check-env.mjs uses AI_PROVIDER_API_KEY_ENVS (all 10 providers) for the
+    // hasAnyAIKey check. All providers are now automatic.
+    assert.match(src, /AI_PROVIDER_API_KEY_ENVS/);
+    assert.match(src, /hasAnyAIKey/);
+    // The catalog has all 10 providers in canonical order.
     const { AI_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
     assert.deepEqual(AI_PROVIDER_API_KEY_ENVS, [
-      "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY",
-      "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+      "ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
+      "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
     ]);
   });
 
   it("production error message is generated from AI_PROVIDER_KEYS (references all keys)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    // The message is derived from the AI_PROVIDER_KEYS list rather than a stale
-    // hardcoded string, so it always reflects the full canonical key set.
-    assert.match(src, /AI_PROVIDER_KEYS\.map\(\(k\) => k\.name\)\.join/);
+    assert.match(src, /AI_PROVIDER_KEYS_CHECK\.map\(\(k\) => k\.name\)\.join/);
   });
 });
 

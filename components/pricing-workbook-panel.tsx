@@ -56,7 +56,7 @@ function money(value: number, currency: string): string {
   return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function PricingWorkbookPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [workbook, setWorkbook] = useState<PricingWorkbook | null>(null);
   const [loading, setLoading] = useState(false);

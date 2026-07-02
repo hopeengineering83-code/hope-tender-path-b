@@ -37,7 +37,7 @@ const QUICK_QUESTIONS = [
   "What compliance items could disqualify us?",
 ];
 
-export function TenderAICopilotPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState<CopilotResponse | null>(null);

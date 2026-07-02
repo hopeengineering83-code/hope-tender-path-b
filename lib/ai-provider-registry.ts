@@ -131,7 +131,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   zai: {
     provider: "zai",
     displayName: "Z.ai GLM",
-    rank: 7,
+    rank: 1,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
@@ -154,12 +154,12 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: true,
+    emergencyOnly: false,
   },
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 8,
+    rank: 2,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
@@ -180,12 +180,12 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: true,
+    emergencyOnly: false,
   },
   mistral: {
     provider: "mistral",
     displayName: "Mistral",
-    rank: 9,
+    rank: 3,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
@@ -204,7 +204,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: true,
+    emergencyOnly: false,
   },
   groq: {
     provider: "groq",
@@ -233,7 +233,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openrouter: {
     provider: "openrouter",
     displayName: "OpenRouter",
-    rank: 2,
+    rank: 5,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
@@ -259,7 +259,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   gemini: {
     provider: "gemini",
     displayName: "Gemini",
-    rank: 1,
+    rank: 6,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
@@ -282,7 +282,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openai: {
     provider: "openai",
     displayName: "OpenAI",
-    rank: 3,
+    rank: 7,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
@@ -306,7 +306,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   together: {
     provider: "together",
     displayName: "Together",
-    rank: 10,
+    rank: 8,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
@@ -325,12 +325,12 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
-    emergencyOnly: true,
+    emergencyOnly: false,
   },
   deepseek: {
     provider: "deepseek",
     displayName: "DeepSeek",
-    rank: 5,
+    rank: 9,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
@@ -355,7 +355,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   anthropic: {
     provider: "anthropic",
     displayName: "Anthropic / Claude",
-    rank: 6,
+    rank: 10,
     env: {
       apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",
@@ -370,9 +370,8 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     outputCaps: STANDARD_CAPS,
     timeoutMs: 10_000,
     retry: FALLBACK_RETRY,
-    // Last automatic fallback provider — kept last so earlier providers are
-    // preferred, but still part of the automatic chain.
-    emergencyOnly: false,
+    // Last AI provider — emergency-only (rank 10). All earlier providers are automatic; Anthropic is the emergency-only last resort.
+    emergencyOnly: true,
     supportsStructuredJson: false,
   },
 };

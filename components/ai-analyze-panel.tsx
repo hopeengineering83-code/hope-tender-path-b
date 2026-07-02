@@ -20,7 +20,7 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = true }: Props) {
+export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);

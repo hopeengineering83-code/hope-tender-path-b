@@ -19,6 +19,6 @@ const TenderChatPanel = dynamic(
   },
 );
 
-export function TenderChatPanelWrapper({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function TenderChatPanelWrapper({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   return <TenderChatPanel tenderId={tenderId} canMutate={canMutate} />;
 }

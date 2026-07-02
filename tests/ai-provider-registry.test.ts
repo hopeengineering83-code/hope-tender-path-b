@@ -51,7 +51,7 @@ afterEach(() => {
 describe("1. canonical provider order", () => {
   it("is exactly gemini → openrouter → openai → groq → deepseek → anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [
-      "gemini", "openrouter", "openai", "groq", "deepseek", "anthropic",
+      "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
     ]);
   });
 });
@@ -229,7 +229,7 @@ describe("13. ATTEMPT_BUDGET_EXHAUSTED is distinct", () => {
 // 16. Inactive providers remain supported after OpenRouter
 describe("16. inactive providers remain supported after OpenRouter", () => {
   it("all 6 automatic providers in correct order", () => {
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
     for (const p of ["zai", "cerebras", "mistral", "together"] as const) {
       assert.ok(getProviderEntry(p), `${p} must remain in the registry for manual use`);
     }
@@ -247,18 +247,21 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
     assert.equal(getProviderBaseUrl("groq"), "https://api.groq.com/openai/v1");
     assert.equal(getProviderModel("groq", "proposal"), "llama-3.3-70b-versatile");
   });
-  it("OpenRouter keeps second rank among the working providers", () => {
-    assert.equal(getProviderEntry("openrouter").rank, 2);
+  it("OpenRouter keeps rank 5 among the working providers", () => {
+    assert.equal(getProviderEntry("openrouter").rank, 5);
     assert.equal(providerDisplayName("openrouter"), "OpenRouter");
   });
 });
 
 // Emergency-only flag
 describe("emergency-only provider flag", () => {
-  it("zai, cerebras, mistral, together are emergency-only (manual); automatic chain providers are not", () => {
-    const manualOnly = new Set(["zai", "cerebras", "mistral", "together"]);
+  it("only anthropic is emergency-only; all other providers are automatic", () => {
     for (const entry of getCanonicalProviderEntries()) {
-      assert.equal(entry.emergencyOnly, manualOnly.has(entry.provider), `${entry.provider} emergencyOnly mismatch`);
+      if (entry.provider === "anthropic") {
+        assert.equal(entry.emergencyOnly, true, `${entry.provider} should be emergency-only`);
+      } else {
+        assert.equal(entry.emergencyOnly, false, `${entry.provider} should NOT be emergency-only`);
+      }
     }
   });
 });

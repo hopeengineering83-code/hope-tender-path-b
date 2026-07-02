@@ -54,7 +54,7 @@ function extensionOf(fileName: string): string {
   return dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : "";
 }
 
-export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = true }: { tenderId: string; initialFiles: TenderSourceFile[]; canMutate?: boolean }) {
+export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = false }: { tenderId: string; initialFiles: TenderSourceFile[]; canMutate?: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [files, setFiles] = useState(initialFiles);

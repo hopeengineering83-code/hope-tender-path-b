@@ -13,15 +13,19 @@ import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
 // test fails loudly if the registry order ever changes without an explicit
 // product decision.
 const REQUIRED_ORDER = [
-  "gemini",
-  "openrouter",
-  "openai",
+  "zai",
+  "cerebras",
+  "mistral",
   "groq",
+  "openrouter",
+  "gemini",
+  "openai",
+  "together",
   "deepseek",
   "anthropic",
 ] as const;
 
-const REQUIRED_DISPLAY = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic / Claude";
+const REQUIRED_DISPLAY = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude";
 
 describe("AI provider chain policy — canonical order", () => {
   it("registry CANONICAL_AI_PROVIDER_ORDER is exactly the required order", () => {
@@ -36,7 +40,7 @@ describe("AI provider chain policy — canonical order", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_CHAIN], [...REQUIRED_ORDER]);
   });
 
-  it("registry ranks are 1..6 in canonical order", () => {
+  it("registry ranks are 1..10 in canonical order", () => {
     const entries = getCanonicalProviderEntries();
     entries.forEach((entry, idx) => {
       assert.equal(entry.provider, REQUIRED_ORDER[idx], `rank ${idx + 1} provider mismatch`);
@@ -44,9 +48,9 @@ describe("AI provider chain policy — canonical order", () => {
     });
   });
 
-  it("gemini is first, anthropic is last", () => {
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "gemini");
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "openrouter");
+  it("zai is first, anthropic is last", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
   });
 

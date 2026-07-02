@@ -73,7 +73,7 @@ type TraceabilitySummary = {
   selectedProjectsWithWeakEvidence: number;
 };
 
-export default function RequirementCoveragePanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export default function RequirementCoveragePanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);

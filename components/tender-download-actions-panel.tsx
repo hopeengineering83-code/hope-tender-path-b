@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function TenderDownloadActionsPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function TenderDownloadActionsPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [deleting, setDeleting] = useState(false);
   const router = useRouter();
 

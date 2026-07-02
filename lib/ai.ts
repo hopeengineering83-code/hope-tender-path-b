@@ -83,13 +83,12 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  // ONLY automatic providers count as "AI enabled" for the purpose of
-  // deciding whether automatic AI analysis/generation can proceed.
-  // Manual-only providers (Z.ai, Cerebras, Mistral, Together) are
-  // emergencyOnly and MUST NOT make automatic AI appear enabled — they
-  // require explicit per-call selection and are never part of the
-  // automatic fallback chain.
-  return isGeminiEnabled() || isOpenRouterEnabled() || isOpenAIEnabled() || isGroqEnabled() || isDeepSeekEnabled() || isClaudeEnabled();
+  // ALL 10 AI providers are part of the automatic fallback chain:
+  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+  // Together → DeepSeek → Anthropic.
+  // Anthropic is emergency-only (last resort) but still counts toward
+  // "AI enabled" because it IS part of the automatic chain.
+  return isZaiEnabled() || isCerebrasEnabled() || isMistralEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isGeminiEnabled() || isOpenAIEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isClaudeEnabled();
 }
 
 export function isClaudeEnabled() {

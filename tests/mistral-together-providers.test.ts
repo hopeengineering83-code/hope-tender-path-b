@@ -54,14 +54,14 @@ describe("optional provider adapters", () => {
 describe("canonical provider chain", () => {
   const source = readFileSync("lib/ai.ts", "utf8");
 
-  it("derives the chain from the registry (gemini first, anthropic last)", () => {
+  it("derives the chain from the registry (zai first, anthropic last)", () => {
     // CANONICAL_PROVIDER_CHAIN is re-exported from the registry; assert via import.
     const { CANONICAL_PROVIDER_CHAIN } = require("../lib/ai");
     const chain = [...CANONICAL_PROVIDER_CHAIN];
-    assert.deepEqual(chain, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
-    assert.equal(chain[0], "gemini", "Gemini must be first in the canonical chain");
+    assert.deepEqual(chain, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.equal(chain[0], "zai", "Z.ai must be first in the canonical chain");
     assert.equal(chain[chain.length - 1], "anthropic", "Anthropic/Claude must be last in the canonical chain");
-    assert.ok(!chain.includes("together"), "Together must NOT be in the automatic chain");
+    assert.ok(chain.includes("together"), "Together MUST be in the automatic chain (rank 8)");
   });
 
   it("retains explicit adapter cases for all providers", () => {

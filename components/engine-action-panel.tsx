@@ -107,7 +107,7 @@ export function EngineActionPanel({
   vaultReviewedExperts = 0,
   vaultReviewedProjects = 0,
   lifecycleBlockersExist = false,
-  canMutate = true,
+  canMutate = false,
 }: {
   tenderId: string;
   vaultReviewedExperts?: number;

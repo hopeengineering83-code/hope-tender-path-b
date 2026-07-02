@@ -27,7 +27,7 @@ import {
 import { CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_RANK } from "../lib/ai-provider-policy";
 
 const CANONICAL_CHAIN = [
-  "gemini", "openrouter", "openai", "groq", "deepseek", "anthropic",
+  "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
 ] as const;
 
 before(() => { resetProviderHealth(); });

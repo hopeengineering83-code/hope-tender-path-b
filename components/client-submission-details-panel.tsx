@@ -44,7 +44,7 @@ function FieldActionMenu({
   field,
   saving,
   onAction,
-  canMutate = true,
+  canMutate = false,
 }: {
   field: CanonicalFieldState;
   saving: boolean;
@@ -146,7 +146,7 @@ function FieldActionMenu({
   );
 }
 
-export function ClientSubmissionDetailsPanel({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [loading, setLoading] = useState(true);

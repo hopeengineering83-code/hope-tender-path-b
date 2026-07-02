@@ -71,7 +71,7 @@ export function GenerationActionButton({ canonicalGenerationState, fullProposalR
   );
 }
 
-export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness, canMutate = true }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null; canMutate?: boolean }) {
+export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness, canMutate = false }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null; canMutate?: boolean }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);

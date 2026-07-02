@@ -122,7 +122,7 @@ function submissionBadge(status: "BLOCKED" | "PARTIAL" | "READY") {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export default function TenderRecoveryCommandCenter({ tenderId, canMutate = true }: { tenderId: string; canMutate?: boolean }) {
+export default function TenderRecoveryCommandCenter({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<LifecycleResult | null>(null);
   const [loading, setLoading] = useState(true);
