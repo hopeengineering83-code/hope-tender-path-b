@@ -78,15 +78,15 @@ export type BuildPlanHashMetadataEvidence = {
 export type BuildPlanHashInput = {
   activeFiles: BuildPlanHashFile[];
   requirements: BuildPlanHashRequirement[];
+  // Plan-driving fields (not metadata) — these are part of the submission
+  // scope, not the effective metadata values.
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
-  submissionMethod?: string | null;
-  submissionAddress?: string | null;
-  submissionEmails?: string | null;
-  submissionEmailSubject?: string | null;
-  deadline?: Date | string | null;
-  title?: string | null;
   items?: BuildPlanHashItem[];
+  // ONE canonical resolved effective-metadata result. The hash uses ONLY
+  // this array (effective values + source grounding + override state) —
+  // raw metadata fields (submissionMethod, submissionAddress, deadline,
+  // title, etc.) are NEVER read directly from the tender.
   metadataEvidence?: BuildPlanHashMetadataEvidence[];
   metadataOverrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>;
 };
@@ -216,26 +216,19 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
 export function buildPlanHashInputFromTender(tender: {
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
-  submissionMethod?: string | null;
-  submissionAddress?: string | null;
-  submissionEmails?: string | null;
-  submissionEmailSubject?: string | null;
-  deadline?: Date | string | null;
-  title?: string | null;
   files: BuildPlanHashFile[];
   requirements: BuildPlanHashRequirement[];
 }): BuildPlanHashInput {
+  // ONLY plan-driving fields are set here. Raw metadata fields
+  // (submissionMethod, submissionAddress, submissionEmails, deadline, title,
+  // etc.) are intentionally NOT included — the hash uses ONLY the resolved
+  // effective-metadata result (metadataEvidence) built by
+  // buildCanonicalBuildPlanHashInput.
   return {
     activeFiles: tender.files,
     requirements: tender.requirements,
     exactFileNaming: tender.exactFileNaming ?? null,
     exactFileOrder: tender.exactFileOrder ?? null,
-    submissionMethod: tender.submissionMethod ?? null,
-    submissionAddress: tender.submissionAddress ?? null,
-    submissionEmails: tender.submissionEmails ?? null,
-    submissionEmailSubject: tender.submissionEmailSubject ?? null,
-    deadline: tender.deadline ?? null,
-    title: tender.title ?? null,
   };
 }
 

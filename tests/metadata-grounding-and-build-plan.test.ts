@@ -52,11 +52,10 @@ function baseInput(overrides: Partial<BuildPlanHashInput> = {}): BuildPlanHashIn
     ],
     exactFileNaming: "[]",
     exactFileOrder: "[]",
-    submissionMethod: "Email",
-    submissionAddress: "client@x.com",
-    submissionEmails: "client@x.com",
-    // Metadata evidence — the CANONICAL source of metadata in the hash.
-    // Raw metadata fields (submissionMethod, etc.) are NOT hashed separately.
+    // Metadata evidence — the ONE CANONICAL resolved effective-metadata result.
+    // Raw metadata fields (submissionMethod, submissionAddress, submissionEmails,
+    // deadline, title) are NOT on the input — they exist ONLY inside
+    // metadataEvidence as effectiveValue + source grounding.
     metadataEvidence: [
       { fieldKey: "title", effectiveValue: "Test Tender", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "Test Tender Title", evidenceState: "GROUNDED" },
       { fieldKey: "clientName", effectiveValue: "Test Client", sourceTenderFileId: "f1", sourcePage: 1, sourceQuote: "Test Client Name", evidenceState: "GROUNDED" },
@@ -179,19 +178,16 @@ describe("Gap 2: Build Plan hash — change detection (invalidation)", () => {
 });
 
 describe("buildPlanHashInputFromTender", () => {
-  it("produces the same hash the gate/route would from a tender shape", () => {
+  it("produces the same hash as baseInput with metadataEvidence stripped", () => {
+    // buildPlanHashInputFromTender sets ONLY plan-driving fields (no raw
+    // metadata, no metadataEvidence). Compare against baseInput with
+    // metadataEvidence stripped for apples-to-apples.
     const tender = {
       exactFileNaming: "[]",
       exactFileOrder: "[]",
-      submissionMethod: "Email",
-      submissionAddress: "client@x.com",
-      submissionEmails: "client@x.com",
       files: baseInput().activeFiles,
       requirements: baseInput().requirements,
     };
-    // buildPlanHashInputFromTender does NOT set metadataEvidence (it's the
-    // legacy helper). Compare against baseInput with metadataEvidence stripped
-    // so the comparison is apples-to-apples.
     const { metadataEvidence, ...baseWithoutMeta } = baseInput();
     void metadataEvidence;
     assert.equal(computeBuildPlanHash(buildPlanHashInputFromTender(tender)), computeBuildPlanHash(baseWithoutMeta));

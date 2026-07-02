@@ -11,7 +11,7 @@
 
 // The canonical provider ORDER and API-key env NAMES come from the single
 // shared catalog (lib/ai-provider-catalog.cjs) — never re-declared here.
-import { ALL_PROVIDER_API_KEY_ENVS } from "../lib/ai-provider-catalog.cjs";
+import { ALL_PROVIDER_API_KEY_ENVS, AI_PROVIDER_API_KEY_ENVS } from "../lib/ai-provider-catalog.cjs";
 
 // Required in production AND preview deployments (app cannot function without these)
 const ALWAYS_REQUIRED = [
@@ -222,14 +222,18 @@ for (const spec of ALWAYS_REQUIRED) {
   }
 }
 
-// Gap 5 — match lib/env-check.ts: at least one AI provider key is required in
-// production. Preview deployments warn unless STRICT_PREVIEW_ENV_CHECK=true.
-// Development is unaffected (warn-only).
-const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
-if (!hasAnyAIKey) {
+// Gap 5 — match lib/env-check.ts: at least one AUTOMATIC AI provider key is
+// required in production. Manual-only providers (Z.ai, Cerebras, Mistral,
+// Together) do NOT count — they are emergencyOnly and never part of the
+// automatic fallback chain. Preview deployments warn unless
+// STRICT_PREVIEW_ENV_CHECK=true. Development is unaffected (warn-only).
+const AUTOMATIC_AI_PROVIDER_KEYS = AI_PROVIDER_API_KEY_ENVS.map((name) => ({ name }));
+const hasAnyAutomaticAIKey = AUTOMATIC_AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
+if (!hasAnyAutomaticAIKey) {
   const message =
-    `At least one AI provider key is required: ${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}. ` +
-    "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
+    `At least one AUTOMATIC AI provider key is required: ${AUTOMATIC_AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}. ` +
+    "Manual-only providers (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY) do NOT count — they are emergencyOnly and never part of the automatic fallback chain. " +
+    "Without any automatic AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);
   } else if (isVercelPreview && strictPreviewEnvCheck) {

@@ -84,9 +84,10 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
-  // Provider chain, generated directly from the registry in canonical order
-  // (zai → cerebras → mistral → groq → openrouter → gemini → openai → together
-  // → deepseek → anthropic). Only configured providers appear.
+  // Provider chain — ONLY automatic providers (Gemini → OpenRouter → OpenAI
+  // → Groq → DeepSeek → Anthropic). Manual-only providers (Z.ai, Cerebras,
+  // Mistral, Together) are excluded from the automatic chain display because
+  // they are never part of the automatic fallback sequence.
   const providerChain: string[] = [];
   for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
     if (!isProviderConfigured(provider)) continue;
@@ -100,10 +101,17 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
-  if (!anyProviderConfigured) {
-    const keyNames = Object.values(getProviderRegistry()).map((e) => e.env.apiKey).join(", ");
-    blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
+  // ONLY automatic providers (Gemini, OpenRouter, OpenAI, Groq, DeepSeek,
+  // Anthropic) count toward "ready". Manual-only providers (Z.ai, Cerebras,
+  // Mistral, Together) are emergencyOnly — they require explicit per-call
+  // selection and MUST NOT make the environment appear ready for automatic
+  // AI analysis/generation.
+  const anyAutomaticProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
+  if (!anyAutomaticProviderConfigured) {
+    const automaticKeyNames = CANONICAL_AI_PROVIDER_ORDER
+      .map((p) => getProviderRegistry()[p].env.apiKey)
+      .join(", ");
+    blockers.push(`No automatic AI provider is configured. Set at least one of: ${automaticKeyNames}. Manual-only providers (Z.ai, Cerebras, Mistral, Together) do not count toward automatic readiness.`);
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
