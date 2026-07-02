@@ -245,3 +245,57 @@ Stage Summary:
   4. Complete AI promotion evidence persistence (commit e4f4cb09)
   5. Safely absorb PR #933 (commits 70d02ab9 + e56f98fc)
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: 5
+Agent: main
+Task: Recheck again — many gaps to be fixed
+
+Work Log:
+- Verified baseline: 4702/4702 tests pass.
+- Audited all 22 mutation routes — all use requireRole("ADMIN", "PROPOSAL_MANAGER"), no REVIEWER.
+- Audited ALL routes using requireRole — found 8 additional routes that grant REVIEWER.
+  Verified all 8 are GET (read-only) routes. No mutation routes grant REVIEWER.
+- Verified HUMAN_APPROVED_FALLBACK is permanently blocked in gate (FALLBACK_NOT_ALLOWED).
+- Verified approve-analysis route returns auditOnly:true, does NOT authorize release.
+- Verified gate errors are redacted (GATE_INTERNAL_ERROR, raw detail only in server logs).
+- Verified buildDraftBuildPlan returns typed BuildPlanDraftResult (never null).
+- Verified P2034 retry is bounded (MAX_RETRIES=3) in both buildDraftBuildPlan and confirm route.
+- Verified hasValidVirtualSubmissionPlan is fully removed from lib/ and app/.
+- Verified no TODO/FIXME/HACK in release-safety code.
+
+GAPS FOUND AND FIXED:
+
+1. Gate did NOT enforce sourcePage <= totalPages for mandatory requirements:
+   - lib/engine/generation-readiness-gate.ts checked sourcePageNumber >= 1 but NOT
+     sourcePageNumber <= totalPages.
+   - The metadata validator and preflight enforced this, but the gate's own
+     requirement check did NOT.
+   - FIX: Added sourceFileTotalPages to ReadinessRequirement type. Added totalPages
+     to gate's primary files select. Added totalPages to mappedRequirements builder.
+     Added sourcePage > totalPages check in pure decision function.
+   - Added 3 unit tests: blocks when exceeds, allows when within range, allows when
+     totalPages is null.
+
+2. generate route still had virtualOnly remnants:
+   - app/api/tenders/[id]/generate/route.ts planOnly mode returned virtualOnly: true.
+   - A stale comment referenced hasValidVirtualSubmissionPlan (removed earlier).
+   - FIX: Replaced virtualOnly: true with planOnlyDryRun: true. Updated comment to
+     reference recordedBuildPlanState + hasCurrentConfirmedBuildPlan.
+
+3. _TenderFileRow type stub missing totalPages:
+   - The type stub in generation-readiness-gate.ts was missing totalPages.
+   - Runtime worked (accessed via (file as any)?.totalPages) but type was incomplete.
+   - FIX: Added totalPages: number | null to _TenderFileRow.
+
+Verification:
+- 4705/4705 tests pass (was 4702; +3 new totalPages tests)
+- typecheck: clean
+- lint: clean (0 warnings)
+- build: succeeds
+- Committed as 6c97a80c + 398b43c1 and pushed to origin/hotfix/release-safety-consolidation
+
+Stage Summary:
+- All 11 audit areas verified clean.
+- 3 gaps found and fixed (gate requirement totalPages, virtualOnly remnants, type stub).
+- NOT merged, NOT deployed — awaiting explicit user authorization.
