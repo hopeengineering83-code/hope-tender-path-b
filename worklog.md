@@ -183,3 +183,65 @@ Stage Summary:
   5. Safely absorb PR #933 (commits 70d02ab9 + e56f98fc — REVIEWER removed
      from all 22 mutation routes, provider registry aligned)
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: 4
+Agent: main
+Task: Recheck 3 times and fix all gaps
+
+Work Log:
+- PostgreSQL 16.4 binary downloaded from Zonky Maven (embedded-postgres-binaries-linux-amd64-16.4.0.jar), extracted, initdb, started on port 5433.
+- Deployed all 28 migrations.
+- Regenerated Prisma client (npx prisma generate) — the cached client was stale and didn't know about titleSourcePage etc.
+- Installed @electric-sql/pglite (was missing from node_modules).
+- Baseline: 4702/4702 tests pass.
+
+PASS 1 — AI Analyze completion paths audit:
+- Verified all 3 paths (streaming, non-streaming, durable) use buildCanonicalAnalysisTenderUpdate.
+- Verified all 3 paths use resolveMetadataSourceFileIds / attributeMetadataSourceFileId.
+- Verified all 3 paths load tender with include (all fields) so source evidence is available.
+- Verified durable job (lib/ai-jobs/analysis-job-service.ts) passes all 6 source file IDs.
+- Checked non-canonical paths (auto-fill-tender-metadata, re-extract-metadata, repair-metadata)
+  that write metadata values WITHOUT source evidence. These are deterministic extractors,
+  not AI. The BuildPlan preflight blocks tenders with values but no source grounding —
+  correct fail-closed behavior. No fix needed.
+
+PASS 2 — Gate decision logic audit:
+- Verified evaluateGenerationReadiness is fail-closed on every condition.
+- Verified recordedBuildPlanState is always set by the async gate (never undefined in production).
+- Verified hasCurrentConfirmedBuildPlan !== true catches undefined (fail-closed).
+- Verified criticalMetadataOk uses BOTH resolver hasGenerationBlocker AND validateCriticalMetadataEvidenceForBuildPlan (defense in depth).
+- Verified isGroundedEvidenceWithFileCheck checks page + quote + active fileId.
+- Verified validator checks quote containment in extracted text (stricter than resolver).
+- Existing FAIL-CLOSED tests cover undefined hasCurrentConfirmedBuildPlan and confirmedPlanDocumentsOk.
+
+PASS 3 — Tests/hash/dead code audit:
+- Verified route integration test uses real auth (only next/headers cookies() is mocked).
+- Verified no 401 acceptance in route test.
+- Verified hash handles empty items/metadataEvidence/overrides with ?? [].
+- Verified buildPlanHashInputFromTender is still used (not dead code).
+- FOUND GAP: tests/unified-snapshot-integration.test.ts used describe.skip when
+  RUN_DB_INTEGRATION was not set — SILENTLY SKIPPED instead of failing.
+- FOUND GAP: tests/database-safety-integration.test.ts used same describe.skip pattern.
+- User explicitly required: 'RUN_DB_INTEGRATION=true mandatory (tests fail, not skip, when absent)'.
+- FIX: Replaced describe.skip with process.exit(1) + FATAL message in both tests.
+  Verified both now FAIL with FATAL message when RUN_DB_INTEGRATION is absent.
+
+Verification:
+- 4702/4702 tests pass (unchanged from baseline — the 2 fixed tests were already
+  running because RUN_DB_INTEGRATION=true was set in the test env)
+- typecheck: clean
+- lint: clean (0 warnings)
+- build: succeeds
+- Committed as e1b97f37 and pushed to origin/hotfix/release-safety-consolidation
+
+Stage Summary:
+- 3-pass recheck complete. 1 gap found and fixed (2 tests silently skipped
+  instead of failing when RUN_DB_INTEGRATION was absent).
+- All 5 original fixes are verified real and complete:
+  1. Real authenticated HTTP route tests (commits e56f98fc + b622a163)
+  2. Fail-closed for unknown submission methods (commit e56f98fc)
+  3. One canonical effective metadata authority (commits b149d6dc + b622a163 + 86427ce2)
+  4. Complete AI promotion evidence persistence (commit e4f4cb09)
+  5. Safely absorb PR #933 (commits 70d02ab9 + e56f98fc)
+- NOT merged, NOT deployed — awaiting explicit user authorization.
