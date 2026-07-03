@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
 import { detectAnalysisSource, ANALYSIS_APPROVAL_GAP_TITLE } from "../analysis-source";
 
@@ -127,7 +128,9 @@ export async function getCanonicalTenderWorkflowState(
     analysisIsApprovedFallback,
   } as any);
 
-  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const planStatus = deriveSubmissionPlanStatus(tender, plan);
   const planApproved = planStatus === "CANONICAL_APPROVED";
 

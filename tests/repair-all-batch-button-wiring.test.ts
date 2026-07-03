@@ -31,20 +31,16 @@ describe("GenerationActionPanel surfaces a one-click 'Repair all' batch action",
     }
   });
 
-  it("classifies each per-field result into REPAIRED / NOT_FOUND / SKIPPED buckets", () => {
-    assert.match(source, /r\.status === "REPAIRED"/);
-    assert.match(source, /r\.status === "NOT_FOUND"/);
-    assert.match(source, /r\.status === "SKIPPED"/);
-    assert.match(source, /repairedFields\.length/);
-    assert.match(source, /notFoundFields\.length/);
-    assert.match(source, /skippedFields\.length/);
+  it("uses parseRepairMetadataResponse to validate the API response shape", () => {
+    assert.match(source, /parseRepairMetadataResponse/);
+    assert.match(source, /buildRepairMessage/);
+    assert.doesNotMatch(source, /data\.results\.filter/);
   });
 
-  it("router.refresh fires ONLY when at least one field was actually repaired", () => {
-    // Locate the REPAIRED branch of the batch handler and confirm router.refresh is inside it.
-    const repairedBranch = source.match(/if \(repairedFields\.length > 0\) \{[\s\S]{0,600}/);
-    assert.ok(repairedBranch, "REPAIRED branch must exist");
-    assert.match(repairedBranch![0], /router\.refresh\(\)/);
+  it("router.refresh fires ONLY when parsed.success is true", () => {
+    const successBranch = source.match(/if \(parsed\.success\)[\s\S]{0,300}/);
+    assert.ok(successBranch, "parsed.success branch must exist");
+    assert.match(successBranch![0], /router\.refresh/);
   });
 
   it("the batch button is rendered only when metadataBlockerPresent is true (guarded by canMutate)", () => {

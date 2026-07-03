@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus, SubmissionPlanStatus } from "../submission-plan";
 import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 
@@ -31,7 +32,9 @@ export async function resolvePlanTruth(
   if (!tender) throw new Error("Tender not found");
 
   const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
-  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const status = deriveSubmissionPlanStatus(tender, plan);
 
   const isVerified = status === "CANONICAL_APPROVED";
@@ -45,7 +48,7 @@ export async function resolvePlanTruth(
   return {
     status: status as PlanTruthStatus,
     isVerified,
-    totalRequired: plan.files.filter(f => f.required).length,
+    totalRequired: plan.files.filter((f: any) => f.required).length,
     totalGenerated: tender.generatedDocuments.filter(d => d.generationStatus === "GENERATED").length,
     reason
   };

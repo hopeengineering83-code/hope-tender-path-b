@@ -33,6 +33,14 @@ import {
 } from "../../../../../lib/engine/tender-field-extractors";
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
+import type { RepairOutcome, RepairMetadataResponse } from "../../../../../lib/engine/repair-metadata-contract";
+import {
+  isValidReferenceCandidate,
+  isValidDeadlineCandidate,
+  isValidTitleOrClientCandidate,
+  verifySourceQuote,
+  type ActiveTenderFile,
+} from "../../../../../lib/engine/source-grounded-metadata-repair";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +91,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  const results: Record<string, unknown> = {};
+  const outcomes: RepairOutcome[] = [];
   // Prisma update map — accepts string / number / Date / null. Cast at write time.
   const updates: Record<string, unknown> = {};
 
@@ -92,23 +100,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // ── evaluationMethodology (AI-precedent extractor, separate module) ───
   if (requestedFields.includes("evaluationMethodology")) {
     if (tender.evaluationMethodology && tender.evaluationMethodology.trim().length > 0 && !force) {
-      results.evaluationMethodology = {
-        status: "SKIPPED",
-        reason: "evaluationMethodology is already populated. Pass force:true (ADMIN only) to overwrite.",
-      };
+      outcomes.push({ field: "evaluationMethodology", status: "SKIPPED", reason: "evaluationMethodology is already populated. Pass force:true (ADMIN only) to overwrite." });
     } else {
       const extraction = extractEvaluationMethodologyFromSource(filesInput);
       if (!extraction.found) {
-        results.evaluationMethodology = { status: "NOT_FOUND", reason: extraction.reason };
+        outcomes.push({ field: "evaluationMethodology", status: "NOT_FOUND", reason: extraction.reason });
       } else {
         (updates as Record<string, unknown>).evaluationMethodology = extraction.methodologyText;
-        results.evaluationMethodology = {
-          status: "REPAIRED",
-          confidence: extraction.confidence,
-          sourceFile: extraction.sourceFile,
-          sourceQuote: extraction.sourceQuote,
-          items: extraction.items,
-        };
+        outcomes.push({ field: "evaluationMethodology", status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourceQuote: extraction.sourceQuote });
         await logAction({
           userId: actor.id,
           action: "TENDER_METADATA_REPAIRED",
@@ -139,12 +138,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const currentValue = (tender as unknown as Record<string, unknown>)[field];
     const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
     if (alreadyPopulated && !force) {
-      results[field] = { status: "SKIPPED", reason: `${field} is already populated. Pass force:true (ADMIN only) to overwrite.` };
+      outcomes.push({ field, status: "SKIPPED", reason: `${field} is already populated. Pass force:true (ADMIN only) to overwrite.` });
       continue;
     }
     const extraction = runExtractorByField(field as ExtractorFieldName, filesInput) as ExtractedFieldOrMissing<unknown>;
     if (!extraction.found) {
-      results[field] = { status: "NOT_FOUND", reason: extraction.reason };
+      outcomes.push({ field, status: "NOT_FOUND", reason: extraction.reason });
       continue;
     }
     // bidBondAmount produces { amount, currency } — split into two DB columns.
@@ -158,18 +157,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // to compute the absolute amount, which we will not invent.
     } else if (field === "deadline" || field === "preBidMeetingDate") {
       const dt = extraction.value as Date;
+      if (field === "deadline" && !isValidDeadlineCandidate(dt)) {
+        outcomes.push({ field, status: "REJECTED", reason: "Extracted deadline is invalid or too far in the past.", value: dt });
+        continue;
+      }
       (updates as Record<string, unknown>)[field] = dt;
     } else {
       const rawValue = extraction.value as string;
-      // Reject placeholder values ("TBC", "N/A", "Bid-Team to confirm", etc.)
-      // to prevent metadata contamination from being stored as real values.
-      if (containsMetadataPlaceholder(rawValue)) {
-        results[field] = {
-          status: "REJECTED",
-          reason: "Extracted value contains a placeholder pattern and was not stored to prevent metadata contamination.",
-          value: rawValue,
-        };
+      // ── Use the SHARED source-grounded metadata repair service ──────
+      if (field === "reference" && !isValidReferenceCandidate(rawValue)) {
+        outcomes.push({ field, status: "REJECTED", reason: `Extracted reference is invalid (stop-word, label, placeholder, or missing digit).`, value: rawValue });
         continue;
+      }
+      if (field === "clientName" && !isValidTitleOrClientCandidate(rawValue)) {
+        outcomes.push({ field, status: "REJECTED", reason: `Extracted ${field} is invalid (placeholder, contaminated, label, or too short).`, value: rawValue });
+        continue;
+      }
+      if (containsMetadataPlaceholder(rawValue)) {
+        outcomes.push({ field, status: "REJECTED", reason: "Extracted value contains a placeholder pattern.", value: rawValue });
+        continue;
+      }
+      if (extraction.sourceQuote) {
+        const activeFiles: ActiveTenderFile[] = tender.files.map((f: any) => ({ id: f.fileName, fileName: f.fileName, extractedText: f.extractedText }));
+        const verification = verifySourceQuote(extraction.sourceQuote, activeFiles);
+        if (!verification.verified) {
+          outcomes.push({ field, status: "UNRESOLVED" as any, reason: `Source quote for ${field} not found in active tender file. Re-grounding required.` });
+          continue;
+        }
       }
       (updates as Record<string, unknown>)[field] = rawValue;
       // When we repair clientName, also sync procuringEntityName if it's empty
@@ -185,13 +199,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
       }
     }
-    results[field] = {
-      status: "REPAIRED",
-      confidence: extraction.confidence,
-      sourceFile: extraction.sourceFile,
-      sourceQuote: extraction.sourceQuote,
-      value: extraction.value,
-    };
+    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({
       userId: actor.id,
       action: "TENDER_METADATA_REPAIRED",
@@ -214,9 +222,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await prisma.tender.update({ where: { id: tenderId }, data: updates as Record<string, unknown> });
   }
 
-  return NextResponse.json({
+  const outcomesByField: Record<string, RepairOutcome> = {};
+  for (const o of outcomes) { outcomesByField[o.field] = o; }
+  const response: RepairMetadataResponse = {
     success: Object.keys(updates).length > 0,
-    repaired: Object.keys(updates),
-    results,
-  });
+    outcomes,
+    outcomesByField,
+  };
+  return NextResponse.json(response);
 }

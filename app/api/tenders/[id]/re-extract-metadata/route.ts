@@ -27,6 +27,11 @@ import {
   containsMetadataPlaceholder,
 } from "../../../../../lib/engine/metadata-validators";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
+import {
+  isValidReferenceCandidate,
+  isValidDeadlineCandidate,
+  isValidTitleOrClientCandidate,
+} from "../../../../../lib/engine/source-grounded-metadata-repair";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
@@ -65,6 +70,14 @@ function isValidStoredValue(field: string, value: unknown): boolean {
   if (typeof value === "string" && value.trim() === "") return false;
   // Reject placeholder/Bid-Team-to-confirm strings regardless of field
   if (typeof value === "string" && containsMetadataPlaceholder(value)) return false;
+  // ── Use the SHARED source-grounded metadata repair service ──────
+  // This ensures re-extract-metadata and repair-metadata use the SAME
+  // validation logic — no disagreement for reference, client, deadline,
+  // title, or evaluation criteria.
+  if (field === "reference" && !isValidReferenceCandidate(String(value))) return false;
+  if (field === "clientName" && !isValidTitleOrClientCandidate(String(value))) return false;
+  if (field === "title" && !isValidTitleOrClientCandidate(String(value))) return false;
+  if (field === "deadline" && !isValidDeadlineCandidate(value)) return false;
   switch (field) {
     case "clientName":         return isValidClientName(String(value));
     case "reference":          return isValidReferenceNumber(String(value));
