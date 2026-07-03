@@ -107,7 +107,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         outcomes.push({ field: "evaluationMethodology", status: "NOT_FOUND", reason: extraction.reason });
       } else {
         (updates as Record<string, unknown>).evaluationMethodology = extraction.methodologyText;
-        outcomes.push({ field: "evaluationMethodology", status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourceQuote: extraction.sourceQuote });
+        outcomes.push({ field: "evaluationMethodology", status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: null, sourceQuote: extraction.sourceQuote });
         await logAction({
           userId: actor.id,
           action: "TENDER_METADATA_REPAIRED",
@@ -199,7 +199,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
       }
     }
-    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourceQuote: extraction.sourceQuote, value: extraction.value });
+    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: null, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({
       userId: actor.id,
       action: "TENDER_METADATA_REPAIRED",

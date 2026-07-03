@@ -158,8 +158,19 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
     if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") return "Export readiness re-checked. Review the Export Readiness panel for canonical blockers.";
     if (action === "RECONCILE_OUTSIDE_PLAN_DOCS" || action === "EXCLUDE_OUTSIDE_PLAN_DOCS") return `Outside-plan reconciliation completed — ${json.superseded ?? 0} document(s) excluded/superseded.`;
     if (action === "REPAIR_METADATA") {
-      const repaired: string[] = Array.isArray(json.repaired) ? json.repaired as string[] : [];
-      return repaired.length > 0 ? `Metadata repaired — ${repaired.join(", ")} updated from tender source text.` : "Metadata repair ran — no missing fields could be extracted from the tender source text.";
+      // Versioned-safe contract: API returns { outcomes: [...] } not { repaired: [...] }
+      const outcomes: Array<{ field?: string; status?: string }> = Array.isArray(json.outcomes) ? json.outcomes as Array<{ field?: string; status?: string }> : [];
+      const repairedFields = outcomes.filter((o) => o.status === "REPAIRED").map((o) => o.field ?? "unknown");
+      const rejectedFields = outcomes.filter((o) => o.status === "REJECTED").map((o) => o.field ?? "unknown");
+      const notFoundFields = outcomes.filter((o) => o.status === "NOT_FOUND").map((o) => o.field ?? "unknown");
+      const unresolved = notFoundFields.length + rejectedFields.length;
+      if (repairedFields.length > 0 && unresolved === 0) {
+        return `Metadata repaired — ${repairedFields.join(", ")} updated from tender source text.`;
+      } else if (repairedFields.length > 0 && unresolved > 0) {
+        return `Metadata partially repaired — ${repairedFields.join(", ")} updated. ${unresolved} field(s) remain unresolved: ${[...notFoundFields, ...rejectedFields].join(", ")}.`;
+      } else {
+        return `Metadata repair ran — no fields could be extracted from the tender source text. ${unresolved} field(s) remain unresolved.`;
+      }
     }
     if (action === "RE_EXTRACT_METADATA") return "Metadata re-extraction complete. Review the tender detail panel to confirm updated fields.";
     if (action === "LINK_VAULT_EVIDENCE") return (json.message as string | undefined) ?? `Vault evidence linking completed — ${(json.linked as number | undefined) ?? 0} document(s) ready.`;
