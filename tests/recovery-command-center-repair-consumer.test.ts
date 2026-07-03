@@ -18,10 +18,14 @@ describe("Recovery Command Center REPAIR_METADATA consumer contract", () => {
     assert.match(source, /outcomes\.filter\(\(o\) => o\.status === "REPAIRED"\)/);
   });
 
-  it("reports unresolved fields when NOT_FOUND or REJECTED remain", () => {
+  it("reports unresolved fields when NOT_FOUND, REJECTED, UNRESOLVED, or ERROR remain", () => {
     assert.match(source, /unresolved/);
-    assert.match(source, /notFoundFields/);
-    assert.match(source, /rejectedFields/);
+    assert.match(source, /unresolvedFields/);
+    // Must treat NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as unresolved
+    assert.match(source, /NOT_FOUND/);
+    assert.match(source, /REJECTED/);
+    assert.match(source, /UNRESOLVED/);
+    assert.match(source, /ERROR/);
   });
 
   it("shows partial repair message when some fields repaired but unresolved remain", () => {

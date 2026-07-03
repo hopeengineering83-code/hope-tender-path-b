@@ -161,15 +161,16 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       // Versioned-safe contract: API returns { outcomes: [...] } not { repaired: [...] }
       const outcomes: Array<{ field?: string; status?: string }> = Array.isArray(json.outcomes) ? json.outcomes as Array<{ field?: string; status?: string }> : [];
       const repairedFields = outcomes.filter((o) => o.status === "REPAIRED").map((o) => o.field ?? "unknown");
-      const rejectedFields = outcomes.filter((o) => o.status === "REJECTED").map((o) => o.field ?? "unknown");
-      const notFoundFields = outcomes.filter((o) => o.status === "NOT_FOUND").map((o) => o.field ?? "unknown");
-      const unresolved = notFoundFields.length + rejectedFields.length;
-      if (repairedFields.length > 0 && unresolved === 0) {
+      const skippedFields = outcomes.filter((o) => o.status === "SKIPPED").map((o) => o.field ?? "unknown");
+      // Treat NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as unresolved
+      const unresolvedFields = outcomes.filter((o) => o.status === "NOT_FOUND" || o.status === "REJECTED" || o.status === "UNRESOLVED" || o.status === "ERROR").map((o) => o.field ?? "unknown");
+      if (repairedFields.length > 0 && unresolvedFields.length === 0) {
         return `Metadata repaired — ${repairedFields.join(", ")} updated from tender source text.`;
-      } else if (repairedFields.length > 0 && unresolved > 0) {
-        return `Metadata partially repaired — ${repairedFields.join(", ")} updated. ${unresolved} field(s) remain unresolved: ${[...notFoundFields, ...rejectedFields].join(", ")}.`;
+      } else if (repairedFields.length > 0 && unresolvedFields.length > 0) {
+        return `Metadata partially repaired — ${repairedFields.join(", ")} updated. ${unresolvedFields.length} field(s) remain unresolved: ${unresolvedFields.join(", ")}.`;
       } else {
-        return `Metadata repair ran — no fields could be extracted from the tender source text. ${unresolved} field(s) remain unresolved.`;
+        // Never report "Metadata repaired" when unresolved or error outcomes remain
+        return `Metadata repair ran — no fields could be extracted from the tender source text. ${unresolvedFields.length} field(s) remain unresolved.`;
       }
     }
     if (action === "RE_EXTRACT_METADATA") return "Metadata re-extraction complete. Review the tender detail panel to confirm updated fields.";

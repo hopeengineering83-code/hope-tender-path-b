@@ -70,6 +70,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? ((body as { fields: unknown[] }).fields).map(String).filter((f): f is SupportedField => (SUPPORTED_FIELDS as readonly string[]).includes(f))
     : ["evaluationMethodology" as SupportedField];
   const force = (body as { force?: unknown }).force === true && actor.role === "ADMIN";
+  // NOTE: force:true allows overwriting existing values but does NOT bypass
+  // source grounding, quote containment, active-file checks, or validation.
+  // Critical source-grounded fields still require durable file ID, quote
+  // containment, and active-file verification even when force is true.
 
   // Scope: owner OR (ADMIN / PROPOSAL_MANAGER). The fallback `?? findFirst({ where: { id } })`
   // was removed (audit SEC-002, 2026-06-20) — it allowed any REVIEWER (broader
@@ -79,7 +83,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // return 404 (not 403, to avoid leaking existence).
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    include: { files: { select: { fileName: true, extractedText: true } } },
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, fileName: true, originalFileName: true, extractedText: true, deletionStatus: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
@@ -96,6 +100,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const updates: Record<string, unknown> = {};
 
   const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText })) };
+  // Map from fileName to durable file ID for source-grounding.
+  // The extractor returns sourceFile as a fileName; we need the durable ID
+  // to persist canonical source evidence (e.g., clientNameSourceFileId).
+  const fileNameToId = new Map<string, string>();
+  for (const f of tender.files as Array<{ id: string; fileName: string; originalFileName: string | null }>) {
+    fileNameToId.set(f.fileName, f.id);
+    if (f.originalFileName) fileNameToId.set(f.originalFileName, f.id);
+  }
+  // Active file IDs for evidence validation
+  const activeFileIds = new Set((tender.files as Array<{ id: string }>).map((f) => f.id));
+  // Active files with extracted text for quote containment verification
+  const activeFilesForQuote: ActiveTenderFile[] = (tender.files as Array<{ id: string; fileName: string; extractedText: string | null }>).map((f) => ({ id: f.id, fileName: f.fileName, extractedText: f.extractedText }));
 
   // ── evaluationMethodology (AI-precedent extractor, separate module) ───
   if (requestedFields.includes("evaluationMethodology")) {
@@ -135,6 +151,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // persist + audit when found.
   for (const field of SUPPORTED_EXTRACTORS) {
     if (!requestedFields.includes(field)) continue;
+    let durableFileId: string | null = null;
     const currentValue = (tender as unknown as Record<string, unknown>)[field];
     const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
     if (alreadyPopulated && !force) {
@@ -177,13 +194,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         outcomes.push({ field, status: "REJECTED", reason: "Extracted value contains a placeholder pattern.", value: rawValue });
         continue;
       }
-      if (extraction.sourceQuote) {
-        const activeFiles: ActiveTenderFile[] = tender.files.map((f: any) => ({ id: f.fileName, fileName: f.fileName, extractedText: f.extractedText }));
-        const verification = verifySourceQuote(extraction.sourceQuote, activeFiles);
-        if (!verification.verified) {
-          outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} not found in active tender file. Re-grounding required.` });
-          continue;
-        }
+      // ── DURABLE SOURCE-GROUNDING: require file ID, page, quote, containment ─
+      durableFileId = extraction.sourceFile ? (fileNameToId.get(extraction.sourceFile) ?? null) : null;
+      if (!durableFileId || !activeFileIds.has(durableFileId)) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source file for ${field} is not an active tender file. Re-grounding required.` });
+        continue;
+      }
+      if (!extraction.sourceQuote || extraction.sourceQuote.trim().length < 5) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is missing or too short. Re-grounding required.` });
+        continue;
+      }
+      const quoteVerification = verifySourceQuote(extraction.sourceQuote, activeFilesForQuote);
+      if (!quoteVerification.verified || quoteVerification.sourceFileId !== durableFileId) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is not contained in the referenced active tender file. Re-grounding required.` });
+        continue;
       }
       (updates as Record<string, unknown>)[field] = rawValue;
       // When we repair clientName, also sync procuringEntityName if it's empty
@@ -198,6 +222,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           (updates as Record<string, unknown>).metadataContaminated = false;
         }
       }
+    }
+    // ── PERSIST CANONICAL SOURCE EVIDENCE ATOMICALLY ────────────────────
+    // For fields with dedicated source-evidence columns, persist file ID + quote.
+    // The extractor does not return page numbers — for critical source-grounded
+    // fields, the canonical resolver requires page > 0, so we cannot mark
+    // these as fully grounded. We persist what we have and let the canonical
+    // resolver determine the final state.
+    const sourceEvidenceColumns: Record<string, { fileId: string; page: string; quote: string }> = {
+      clientName: { fileId: "clientNameSourceFileId", page: "clientNameSourcePage", quote: "clientNameSourceQuote" },
+      title: { fileId: "titleSourceFileId", page: "titleSourcePage", quote: "titleSourceQuote" },
+      deadline: { fileId: "deadlineSourceFileId", page: "deadlineSourcePage", quote: "deadlineSourceQuote" },
+      submissionMethod: { fileId: "submissionMethodSourceFileId", page: "submissionMethodSourcePage", quote: "submissionMethodSourceQuote" },
+      submissionAddress: { fileId: "submissionAddressSourceFileId", page: "submissionAddressSourcePage", quote: "submissionAddressSourceQuote" },
+      submissionEmails: { fileId: "submissionEmailSourceFileId", page: "submissionEmailSourcePage", quote: "submissionEmailSourceQuote" },
+    };
+    const evidenceCols = sourceEvidenceColumns[field];
+    if (evidenceCols) {
+      // Persist durable file ID, quote, and page (null — extractor doesn't
+      // return page). The canonical resolver will check isGroundedEvidence
+      // which requires page > 0, so the field will be EXTRACTED_UNVERIFIED
+      // until a page is provided. This is correct — we do NOT claim full
+      // grounding without a page.
+      (updates as Record<string, unknown>)[evidenceCols.fileId] = durableFileId;
+      (updates as Record<string, unknown>)[evidenceCols.quote] = extraction.sourceQuote;
+      // Do NOT set sourcePage to null — leave it untouched so existing valid
+      // page evidence is preserved. If no page evidence exists, the canonical
+      // resolver will report EXTRACTED_UNVERIFIED (not GROUNDED).
     }
     outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: null, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({
