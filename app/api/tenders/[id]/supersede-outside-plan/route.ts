@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../../../../../lib/engine/build-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
@@ -24,7 +23,7 @@ async function getOutsidePlanDocIds(tenderId: string, userId: string): Promise<{
   });
   if (!tender) return { ids: [], planEmpty: false };
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
-  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   if (plan.files.length === 0) return { ids: [], planEmpty: true };
   const required = new Set(plan.files.map((f: any) => normalizeExactFileName(f.exactFileName)).filter(Boolean));

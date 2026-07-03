@@ -71,6 +71,27 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03 UTC — Claude Code (PR #936 gap review)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **Scope:** Honest gap review of the P1-A/B/C/D commit; fixed five verified gaps so the PR's claims match the code.
+- **Gaps found and fixed:**
+  1. `getCurrentConfirmedBuildPlan` was FAIL-OPEN: any hash-computation error returned `ok:true`, silently skipping the staleness AND metadata-evidence checks. Now fails closed; reduced unit-test prisma mocks are detected explicitly (missing `tenderMetadataOverride` delegate) instead of by catching errors. Corrupted `itemsJson` also fails closed instead of throwing.
+  2. Commit claimed `lib/canonical-tender-readiness.ts` and `lib/engine/final-submission-readiness.ts` use the confirmed BuildPlan + `NO_CURRENT_CONFIRMED_BUILD_PLAN` blocker — neither was true. Both now actually use `getCurrentConfirmedBuildPlan`; the blocker now exists on both gates; derived-fallback plans no longer feed final-export readiness (`hasExplicitPlanScope = confirmedPlan.ok`).
+  3. Repair route emitted `status: "UNRESOLVED" as any` — a status missing from the response contract, so clients coerced it to `ERROR` and misreported quote-verification failures as errors. `UNRESOLVED` is now a first-class contract status with correct counting and messaging.
+  4. All six confirmed-plan call sites re-parsed `plan.itemsJson` with unguarded `JSON.parse` (crash on corrupt rows). `getCurrentConfirmedBuildPlan` now returns safely-parsed `items`; call sites consume it.
+  5. Removed never-wired dead code (`processMetadataRepair`, `isSourceEvidenceStale`) that the commit message described as a wired shared service; the genuinely shared validators and `verifySourceQuote` remain.
+- **Files changed:** `lib/engine/build-plan.ts`, `lib/canonical-tender-readiness.ts`, `lib/engine/final-submission-readiness.ts`, `lib/engine/repair-metadata-contract.ts`, `lib/engine/source-grounded-metadata-repair.ts`, `lib/engine/workflow/workflow-state.ts`, `lib/engine/analysis/plan-truth.ts`, `lib/engine/analysis/authority-truth.ts`, `app/api/tenders/[id]/repair-metadata/route.ts`, `app/api/tenders/[id]/auto-finalize/route.ts`, `app/api/tenders/[id]/supersede-outside-plan/route.ts`, `components/submission-plan-reconciliation-panel.tsx`, `components/tender-share-panel.tsx`, `tests/confirmed-build-plan-fail-closed.test.ts` (NEW, 15 tests), `operator_handoff.md`.
+- **Commands run and results:**
+  - `npx tsc --noEmit` — PASS (exit 0)
+  - `npm run lint` — PASS (exit 0)
+  - `npx prisma validate` — PASS (exit 0)
+  - `RUN_DB_INTEGRATION=true npm test` — 4838/4838 PASS (0 fail; local PostgreSQL 16)
+  - `npm run build` — result recorded in the PR conversation.
+- **Known risks:** Tenders without a current confirmed BuildPlan now show `NO_CURRENT_CONFIRMED_BUILD_PLAN` and blocked export readiness where the derived draft previously filled in — intentional fail-closed behavior per P1-D, but visible to users of existing tenders until they Build + Confirm a plan.
+- **Next action:** Hope reviews PR #936; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI on the amended head and Hope's review.
+
 ### 2026-07-03 UTC — Super Z (GLM)
 
 - **Branch:** `hotfix/release-safety-consolidation` (PR #931)

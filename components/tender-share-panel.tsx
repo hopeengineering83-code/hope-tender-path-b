@@ -62,7 +62,7 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
         const fullUrl = window.location.origin + data.shareUrl;
         setNewShareUrl(fullUrl);
         await loadShares();
-      router.refresh();
+        router.refresh();
       }
     } catch {
       // ignore

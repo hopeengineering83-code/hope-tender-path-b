@@ -41,14 +41,13 @@ import {
   type DocumentLike,
 } from "./document-output-state";
 import {
-  buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback,
-  hasExplicitSubmissionScope,
   findExtraGeneratedDocuments,
   findMissingGeneratedDocuments,
   inferEnvelope,
   submissionPlanFileCount,
   type SubmissionEnvelope,
 } from "./submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
@@ -547,30 +546,19 @@ export async function getFinalSubmissionReadiness(
 
   const mandatoryRequirements = tender.requirements.filter((r) => r.priority === "MANDATORY");
 
-  // Plan reconciliation — used for the summary planStatus enum.
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    submissionMethod: tender.submissionMethod,
-    tenderCategory: tender.category,
-    analysisExtractionStatus: tender.analysisExtractionStatus,
-    requirements: tender.requirements,
-  });
+  // Plan reconciliation — AUTHORITATIVE: only the current CONFIRMED BuildPlan
+  // defines the export file plan. A derived draft must never stand in for a
+  // confirmed plan on the final-export path (fail closed).
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, opts.tenderId, opts.userId);
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const requiredPlanCount = submissionPlanFileCount(plan);
-  const hasExplicitPlanScope = hasExplicitSubmissionScope({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements: tender.requirements,
-  });
+  // A confirmed Build Plan IS the explicit submission scope. Without one there
+  // is no trusted scope at all, so the no-plan blockers below fire.
+  const hasExplicitPlanScope = confirmedPlan.ok;
   const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
   const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
-  const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
+  const planNames = new Set(planItems.map((f) => f.exactFileName.toLowerCase().trim()));
   const actualNames = finalCandidates.map((d) => (d.exactFileName ?? d.name ?? "").toLowerCase().trim()).filter(Boolean);
   const nameMismatch = requiredPlanCount > 0 && actualNames.some((n) => !planNames.has(n));
   const orderMismatch = false; // currently surfaced via filePlanBlockersFromLists in tenderLevelBlockers
@@ -795,6 +783,14 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: `${qualityFailed} generated document(s) failed the quality gate (QUALITY_FAILED).`,
       recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or attach official originals before export.",
+    });
+  }
+  if (!confirmedPlan.ok) {
+    tenderLevelBlockers.push({
+      category: "NO_CURRENT_CONFIRMED_BUILD_PLAN",
+      severity: "HIGH",
+      title: `No current confirmed Build Plan: ${confirmedPlan.blocker}`,
+      recommendedAction: "Build and confirm the submission Build Plan before final export. Derived drafts do not authorize export.",
     });
   }
   if (requiredPlanCount > 0 && !hasExplicitPlanScope) {

@@ -129,7 +129,7 @@ export async function getCanonicalTenderWorkflowState(
   } as any);
 
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
-  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const planStatus = deriveSubmissionPlanStatus(tender, plan);
   const planApproved = planStatus === "CANONICAL_APPROVED";

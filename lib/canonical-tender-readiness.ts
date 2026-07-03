@@ -2,7 +2,8 @@ import type { PrismaClient } from "@prisma/client";
 import { getTenderGenerationReadinessStrict } from "./tender-generation-readiness-strict";
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
-import { buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build-plan";
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
 import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
@@ -59,7 +60,12 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
-  const plan = buildSubmissionPlanWithDerivedFallback(tender);
+  // AUTHORITATIVE: only the current CONFIRMED BuildPlan defines the file plan.
+  // Without one, final export is blocked (NO_CURRENT_CONFIRMED_BUILD_PLAN) —
+  // a derived draft must never stand in for a confirmed plan here.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId);
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
@@ -91,11 +97,13 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...(projectRequirementExists && reviewedSelectedProjects === 0 ? ["NO_SELECTED_REVIEWED_PROJECTS"] : []),
     ...(tender.generatedDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
     ...(missing.length > 0 ? ["MISSING_PLANNED_FILES"] : []),
+    ...(confirmedPlan.ok ? [] : ["NO_CURRENT_CONFIRMED_BUILD_PLAN"]),
   ];
 
   const nextActions = Array.from(new Set([
     ...readiness.fullProposalBlockers.map((b) => b.nextAction).filter(Boolean) as string[],
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["RUN_ENGINE"] : []),
+    ...(confirmedPlan.ok ? [] : ["BUILD_SUBMISSION_PLAN"]),
   ]));
 
   const states = computeCanonicalModuleStates({

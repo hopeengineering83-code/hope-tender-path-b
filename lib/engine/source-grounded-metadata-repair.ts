@@ -1,23 +1,13 @@
-// Shared source-grounded metadata repair service.
+// Shared source-grounded metadata validators.
+//
+// These are the SINGLE validation rules used by both the repair-metadata and
+// re-extract-metadata routes, so the two endpoints can never disagree about
+// what counts as a valid reference / deadline / title / client name, and
+// both verify claimed source quotes against the active tender file text.
 import { containsMetadataPlaceholder } from "./metadata-validators";
 import { detectMetadataContamination } from "./tender-metadata-completeness";
 
-export type RepairableField = "reference" | "deadline" | "clientName" | "title" | "submissionMethod" | "submissionEmails" | "submissionAddress" | "evaluationMethodology" | "pageLimit" | "validityDays" | "bidBondAmount" | "numberOfCopiesRequired" | "mandatorySiteVisit";
-export type RepairResultStatus = "REPAIRED" | "NOT_FOUND" | "SKIPPED" | "REJECTED" | "UNRESOLVED";
-
-export interface SourceGroundedRepairResult {
-  field: RepairableField;
-  status: RepairResultStatus;
-  reason?: string;
-  value?: unknown;
-  sourceFile?: string | null;
-  sourcePage?: number | null;
-  sourceQuote?: string | null;
-  confidence?: string | null;
-}
-
 export interface ActiveTenderFile { id: string; fileName: string; extractedText: string | null; totalPages?: number | null; }
-export interface MetadataRepairInput { field: RepairableField; currentValue: unknown; extractedValue: unknown; extractionSource?: string | null; extractionSourceFile?: string | null; extractionSourcePage?: number | null; extractionSourceQuote?: string | null; extractionConfidence?: string | null; isManualOverride: boolean; activeFiles: ActiveTenderFile[]; }
 
 const REFERENCE_STOP_WORDS = /^(not|n\/?a|tbd|tbc|to\s+be\s+determined|to\s+be\s+confirmed|unknown|none|null|placeholder|n\.a\.|nil)$/i;
 const FIELD_LABEL_PATTERNS = /^(reference\s*(number|no\.?)?|ref\.?\s*(number|no\.?)?|tender\s*(number|no\.?)?|bid\s*(number|no\.?)?|deadline|date|title|client\s*name|procuring\s*entity)$/i;
@@ -68,32 +58,4 @@ export function verifySourceQuote(quote: string | null | undefined, files: Activ
     if (fileText.includes(normalizedQuote)) return { verified: true, sourceFileId: file.id };
   }
   return { verified: false, sourceFileId: null };
-}
-
-export function processMetadataRepair(input: MetadataRepairInput): SourceGroundedRepairResult {
-  const { field, currentValue, extractedValue, isManualOverride, activeFiles } = input;
-  if (isManualOverride) {
-    const currentStr = currentValue != null ? String(currentValue).trim() : "";
-    if (currentStr.length > 0) {
-      if (field === "reference" && !isValidReferenceCandidate(currentStr)) return { field, status: "UNRESOLVED", reason: `Manual value "${currentStr}" is not a valid reference. Correct it manually.` };
-      if (field === "deadline" && !isValidDeadlineCandidate(currentValue)) return { field, status: "UNRESOLVED", reason: "Manual deadline value is invalid or too far in the past. Correct it manually." };
-      if ((field === "title" || field === "clientName") && !isValidTitleOrClientCandidate(currentStr)) return { field, status: "UNRESOLVED", reason: `Manual ${field} value is invalid. Correct it manually.` };
-      return { field, status: "SKIPPED", reason: `${field} has a valid manual value — preserved.` };
-    }
-  }
-  if (extractedValue == null || (typeof extractedValue === "string" && !extractedValue.trim())) return { field, status: "NOT_FOUND", reason: `No ${field} candidate found in tender source text.` };
-  if (field === "reference" && !isValidReferenceCandidate(extractedValue as string)) return { field, status: "REJECTED", reason: `Extracted reference is invalid.`, value: extractedValue };
-  if (field === "deadline" && !isValidDeadlineCandidate(extractedValue)) return { field, status: "REJECTED", reason: "Extracted deadline is invalid or too far in the past.", value: extractedValue };
-  if ((field === "title" || field === "clientName") && !isValidTitleOrClientCandidate(extractedValue as string)) return { field, status: "REJECTED", reason: `Extracted ${field} is invalid.`, value: extractedValue };
-  if (typeof extractedValue === "string" && containsMetadataPlaceholder(extractedValue)) return { field, status: "REJECTED", reason: `Extracted ${field} contains a placeholder pattern.`, value: extractedValue };
-  if (input.extractionSourceQuote) {
-    const verification = verifySourceQuote(input.extractionSourceQuote, activeFiles);
-    if (!verification.verified) return { field, status: "UNRESOLVED", reason: `Source quote for ${field} is not contained in any active tender file. Re-grounding required.` };
-  }
-  return { field, status: "REPAIRED", value: extractedValue, sourceFile: input.extractionSourceFile ?? null, sourcePage: input.extractionSourcePage ?? null, sourceQuote: input.extractionSourceQuote ?? null, confidence: input.extractionConfidence ?? "medium" };
-}
-
-export function isSourceEvidenceStale(sourceFileId: string | null | undefined, activeFiles: ActiveTenderFile[]): boolean {
-  if (!sourceFileId) return true;
-  return !activeFiles.some((f) => f.id === sourceFileId);
 }

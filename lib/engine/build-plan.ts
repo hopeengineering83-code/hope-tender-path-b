@@ -422,15 +422,34 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   }
   const plan = await (prisma as any).buildPlan.findFirst({ where: { tenderId, status: "CONFIRMED", tender: { userId } }, orderBy: { updatedAt: "desc" } });
   if (!plan) return { ok: false as const, blocker: "No confirmed Build Plan exists." };
-  const items = JSON.parse(plan.itemsJson || "[]") as BuildPlanItem[];
-  // Safe guard: computeTenderBuildPlanHash calls prisma.tender.findFirst and
-  // prisma.tenderMetadataOverride.findMany — if the prisma client is a mock
-  // that doesn't have these, skip hash verification and return the plan.
+  // FAIL CLOSED on corrupted plan items — a plan whose contents cannot be
+  // read must never authorize generation or export.
+  let items: BuildPlanItem[];
+  try {
+    const parsed = JSON.parse(plan.itemsJson || "[]");
+    if (!Array.isArray(parsed)) throw new Error("itemsJson is not an array");
+    items = parsed as BuildPlanItem[];
+  } catch {
+    return { ok: false as const, blocker: "Confirmed Build Plan items are corrupted and cannot be read. Rebuild and re-confirm the Build Plan." };
+  }
+  // Reduced unit-test prisma mocks don't model the tables that
+  // computeTenderBuildPlanHash reads. Detect that EXPLICITLY (missing model
+  // delegates) and only then skip hash verification. A real PrismaClient
+  // always has these delegates, so production always verifies.
+  const canVerifyHash =
+    typeof (prisma as any).tenderMetadataOverride?.findMany === "function" &&
+    typeof (prisma as any).tender?.findFirst === "function";
+  if (!canVerifyHash) {
+    return { ok: true as const, plan, items, currentHash: plan.confirmedContentHash ?? plan.contentHash };
+  }
+  // FAIL CLOSED on verification failure — if freshness cannot be proven, the
+  // plan must not authorize anything. (A previous revision returned ok:true
+  // here, silently skipping the staleness and evidence checks.)
   let currentHash: string | null = null;
   try {
     currentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
   } catch {
-    return { ok: true as const, plan, currentHash: plan.confirmedContentHash ?? plan.contentHash };
+    return { ok: false as const, blocker: "Confirmed Build Plan freshness could not be verified (hash computation failed). Retry, or rebuild and re-confirm the Build Plan." };
   }
   const hashOk = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
   if (!hashOk) return { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
@@ -446,7 +465,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
       return { ok: false as const, blocker: `Confirmed Build Plan metadata evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
     }
   }
-  return { ok: true as const, plan, currentHash };
+  return { ok: true as const, plan, items, currentHash };
 }
 
 

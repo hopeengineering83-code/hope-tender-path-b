@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { runAuthorityReview, AuthorityReviewResult } from "../authority-review";
 import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
-import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { deriveSubmissionPlanStatus } from "../submission-plan";
 
 export type AuthorityTruthStatus =
   | "NOT_ASSESSED"
@@ -33,7 +33,7 @@ export async function resolveAuthorityTruth(
 
   const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
-  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const planStatus = deriveSubmissionPlanStatus(tender, plan);
 

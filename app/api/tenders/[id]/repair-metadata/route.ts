@@ -181,7 +181,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const activeFiles: ActiveTenderFile[] = tender.files.map((f: any) => ({ id: f.fileName, fileName: f.fileName, extractedText: f.extractedText }));
         const verification = verifySourceQuote(extraction.sourceQuote, activeFiles);
         if (!verification.verified) {
-          outcomes.push({ field, status: "UNRESOLVED" as any, reason: `Source quote for ${field} not found in active tender file. Re-grounding required.` });
+          outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} not found in active tender file. Re-grounding required.` });
           continue;
         }
       }

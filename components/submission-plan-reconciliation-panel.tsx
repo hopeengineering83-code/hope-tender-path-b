@@ -67,7 +67,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
       </section>
     );
   }
-  const planItems: BuildPlanItem[] = JSON.parse(confirmed.plan.itemsJson || "[]");
+  const planItems: BuildPlanItem[] = confirmed.items;
   const requiredItems = planItems.filter((item) => item.required);
   const requiredCount = requiredItems.length;
   const missing = findMissingGeneratedDocuments({ files: planItems, warnings: [] } as any, tender.generatedDocuments);

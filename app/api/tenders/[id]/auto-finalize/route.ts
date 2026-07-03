@@ -7,7 +7,6 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../../../../../lib/engine/build-plan";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
@@ -272,7 +271,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // ─── AUTHORITATIVE: use the current CONFIRMED BuildPlan only ──────────
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, actor.id);
-  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const planEmpty = plan.files.length === 0;
   const plannedNames = new Set(plan.files.map((f: any) => (f.exactFileName ?? "").trim().toLowerCase()));
