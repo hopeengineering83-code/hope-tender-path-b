@@ -292,19 +292,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // strict BuildPlan metadata validator reads these first.
       (updates as Record<string, unknown>).referenceSourceFileId = durableFileId;
       (updates as Record<string, unknown>).referenceSourceQuote = extraction.sourceQuote ?? null;
-      if (provenPage != null) {
-        (updates as Record<string, unknown>).referenceSourcePage = provenPage;
-      }
+      // Always write the page — even when null — to clear stale page evidence.
+      (updates as Record<string, unknown>).referenceSourcePage = provenPage;
     }
     const evidenceCols = sourceEvidenceColumns[field];
     if (evidenceCols && durableFileId) {
       (updates as Record<string, unknown>)[evidenceCols.fileId] = durableFileId;
       (updates as Record<string, unknown>)[evidenceCols.quote] = extraction.sourceQuote;
-      // Persist the proven page (computed from TenderFile.totalPages guard).
-      // This is the AUTHORITATIVE page number — not the extractor's heuristic.
-      if (provenPage != null) {
-        (updates as Record<string, unknown>)[evidenceCols.page] = provenPage;
-      }
+      // Always write the page column — even when null. This clears any stale
+      // page from a prior extraction that doesn't correspond to the new value.
+      (updates as Record<string, unknown>)[evidenceCols.page] = provenPage;
     }
     outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: provenPage, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({

@@ -15,6 +15,7 @@ import {
 import { upsertRequirements } from "../engine/stable-requirements";
 import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
 import { attributeMetadataSourceFileId } from "../engine/metadata-source-attribution";
+import { computeProvenPageNumber } from "../engine/page-provenance";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
@@ -437,6 +438,7 @@ export async function finalizeJob(jobId: string, userId: string) {
     // caused AI_ANALYSIS_PERSISTENCE_FAILED on large analyses.
     const preparationStart = Date.now();
     let drafts: RequirementDraft[];
+    let attrFiles: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null; totalPages?: number | null }> = [];
     let tenderUpdate: Prisma.TenderUpdateInput;
     let outputJson: string;
     try {
@@ -444,9 +446,10 @@ export async function finalizeJob(jobId: string, userId: string) {
             where: { id: job.tenderId! },
             select: {
                 clientName: true, submissionMethod: true, submissionEmails: true, notes: true,
+                contactDetailsSourceJson: true,
                 files: {
                     where: { deletionStatus: "ACTIVE" },
-                    select: { id: true, extractedText: true, deletionStatus: true },
+                    select: { id: true, extractedText: true, deletionStatus: true, totalPages: true },
                 },
             },
         });
@@ -460,18 +463,54 @@ export async function finalizeJob(jobId: string, userId: string) {
         // Bind each metadata field's source evidence to the ACTUAL active file
         // whose extracted text contains the field's supporting quote (or null →
         // ungrounded). No earliest-file guessing.
-        const attrFiles = existingTender?.files ?? [];
-        const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(merged, {
-            clientName: existingTender?.clientName,
-            submissionMethod: existingTender?.submissionMethod,
-            submissionEmails: existingTender?.submissionEmails,
-            notes: existingTender?.notes,
+        attrFiles = existingTender?.files ?? [];
+        // Resolve source file IDs for all critical fields
+        const sourceFileIds = {
             clientNameSourceFileId: attributeMetadataSourceFileId(merged.clientNameSourceQuote, attrFiles),
             submissionMethodSourceFileId: attributeMetadataSourceFileId(merged.submissionMethodSourceQuote, attrFiles),
             submissionAddressSourceFileId: attributeMetadataSourceFileId(merged.submissionAddressSourceQuote, attrFiles),
             submissionEmailSourceFileId: attributeMetadataSourceFileId(merged.submissionEmailSourceQuote, attrFiles),
             titleSourceFileId: attributeMetadataSourceFileId(merged.tenderTitleSourceQuote, attrFiles),
             deadlineSourceFileId: attributeMetadataSourceFileId(merged.deadlineSourceQuote, attrFiles),
+        };
+        // Guard AI-claimed page numbers using the authoritative TenderFile.totalPages
+        // guard (same as streaming/non-streaming ai-analyze paths).
+        const guardedMerged = { ...merged };
+        const guardPage = (quote: string | null | undefined, fileId: string | null): number | null => {
+            if (!quote || !fileId) return null;
+            const file = attrFiles.find((f: any) => f.id === fileId);
+            if (!file || !file.extractedText) return null;
+            const needle = quote.toLowerCase().replace(/\s+/g, " ").trim();
+            const haystack = file.extractedText.toLowerCase().replace(/\s+/g, " ").trim();
+            const idx = needle.length >= 6 ? haystack.indexOf(needle.slice(0, Math.min(20, needle.length))) : -1;
+            return computeProvenPageNumber(file.extractedText, idx >= 0 ? idx : 0, (file as any).totalPages ?? null);
+        };
+        if (guardedMerged.tenderTitleSourcePage !== undefined) guardedMerged.tenderTitleSourcePage = guardPage(guardedMerged.tenderTitleSourceQuote, sourceFileIds.titleSourceFileId);
+        if (guardedMerged.deadlineSourcePage !== undefined) guardedMerged.deadlineSourcePage = guardPage(guardedMerged.deadlineSourceQuote, sourceFileIds.deadlineSourceFileId);
+        if (guardedMerged.clientNameSourcePage !== undefined) guardedMerged.clientNameSourcePage = guardPage(guardedMerged.clientNameSourceQuote, sourceFileIds.clientNameSourceFileId);
+        if (guardedMerged.submissionEmailSourcePage !== undefined) guardedMerged.submissionEmailSourcePage = guardPage(guardedMerged.submissionEmailSourceQuote, sourceFileIds.submissionEmailSourceFileId);
+        if (guardedMerged.submissionMethodSourcePage !== undefined) guardedMerged.submissionMethodSourcePage = guardPage(guardedMerged.submissionMethodSourceQuote, sourceFileIds.submissionMethodSourceFileId);
+        if (guardedMerged.submissionAddressSourcePage !== undefined) guardedMerged.submissionAddressSourcePage = guardPage(guardedMerged.submissionAddressSourceQuote, sourceFileIds.submissionAddressSourceFileId);
+        // Guard contactDetailsSource page numbers and resolve fileId for each entry
+        if (guardedMerged.contactDetailsSource) {
+            const guardedContact: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> = {};
+            for (const [key, entry] of Object.entries(guardedMerged.contactDetailsSource)) {
+                if (entry && entry.quote) {
+                    const entryFileId = attributeMetadataSourceFileId(entry.quote, attrFiles);
+                    guardedContact[key] = { page: guardPage(entry.quote, entryFileId), quote: entry.quote, fileId: entryFileId };
+                } else if (entry) {
+                    guardedContact[key] = { page: null, quote: entry?.quote ?? null, fileId: null };
+                }
+            }
+            guardedMerged.contactDetailsSource = guardedContact;
+        }
+        const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(guardedMerged, {
+            clientName: existingTender?.clientName,
+            submissionMethod: existingTender?.submissionMethod,
+            submissionEmails: existingTender?.submissionEmails,
+            notes: existingTender?.notes,
+            ...sourceFileIds,
+            existingContactDetailsSourceJson: existingTender?.contactDetailsSourceJson ?? null,
         });
 
         tenderUpdate = {
@@ -564,6 +603,38 @@ export async function finalizeJob(jobId: string, userId: string) {
         timeout: 10000,
         isolationLevel: "Serializable",
     });
+
+    // After the transaction commits, resolve and persist the reference field's
+    // fileId so it can achieve EXTRACTED_AND_GROUNDED. Non-fatal — if this
+    // fails, the reference field stays EXTRACTED_UNVERIFIED until repair.
+    try {
+        const refTender = await prisma.tender.findUnique({
+            where: { id: job.tenderId! },
+            select: { contactDetailsSourceJson: true },
+        }).catch(() => null);
+        if (refTender?.contactDetailsSourceJson) {
+            let contactDetails: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }>;
+            try { contactDetails = JSON.parse(refTender.contactDetailsSourceJson); } catch { contactDetails = {}; }
+            const refEntry = contactDetails["procurementReferenceNumber"];
+            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && !refEntry.fileId) {
+                const refFileId = attributeMetadataSourceFileId(refEntry.quote, attrFiles);
+                if (refFileId) {
+                    contactDetails["procurementReferenceNumber"] = {
+                        page: refEntry.page ?? null,
+                        quote: refEntry.quote,
+                        fileId: refFileId,
+                    };
+                    await prisma.tender.update({
+                        where: { id: job.tenderId! },
+                        data: { contactDetailsSourceJson: JSON.stringify(contactDetails) },
+                    });
+                }
+            }
+        }
+    } catch (refErr) {
+        console.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
+    }
+
     console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
     } catch (persistErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);

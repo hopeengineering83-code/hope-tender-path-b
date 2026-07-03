@@ -157,6 +157,8 @@ export async function repairSourceGrounding(tenderId: string): Promise<RepairSou
           quote: result.quote,
           confidence: result.confidence,
           page: detectPageNumber(text, result.offset, file.totalPages),
+          // Note: sourcePageNumber is always written below (even when null)
+          // to clear stale page evidence from a prior repair.
           heading: detectSectionHeading(text, result.offset),
         };
       }
@@ -185,7 +187,10 @@ export async function repairSourceGrounding(tenderId: string): Promise<RepairSou
         sourceTenderFileId: bestMatch.fileId,
         sourceExactQuote: bestMatch.quote.slice(0, 500),
         sourceConfidence: Math.round(bestMatch.confidence * 100) / 100,
-        ...(bestMatch.page !== null ? { sourcePageNumber: bestMatch.page } : {}),
+        // Always write sourcePageNumber — even when null — to clear stale
+        // page evidence from a prior repair that doesn't correspond to the
+        // new quote.
+        sourcePageNumber: bestMatch.page,
         ...(bestMatch.heading !== null ? { sourceSectionHeading: bestMatch.heading } : {}),
         updatedAt: new Date(),
       },

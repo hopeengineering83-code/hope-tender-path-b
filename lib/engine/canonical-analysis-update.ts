@@ -136,15 +136,30 @@ function mergeContactDetailsSource(
     }
   }
 
-  // Then, overlay AI's entries (AI wins for page/quote; preserve existing fileId if AI lacks one)
+  // Then, overlay AI's entries. AI wins for page/quote. For fileId:
+  //   - If AI provides a fileId (rare — only from guardAiPageNumbers), use it.
+  //   - If AI does NOT provide a fileId BUT the quote is UNCHANGED from the
+  //     existing entry, preserve the existing fileId (it's still valid for
+  //     the same quote).
+  //   - If AI does NOT provide a fileId AND the quote CHANGED, drop the
+  //     existing fileId (it was attributed to the OLD quote and may not
+  //     point to a file containing the NEW quote). Let resolveReferenceFileId
+  //     or a subsequent repair re-resolve it.
   for (const [key, val] of Object.entries(aiSource)) {
     if (val && typeof val === "object") {
-      const existingFileId = merged[key]?.fileId;
+      const existingEntry = merged[key];
+      const existingFileId = existingEntry?.fileId ?? null;
+      const existingQuote = existingEntry?.quote ?? null;
+      const newQuote = val.quote ?? null;
+      const quotesMatch = existingQuote !== null && newQuote !== null &&
+        existingQuote.toLowerCase().replace(/\s+/g, " ").trim() === newQuote.toLowerCase().replace(/\s+/g, " ").trim();
+      const aiFileId = typeof val.fileId === "string" && val.fileId.length > 0 ? val.fileId : null;
+      // Preserve existing fileId only when AI doesn't provide one AND the quote is unchanged
+      const fileId = aiFileId ?? (quotesMatch ? existingFileId : null) ?? null;
       merged[key] = {
         page: val.page ?? null,
-        quote: val.quote ?? null,
-        // AI never emits fileId — preserve the existing one (from repair/enrichment)
-        fileId: (typeof val.fileId === "string" && val.fileId.length > 0 ? val.fileId : null) ?? existingFileId ?? null,
+        quote: newQuote,
+        fileId,
       };
     }
   }

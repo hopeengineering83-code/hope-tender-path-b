@@ -418,8 +418,16 @@ export function clearEvidenceForField(field: string): Record<string, null> {
       clear.submissionEmailSourcePage = null;
       clear.submissionEmailSourceQuote = null;
       break;
-    // reference evidence is in contactDetailsSourceJson — handled separately
-    // by the caller (merge-null into the procurementReferenceNumber entry).
+    case "reference":
+      clear.referenceSourceFileId = null;
+      clear.referenceSourcePage = null;
+      clear.referenceSourceQuote = null;
+      break;
+    case "submissionEmailSubject":
+      clear.submissionEmailSubjectSourceFileId = null;
+      clear.submissionEmailSubjectSourcePage = null;
+      clear.submissionEmailSubjectSourceQuote = null;
+      break;
   }
   return clear;
 }
