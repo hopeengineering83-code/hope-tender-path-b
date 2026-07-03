@@ -607,7 +607,6 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     or requirements with exactFileName), the plan must produce at least
     //     one required file. If there's no explicit scope, any tender with
     //     extracted requirements has a valid plan by default.
-    const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
     // Virtual submission plan authority removed — release depends only on
     // persisted confirmed BuildPlan.
     // I — EXPORT/FINAL-ZIP readiness: count of real current generated files

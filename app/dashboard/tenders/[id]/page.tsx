@@ -9,6 +9,7 @@ import { ExtractionSnapshotPanel } from "../../../../components/extraction-snaps
 import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
 import { canMutateTender } from "../../../../lib/recovery-command-actions";
+import { getCurrentConfirmedBuildPlan } from "../../../../lib/engine/build-plan";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
@@ -146,6 +147,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
+  // Confirmed BuildPlan items feed the executive snapshot's planned-doc counts
+  // so the dashboard can never show plan numbers the gates do not enforce.
+  const confirmedPlanForSnapshot = await getCurrentConfirmedBuildPlan(prismaClient, tender.id, userId).catch(() => ({ ok: false as const, blocker: "unavailable" }));
+  const confirmedPlanItems = confirmedPlanForSnapshot.ok ? confirmedPlanForSnapshot.items : null;
 
   return (
     <main className="space-y-5" aria-label="Tender workflow workspace">
@@ -158,7 +163,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} />
 
-      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
+      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} confirmedPlanItems={confirmedPlanItems} />
       <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />

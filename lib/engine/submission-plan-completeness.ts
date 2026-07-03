@@ -51,6 +51,7 @@ export type SubmissionPlanRow = {
 };
 
 export type SubmissionPlanState =
+  | "CONFIRMED_BUILD_PLAN"
   | "EXPLICIT_TENDER_PLAN"
   | "DERIVED_DRAFT_UNCONFIRMED"
   | "PLAN_NOT_BUILT"
@@ -173,16 +174,26 @@ export type ResolvePlanCompletenessInput = {
   tender: TenderLike;
   generatedDocuments: GeneratedDocSnapshot[];
   qualityFailedIds?: Set<string>;
+  /**
+   * Items of the current CONFIRMED BuildPlan, when one exists. When provided,
+   * they are the AUTHORITATIVE plan: the derived-fallback plan and the
+   * adopt-from-docs heuristic are skipped so completeness counts can never
+   * disagree with the confirmed plan the gates enforce.
+   */
+  confirmedPlanItems?: SubmissionPlanFile[] | null;
 };
 
 export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompletenessInput): SubmissionPlanCompletenessReport {
-  const plan = buildSubmissionPlanWithDerivedFallback(input.tender);
+  const confirmedItems = input.confirmedPlanItems ?? null;
+  const plan = confirmedItems
+    ? { files: confirmedItems, warnings: [] as string[] }
+    : buildSubmissionPlanWithDerivedFallback(input.tender);
   let planFiles = plan.files.filter((f) => f.required);
   const requirementCount = input.tender.requirements?.length ?? 0;
-  const explicitScope = hasExplicitSubmissionScope(input.tender);
+  const explicitScope = confirmedItems ? true : hasExplicitSubmissionScope(input.tender);
 
   let adoptedFromDocs = false;
-  if (planFiles.length === 0 && input.generatedDocuments.length > 0) {
+  if (!confirmedItems && planFiles.length === 0 && input.generatedDocuments.length > 0) {
     const activeDocs = input.generatedDocuments.filter((doc) => {
       const gen = (doc.generationStatus ?? "").toUpperCase();
       const rev = (doc.reviewStatus ?? "").toUpperCase();
@@ -299,7 +310,9 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const hasExplicitScope = explicitScope;
 
   let planState: SubmissionPlanState;
-  if (totalRequired > 0) {
+  if (confirmedItems && totalRequired > 0) {
+    planState = "CONFIRMED_BUILD_PLAN";
+  } else if (totalRequired > 0) {
     if (adoptedFromDocs) {
       const activeDocs = input.generatedDocuments.filter((doc) => {
         const gen = (doc.generationStatus ?? "").toUpperCase();

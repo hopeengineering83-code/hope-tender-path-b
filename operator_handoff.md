@@ -71,6 +71,24 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03 UTC — Claude Code (PR #936 deep pass, round 3 — no derived-plan authority left)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **Scope:** Closed every remaining derived-plan consumer so the confirmed BuildPlan is the single plan authority everywhere it drives mutations, gates, or user-facing plan counts; fixed the stored-deadline churn rule.
+- **Changes:**
+  1. `generate` route: reconciliation scope (`plannedTargetFiles`/`plannedFileKeys`, fill-planned-support-docs, missing/extra reporting) now comes from `getCurrentConfirmedBuildPlan` items, not the derived plan. The two remaining `hasExplicitSubmissionScope(tender)` calls are pre-plan extraction-gate heuristics and intentionally stay.
+  2. `generate-missing-plan-files` route: 422 `BUILD_PLAN_NOT_CONFIRMED` without a current confirmed plan; missing files are computed against `confirmedPlan.items` only (a derived plan could mint files the confirmed plan never required).
+  3. `submission-plan-completeness` resolver: new optional `confirmedPlanItems` input — when present it is authoritative (derived fallback + adopt-from-docs skipped), `planState: "CONFIRMED_BUILD_PLAN"`, no user-confirmation warning. Wired in the `GET submission-plan` route and `computeTenderLifecycle`; panel shows the new state with an "ok" tone.
+  4. `ExecutiveSnapshot`: planned-doc dashboard counts now come from a `confirmedPlanItems` prop (fetched in the tender page); with no confirmed plan the totals fall back to actual generated documents instead of derived numbers the gates don't enforce.
+  5. `FinalPackageManifestPanel`: manifest plan targets from the confirmed plan; fail-closed when none.
+  6. Dead code: removed the gate's unused `await import("./submission-plan")` destructure and workflow-state's unused derived-fallback import.
+  7. Deadline rule split: new `isParseableDeadlineValue` (structural — placeholders/labels/garbage invalid, past dates VALID) for already-STORED deadlines, so archived tenders stop being flagged invalid and churned by re-extract; `isValidDeadlineCandidate` (30-day recency) still guards NEW extraction candidates, and re-extract now candidate-validates the extracted deadline before it may overwrite anything.
+- **Where derived plans legitimately remain:** `lib/engine/build-plan.ts` (drafting IS derivation) and the generate route's `planOnly` dry-run (creates a DRAFT plan, generates nothing).
+- **Files changed:** generate route, generate-missing-plan-files route, submission-plan route, re-extract-metadata route, submission-plan-completeness.ts, tender-lifecycle-orchestrator.ts, generation-readiness-gate.ts, workflow-state.ts, source-grounded-metadata-repair.ts, executive-snapshot.tsx, page.tsx, final-package-manifest-panel.tsx, submission-plan-completeness-panel.tsx, tests/confirmed-build-plan-fail-closed.test.ts (now 26 tests), operator_handoff.md.
+- **Commands run and results:** `npx tsc --noEmit` PASS · `npm run lint` PASS · `npx prisma validate` PASS · `RUN_DB_INTEGRATION=true npm test` **4849/4849 PASS** · `npm run build` PASS (exit 0).
+- **Next action:** Hope reviews PR #936; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI on the new head and Hope's review.
+
 ### 2026-07-03 UTC — Claude Code (PR #936 pre-merge investigation, round 2)
 
 - **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)

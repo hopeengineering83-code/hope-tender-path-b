@@ -216,4 +216,103 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     assert.match(source, /BUILD_PLAN_NOT_CONFIRMED/);
     assert.ok(!source.includes("buildSubmissionPlanWithDerivedFallback"), "reconciliation must never supersede documents against a derived heuristic plan");
   });
+
+  it("every remaining plan consumer follows the confirmed Build Plan — no derived-fallback authority anywhere", () => {
+    // Files where the plan drives mutations, gates, or user-facing plan
+    // counts. buildSubmissionPlan(WithDerivedFallback) may only remain in the
+    // draft-creation path (lib/engine/build-plan.ts, generate planOnly) and
+    // in submission-plan.ts itself.
+    for (const path of [
+      "app/api/tenders/[id]/generate-missing-plan-files/route.ts",
+      "app/api/tenders/[id]/reconcile-docs/route.ts",
+      "components/final-package-manifest-panel.tsx",
+      "app/dashboard/tenders/[id]/executive-snapshot.tsx",
+      "lib/engine/submission-plan-completeness.ts",
+      "lib/engine/workflow/workflow-state.ts",
+      "lib/canonical-tender-readiness.ts",
+      "lib/engine/final-submission-readiness.ts",
+      "lib/engine/analysis/plan-truth.ts",
+      "lib/engine/analysis/authority-truth.ts",
+    ]) {
+      const source = readFileSync(path, "utf8");
+      if (path === "lib/engine/submission-plan-completeness.ts") {
+        // The resolver keeps the derived fallback ONLY for tenders without a
+        // confirmed plan, and must prefer confirmedPlanItems when provided.
+        assert.match(source, /confirmedPlanItems/);
+        continue;
+      }
+      assert.ok(!source.includes("buildSubmissionPlanWithDerivedFallback"), `${path} must not use the derived-fallback plan`);
+    }
+  });
+
+  it("generate route scopes reconciliation to the confirmed plan; generate-missing-plan-files fails closed without one", () => {
+    const generate = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+    assert.match(generate, /const confirmedPlanForRun = await getCurrentConfirmedBuildPlan\(prisma, id, userId\);/);
+    assert.match(generate, /const explicitSubmissionScope = confirmedPlanForRun\.ok;/);
+    const missing = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    assert.match(missing, /BUILD_PLAN_NOT_CONFIRMED/);
+    assert.match(missing, /confirmedPlan\.items/);
+  });
+
+  it("submission-plan GET and lifecycle orchestrator pass confirmed items into completeness", () => {
+    const route = readFileSync("app/api/tenders/[id]/submission-plan/route.ts", "utf8");
+    assert.match(route, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
+    const orchestrator = readFileSync("lib/engine/tender-lifecycle-orchestrator.ts", "utf8");
+    assert.match(orchestrator, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
+  });
+});
+
+describe("completeness resolver — confirmed plan authority (real function calls)", () => {
+  it("confirmedPlanItems override the derived plan and set CONFIRMED_BUILD_PLAN", async () => {
+    const { resolveSubmissionPlanCompleteness } = await import("../lib/engine/submission-plan-completeness");
+    const report = resolveSubmissionPlanCompleteness({
+      tender: { id: "t1", title: "T", exactFileNaming: null, exactFileOrder: null, requirements: [] } as never,
+      generatedDocuments: [],
+      confirmedPlanItems: [{
+        canonicalId: "doc-1", exactFileName: "Technical Proposal.docx", exactOrder: 1,
+        documentType: "TECHNICAL_PROPOSAL", required: true, format: "DOCX", envelope: "TECHNICAL",
+        sourceRequirementIds: [],
+      } as never],
+    });
+    assert.equal(report.planState, "CONFIRMED_BUILD_PLAN");
+    assert.equal(report.requiresUserConfirmation, false);
+    assert.equal(report.hasExplicitScope, true);
+    assert.equal(report.totalRequired, 1);
+    assert.equal(report.totalMissing, 1, "the confirmed file has no generated doc yet — it must count as missing");
+  });
+
+  it("without confirmedPlanItems the derived behavior is unchanged (requirements → derived draft)", async () => {
+    const { resolveSubmissionPlanCompleteness } = await import("../lib/engine/submission-plan-completeness");
+    const report = resolveSubmissionPlanCompleteness({
+      tender: {
+        id: "t1", title: "T", exactFileNaming: null, exactFileOrder: null,
+        requirements: [{ id: "r1", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", priority: "MANDATORY" }],
+      } as never,
+      generatedDocuments: [],
+    });
+    assert.notEqual(report.planState, "CONFIRMED_BUILD_PLAN");
+  });
+});
+
+describe("deadline validity — stored values vs extraction candidates", () => {
+  it("a passed deadline stays structurally valid as a STORED value", async () => {
+    const { isParseableDeadlineValue, isValidDeadlineCandidate } = await import("../lib/engine/source-grounded-metadata-repair");
+    const lastYear = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    assert.equal(isParseableDeadlineValue(lastYear), true, "historical deadlines are real data, not invalid data");
+    assert.equal(isValidDeadlineCandidate(lastYear), false, "but a NEW extraction candidate that old signals contamination");
+  });
+
+  it("placeholders, labels, and garbage are invalid in both modes", async () => {
+    const { isParseableDeadlineValue, isValidDeadlineCandidate } = await import("../lib/engine/source-grounded-metadata-repair");
+    for (const bad of ["TBD", "Deadline", "not-a-date", "", null, undefined, 42]) {
+      assert.equal(isParseableDeadlineValue(bad), false, `stored: ${String(bad)}`);
+      assert.equal(isValidDeadlineCandidate(bad), false, `candidate: ${String(bad)}`);
+    }
+  });
+
+  it("re-extract keeps stored historical deadlines and candidate-validates extracted ones", () => {
+    const source = readFileSync("app/api/tenders/[id]/re-extract-metadata/route.ts", "utf8");
+    assert.match(source, /field === "deadline" && !isParseableDeadlineValue\(value\)/);
+    assert.match(source, /isValidDeadlineCandidate\(metadata\.deadline\) \? metadata\.deadline : null/);
+  });
 });

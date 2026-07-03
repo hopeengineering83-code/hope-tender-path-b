@@ -7,7 +7,7 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -28,7 +28,7 @@ import { resolveCanonicalFieldState } from "../../../../../lib/engine/canonical-
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isCriticalField } from "../../../../../lib/engine/tender-policy-registry";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
-import { buildDraftBuildPlan } from "../../../../../lib/engine/build-plan";
+import { buildDraftBuildPlan, getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 // hasValidSubmissionPlan was REMOVED — GeneratedDocument rows must never be
 // used as a BuildPlan proxy. The authoritative plan check is enforced by
 // assertTenderReadyForGenerationAndExport (hasCurrentConfirmedBuildPlan +
@@ -848,8 +848,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const submissionPlan = buildSubmissionPlanWithDerivedFallback({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements, submissionMethod: tender.submissionMethod, tenderCategory: tender.category, analysisExtractionStatus: tender.analysisExtractionStatus });
-  const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
+  // AUTHORITATIVE: the generation reconciliation scope (which files control
+  // fill/missing/extra checks) comes from the current CONFIRMED BuildPlan
+  // only — never from a derived heuristic plan. The central gate below
+  // (purpose "generate") independently blocks when no current confirmed plan
+  // exists, so an empty scope here never authorizes anything.
+  const confirmedPlanForRun = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+  const submissionPlan = { files: confirmedPlanForRun.ok ? confirmedPlanForRun.items : [], warnings: [] as string[] } as any;
+  const explicitSubmissionScope = confirmedPlanForRun.ok;
   const plannedTargetFiles = explicitSubmissionScope ? plannedSubmissionTargetFiles(submissionPlan) : [];
   const plannedFileKeys = explicitSubmissionScope ? plannedSubmissionTargetKeys(submissionPlan) : undefined;
 

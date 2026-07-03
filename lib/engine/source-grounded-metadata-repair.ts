@@ -23,6 +23,24 @@ export function isValidReferenceCandidate(value: string | null | undefined): boo
   return true;
 }
 
+/**
+ * Structural validity for an already-STORED deadline: a real parseable date
+ * that is not a placeholder or a field label. Unlike isValidDeadlineCandidate
+ * there is NO recency rule — a tender whose deadline legitimately passed keeps
+ * its historical deadline instead of being flagged invalid and churned by
+ * re-extraction. The 30-day recency rule applies only to NEW extraction
+ * candidates (isValidDeadlineCandidate), where a long-past date signals
+ * contamination from old tender alerts.
+ */
+export function isParseableDeadlineValue(value: unknown): boolean {
+  if (!value) return false;
+  if (value instanceof Date) return !isNaN(value.getTime());
+  if (typeof value !== "string") return false;
+  if (containsMetadataPlaceholder(value)) return false;
+  if (FIELD_LABEL_PATTERNS.test(value)) return false;
+  return !isNaN(new Date(value).getTime());
+}
+
 export function isValidDeadlineCandidate(value: unknown): boolean {
   if (!value) return false;
   let date: Date;

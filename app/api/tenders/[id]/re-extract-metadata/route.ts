@@ -30,6 +30,7 @@ import { detectMetadataContamination } from "../../../../../lib/engine/tender-me
 import {
   isValidReferenceCandidate,
   isValidDeadlineCandidate,
+  isParseableDeadlineValue,
   isValidTitleOrClientCandidate,
 } from "../../../../../lib/engine/source-grounded-metadata-repair";
 import { logAction } from "../../../../../lib/audit";
@@ -77,7 +78,11 @@ function isValidStoredValue(field: string, value: unknown): boolean {
   if (field === "reference" && !isValidReferenceCandidate(String(value))) return false;
   if (field === "clientName" && !isValidTitleOrClientCandidate(String(value))) return false;
   if (field === "title" && !isValidTitleOrClientCandidate(String(value))) return false;
-  if (field === "deadline" && !isValidDeadlineCandidate(value)) return false;
+  // Stored deadlines use the STRUCTURAL check only: a historical (passed)
+  // deadline is still the tender's real deadline and must not be flagged
+  // invalid and churned. The 30-day recency rule applies to NEW extraction
+  // candidates below, where a long-past date signals contamination.
+  if (field === "deadline" && !isParseableDeadlineValue(value)) return false;
   switch (field) {
     case "clientName":         return isValidClientName(String(value));
     case "reference":          return isValidReferenceNumber(String(value));
@@ -195,7 +200,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   tryFill("evaluationMethodology", metadata.evaluationMethodology);
   tryFill("budget", metadata.budget);
   tryFill("currency", metadata.currency);
-  tryFill("deadline", metadata.deadline);
+  tryFill("deadline", isValidDeadlineCandidate(metadata.deadline) ? metadata.deadline : null);
   tryFill("submissionMethod", metadata.submissionMethod);
   tryFill("submissionAddress", metadata.submissionAddress);
   tryFill("pageLimit", metadata.pageLimit);

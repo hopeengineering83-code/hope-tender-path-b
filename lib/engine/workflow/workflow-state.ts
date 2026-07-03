@@ -3,7 +3,7 @@ import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
-import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { deriveSubmissionPlanStatus } from "../submission-plan";
 import { detectAnalysisSource, ANALYSIS_APPROVAL_GAP_TITLE } from "../analysis-source";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
