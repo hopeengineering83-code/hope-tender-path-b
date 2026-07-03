@@ -205,7 +205,7 @@ describe("re-extract-metadata route — enrichment wired in", () => {
 
   it("imports enrichMetadataWithSourceEvidence", () => {
     assert.ok(
-      src.includes('import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";'),
+      src.includes('import { enrichMetadataWithSourceEvidence, clearEvidenceForField } from "../../../../../lib/engine/metadata-source-enrichment";'),
       "must import enrichMetadataWithSourceEvidence",
     );
   });

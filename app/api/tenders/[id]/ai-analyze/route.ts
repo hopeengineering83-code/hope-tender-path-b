@@ -783,6 +783,7 @@ async function handleStreamingAnalyze(
                 submissionEmails: tenderRecord.submissionEmails,
                 notes: tenderRecord.notes,
                 ...sourceFileIds,
+                existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -1493,6 +1494,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             submissionEmails: tenderRecord.submissionEmails,
             notes: tenderRecord.notes,
             ...sourceFileIdsNonStream,
+            existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.

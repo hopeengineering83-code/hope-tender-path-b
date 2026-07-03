@@ -18,7 +18,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
-import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
+import { enrichMetadataWithSourceEvidence, clearEvidenceForField } from "../../../../../lib/engine/metadata-source-enrichment";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import {
   isValidClientName,
@@ -171,6 +171,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       update[key as string] = extracted;
       fieldsAfter[key as string] = extracted;
       if (!isEmpty(stored)) overwrittenInvalid.push(key as string);
+      // Stale-evidence prevention: when a critical field's scalar value
+      // changes, the old file/page/quote evidence for the OLD value must
+      // NOT survive \u2014 it would be stale evidence for a different value.
+      // Clear the whole evidence tuple atomically here. The enrichment
+      // step below may re-set it with PROVEN evidence for the NEW value.
+      // This ensures a null/unproven page never makes the field grounded.
+      const cleared = clearEvidenceForField(key as string);
+      for (const [col, val] of Object.entries(cleared)) {
+        (update as Record<string, unknown>)[col] = val;
+      }
+      // Reference evidence lives in contactDetailsSourceJson.procurementReferenceNumber.
+      // When the reference scalar changes, clear that JSON entry so the old
+      // fileId/page/quote for the OLD reference value cannot survive.
+      if (key === "reference") {
+        const existingJson = (tender as { contactDetailsSourceJson?: string | null }).contactDetailsSourceJson;
+        if (existingJson) {
+          try {
+            const contactDetails = JSON.parse(existingJson) as Record<string, unknown>;
+            if (contactDetails["procurementReferenceNumber"]) {
+              delete contactDetails["procurementReferenceNumber"];
+              (update as Record<string, unknown>).contactDetailsSourceJson =
+                Object.keys(contactDetails).length > 0 ? JSON.stringify(contactDetails) : null;
+            }
+          } catch {
+            // malformed JSON \u2014 nothing to clear
+          }
+        }
+      }
     } else {
       fieldsAfter[key as string] = stored;
     }

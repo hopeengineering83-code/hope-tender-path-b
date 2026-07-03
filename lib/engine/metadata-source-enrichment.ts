@@ -373,3 +373,53 @@ export function enrichMetadataWithSourceEvidence(
 
   return out;
 }
+
+/**
+ * Build the "clear evidence" update map for a field whose scalar value changed.
+ *
+ * When re-extraction changes a metadata scalar, prior file/page/quote evidence
+ * for the OLD value must NOT survive — it would be stale evidence for a
+ * different value. This function returns the columns to set to null so the
+ * old evidence tuple is cleared atomically with the new scalar value.
+ *
+ * The caller should Object.assign these into the update map BEFORE the
+ * enrichment (which may re-set them with proven evidence for the NEW value).
+ */
+export function clearEvidenceForField(field: string): Record<string, null> {
+  const clear: Record<string, null> = {};
+  switch (field) {
+    case "clientName":
+      clear.clientNameSourceFileId = null;
+      clear.clientNameSourcePage = null;
+      clear.clientNameSourceQuote = null;
+      break;
+    case "title":
+      clear.titleSourceFileId = null;
+      clear.titleSourcePage = null;
+      clear.titleSourceQuote = null;
+      break;
+    case "deadline":
+      clear.deadlineSourceFileId = null;
+      clear.deadlineSourcePage = null;
+      clear.deadlineSourceQuote = null;
+      break;
+    case "submissionMethod":
+      clear.submissionMethodSourceFileId = null;
+      clear.submissionMethodSourcePage = null;
+      clear.submissionMethodSourceQuote = null;
+      break;
+    case "submissionAddress":
+      clear.submissionAddressSourceFileId = null;
+      clear.submissionAddressSourcePage = null;
+      clear.submissionAddressSourceQuote = null;
+      break;
+    case "submissionEmails":
+      clear.submissionEmailSourceFileId = null;
+      clear.submissionEmailSourcePage = null;
+      clear.submissionEmailSourceQuote = null;
+      break;
+    // reference evidence is in contactDetailsSourceJson — handled separately
+    // by the caller (merge-null into the procurementReferenceNumber entry).
+  }
+  return clear;
+}
