@@ -71,6 +71,14 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03T17:00:00Z — Super Z (GLM)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **HEAD SHA:** `919d84e2`
+- **Scope:** Verified all gaps fixed — durable source grounding, confirmed BuildPlan enforcement, Recovery Command Center messaging, canMutate fail-closed defaults
+- **Commands:** `npx tsc --noEmit` PASS, `RUN_DB_INTEGRATION=true npm test` 4861/4861 PASS, `npm run lint` PASS, `npx prisma validate` PASS, `npm run build` PASS
+- **Merge status:** `unsafe`
+
 ### 2026-07-03 UTC — Claude Code (PR #936 deep pass, round 3 — no derived-plan authority left)
 
 - **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
