@@ -3,6 +3,7 @@ import { getTenderGenerationReadinessStrict } from "./tender-generation-readines
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
 import { buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build-plan";
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
 import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
@@ -59,7 +60,10 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
-  const plan = buildSubmissionPlanWithDerivedFallback(tender);
+  // ─── AUTHORITATIVE: use the current CONFIRMED BuildPlan only ──────────
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId);
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
@@ -84,6 +88,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
 
   const blockers = [
     ...readiness.fullProposalBlockers.map((b) => b.code),
+    ...(!confirmedPlan.ok ? ["NO_CURRENT_CONFIRMED_BUILD_PLAN"] : []),
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["ENGINE_NOT_COMPLETED"] : []),
     ...(expertRequirementExists && tender.expertMatches.length === 0 ? ["NO_TENDER_SPECIFIC_EXPERT_MATCHES"] : []),
     ...(projectRequirementExists && tender.projectMatches.length === 0 ? ["NO_TENDER_SPECIFIC_PROJECT_MATCHES"] : []),

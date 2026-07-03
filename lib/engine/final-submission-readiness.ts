@@ -50,6 +50,7 @@ import {
   type SubmissionEnvelope,
 } from "./submission-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
@@ -548,17 +549,10 @@ export async function getFinalSubmissionReadiness(
   const mandatoryRequirements = tender.requirements.filter((r) => r.priority === "MANDATORY");
 
   // Plan reconciliation — used for the summary planStatus enum.
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    submissionMethod: tender.submissionMethod,
-    tenderCategory: tender.category,
-    analysisExtractionStatus: tender.analysisExtractionStatus,
-    requirements: tender.requirements,
-  });
+  // ─── AUTHORITATIVE: use the current CONFIRMED BuildPlan only ──────────
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, opts.tenderId, opts.userId);
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? JSON.parse(confirmedPlan.plan.itemsJson || "[]") : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const requiredPlanCount = submissionPlanFileCount(plan);
   const hasExplicitPlanScope = hasExplicitSubmissionScope({
     id: tender.id,
@@ -570,7 +564,7 @@ export async function getFinalSubmissionReadiness(
   });
   const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
   const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
-  const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
+  const planNames = new Set(plan.files.map((f: any) => f.exactFileName.toLowerCase().trim()));
   const actualNames = finalCandidates.map((d) => (d.exactFileName ?? d.name ?? "").toLowerCase().trim()).filter(Boolean);
   const nameMismatch = requiredPlanCount > 0 && actualNames.some((n) => !planNames.has(n));
   const orderMismatch = false; // currently surfaced via filePlanBlockersFromLists in tenderLevelBlockers
