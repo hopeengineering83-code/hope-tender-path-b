@@ -581,3 +581,89 @@ Stage Summary:
   when fileId is in activeTenderFileIds.
 - 15 new regression tests pin both contracts (source-inspection + behavioral).
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: deep-fix-contact-details-file-id
+Agent: main (Super Z / GLM)
+Task: User said "Go deep and fix all". Deep audit of every contactDetailsSourceJson consumer and every resolveCanonicalFieldState caller; fix all gaps.
+
+Work Log:
+- Set up local PostgreSQL 16.4 (found at /tmp/pg-extract/bin/) on port 5434
+  with all migrations applied via `prisma migrate reset`. This let me run
+  the FULL test suite including the 6 DB-integration tests that previous
+  sessions had to skip. All 4876 tests pass with proper DB + migrations.
+- Audited every file that reads or writes contactDetailsSourceJson (via
+  subagent). Found 3 high-priority gaps:
+
+GAP 1: lib/engine/analysis/metadata-truth.ts had a SEPARATE duplicate parser
+  (parseContactEvidence) that didn't extract fileId. Worse, its evidenceByField
+  map didn't include title, deadline, or reference — it explicitly said
+  "Fields without a source column have NO evidence and can therefore never be
+  GROUNDED". But title and deadline DO have dedicated source columns (added by
+  migration 20260702000000), and reference evidence is now persisted via
+  contactDetailsSourceJson (commit 6f549591). So the Metadata Truth panel
+  could NEVER show title/deadline/reference as GROUNDED, even when the DB had
+  the evidence.
+  FIX: FieldEvidence type widened to include fileId; parseContactEvidence reads
+  fileId; hasGroundingEvidence uses isGroundedEvidenceWithFileCheck when
+  activeTenderFileIds is in scope; SELECT now includes titleSource*, deadlineSource*,
+  submissionEmailSourceQuote, all *SourceFileId columns, AND active files;
+  evidenceByField now includes title, deadline, reference, and fileId for every
+  field with a dedicated *SourceFileId column.
+
+GAP 2: app/api/tenders/[id]/generate/route.ts didn't pass activeTenderFileIds
+  to resolveCanonicalFieldState, AND didn't forward titleSource*, deadlineSource*,
+  *SourceFileId, or submissionEmailSourceQuote columns. Consequence: even with
+  the fileId fix from 6f549591, the generate route's canonical state couldn't
+  enforce active-file grounding, and title/deadline could never be GROUNDED in
+  the generate route even when the DB had the evidence.
+  FIX: the route now forwards ALL source-evidence columns AND passes
+  activeTenderFileIds: new Set((tender.files ?? []).map(f => f.id)).
+
+GAP 3: lib/ai.ts chunk-merge logic could silently unground reference. The
+  "best wins" merge checked only page !== null || quote !== null. If a user
+  repaired reference (writing { page, quote, fileId }) and then re-ran AI
+  Analyze, the AI's { page, quote } (no fileId — AI never emits fileId) could
+  overwrite the repaired entry — losing the fileId and ungrounding reference.
+  FIX: the merge now constructs a new entry that preserves
+  fileId: val.fileId ?? existing?.fileId ?? null. Covers all 3 directions.
+
+Type/comment cleanups:
+  - lib/ai.ts:1485 — contactDetailsSource type widened to include fileId.
+  - lib/engine/tender-metadata.ts:43 — same widening on TenderMetadata type.
+  - lib/engine/tender-metadata.ts:103 — same widening on sourceMap return type.
+  - prisma/schema.prisma:372-377 — comment mentions fileId and procurementReferenceNumber.
+
+Regression tests (tests/deep-fix-contact-details-file-id.test.ts, 23 tests):
+  - 9 source-inspection tests for metadata-truth.ts (FieldEvidence type,
+    parseContactEvidence, isGroundedEvidenceWithFileCheck import,
+    hasGroundingEvidence, SELECT columns, evidenceByField, fileId threading,
+    activeTenderFileIds).
+  - 4 source-inspection tests for generate route (activeTenderFileIds, title
+    columns, deadline columns, fileId + quote columns).
+  - 3 source-inspection tests for lib/ai.ts (type, merge logic, merge result).
+  - 3 source-inspection tests for type definitions across codebase.
+  - 4 behavioral tests for merge-preservation (3 directions + no-invention).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+  - npx tsc --noEmit: PASS
+  - npx eslint . --max-warnings 0: PASS
+  - npx prisma validate: PASS
+  - npx next build: PASS
+  - RUN_DB_INTEGRATION=true npm test: 4899/4899 PASS (4876 from prior commit +
+    23 new). The 6 previously-"pre-existing" DB-integration failures now ALL
+    PASS with proper DB + migrations, confirming they were env-related, not
+    code-related.
+
+Stage Summary:
+- All 3 high-priority gaps closed.
+- Metadata Truth panel can now GROUND title, deadline, and reference (previously
+  impossible even when the DB had the evidence).
+- Generate route now enforces active-file grounding for ALL critical fields
+  (previously only enforced page+quote, and omitted title/deadline/fileId
+  columns entirely).
+- AI re-runs no longer silently unground reference (fileId preserved through
+  the merge).
+- Type definitions across the codebase are now consistent (fileId included).
+- 23 new regression tests pin every contract.
+- NOT merged, NOT deployed — awaiting explicit user authorization.

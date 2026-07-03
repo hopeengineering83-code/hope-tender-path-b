@@ -600,18 +600,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ...tender,
           submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
           clientContactEmail: (tender as any).clientContactEmail ?? null,
+          // Per-field source-evidence columns — forward ALL of them so the
+          // canonical resolver can ground every critical field, not just
+          // clientName/submissionMethod. Without these, title/deadline/
+          // reference/submissionAddress/submissionEmails can never be
+          // GROUNDED in the generate route even when the DB has the evidence.
           clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
           clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+          clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+          titleSourcePage: (tender as any).titleSourcePage ?? null,
+          titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+          titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+          deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+          deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+          deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
           submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
           submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+          submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
           submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
           submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+          submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
           submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
+          submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+          submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
           contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
         } as any,
         overrides: overrides as any[],
         hasExtractedRequirements: tender.requirements.length > 0,
         submissionMethodContext: tender.submissionMethod ?? undefined,
+        // Enforce active-file grounding: a fileId pointing to a
+        // deleted/superseded TenderFile must NOT count as GROUNDED.
+        activeTenderFileIds: new Set((tender.files ?? []).map((f: any) => f.id)),
       });
       const policyCtx = { submissionMethod: tender.submissionMethod };
       const missingCritical: string[] = canonicalState.fields

@@ -1482,7 +1482,10 @@ export type AIAnalysisResult = {
   submissionEmails?: string | null;
   // Per-field source provenance for the contact/location fields above.
   // Stored as JSON in DB column contactDetailsSourceJson.
-  contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
+  // fileId is optional — present when the repair-metadata route enriches
+  // an entry (e.g. procurementReferenceNumber) so the canonical resolver
+  // can ground the field against activeTenderFileIds.
+  contactDetailsSource?: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> | null;
   // Source traceability for submission method and address
   submissionMethodSourcePage?: number | null;
   submissionMethodSourceQuote?: string | null;
@@ -1796,7 +1799,7 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
   // Merge contactDetailsSource: prefer entries with real source data (non-null page or quote).
   // Earlier chunks may output null for a key that appears in a later chunk — "best wins" ensures
   // donorAgency/implementingAgency found in chunk 3 are not silently dropped by a null entry from chunk 0.
-  const contactDetailsSource: Record<string, { page: number | null; quote: string | null }> = {};
+  const contactDetailsSource: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> = {};
   for (const part of parts) {
     if (part.contactDetailsSource) {
       for (const [key, val] of Object.entries(part.contactDetailsSource)) {
@@ -1804,7 +1807,15 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
         const existingHasData = existing && (existing.page !== null || existing.quote !== null);
         const newHasData = val.page !== null || val.quote !== null;
         if (!existing || (!existingHasData && newHasData)) {
-          contactDetailsSource[key] = val;
+          // "Best wins" — but never drop a fileId that the repair-metadata
+          // route may have persisted on the existing entry. If the new chunk
+          // has no fileId (AI chunks never do — only repair does), preserve
+          // the existing fileId so the field stays GROUNDED after a re-run.
+          contactDetailsSource[key] = {
+            page: val.page,
+            quote: val.quote,
+            fileId: val.fileId ?? existing?.fileId ?? null,
+          };
         }
       }
     }

@@ -40,7 +40,7 @@ export type TenderMetadataDraft = {
   implementingAgency: string | null;
   clientWebsite: string | null;
   submissionEmailSubject: string | null;
-  contactDetailsSource: Record<string, { page: number | null; quote: string | null }> | null;
+  contactDetailsSource: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> | null;
   // ─── new fields (returned but only mapped to DB when columns exist) ───
   clientContactName: string | null;
   clientContactTitle: string | null;
@@ -100,7 +100,7 @@ function firstLabelledValue(text: string, patterns: RegExp[]): GroundedString {
   return null;
 }
 
-function sourceMap(entries: Array<[string, GroundedString]>): Record<string, { page: number | null; quote: string | null }> | null {
+function sourceMap(entries: Array<[string, GroundedString]>): Record<string, { page: number | null; quote: string | null; fileId?: string | null }> | null {
   const out: Record<string, { page: number | null; quote: string | null }> = {};
   for (const [field, result] of entries) {
     if (result) out[field] = { page: result.page, quote: result.quote };

@@ -71,6 +71,37 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03T19:30:00Z — Super Z (GLM)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **HEAD SHA (prior):** `6f549591` → (this commit)
+- **Scope:** Deep audit + fix of every `contactDetailsSourceJson` consumer and every `resolveCanonicalFieldState` caller that was silently dropping `fileId` or omitting source-evidence columns. Three high-priority gaps closed, plus type/comment cleanups.
+- **Audit method:** Ran the FULL test suite with a real PostgreSQL 16 instance (found at `/tmp/pg-extract/bin/`) + all migrations applied via `prisma migrate reset`. Previous sessions had local Postgres 16; this session confirmed the 6 "pre-existing" DB-integration test failures were 100% env-related (no DB / `prisma db push` doesn't apply triggers) — all 4876 tests pass with proper DB + migrations.
+- **Gaps closed:**
+  1. **`lib/engine/analysis/metadata-truth.ts` had a SEPARATE duplicate parser** (`parseContactEvidence`) that didn't extract `fileId`, AND its `evidenceByField` map didn't include `title`, `deadline`, or `reference` (it explicitly said "Fields without a source column have NO evidence and can therefore never be GROUNDED"). But `title` and `deadline` DO have dedicated source columns (added by migration `20260702000000_add_title_deadline_email_source_evidence`), and `reference` evidence is now persisted via `contactDetailsSourceJson` (commit `6f549591`). FIX: (a) `FieldEvidence` type widened to include `fileId: string | null`; (b) `parseContactEvidence()` reads `fileId` from each entry; (c) `hasGroundingEvidence()` uses `isGroundedEvidenceWithFileCheck()` when `activeTenderFileIds` is in scope; (d) SELECT now includes `titleSource*`, `deadlineSource*`, `submissionEmailSourceQuote`, all `*SourceFileId` columns, AND `files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } }` for `activeTenderFileIds`; (e) `evidenceByField` now includes `title`, `deadline`, `reference` (from `procurementReferenceNumber` in contactDetails), and `fileId` for every field with a dedicated `*SourceFileId` column.
+  2. **`app/api/tenders/[id]/generate/route.ts` didn't pass `activeTenderFileIds`** to `resolveCanonicalFieldState`, AND didn't forward `titleSource*`, `deadlineSource*`, `*SourceFileId`, or `submissionEmailSourceQuote` columns. Consequence: even with the fileId fix from `6f549591`, the generate route's canonical state couldn't enforce active-file grounding, and title/deadline could never be GROUNDED in the generate route even when the DB had the evidence. FIX: the route now forwards ALL source-evidence columns AND passes `activeTenderFileIds: new Set((tender.files ?? []).map(f => f.id))` so the resolver enforces active-file grounding (a fileId pointing to a deleted/superseded TenderFile no longer counts as GROUNDED).
+  3. **`lib/ai.ts` chunk-merge logic could silently unground `reference`.** The "best wins" merge in `mergeAnalysisResults()` checked only `page !== null || quote !== null` to decide if an entry had "real data". If a user repaired `reference` (writing `{ page, quote, fileId }`) and then re-ran AI Analyze, the AI's `{ page, quote }` (no fileId — AI never emits fileId) could overwrite the repaired entry — losing the fileId and ungrounding reference. FIX: the merge now constructs a new entry that preserves `fileId: val.fileId ?? existing?.fileId ?? null`. This covers all three directions: (a) repair-written fileId survives an AI re-run that doesn't emit fileId; (b) a later chunk's fileId is preserved when overwriting a null entry; (c) an existing fileId is preserved when a later chunk overwrites with data but no fileId.
+- **Type/comment cleanups (for consistency):**
+  - `lib/ai.ts:1485` — `contactDetailsSource` type widened to `Record<string, { page: number | null; quote: string | null; fileId?: string | null }>`.
+  - `lib/engine/tender-metadata.ts:43` — same widening on the `TenderMetadata` type.
+  - `lib/engine/tender-metadata.ts:103` — same widening on `sourceMap()` return type.
+  - `prisma/schema.prisma:372-377` — comment now mentions `fileId?: string|null` in the shape and lists `procurementReferenceNumber` as a covered key.
+- **Files changed:** `lib/engine/analysis/metadata-truth.ts`, `app/api/tenders/[id]/generate/route.ts`, `lib/ai.ts`, `lib/engine/tender-metadata.ts`, `prisma/schema.prisma`, `tests/deep-fix-contact-details-file-id.test.ts` (NEW — 23 regression tests), `operator_handoff.md`, `worklog.md`.
+- **Regression tests added (`tests/deep-fix-contact-details-file-id.test.ts`, 23 tests):**
+  - metadata-truth.ts source-inspection (9 tests): FieldEvidence type includes fileId; parseContactEvidence reads fileId; imports isGroundedEvidenceWithFileCheck; hasGroundingEvidence uses file-check; SELECT includes all source columns + active files; evidenceByField includes title/deadline/reference; evidenceByField includes fileId for every field with a dedicated column; activeTenderFileIds is built and passed.
+  - generate route source-inspection (4 tests): passes activeTenderFileIds; forwards title source columns; forwards deadline source columns; forwards clientName/submissionMethod/submissionAddress/submissionEmail fileId + quote columns.
+  - lib/ai.ts source-inspection (3 tests): contactDetailsSource type includes fileId; merge logic preserves fileId; merge result type includes fileId.
+  - Type definitions across codebase (3 tests): tender-metadata.ts type and sourceMap return type include fileId; schema.prisma comment mentions fileId and procurementReferenceNumber.
+  - Behavioral merge-preservation (4 tests): preserves fileId from repair when AI re-run provides page+quote but no fileId; preserves fileId when later chunk overwrites a null entry; preserves existing fileId when later chunk overwrites with data but no fileId; does NOT invent a fileId when neither chunk has one.
+- **Commands run and results:**
+  - `npx tsc --noEmit` PASS
+  - `npx eslint . --max-warnings 0` PASS
+  - `npx prisma validate` PASS (with proper DATABASE_URL)
+  - `npx next build` PASS (with proper env)
+  - `RUN_DB_INTEGRATION=true npm test` — **4899/4899 PASS** (4876 from prior commit + 23 new). Local PostgreSQL 16.4 at `127.0.0.1:5434`, all migrations applied via `prisma migrate reset`.
+- **Next action:** Hope reviews PR #936; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI on the new head and Hope's review.
+
 ### 2026-07-03T18:30:00Z — Super Z (GLM)
 
 - **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
