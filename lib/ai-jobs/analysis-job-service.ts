@@ -616,9 +616,14 @@ export async function finalizeJob(jobId: string, userId: string) {
             let contactDetails: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }>;
             try { contactDetails = JSON.parse(refTender.contactDetailsSourceJson); } catch { contactDetails = {}; }
             const refEntry = contactDetails["procurementReferenceNumber"];
-            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && !refEntry.fileId) {
+            // Re-resolve fileId when it's missing OR points to a deleted/inactive file
+            // (mirrors the ai-analyze route's resolveReferenceFileId behavior).
+            const existingFileIdStillActive = refEntry?.fileId
+              ? attrFiles.some((f: any) => f.id === refEntry.fileId && (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+              : false;
+            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && (!refEntry.fileId || !existingFileIdStillActive)) {
                 const refFileId = attributeMetadataSourceFileId(refEntry.quote, attrFiles);
-                if (refFileId) {
+                if (refFileId && refFileId !== refEntry.fileId) {
                     contactDetails["procurementReferenceNumber"] = {
                         page: refEntry.page ?? null,
                         quote: refEntry.quote,

@@ -90,3 +90,31 @@ describe("computeProvenPageNumber — page-provenance guard", () => {
     assert.equal(computeProvenPageNumber("Ministry of Health at the start.", 0, 2), null);
   });
 });
+
+// ─── Edge case: marker + totalPages=null ─────────────────────────────────────
+
+describe("computeProvenPageNumber — edge cases with totalPages=null", () => {
+  it("[Page N] marker with totalPages=null → returns the marker's page (no upper-bound check)", () => {
+    // When totalPages is null, we can't verify the upper bound. The marker
+    // is from the file's text (not AI), so we trust it. This is a deliberate
+    // design choice: markers come from the PDF extractor, not AI hallucination.
+    const text = "Some intro.\n[Page 5]\nMinistry of Health";
+    const idx = text.indexOf("Ministry of Health");
+    const page = computeProvenPageNumber(text, idx, null);
+    assert.equal(page, 5, "[Page 5] marker should be trusted when totalPages is null");
+  });
+
+  it("form feed with totalPages=null → returns the form-feed-derived page", () => {
+    const text = "page one\fpage two\fpage three\fMinistry of Health";
+    const idx = text.indexOf("Ministry of Health");
+    const page = computeProvenPageNumber(text, idx, null);
+    assert.equal(page, 4, "3 form feeds → page 4, trusted when totalPages is null");
+  });
+
+  it("no boundary + totalPages=null → null (cannot prove page)", () => {
+    const text = "Boundaryless text with Ministry of Health.";
+    const idx = text.indexOf("Ministry of Health");
+    const page = computeProvenPageNumber(text, idx, null);
+    assert.equal(page, null, "no boundary + totalPages=null → null");
+  });
+});

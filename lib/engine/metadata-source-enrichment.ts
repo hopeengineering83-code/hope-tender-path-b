@@ -423,6 +423,12 @@ export function clearEvidenceForField(field: string): Record<string, null> {
       clear.referenceSourcePage = null;
       clear.referenceSourceQuote = null;
       break;
+    // submissionEmailSubject is not currently in SUPPORTED_EXTRACTORS or
+    // tryFill, so this case is defensive — it exists so that if a future
+    // extractor or route adds submissionEmailSubject re-extraction, the
+    // stale-evidence clearing is already correct. No current caller reaches
+    // this case, but the dedicated columns exist in the schema and must be
+    // cleared atomically with any scalar change.
     case "submissionEmailSubject":
       clear.submissionEmailSubjectSourceFileId = null;
       clear.submissionEmailSubjectSourcePage = null;
