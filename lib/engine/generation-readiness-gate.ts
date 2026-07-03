@@ -666,6 +666,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     (files added/removed/renamed, requirements changed, submission
     //     instructions changed, plan rebuilt but not re-confirmed) → false.
     let hasCurrentConfirmedBuildPlan = false;
+    let confirmedBuildPlanItemsValid: boolean | undefined;
+    let confirmedBuildPlanItemBlockers: string[] | undefined;
     let confirmedPlanDocumentsOk: boolean | undefined;
     let confirmedPlanDocumentBlockers: string[] | undefined;
     if (recordedBuildPlan && recordedBuildPlanState === "VALID") {
@@ -673,6 +675,13 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
       if (confirmed.ok) {
         hasCurrentConfirmedBuildPlan = true;
+        // K2 — Every item of the confirmed plan is re-validated at runtime:
+        // structure, duplicates, scope match, requirement links, template file
+        // references. A confirmed plan whose ITEMS are malformed must never
+        // authorize a release action even when its hash is fresh.
+        const itemValidation = await buildPlanModule.validateBuildPlanItemsAtRuntime(prisma, tenderId, userId, confirmed.items);
+        confirmedBuildPlanItemsValid = itemValidation.ok;
+        confirmedBuildPlanItemBlockers = itemValidation.blockers;
         // For export/final-zip, also validate that every required plan item has
         // a matching generated, validated, approved document with content — and
         // no extra/foreign documents exist outside the confirmed plan.
@@ -713,6 +722,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       })()),
       recordedBuildPlanState,
       hasCurrentConfirmedBuildPlan,
+      confirmedBuildPlanItemsValid,
+      confirmedBuildPlanItemBlockers,
       confirmedPlanDocumentsOk,
       confirmedPlanDocumentBlockers,
       exportReadyDocumentCount,

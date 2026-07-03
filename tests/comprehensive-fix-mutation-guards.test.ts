@@ -102,6 +102,7 @@ describe("Fix 6 — Quote containment check in central gate", () => {
       }],
       criticalMetadataOk: true,
       hasCurrentConfirmedBuildPlan: true,
+      confirmedBuildPlanItemsValid: true,
       confirmedPlanDocumentsOk: true,
       exportReadyDocumentCount: 1,
     });
@@ -133,6 +134,7 @@ describe("Fix 6 — Quote containment check in central gate", () => {
       }],
       criticalMetadataOk: true,
       hasCurrentConfirmedBuildPlan: true,
+      confirmedBuildPlanItemsValid: true,
       confirmedPlanDocumentsOk: true,
       exportReadyDocumentCount: 1,
     });

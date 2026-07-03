@@ -67,6 +67,7 @@ function passingGateInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     // BuildPlan enforcement is fail-closed: default to true so the "good"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true,
+    confirmedBuildPlanItemsValid: true,
     confirmedPlanDocumentsOk: true,
     ...overrides,
   };

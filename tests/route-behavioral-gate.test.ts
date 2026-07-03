@@ -103,6 +103,7 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     // Default to true so the "passing" base case actually passes; tests that
     // exercise the BuildPlan-confirmed blocker override these to false.
     hasCurrentConfirmedBuildPlan: true,
+    confirmedBuildPlanItemsValid: true,
     confirmedPlanDocumentsOk: true,
     recordedBuildPlanState: "VALID" as const,
     exportReadyDocumentCount: 3,

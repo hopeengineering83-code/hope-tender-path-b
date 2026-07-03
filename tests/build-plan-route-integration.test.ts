@@ -141,6 +141,10 @@ async function createFullTender(suffix: string, userId: string, opts: {
       titleSourceQuote: "This tender requires a Technical Proposal for the project.",
       deadlineSourcePage: 1,
       deadlineSourceQuote: "This tender requires a Technical Proposal for the project.",
+      referenceSourcePage: 1,
+      referenceSourceQuote: "This tender requires a Technical Proposal for the project.",
+      submissionEmailSubjectSourcePage: 1,
+      submissionEmailSubjectSourceQuote: "This tender requires a Technical Proposal for the project.",
       ...(isEmail ? {
         submissionEmailSourcePage: 1,
         submissionEmailSourceQuote: "This tender requires a Technical Proposal for the project.",
@@ -162,6 +166,7 @@ async function createFullTender(suffix: string, userId: string, opts: {
   const updateData: any = {
     clientNameSourceFileId: file.id, submissionMethodSourceFileId: file.id,
     titleSourceFileId: file.id, deadlineSourceFileId: file.id,
+    referenceSourceFileId: file.id, submissionEmailSubjectSourceFileId: file.id,
   };
   if (isEmail) updateData.submissionEmailSourceFileId = file.id;
   else updateData.submissionAddressSourceFileId = file.id;

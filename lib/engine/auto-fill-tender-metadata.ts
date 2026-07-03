@@ -24,6 +24,7 @@ type TenderFileForAutoFill = {
   extractedText?: string | null;
   originalFileName?: string | null;
   fileName?: string | null;
+  totalPages?: number | null;
 };
 
 type TenderForAutoFill = {
@@ -169,7 +170,7 @@ export async function autoFillTenderMetadata(
   // it returns {found:false} when no plausible match is in the source.
   // The extractors take a per-file input shape.
   const filesInput = {
-    files: tender.files.map((f) => ({ fileName: f.fileName ?? f.originalFileName ?? null, extractedText: f.extractedText ?? null })),
+    files: tender.files.map((f) => ({ fileName: f.fileName ?? f.originalFileName ?? null, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
   };
   function shouldFillScalar<T>(field: string, current: T | null | undefined): boolean {
     if (filled.includes(field)) return false;

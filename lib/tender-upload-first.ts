@@ -237,7 +237,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         },
       });
 
-      const fileRecords: Array<{ id: string; originalFileName: string }> = [];
+      const fileRecords: Array<{ id: string; originalFileName: string; totalPages: number | null }> = [];
       for (const upload of storedUploads) {
         const metrics = deriveFileExtractionMetrics(upload.extractedText);
         fileRecords.push(await tx.tenderFile.create({
@@ -258,7 +258,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             extractionScore: metrics.extractionScore,
             extractionMethod: metrics.extractionMethod,
           },
-          select: { id: true, originalFileName: true },
+          select: { id: true, originalFileName: true, totalPages: true },
         }));
       }
 
@@ -276,6 +276,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     id: fr.id,
     extractedText: storedUploads[i]?.extractedText ?? null,
     deletionStatus: "ACTIVE" as const,
+    totalPages: fr.totalPages,
   }));
   const enrichment = enrichMetadataWithSourceEvidence({
     title: persisted.tender.title,
@@ -285,6 +286,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     submissionMethod: persisted.tender.submissionMethod,
     submissionAddress: persisted.tender.submissionAddress,
     submissionEmails: persisted.tender.submissionEmails,
+    submissionEmailSubject: persisted.tender.submissionEmailSubject,
     existingContactDetailsSourceJson: persisted.tender.contactDetailsSourceJson ?? null,
   }, enrichmentFiles);
   if (Object.keys(enrichment).length > 0) {

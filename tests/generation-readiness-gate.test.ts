@@ -41,6 +41,7 @@ function ready(overrides: Partial<GenerationReadinessInput> = {}): GenerationRea
     // Default to true so the "ready" base case actually passes; tests that
     // exercise the BuildPlan-confirmed blocker override this to false.
     hasCurrentConfirmedBuildPlan: true,
+    confirmedBuildPlanItemsValid: true,
     confirmedPlanDocumentsOk: true,
     ...overrides,
   };

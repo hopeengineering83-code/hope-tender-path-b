@@ -29,7 +29,7 @@
  *   - lib/tender-upload-first.ts (after the transaction commits)
  */
 
-import { attributeMetadataSourceFileId, type AttributionFile } from "./metadata-source-attribution";
+import type { AttributionFile } from "./metadata-source-attribution";
 
 /** Minimum length of a value worth searching for in file text. */
 const MIN_VALUE_LENGTH = 3;
@@ -37,7 +37,12 @@ const MIN_VALUE_LENGTH = 3;
 /** Maximum characters of surrounding context to capture as the source quote. */
 const QUOTE_CONTEXT_CHARS = 200;
 
-export type EnrichmentFile = AttributionFile;
+export type EnrichmentFile = AttributionFile & {
+  /** Total pages of the file when known — REQUIRED for the single-page
+   *  fallback in page attribution. Without it, a document with no page
+   *  boundaries gets NO page number (fail-closed), never a guessed "1". */
+  totalPages?: number | null;
+};
 
 export type EnrichedSourceEvidence = {
   // Dedicated source-evidence columns (only fields where evidence was found)
@@ -59,6 +64,16 @@ export type EnrichedSourceEvidence = {
   submissionEmailSourceFileId?: string;
   submissionEmailSourcePage?: number | null;
   submissionEmailSourceQuote?: string;
+  // Reference evidence — dedicated columns read first by the strict BuildPlan
+  // metadata validator. Also mirrored into contactDetailsSourceJson below for
+  // the canonical resolver.
+  referenceSourceFileId?: string;
+  referenceSourcePage?: number | null;
+  referenceSourceQuote?: string;
+  // Required submission email subject evidence.
+  submissionEmailSubjectSourceFileId?: string;
+  submissionEmailSubjectSourcePage?: number | null;
+  submissionEmailSubjectSourceQuote?: string;
   // For reference: an updated contactDetailsSourceJson string with the
   // procurementReferenceNumber entry enriched with fileId + page + quote.
   // Only set when reference evidence was found; null otherwise.
@@ -75,31 +90,92 @@ function normalizeText(value: string): string {
 
 /**
  * Compute the 1-based page number for a character index in extracted text.
- * Counts form feeds (\f) and "[Page N]" or "Page N" markers before the index.
- * Returns 1 when no page markers are found (single-page document assumption).
+ *
+ * FAIL-CLOSED page attribution:
+ *   - Form feeds (\f — inserted per page by the PDF extractor) are reliable
+ *     page boundaries → page = formFeeds before the index + 1.
+ *   - Explicit "Page N" markers on their own line are usable boundaries →
+ *     page = last marker's N before the index.
+ *   - NO boundaries at all → page 1 is returned ONLY when the file is
+ *     verified as a one-page document (totalPages === 1). Otherwise the page
+ *     is UNKNOWN (null): a multi-page document with no boundary information
+ *     must not have its evidence attributed to page 1 by assumption.
+ *   - A computed page beyond the file's known totalPages means the markers
+ *     are unreliable → null (never persist an impossible page).
  */
-function computePageNumber(text: string, matchIndex: number): number | null {
+function computePageNumber(
+  text: string,
+  matchIndex: number,
+  totalPages?: number | null,
+): number | null {
   if (matchIndex < 0 || matchIndex > text.length) return null;
+  const clamp = (page: number): number | null =>
+    typeof totalPages === "number" && totalPages > 0 && page > totalPages ? null : page;
   const before = text.slice(0, matchIndex);
+  // 1. "[Page N]" markers — the CANONICAL page-boundary format written by
+  //    lib/extract-text.ts at the start of every extracted page.
+  const bracketMarkers = before.match(/\[Page\s+(\d+)\]/gi);
+  if (bracketMarkers && bracketMarkers.length > 0) {
+    const m = bracketMarkers[bracketMarkers.length - 1].match(/(\d+)/);
+    if (m) return clamp(parseInt(m[1], 10));
+  }
+  if (/\[Page\s+\d+\]/i.test(text)) {
+    // Markers exist but none precede the match → cannot attribute reliably.
+    return totalPages === 1 ? 1 : null;
+  }
+  // 2. Form feeds (\f) — per-page boundaries from plain-text extractors.
   const formFeeds = (before.match(/\f/g) || []).length;
-  if (formFeeds > 0) return formFeeds + 1;
+  if (formFeeds > 0 || text.includes("\f")) return clamp(formFeeds + 1);
+  // 3. Unbracketed "Page N" line markers (some OCR providers).
   const pageMarkers = before.match(/(?:^|\n)[-\s]*Page\s+(\d+)/gi);
   if (pageMarkers && pageMarkers.length > 0) {
     const lastMatch = pageMarkers[pageMarkers.length - 1];
     const m = lastMatch.match(/(\d+)/);
-    if (m) return parseInt(m[1], 10);
+    if (m) return clamp(parseInt(m[1], 10));
   }
-  // Single-page assumption: if there are no page markers, the text is page 1.
-  return 1;
+  // No page boundaries in the text. Only a VERIFIED one-page file may be
+  // attributed to page 1 — everything else stays unknown (fail-closed).
+  if (totalPages === 1) return 1;
+  return null;
+}
+
+/**
+ * Build the normalized form of a text together with an exact index map from
+ * every normalized character back to its offset in the original text. This
+ * replaces the previous first-prefix approximation, which could map the match
+ * to a DIFFERENT occurrence of a similar prefix and mis-attribute the page
+ * and quote.
+ */
+function buildNormalizedIndex(text: string): { normalized: string; map: number[] } {
+  const lower = text.toLowerCase();
+  let normalized = "";
+  const map: number[] = [];
+  let pendingSpace = false;
+  for (let i = 0; i < lower.length; i++) {
+    const ch = lower[i];
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f" || ch === "\v" || /\s/.test(ch)) {
+      if (normalized.length > 0) pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace) {
+      normalized += " ";
+      map.push(i);
+      pendingSpace = false;
+    }
+    normalized += ch;
+    map.push(i);
+  }
+  return { normalized, map };
 }
 
 /**
  * Locate a value inside a file's extracted text and return the source evidence
  * (fileId, page, quote) if found. The quote is a snippet of surrounding context
- * (up to QUOTE_CONTEXT_CHARS characters) centered on the match.
+ * (up to QUOTE_CONTEXT_CHARS characters) centered on the EXACT match position.
  *
  * The search is normalized (lowercase + collapsed whitespace) so it matches
- * across line wraps and spacing differences.
+ * across line wraps and spacing differences, and the normalized match index is
+ * mapped back to the exact original offset — never approximated by prefix.
  */
 function locateValueInFile(
   value: string,
@@ -108,18 +184,16 @@ function locateValueInFile(
   if (!file.extractedText) return null;
   const needle = normalizeText(value);
   if (needle.length < MIN_VALUE_LENGTH) return null;
-  const haystack = normalizeText(file.extractedText);
-  const idx = haystack.indexOf(needle);
+  const { normalized, map } = buildNormalizedIndex(file.extractedText);
+  const idx = normalized.indexOf(needle);
   if (idx < 0) return null;
-  // Map the normalized index back to the original text. Because normalization
-  // only collapses whitespace, the character count up to idx in the normalized
-  // text is >= the character count in the original. We approximate by finding
-  // the first occurrence of the needle's first ~20 chars in the original text.
-  const probe = needle.slice(0, Math.min(20, needle.length));
-  const origIdx = file.extractedText.toLowerCase().indexOf(probe);
-  const page = computePageNumber(file.extractedText, origIdx >= 0 ? origIdx : 0);
-  // Capture surrounding context from the original text for the quote.
-  const quoteStart = Math.max(0, (origIdx >= 0 ? origIdx : 0) - Math.floor(QUOTE_CONTEXT_CHARS / 2));
+  // EXACT mapping: map[idx] is the original offset of the matched character.
+  const origIdx = map[idx];
+  if (typeof origIdx !== "number") return null;
+  const page = computePageNumber(file.extractedText, origIdx, file.totalPages);
+  // Capture surrounding context from the original text for the quote,
+  // centered on the true occurrence.
+  const quoteStart = Math.max(0, origIdx - Math.floor(QUOTE_CONTEXT_CHARS / 2));
   const quoteEnd = Math.min(file.extractedText.length, quoteStart + QUOTE_CONTEXT_CHARS);
   const rawQuote = file.extractedText.slice(quoteStart, quoteEnd).trim();
   return { fileId: file.id, page, quote: rawQuote };
@@ -166,6 +240,7 @@ export type EnrichmentInput = {
   submissionMethod?: string | null;
   submissionAddress?: string | null;
   submissionEmails?: string | string[] | null;
+  submissionEmailSubject?: string | null;
   /** Existing contactDetailsSourceJson (string) — the reference entry will be merged in. */
   existingContactDetailsSourceJson?: string | null;
 };
@@ -258,10 +333,15 @@ export function enrichMetadataWithSourceEvidence(
     }
   }
 
-  // reference (via contactDetailsSourceJson.procurementReferenceNumber)
+  // reference — dedicated columns (read first by the strict BuildPlan
+  // validator) plus the contactDetailsSourceJson.procurementReferenceNumber
+  // entry the canonical resolver reads.
   if (metadata.reference) {
     const found = locateValueInFiles(metadata.reference, files);
     if (found) {
+      out.referenceSourceFileId = found.fileId;
+      out.referenceSourcePage = found.page;
+      out.referenceSourceQuote = found.quote;
       let contactDetails: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
       const existing = metadata.existingContactDetailsSourceJson;
       if (existing) {
@@ -277,6 +357,17 @@ export function enrichMetadataWithSourceEvidence(
         fileId: found.fileId,
       };
       out.contactDetailsSourceJson = JSON.stringify(contactDetails);
+    }
+  }
+
+  // submissionEmailSubject — a REQUIRED email subject line is submission-
+  // critical; when present it needs the same evidence as other fields.
+  if (metadata.submissionEmailSubject) {
+    const found = locateValueInFiles(metadata.submissionEmailSubject, files);
+    if (found) {
+      out.submissionEmailSubjectSourceFileId = found.fileId;
+      out.submissionEmailSubjectSourcePage = found.page;
+      out.submissionEmailSubjectSourceQuote = found.quote;
     }
   }
 

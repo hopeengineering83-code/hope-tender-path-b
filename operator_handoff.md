@@ -71,6 +71,36 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03 UTC — Claude Code (PR #936 release blockers — genuine completion pass)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **Scope:** Honest completion of the four release blockers. The prior commit `0ba5b59` declared them fixed but left critical gaps; this pass closes every one and fixes two additional production defects found on the way.
+- **Corrections to the prior commit (`0ba5b59`):**
+  1. **The new gate check was unwired and would have blocked everything.** `evaluateGenerationReadiness` gained `confirmedBuildPlanItemsValid !== true → BUILD_PLAN_ITEMS_INVALID`, but the async gate never computed the field — every release action would have failed even with a perfect confirmed plan. `assertTenderReadyForGenerationAndExport` now runs `validateBuildPlanItemsAtRuntime(confirmed.items)` and forwards the result + blockers. Seven pure-gate test base inputs updated.
+  2. **Unconditional reference check softened to value-driven.** `checkField("reference", …)` blocked every tender with no reference value; reference is not in CLAUDE.md's critical-block list. Now: a reference VALUE requires full evidence (active file + valid page + contained quote); an absent reference does not block.
+- **Blocker 2 — page attribution now fails closed (real fixes, not claims):**
+  1. `metadata-source-enrichment.ts` mapped normalized match positions back via a FIRST-PREFIX probe (`indexOf(needle.slice(0,20))`) that could land on a different occurrence — replaced with an exact normalized→original index map; page and quote now come from the true occurrence.
+  2. Both `computePageNumber` implementations (enrichment + field extractors) defaulted to page 1 with no boundaries. Now: page 1 only when the file is VERIFIED one page (`totalPages === 1`); computed page > totalPages → null; otherwise null (evidence keeps fileId+quote but no invented page, so the strict validators keep the field ungrounded).
+  3. **Neither implementation matched `[Page N]` — the canonical marker `lib/extract-text.ts` writes.** The marker branch never fired on the app's own extraction output, so nearly all page evidence was the hardcoded 1. Bracketed markers are now parsed first.
+  4. All 27 extractor call sites pass `file.totalPages`; repair route, re-extract route, upload-first, and auto-fill now supply it.
+  5. re-extract-metadata read ALL files (including DELETED) into its combined text and enrichment — now ACTIVE only.
+- **Blocker 3 — reference + required email subject evidence:**
+  - Validator accepts evidence from the dedicated `referenceSource*` / `submissionEmailSubjectSource*` columns OR `contactDetailsSourceJson` (`procurementReferenceNumber` / `submissionEmailSubject`) with identical strictness. Email/portal-email tenders with a subject VALUE must evidence it.
+  - Writers now populate the dedicated reference columns (repair route, enrichment); enrichment also grounds `submissionEmailSubject`; upload-first and re-extract pass the subject through.
+  - Fixed reference extractor label-prefix bug: "procurement IDentifiers" matched label `ID` and captured "entifiers"; separator lookaheads added to all three patterns.
+- **NEW migration `20260703100000_add_missing_build_plan_columns` — production-blocking schema drift.** NO committed migration ever created `BuildPlan.status/revision/itemsJson/validationJson/confirmedAt/confirmedBy`; they existed only in schema.prisma (verified with `prisma migrate diff` against a migrations-built database). On the `vercel-build` path (`prisma migrate deploy`) every BuildPlan operation would throw at runtime. This session's DB verification ran against a database built with `prisma migrate deploy`, not `db push`.
+- **Blocker 4 — real PostgreSQL route tests** (`tests/release-blockers-integration.test.ts`, 23 tests): real HMAC-signed sessions + real route handlers (repair-metadata, re-extract-metadata). Proofs: malformed/duplicate/null/foreign-requirement/inactive-template plan items fail closed; gate blocks `BUILD_PLAN_ITEMS_INVALID` including when the field is undefined; corrupted `itemsJson` and stale hashes cannot authorize; multi-page-no-boundary evidence gets NO page (decoy-prefix test proves true-occurrence attribution); repair persists durable reference evidence with marker-derived page and refuses to invent one; deleted files cannot supply values or evidence via either route.
+- **Files changed:** `lib/engine/build-plan.ts`, `lib/engine/generation-readiness-gate.ts`, `lib/engine/metadata-source-enrichment.ts`, `lib/engine/tender-field-extractors.ts`, `lib/engine/auto-fill-tender-metadata.ts`, `lib/tender-upload-first.ts`, repair-metadata + re-extract-metadata routes, `prisma/migrations/20260703100000_add_missing_build_plan_columns/`, `tests/release-blockers-integration.test.ts` (rewritten as real route tests), fixture/base-input updates in 11 existing test files, `operator_handoff.md`.
+- **Commands run and results (local PostgreSQL 16, schema via `prisma migrate deploy`):**
+  - `npx tsc --noEmit` — PASS
+  - `npm run lint` — PASS (exit 0)
+  - `npx prisma validate` — PASS
+  - `RUN_DB_INTEGRATION=true npm test` — **4962/4962 PASS** (0 fail)
+  - `npm run build` — PASS (exit 0).
+- **Known risks:** Tenders with a reference or required email subject VALUE but no evidence now block BuildPlan/generation/export until repaired or manually confirmed (intended fail-closed behavior). Page evidence on legacy multi-page extractions without `[Page N]` markers resolves to null and requires re-extract or manual grounding.
+- **Next action:** Hope reviews PR #936; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI on the new head and Hope's review.
+
 ### 2026-07-03T21:30:00Z — Super Z (GLM)
 
 - **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)

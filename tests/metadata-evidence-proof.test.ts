@@ -47,6 +47,10 @@ async function createTenderWithMetadata(suffix: string, opts: {
       titleSourceQuote: "This tender requires a Technical Proposal for the project.",
       deadlineSourcePage: 1,
       deadlineSourceQuote: "This tender requires a Technical Proposal for the project.",
+      referenceSourcePage: 1,
+      referenceSourceQuote: "This tender requires a Technical Proposal for the project.",
+      submissionEmailSubjectSourcePage: 1,
+      submissionEmailSubjectSourceQuote: "This tender requires a Technical Proposal for the project.",
       ...(isEmailSubmissionMethod(method) ? {
         submissionEmailSourcePage: 1,
         submissionEmailSourceQuote: "This tender requires a Technical Proposal for the project.",
@@ -82,6 +86,8 @@ async function createTenderWithMetadata(suffix: string, opts: {
     submissionMethodSourceFileId: file.id,
     titleSourceFileId: file.id,
     deadlineSourceFileId: file.id,
+    referenceSourceFileId: file.id,
+    submissionEmailSubjectSourceFileId: file.id,
   };
   if (isEmailSubmissionMethod(method) || isPortalSubmissionMethod(method)) updateData.submissionEmailSourceFileId = file.id;
   if (isPhysicalSubmissionMethod(method)) updateData.submissionAddressSourceFileId = file.id;
@@ -360,6 +366,10 @@ describe("Canonical metadata evidence — real PostgreSQL proof", () => {
         titleSourceQuote: "This tender requires a Technical Proposal for the project.",
         deadlineSourcePage: 1,
         deadlineSourceQuote: "This tender requires a Technical Proposal for the project.",
+        referenceSourcePage: 1,
+        referenceSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionEmailSubjectSourcePage: 1,
+        submissionEmailSubjectSourceQuote: "This tender requires a Technical Proposal for the project.",
         submissionEmailSourcePage: 1,
         submissionEmailSourceQuote: "This tender requires a Technical Proposal for the project.",
         submissionAddressSourcePage: 1,
@@ -390,6 +400,8 @@ describe("Canonical metadata evidence — real PostgreSQL proof", () => {
         deadlineSourceFileId: file.id,
         submissionEmailSourceFileId: file.id,
         submissionAddressSourceFileId: file.id,
+        referenceSourceFileId: file.id,
+        submissionEmailSubjectSourceFileId: file.id,
       },
     });
     await prisma.tenderRequirement.create({
@@ -471,6 +483,10 @@ describe("Canonical metadata evidence — real PostgreSQL proof", () => {
         titleSourceQuote: "This tender requires a Technical Proposal for the project.",
         deadlineSourcePage: 1,
         deadlineSourceQuote: "This tender requires a Technical Proposal for the project.",
+        referenceSourcePage: 1,
+        referenceSourceQuote: "This tender requires a Technical Proposal for the project.",
+        submissionEmailSubjectSourcePage: 1,
+        submissionEmailSubjectSourceQuote: "This tender requires a Technical Proposal for the project.",
         submissionEmailSourcePage: 1,
         submissionEmailSourceQuote: "This tender requires a Technical Proposal for the project.",
         submissionAddressSourcePage: 1,
@@ -501,6 +517,8 @@ describe("Canonical metadata evidence — real PostgreSQL proof", () => {
         deadlineSourceFileId: file.id,
         submissionEmailSourceFileId: file.id,
         submissionAddressSourceFileId: file.id,
+        referenceSourceFileId: file.id,
+        submissionEmailSubjectSourceFileId: file.id,
       },
     });
     await prisma.tenderRequirement.create({

@@ -186,6 +186,25 @@ describe("AI promotion evidence persistence — BuildPlan-eligible via AI alone"
 
     await prisma.tender.update({ where: { id: tenderId }, data: canonicalData });
 
+    // Mirror the ai-analyze route's reference evidence persistence: the AI
+    // emits contactDetailsSourceJson.procurementReferenceNumber { page, quote }
+    // and the route's resolveReferenceFileId helper resolves + persists the
+    // durable fileId after the promotion transaction commits. Without this,
+    // a tender whose reference VALUE exists but carries no evidence is (by
+    // design) not BuildPlan-eligible.
+    await prisma.tender.update({
+      where: { id: tenderId },
+      data: {
+        contactDetailsSourceJson: JSON.stringify({
+          procurementReferenceNumber: {
+            page: 1,
+            quote: "Tender Notice: Supply of Medical Equipment to Addis Ababa Health Bureau.",
+            fileId,
+          },
+        }),
+      },
+    });
+
     // Persist the requirement with source grounding (mirrors what the route does
     // inside the promotion transaction: tx.tenderRequirement.create with
     // sourceTenderFileId = req.sourceFileToken, but our test AI result has

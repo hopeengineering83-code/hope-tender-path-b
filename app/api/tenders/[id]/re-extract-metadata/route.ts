@@ -121,7 +121,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const tender = await prisma.tender.findFirst({
     where: { id, userId: actor.id },
-    include: { files: { select: { id: true, originalFileName: true, extractedText: true } } },
+    // ACTIVE files only: a deleted file's text must never contribute extracted
+    // values or ground source evidence.
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (tender.files.length === 0) {
@@ -234,9 +236,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Refresh persisted page-level extraction diagnostics on every re-extract so
   // the Extraction Quality dashboard reflects the latest stored truth even when
   // no new metadata fields are discovered.
+  const totalPagesByFileId = new Map<string, number | null>();
   for (const file of tender.files) {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
     const perPage = assessExtractionQualityPerPage(file.extractedText);
+    totalPagesByFileId.set(file.id, perPage.totalDetectedPages ?? null);
     await prisma.tenderFile.update({
       where: { id: file.id },
       data: {
@@ -270,6 +274,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     id: f.id,
     extractedText: f.extractedText,
     deletionStatus: "ACTIVE" as const,
+    totalPages: totalPagesByFileId.get(f.id) ?? null,
   }));
   const enrichment = enrichMetadataWithSourceEvidence({
     title: update.title as string | undefined,
@@ -279,6 +284,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     submissionMethod: update.submissionMethod as string | undefined,
     submissionAddress: update.submissionAddress as string | undefined,
     submissionEmails: update.submissionEmails as string | undefined,
+    submissionEmailSubject: update.submissionEmailSubject as string | undefined,
     existingContactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
   }, enrichmentFiles);
   Object.assign(update, enrichment);

@@ -83,7 +83,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // return 404 (not 403, to avoid leaking existence).
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, fileName: true, originalFileName: true, extractedText: true, deletionStatus: true } } },
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, fileName: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
@@ -99,7 +99,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Prisma update map — accepts string / number / Date / null. Cast at write time.
   const updates: Record<string, unknown> = {};
 
-  const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText })) };
+  const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText, totalPages: f.totalPages ?? null })) };
   // Map from fileName to durable file ID for source-grounding.
   // The extractor returns sourceFile as a fileName; we need the durable ID
   // to persist canonical source evidence (e.g., clientNameSourceFileId).
@@ -279,6 +279,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fileId: durableFileId,
       };
       (updates as Record<string, unknown>).contactDetailsSourceJson = JSON.stringify(contactDetails);
+      // Also persist the dedicated reference source-evidence columns — the
+      // strict BuildPlan metadata validator reads these first.
+      (updates as Record<string, unknown>).referenceSourceFileId = durableFileId;
+      (updates as Record<string, unknown>).referenceSourceQuote = extraction.sourceQuote ?? null;
+      if (extraction.sourcePage != null) {
+        (updates as Record<string, unknown>).referenceSourcePage = extraction.sourcePage;
+      }
     }
     const evidenceCols = sourceEvidenceColumns[field];
     if (evidenceCols && durableFileId) {

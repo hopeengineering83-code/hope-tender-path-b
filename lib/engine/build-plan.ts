@@ -59,12 +59,42 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     submissionEmailSubjectSourceFileId?: string | null;
     submissionEmailSubjectSourcePage?: number | null;
     submissionEmailSubjectSourceQuote?: string | null;
+    /** JSON map of per-field evidence written by AI Analyze / repair —
+     *  reference lives under "procurementReferenceNumber", the email subject
+     *  under "submissionEmailSubject". Used as the evidence source when the
+     *  dedicated columns are not populated. */
+    contactDetailsSourceJson?: string | null;
   },
   activeFiles: Array<{ id: string; extractedText?: string | null; totalPages?: number | null }>,
 ): MetadataEvidenceValidation {
   const blockers: string[] = [];
   const activeFileMap = new Map(activeFiles.map((f) => [f.id, f]));
   const activeFileIds = new Set(activeFiles.map((f) => f.id));
+
+  // Evidence for reference / submissionEmailSubject may live in the dedicated
+  // *Source* columns OR in contactDetailsSourceJson (the storage AI Analyze
+  // and the repair route write). Both are validated with the SAME strictness;
+  // this only resolves WHERE the claimed evidence is stored.
+  let contactEvidence: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }> = {};
+  if (tender.contactDetailsSourceJson) {
+    try {
+      const parsed = JSON.parse(tender.contactDetailsSourceJson);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) contactEvidence = parsed;
+    } catch { contactEvidence = {}; }
+  }
+  function resolveEvidence(
+    dedicated: { fileId?: string | null; page?: number | null; quote?: string | null },
+    contactKey: string,
+  ): { fileId: string | null; page: number | null; quote: string | null } {
+    if (dedicated.fileId || dedicated.page != null || dedicated.quote) {
+      return { fileId: dedicated.fileId ?? null, page: dedicated.page ?? null, quote: dedicated.quote ?? null };
+    }
+    const entry = contactEvidence[contactKey];
+    if (entry && typeof entry === "object") {
+      return { fileId: entry.fileId ?? null, page: typeof entry.page === "number" ? entry.page : null, quote: entry.quote ?? null };
+    }
+    return { fileId: null, page: null, quote: null };
+  }
 
   function checkField(
     label: string,
@@ -109,20 +139,42 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     }
   }
 
-  // POLICY-DRIVEN: always check title, reference, clientName, deadline, submissionMethod.
+  // POLICY-DRIVEN: always check title, clientName, deadline, submissionMethod.
   checkField("title", tender.title, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote);
-  checkField("reference", tender.reference, tender.referenceSourceFileId, tender.referenceSourcePage, tender.referenceSourceQuote);
   checkField("clientName", tender.clientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote);
   checkField("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote);
   checkField("submissionMethod", tender.submissionMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
 
+  // VALUE-DRIVEN: reference is not a block-when-absent field (CLAUDE.md's
+  // critical-block list is client/procuring entity, submission method,
+  // submission endpoint, deadline) — but when a reference VALUE exists it
+  // must carry full evidence: active TenderFile + valid page + contained
+  // quote. Evidence may live in the dedicated referenceSource* columns or in
+  // contactDetailsSourceJson.procurementReferenceNumber.
+  if (tender.reference?.trim()) {
+    const refEvidence = resolveEvidence(
+      { fileId: tender.referenceSourceFileId, page: tender.referenceSourcePage, quote: tender.referenceSourceQuote },
+      "procurementReferenceNumber",
+    );
+    checkField("reference", tender.reference, refEvidence.fileId, refEvidence.page, refEvidence.quote);
+  }
+
   // SUBMISSION-METHOD-DRIVEN: use policy helpers, not substring heuristics.
   const method = tender.submissionMethod;
+  const checkEmailSubjectIfPresent = () => {
+    // A REQUIRED email subject line is submission-critical: sending with the
+    // wrong subject can invalidate the bid. When a subject value exists it
+    // must be evidence-backed exactly like the other critical fields.
+    if (!tender.submissionEmailSubject?.trim()) return;
+    const subjEvidence = resolveEvidence(
+      { fileId: tender.submissionEmailSubjectSourceFileId, page: tender.submissionEmailSubjectSourcePage, quote: tender.submissionEmailSubjectSourceQuote },
+      "submissionEmailSubject",
+    );
+    checkField("submissionEmailSubject", tender.submissionEmailSubject, subjEvidence.fileId, subjEvidence.page, subjEvidence.quote);
+  };
   if (isEmailSubmissionMethod(method)) {
     checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
-    if (tender.submissionEmailSubject?.trim()) {
-      checkField("submissionEmailSubject", tender.submissionEmailSubject, tender.submissionEmailSubjectSourceFileId, tender.submissionEmailSubjectSourcePage, tender.submissionEmailSubjectSourceQuote);
-    }
+    checkEmailSubjectIfPresent();
   } else if (isPhysicalSubmissionMethod(method)) {
     checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
   } else if (isPortalSubmissionMethod(method)) {
@@ -133,6 +185,7 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       blockers.push("Portal submission requires at least one fully grounded endpoint (email or address with source file + page).");
     } else if (hasEmail) {
       checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+      checkEmailSubjectIfPresent();
     } else {
       checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
     }
