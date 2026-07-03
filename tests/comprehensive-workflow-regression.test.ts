@@ -54,7 +54,7 @@ const baseTender = {
     const tender = {
         ...baseTender,
         analysisExtractionStatus: "PARTIAL_EXTRACTION_AI_ANALYZED",
-        status: "PLAN_APPROVED",
+        status: "READY_FOR_GENERATION",
         requirements: [{ priority: "MANDATORY", title: "Req 1", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1, exactFileName: "tech.docx" }]
     };
     const mockPrisma = { tender: { findFirst: async () => tender }, buildPlan: { findFirst: async () => mockConfirmedPlan } };
@@ -105,32 +105,36 @@ const baseTender = {
     assert.equal(state.nextAction, "EDIT_METADATA");
   });
 
-  it("Scenario 9: Derived draft plan cannot pass final readiness", async () => {
+  it("Scenario 9: No confirmed Build Plan blocks generation", async () => {
     const tender = {
         ...baseTender,
         requirements: [{ priority: "MANDATORY", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1 }]
     };
-    const mockPrisma = { tender: { findFirst: async () => tender }, buildPlan: { findFirst: async () => mockConfirmedPlan } };
+    const mockPrisma = { tender: { findFirst: async () => tender }, buildPlan: { findFirst: async () => null } };
     const state = await getCanonicalTenderWorkflowState(mockPrisma as any, "u1", "t1");
     assert.equal(state.nextAction, "BUILD_SUBMISSION_PLAN");
     assert.equal(state.readyForGeneration, false);
   });
 
-  it("Scenario 10: Canonical approved plan permits generation", async () => {
+  it("Scenario 10: Confirmed Build Plan permits generation (with a REAL tender status)", async () => {
+    // Uses a real TENDER_STATUSES value on purpose: "PLAN_APPROVED" is not a
+    // valid tender status and is never written in production, so approval
+    // must come from the confirmed BuildPlan alone.
     const tender = {
         ...baseTender,
-        status: "PLAN_APPROVED",
+        status: "READY_FOR_GENERATION",
         requirements: [{ priority: "MANDATORY", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1, exactFileName: "tech.docx" }]
     };
     const mockPrisma = { tender: { findFirst: async () => tender }, buildPlan: { findFirst: async () => mockConfirmedPlan } };
     const state = await getCanonicalTenderWorkflowState(mockPrisma as any, "u1", "t1");
     assert.equal(state.readyForGeneration, true);
+    assert.notEqual(state.nextAction, "BUILD_SUBMISSION_PLAN");
   });
 
   it("Scenario 11: Missing planned document blocks export", async () => {
     const tender = {
         ...baseTender,
-        status: "PLAN_APPROVED",
+        status: "READY_FOR_GENERATION",
         requirements: [{ priority: "MANDATORY", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1, exactFileName: "tech.docx" }],
         generatedDocuments: []
     };
@@ -143,7 +147,7 @@ const baseTender = {
   it("Scenario 12: Extra generated document blocks export", async () => {
     const tender = {
         ...baseTender,
-        status: "PLAN_APPROVED",
+        status: "READY_FOR_GENERATION",
         requirements: [{ priority: "MANDATORY", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1, exactFileName: "tech.docx" }],
         generatedDocuments: [
             { name: "Tech", exactFileName: "tech.docx", generationStatus: "GENERATED" },
@@ -159,7 +163,7 @@ const baseTender = {
   it("Scenario 13: Stale analysis versions block export", async () => {
     const tender = {
         ...baseTender,
-        status: "PLAN_APPROVED",
+        status: "READY_FOR_GENERATION",
         requirements: [{ priority: "MANDATORY", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1, exactFileName: "tech.docx" }],
         generatedDocuments: [{ name: "Tech", exactFileName: "tech.docx", generationStatus: "GENERATED", contentSummary: JSON.stringify({ analysisHash: "OLD_HASH" }) }]
     };
@@ -171,7 +175,7 @@ const baseTender = {
   it("Scenario 14: Unresolved critical gap blocks export", async () => {
     const tender = {
         ...baseTender,
-        status: "PLAN_APPROVED",
+        status: "READY_FOR_GENERATION",
         requirements: [{ priority: "MANDATORY", title: "Technical Proposal", requirementType: "TECHNICAL_PROPOSAL", sourceConfidence: 0.9, sourcePageNumber: 1, exactFileName: "tech.docx" }],
         generatedDocuments: [{ name: "Tech", exactFileName: "tech.docx", generationStatus: "GENERATED", contentSummary: null as string | null }],
         complianceGaps: [{ severity: "CRITICAL", isResolved: false }]

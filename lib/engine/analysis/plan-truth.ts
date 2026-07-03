@@ -35,7 +35,11 @@ export async function resolvePlanTruth(
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
   const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
-  const status = deriveSubmissionPlanStatus(tender, plan);
+  // A current CONFIRMED BuildPlan IS the approved plan. The
+  // tender.status === "PLAN_APPROVED" branch inside deriveSubmissionPlanStatus
+  // is unreachable in production (not a TENDER_STATUSES value, never written),
+  // so verification keys on the confirmed plan itself.
+  const status = confirmedPlan.ok ? "CANONICAL_APPROVED" : deriveSubmissionPlanStatus(tender, plan);
 
   const isVerified = status === "CANONICAL_APPROVED";
   const analysisTrusted = analysisInfo.state === "AI_SUCCEEDED" || analysisInfo.state === "HUMAN_APPROVED_FALLBACK";

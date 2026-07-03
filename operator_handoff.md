@@ -71,6 +71,20 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03 UTC — Claude Code (PR #936 pre-merge investigation, round 2)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **Scope:** Pre-merge investigation of whether the PR truly solves the app's problems; two further production defects found and fixed.
+- **Gaps found and fixed:**
+  1. **Plan approval was unreachable in production.** `deriveSubmissionPlanStatus` returns `CANONICAL_APPROVED` only when `tender.status === "PLAN_APPROVED"` — but `PLAN_APPROVED` is not a `TENDER_STATUSES` value, `parseTenderStatus` rejects it, and nothing ever writes it. Consequence: even after Build + Confirm, the workflow panel stayed at "Build Submission Plan" forever, plan-truth stayed `USER_REVIEW_REQUIRED`, and authority review stayed `PREREQUISITES_MISSING`. The prior regression tests passed only because their mocks set the impossible status. The three truth resolvers (workflow-state, plan-truth, authority-truth) now key approval on `confirmedPlan.ok` (which already enforces confirmation + hash freshness + metadata evidence). The central generation/export gate was NOT affected (it checks the confirmed plan directly).
+  2. **reconcile-docs superseded documents against a derived heuristic plan** with no confirmed-plan requirement — a mutation endpoint outside the central gate that could supersede documents the confirmed plan requires. It now 422s (`BUILD_PLAN_NOT_CONFIRMED`) without a current confirmed Build Plan and reconciles against `confirmedPlan.items`.
+- **Verified sound (no change needed):** central gate blocks ALL purposes fail-closed on `hasCurrentConfirmedBuildPlan !== true` (undefined blocks too); generate / generate-missing-plan-files / regenerate-cvs / auto-finalize / export / download(final-zip) / ai-proposal / background jobs all pass through it; generate-missing-plan-files only exempts `SUBMISSION_PLAN_MISSING`, not the confirmed-plan blockers; the Repair All crash path is dead (client uses `parseRepairMetadataResponse`, no other consumer reads the legacy `results` shape).
+- **Known remaining lower-severity items (flagged, not changed):** `lib/engine/submission-plan-completeness.ts` (lifecycle orchestrator + completeness panel + `GET submission-plan`) still uses the derived-fallback plan for display counts, so informational counts can disagree with the confirmed plan; the `generate` route derives per-run target file keys from the derived plan (consistent with the confirmed plan only via hash-freshness + determinism — architecturally it should read `confirmedPlan.items`); `isValidDeadlineCandidate` rejects deadlines >30 days past, so re-extract on archived tenders reports the stored deadline invalid (fail-closed, but visible).
+- **Files changed:** `lib/engine/workflow/workflow-state.ts`, `lib/engine/analysis/plan-truth.ts`, `lib/engine/analysis/authority-truth.ts`, `app/api/tenders/[id]/reconcile-docs/route.ts`, `tests/comprehensive-workflow-regression.test.ts` (scenario 9 models no-confirmed-plan; impossible `PLAN_APPROVED` statuses replaced with real ones), `tests/confirmed-build-plan-fail-closed.test.ts` (+2 tests, now 18), `operator_handoff.md`.
+- **Commands run and results:** `npx tsc --noEmit` PASS · `npm run lint` PASS · `RUN_DB_INTEGRATION=true npm test` 4841/4841 PASS · `npm run build` PASS.
+- **Next action:** Hope reviews PR #936; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI on the new head and Hope's review.
+
 ### 2026-07-03 UTC — Claude Code (PR #936 gap review)
 
 - **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)

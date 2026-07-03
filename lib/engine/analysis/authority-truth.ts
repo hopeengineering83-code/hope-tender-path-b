@@ -35,7 +35,11 @@ export async function resolveAuthorityTruth(
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
   const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
-  const planStatus = deriveSubmissionPlanStatus(tender, plan);
+  // A current CONFIRMED BuildPlan IS the verified plan. The
+  // tender.status === "PLAN_APPROVED" branch inside deriveSubmissionPlanStatus
+  // is unreachable in production (not a TENDER_STATUSES value, never written),
+  // so authority readiness keys on the confirmed plan itself.
+  const planStatus = confirmedPlan.ok ? "CANONICAL_APPROVED" : deriveSubmissionPlanStatus(tender, plan);
 
   const hasDocs = tender.generatedDocuments.length > 0;
   const planVerified = planStatus === "CANONICAL_APPROVED";

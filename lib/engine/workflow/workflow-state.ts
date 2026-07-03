@@ -131,7 +131,13 @@ export async function getCanonicalTenderWorkflowState(
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
   const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
-  const planStatus = deriveSubmissionPlanStatus(tender, plan);
+  // A current CONFIRMED BuildPlan IS the approved plan — getCurrentConfirmedBuildPlan
+  // already enforces confirmation, hash freshness, and metadata evidence.
+  // deriveSubmissionPlanStatus's own approval branch keys on
+  // tender.status === "PLAN_APPROVED", which is not a TENDER_STATUSES value and
+  // is never written in production, so without this the workflow would stay at
+  // BUILD_SUBMISSION_PLAN forever even after the plan is confirmed.
+  const planStatus = confirmedPlan.ok ? "CANONICAL_APPROVED" : deriveSubmissionPlanStatus(tender, plan);
   const planApproved = planStatus === "CANONICAL_APPROVED";
 
   const extractionStatus = (tender as any).analysisExtractionStatus ?? "";

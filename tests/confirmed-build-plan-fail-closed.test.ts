@@ -194,4 +194,26 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     // path is wrapped by the gate-wide try/catch → GATE_INTERNAL_ERROR (fail
     // closed), so it is intentionally not part of this assertion.
   });
+
+  it('plan approval keys on the confirmed BuildPlan, not the unreachable tender.status === "PLAN_APPROVED"', async () => {
+    // "PLAN_APPROVED" is not a legal tender status: nothing can write it, so
+    // any approval check that requires it is permanently false in production.
+    const { TENDER_STATUSES } = await import("../lib/tender-workflow");
+    assert.ok(!(TENDER_STATUSES as readonly string[]).includes("PLAN_APPROVED"));
+    for (const path of [
+      "lib/engine/workflow/workflow-state.ts",
+      "lib/engine/analysis/plan-truth.ts",
+      "lib/engine/analysis/authority-truth.ts",
+    ]) {
+      const source = readFileSync(path, "utf8");
+      assert.match(source, /confirmedPlan\.ok \? "CANONICAL_APPROVED"/, `${path} must derive approval from the confirmed BuildPlan`);
+    }
+  });
+
+  it("reconcile-docs requires a current confirmed Build Plan and reconciles against its items", () => {
+    const source = readFileSync("app/api/tenders/[id]/reconcile-docs/route.ts", "utf8");
+    assert.match(source, /getCurrentConfirmedBuildPlan/);
+    assert.match(source, /BUILD_PLAN_NOT_CONFIRMED/);
+    assert.ok(!source.includes("buildSubmissionPlanWithDerivedFallback"), "reconciliation must never supersede documents against a derived heuristic plan");
+  });
 });
