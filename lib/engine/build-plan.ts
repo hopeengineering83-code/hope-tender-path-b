@@ -31,6 +31,10 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     titleSourceFileId?: string | null;
     titleSourcePage?: number | null;
     titleSourceQuote?: string | null;
+    reference?: string | null;
+    referenceSourceFileId?: string | null;
+    referenceSourcePage?: number | null;
+    referenceSourceQuote?: string | null;
     clientName?: string | null;
     clientNameSourceFileId?: string | null;
     clientNameSourcePage?: number | null;
@@ -51,6 +55,10 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     submissionEmailSourceFileId?: string | null;
     submissionEmailSourcePage?: number | null;
     submissionEmailSourceQuote?: string | null;
+    submissionEmailSubject?: string | null;
+    submissionEmailSubjectSourceFileId?: string | null;
+    submissionEmailSubjectSourcePage?: number | null;
+    submissionEmailSubjectSourceQuote?: string | null;
   },
   activeFiles: Array<{ id: string; extractedText?: string | null; totalPages?: number | null }>,
 ): MetadataEvidenceValidation {
@@ -101,8 +109,9 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     }
   }
 
-  // POLICY-DRIVEN: always check title, clientName, deadline, submissionMethod.
+  // POLICY-DRIVEN: always check title, reference, clientName, deadline, submissionMethod.
   checkField("title", tender.title, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote);
+  checkField("reference", tender.reference, tender.referenceSourceFileId, tender.referenceSourcePage, tender.referenceSourceQuote);
   checkField("clientName", tender.clientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote);
   checkField("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote);
   checkField("submissionMethod", tender.submissionMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
@@ -111,6 +120,9 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
   const method = tender.submissionMethod;
   if (isEmailSubmissionMethod(method)) {
     checkField("submissionEmails", tender.submissionEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+    if (tender.submissionEmailSubject?.trim()) {
+      checkField("submissionEmailSubject", tender.submissionEmailSubject, tender.submissionEmailSubjectSourceFileId, tender.submissionEmailSubjectSourcePage, tender.submissionEmailSubjectSourceQuote);
+    }
   } else if (isPhysicalSubmissionMethod(method)) {
     checkField("submissionAddress", tender.submissionAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
   } else if (isPortalSubmissionMethod(method)) {
@@ -473,6 +485,78 @@ export type ConfirmedPlanDocumentValidation = { ok: boolean; blockers: string[];
 
 function generatedDocumentHasContent(doc: { fileContent?: string | null; storagePath?: string | null }): boolean {
   return Boolean(String(doc.fileContent ?? "").trim() || String(doc.storagePath ?? "").trim());
+}
+
+export async function validateBuildPlanItemsAtRuntime(
+  prisma: PrismaClient,
+  tenderId: string,
+  userId: string,
+  items: BuildPlanItem[],
+): Promise<{ ok: boolean; blockers: string[] }> {
+  const blockers: string[] = [];
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: { files: true, requirements: true },
+  });
+  if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
+
+  const activeFileIds = new Set(tender.files.filter((f: any) => f.deletionStatus === "ACTIVE").map((f: any) => f.id));
+  const requirementMap = new Map(tender.requirements.map((r: any) => [r.id, r]));
+  const authoritative = plannedSubmissionTargetFiles(buildSubmissionPlan(tender as any));
+  const authKeys = new Set(authoritative.map(planItemKey));
+  const seen = new Set<string>();
+
+  // RUNTIME VALIDATIONS
+  if (!Array.isArray(items)) blockers.push("Build Plan items must be an array.");
+  if (items.length === 0) blockers.push("Build Plan cannot be empty.");
+  if (items.length !== authoritative.length) blockers.push("Build Plan item count does not match current tender scope.");
+
+  for (const item of items) {
+    if (!item) {
+      blockers.push("Build Plan contains null or undefined item.");
+      continue;
+    }
+    // Strict item structure validation
+    if (typeof item.exactFileName !== "string" || !item.exactFileName.trim()) {
+      blockers.push(`Plan item has invalid exactFileName: ${item.exactFileName}`);
+    }
+    if (!Number.isInteger(item.exactOrder) || item.exactOrder < 1) {
+      blockers.push(`Plan item has invalid exactOrder: ${item.exactOrder}`);
+    }
+    if (typeof item.documentType !== "string" || !item.documentType.trim()) {
+      blockers.push(`Plan item ${item.exactFileName} has invalid documentType.`);
+    }
+    if (item.required !== true && item.required !== false) {
+      blockers.push(`Plan item ${item.exactFileName} has invalid required flag: ${item.required}`);
+    }
+    // Check for duplicates
+    const itemKey = planItemKey(item);
+    if (seen.has(itemKey)) {
+      blockers.push(`Duplicate plan item: ${item.exactOrder} ${item.exactFileName}`);
+    }
+    seen.add(itemKey);
+    // Check scope match
+    if (!authKeys.has(itemKey)) {
+      blockers.push(`Plan item ${item.exactFileName} is not in current tender-controlled scope.`);
+    }
+    // Validate requirement links
+    if (item.required && (!Array.isArray(item.sourceRequirementIds) || item.sourceRequirementIds.length === 0)) {
+      if (!String(item.canonicalId ?? "").startsWith("exact-")) {
+        blockers.push(`Required plan item ${item.exactFileName} has no linked requirements.`);
+      }
+    }
+    for (const reqId of item.sourceRequirementIds ?? []) {
+      if (!requirementMap.has(reqId)) {
+        blockers.push(`Plan item ${item.exactFileName} references missing requirement ${reqId}.`);
+      }
+    }
+    // Validate template file references if present
+    if (item.templateSourceFileId && !activeFileIds.has(item.templateSourceFileId)) {
+      blockers.push(`Plan item ${item.exactFileName} template file is not an active tender file.`);
+    }
+  }
+
+  return { ok: blockers.length === 0, blockers };
 }
 
 export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<ConfirmedPlanDocumentValidation> {

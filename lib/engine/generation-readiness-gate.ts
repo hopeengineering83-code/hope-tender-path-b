@@ -100,6 +100,7 @@ export type GenerationBlockerCode =
   | "SUBMISSION_PLAN_MISSING"
   | "BUILD_PLAN_MISSING"
   | "BUILD_PLAN_STALE"
+  | "BUILD_PLAN_ITEMS_INVALID"
   | "NO_EXPORT_READY_DOCUMENTS"
   | "BUILD_PLAN_NOT_CONFIRMED"
   | "CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE"
@@ -184,6 +185,10 @@ export interface GenerationReadinessInput {
   exportReadyDocumentCount: number;
   // K — CONFIRMED BuildPlan: a current CONFIRMED BuildPlan with matching hash.
   hasCurrentConfirmedBuildPlan?: boolean;
+  // K2 — Confirmed BuildPlan items validation: all items must be valid, non-null,
+  //      with correct structure, no duplicates, and matching current tender scope.
+  confirmedBuildPlanItemsValid?: boolean;
+  confirmedBuildPlanItemBlockers?: string[];
   // L — Confirmed plan document reconciliation for export/ZIP.
   confirmedPlanDocumentsOk?: boolean;
   confirmedPlanDocumentBlockers?: string[];
@@ -333,6 +338,13 @@ export function evaluateGenerationReadiness(
   //     silently bypass the confirmed-plan requirement.
   if (input.hasCurrentConfirmedBuildPlan !== true) {
     return fail("BUILD_PLAN_NOT_CONFIRMED", "No current confirmed Build Plan exists. Build and confirm the Build Plan before any release action.");
+  }
+
+  // K2 — Confirmed BuildPlan items must be valid at runtime. A corrupted, invalid,
+  //      or malformed item must block generation/export.
+  if (input.confirmedBuildPlanItemsValid !== true) {
+    const blockerList = (input.confirmedBuildPlanItemBlockers ?? []).slice(0, 3).join("; ");
+    return fail("BUILD_PLAN_ITEMS_INVALID", `Build Plan items are invalid and cannot authorize generation/export: ${blockerList || "unspecified error"}`);
   }
 
   if (input.purpose === "export" || input.purpose === "final-zip") {
