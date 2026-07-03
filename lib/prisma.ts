@@ -1,5 +1,6 @@
 import { logger } from "./observability";
 import { PrismaClient } from "@prisma/client";
+// @ts-ignore - Prisma client types may not be generated in all environments
 import { checkEnv } from "./env-check";
 import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
 

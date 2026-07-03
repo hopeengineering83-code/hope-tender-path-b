@@ -97,10 +97,10 @@ describe("persisted release plan model hardening", () => {
       requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "A meaningful exact tender quote", sourceFileActiveInTender: true }],
       criticalMetadataOk: true,
       hasConfirmedPersistedPlan: false,
-      hasApprovedRequirementEvidence: true,
+      confirmedPlanDocumentsOk: true,
     };
     assert.equal(evaluateGenerationReadiness(base).blockerCode, "SUBMISSION_PLAN_MISSING");
-    assert.equal(evaluateGenerationReadiness({ ...base, hasConfirmedPersistedPlan: true, hasApprovedRequirementEvidence: false }).blockerCode, "REQUIREMENT_EVIDENCE_MISSING");
+    assert.equal(evaluateGenerationReadiness({ ...base, hasCurrentConfirmedBuildPlan: true, hasApprovedRequirementEvidence: false }).blockerCode, "REQUIREMENT_EVIDENCE_MISSING");
   });
 
   it("uses real foreign keys for supported requirement-evidence asset references", () => {
