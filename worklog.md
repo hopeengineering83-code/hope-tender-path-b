@@ -667,3 +667,101 @@ Stage Summary:
 - Type definitions across the codebase are now consistent (fileId included).
 - 23 new regression tests pin every contract.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: resolver-caller-source-evidence-fix
+Agent: main (Super Z / GLM)
+Task: Continue fixing remaining gaps genuinely — audit every canonical-resolver caller and every metadata-evidence writer.
+
+Work Log:
+- Audited every caller of resolveCanonicalFieldState and every writer of
+  metadata source evidence (via two subagents). Found 4 high-priority gaps
+  in resolver callers + 2 structural gaps in writers (documented as known
+  limitations, not fixed in this commit).
+
+GAPS FIXED (resolver callers):
+
+1. lib/engine/final-submission-readiness.ts — SELECT and resolver call both
+   omitted title/deadline/submissionEmailSourceQuote columns. Through the
+   export/ZIP gate, title/deadline/submissionEmails could never reach
+   EXTRACTED_AND_GROUNDED — always EXTRACTED_UNVERIFIED with evidenceReviewNeeded.
+   FIX: SELECT now includes titleSource*, deadlineSource*,
+   submissionEmailSourceQuote; resolver call forwards all of them with ?? null.
+
+2. lib/engine/tender-release-snapshot.ts — same gap, but HIGHER IMPACT because
+   the snapshot is the canonical UI source ("all panels read from this snapshot
+   or its exact server-derived sub-payload"). Every UI panel that reads the
+   snapshot saw title/deadline/submissionEmails as ungrounded even when the DB
+   had the evidence — directly contradicting the resolver's design goal of
+   "the same tender field must NEVER be green in one panel and invalid in another".
+   FIX: SELECT + resolver call now include title/deadline/submissionEmailSourceQuote.
+
+3. lib/engine/build-plan-hash.ts — activeTenderFileIds was NOT filtered to
+   deletionStatus=ACTIVE. Currently safe only because the sole caller
+   (computeTenderBuildPlanHash) pre-filters files. But the function's own type
+   doc says callers can pass the full file list — a latent gap if a future
+   caller passes unfiltered files (deleted-file evidence would count as GROUNDED).
+   FIX: activeTenderFileIds now filters to deletionStatus=ACTIVE inside the
+   function (defense-in-depth).
+
+4. app/api/tenders/[id]/route.ts — TENDER_DASHBOARD_SELECT omitted 9
+   source-evidence columns (clientNameSourceFileId, titleSource*,
+   deadlineSource*, submissionMethodSourceFileId, submissionAddressSourceFileId,
+   submissionEmailSourceFileId, submissionEmailSourceQuote) AND files.deletionStatus.
+   Client panels could not reconstruct active-file grounding state.
+   FIX: TENDER_DASHBOARD_SELECT now includes all source-evidence columns;
+   files select includes deletionStatus.
+
+CONSISTENCY FIX:
+- lib/engine/tender-metadata.ts sourceMap() — local `out` type was missing
+  fileId. Now explicitly writes fileId: null for each entry (the regex
+  extractors don't produce fileId — only AI Analyze + repair-metadata do).
+  This makes the shape consistent with the widened return type.
+
+KNOWN LIMITATIONS (documented, not fixed — structural refactors):
+- re-extract-metadata route: combines all files into one combinedText blob,
+  so per-file attribution is impossible. Re-extracted values are persisted
+  as bare scalars with zero source evidence → EXTRACTED_UNVERIFIED forever.
+  Fixing this requires refactoring inferTenderMetadata to return per-field
+  source evidence (fileId, page, quote) — a substantial change.
+- tender-upload-first route: same combinedText pattern. Fresh tenders have
+  zero grounded metadata until AI Analyze (grounds 6 of 7 critical fields)
+  or repair-metadata (grounds all 7) is run. The file IDs ARE available
+  after the transaction commits but are not used for source attribution.
+- ai-analyze route: AI never emits fileId (it sees extracted text only, not
+  TenderFile IDs). Reference evidence via contactDetailsSourceJson has no
+  fileId until repair-metadata is called. The lib/ai.ts merge logic now
+  preserves fileId if it exists, but AI cannot create one.
+- metadata-override route: by design does not write source evidence —
+  overrides confirm existing evidence. If no prior evidence exists, the
+  override stays MANUAL_CONFIRMED (blocked).
+
+Regression tests (tests/resolver-caller-source-evidence.test.ts, 9 tests):
+- final-submission-readiness: 3 tests (SELECT columns, resolver call forwards,
+  activeTenderFileIds filtered to ACTIVE).
+- tender-release-snapshot: 3 tests (SELECT columns, resolver call forwards,
+  activeTenderFileIds from activeFiles).
+- build-plan-hash: 1 test (activeTenderFileIds filters to ACTIVE; old
+  unfiltered construction removed).
+- route.ts TENDER_DASHBOARD_SELECT: 2 tests (all source-evidence columns,
+  files.deletionStatus).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+- npx tsc --noEmit: PASS
+- npx eslint . --max-warnings 0: PASS
+- npx next build: PASS
+- RUN_DB_INTEGRATION=true npm test: 4908/4908 PASS (4899 from prior commit +
+  9 new).
+
+Stage Summary:
+- All 4 resolver-caller gaps closed.
+- Final-submission-readiness, tender-release-snapshot, build-plan-hash, and
+  the dashboard GET route now all forward every source-evidence column AND
+  pass activeTenderFileIds filtered to ACTIVE files.
+- The Metadata Truth panel, export gate, ZIP gate, release snapshot, build
+  plan hash, and dashboard now all see IDENTICAL grounding state for every
+  critical field — no more "grounded in one panel, ungrounded in another".
+- 9 new regression tests pin the contracts.
+- Known structural limitations (re-extract, upload-first, ai-analyze reference
+  fileId) documented for future refactors.
+- NOT merged, NOT deployed — awaiting explicit user authorization.

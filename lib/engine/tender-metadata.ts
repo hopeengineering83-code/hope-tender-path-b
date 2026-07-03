@@ -101,9 +101,9 @@ function firstLabelledValue(text: string, patterns: RegExp[]): GroundedString {
 }
 
 function sourceMap(entries: Array<[string, GroundedString]>): Record<string, { page: number | null; quote: string | null; fileId?: string | null }> | null {
-  const out: Record<string, { page: number | null; quote: string | null }> = {};
+  const out: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
   for (const [field, result] of entries) {
-    if (result) out[field] = { page: result.page, quote: result.quote };
+    if (result) out[field] = { page: result.page, quote: result.quote, fileId: null };
   }
   return Object.keys(out).length > 0 ? out : null;
 }

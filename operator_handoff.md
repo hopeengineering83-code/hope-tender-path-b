@@ -71,6 +71,37 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-03T20:30:00Z — Super Z (GLM)
+
+- **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
+- **HEAD SHA (prior):** `4fdcf90b` → (this commit)
+- **Scope:** Continued deep audit — closed 4 high-priority gaps in canonical-resolver callers (final-submission-readiness, tender-release-snapshot, build-plan-hash, dashboard GET route). Documented 4 known structural limitations (re-extract, upload-first, ai-analyze reference fileId, metadata-override) as future-refactor candidates.
+- **Gaps closed:**
+  1. **`lib/engine/final-submission-readiness.ts`** — SELECT and resolver call both omitted `titleSource*`, `deadlineSource*`, `submissionEmailSourceQuote`. Through the export/ZIP gate, title/deadline/submissionEmails could never reach `EXTRACTED_AND_GROUNDED`. FIX: SELECT + resolver call now include all source-evidence columns.
+  2. **`lib/engine/tender-release-snapshot.ts`** — same gap, HIGHER IMPACT (the snapshot is the canonical UI source; every panel reads from it). All UI panels saw title/deadline/submissionEmails as ungrounded even when the DB had the evidence. FIX: SELECT + resolver call now include all source-evidence columns.
+  3. **`lib/engine/build-plan-hash.ts`** — `activeTenderFileIds` was NOT filtered to `deletionStatus=ACTIVE`. Currently safe only because the sole caller pre-filters. Latent gap if a future caller passes unfiltered files. FIX: `activeTenderFileIds` now filters to ACTIVE inside the function (defense-in-depth).
+  4. **`app/api/tenders/[id]/route.ts`** — `TENDER_DASHBOARD_SELECT` omitted 9 source-evidence columns AND `files.deletionStatus`. Client panels could not reconstruct active-file grounding state. FIX: `TENDER_DASHBOARD_SELECT` now includes all source-evidence columns; `files` select includes `deletionStatus`.
+- **Consistency fix:** `lib/engine/tender-metadata.ts` `sourceMap()` local `out` type now explicitly writes `fileId: null` for each entry (the regex extractors don't produce fileId — only AI Analyze + repair-metadata do). Makes the shape consistent with the widened return type from the prior commit.
+- **Known structural limitations (documented, not fixed — require substantial refactors):**
+  - **`re-extract-metadata` route:** combines all files into one `combinedText` blob, so per-file attribution is impossible. Re-extracted values are persisted as bare scalars with zero source evidence → `EXTRACTED_UNVERIFIED` forever. Fixing requires refactoring `inferTenderMetadata` to return per-field source evidence.
+  - **`tender-upload-first` route:** same `combinedText` pattern. Fresh tenders have zero grounded metadata until AI Analyze (grounds 6 of 7 critical fields) or repair-metadata (grounds all 7) is run. File IDs ARE available after the transaction commits but are not used for source attribution.
+  - **`ai-analyze` route:** AI never emits fileId (it sees extracted text only, not TenderFile IDs). Reference evidence via `contactDetailsSourceJson` has no fileId until repair-metadata is called. The `lib/ai.ts` merge logic now preserves fileId if it exists, but AI cannot create one.
+  - **`metadata-override` route:** by design does not write source evidence — overrides confirm existing evidence. If no prior evidence exists, the override stays `MANUAL_CONFIRMED` (blocked). Optional enhancement: accept optional `{sourceFileId, sourcePage, sourceQuote}` payload.
+- **Files changed:** `lib/engine/final-submission-readiness.ts`, `lib/engine/tender-release-snapshot.ts`, `lib/engine/build-plan-hash.ts`, `app/api/tenders/[id]/route.ts`, `lib/engine/tender-metadata.ts`, `tests/resolver-caller-source-evidence.test.ts` (NEW — 9 regression tests), `operator_handoff.md`, `worklog.md`.
+- **Regression tests added (`tests/resolver-caller-source-evidence.test.ts`, 9 tests):**
+  - final-submission-readiness (3): SELECT columns, resolver call forwards, activeTenderFileIds filtered to ACTIVE.
+  - tender-release-snapshot (3): SELECT columns, resolver call forwards, activeTenderFileIds from activeFiles.
+  - build-plan-hash (1): activeTenderFileIds filters to ACTIVE; old unfiltered construction removed.
+  - route.ts TENDER_DASHBOARD_SELECT (2): all source-evidence columns, files.deletionStatus.
+- **Commands run and results:**
+  - `npx tsc --noEmit` PASS
+  - `npx eslint . --max-warnings 0` PASS
+  - `npx prisma validate` PASS
+  - `npx next build` PASS
+  - `RUN_DB_INTEGRATION=true npm test` — **4908/4908 PASS** (4899 from prior commit + 9 new). Local PostgreSQL 16.4 at `127.0.0.1:5434`, all migrations applied via `prisma migrate reset`.
+- **Next action:** Hope reviews PR #936; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI on the new head and Hope's review.
+
 ### 2026-07-03T19:30:00Z — Super Z (GLM)
 
 - **Branch:** `hotfix/metadata-repair-crash-and-snapshot-consistency` (PR #936)
