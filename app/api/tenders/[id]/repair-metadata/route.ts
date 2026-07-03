@@ -237,20 +237,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       submissionAddress: { fileId: "submissionAddressSourceFileId", page: "submissionAddressSourcePage", quote: "submissionAddressSourceQuote" },
       submissionEmails: { fileId: "submissionEmailSourceFileId", page: "submissionEmailSourcePage", quote: "submissionEmailSourceQuote" },
     };
+    // For reference (no dedicated source columns), persist via contactDetailsSourceJson
+    // which the canonical resolver reads under "procurementReferenceNumber".
+    if (field === "reference" && durableFileId) {
+      const existingJson = (tender as any).contactDetailsSourceJson;
+      let contactDetails: Record<string, { page: number | null; quote: string | null }> = {};
+      try { contactDetails = typeof existingJson === "string" ? JSON.parse(existingJson) : (existingJson ?? {}); } catch { contactDetails = {}; }
+      contactDetails["procurementReferenceNumber"] = {
+        page: extraction.sourcePage ?? null,
+        quote: extraction.sourceQuote ?? null,
+      };
+      (updates as Record<string, unknown>).contactDetailsSourceJson = JSON.stringify(contactDetails);
+    }
     const evidenceCols = sourceEvidenceColumns[field];
-    if (evidenceCols) {
-      // Persist durable file ID, quote, and page (null — extractor doesn't
-      // return page). The canonical resolver will check isGroundedEvidence
-      // which requires page > 0, so the field will be EXTRACTED_UNVERIFIED
-      // until a page is provided. This is correct — we do NOT claim full
-      // grounding without a page.
+    if (evidenceCols && durableFileId) {
       (updates as Record<string, unknown>)[evidenceCols.fileId] = durableFileId;
       (updates as Record<string, unknown>)[evidenceCols.quote] = extraction.sourceQuote;
-      // Do NOT set sourcePage to null — leave it untouched so existing valid
-      // page evidence is preserved. If no page evidence exists, the canonical
-      // resolver will report EXTRACTED_UNVERIFIED (not GROUNDED).
+      // Persist sourcePage from the extractor — it computes page number from
+      // text position (form feeds / page markers). If null, leave existing
+      // page evidence untouched.
+      if (extraction.sourcePage != null) {
+        (updates as Record<string, unknown>)[evidenceCols.page] = extraction.sourcePage;
+      }
     }
-    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: null, sourceQuote: extraction.sourceQuote, value: extraction.value });
+    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: extraction.sourcePage ?? null, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({
       userId: actor.id,
       action: "TENDER_METADATA_REPAIRED",

@@ -34,6 +34,7 @@ export type ExtractedField<T> = {
   value: T;
   sourceQuote: string;
   sourceFile: string | null;
+  sourcePage: number | null;
   confidence: "HIGH" | "MEDIUM" | "LOW";
 };
 export type ExtractedFieldMissing = { found: false; reason: string };
@@ -95,6 +96,21 @@ const REFERENCE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> =
     ), confidence: "MEDIUM" },
 ];
 
+// Compute the 1-based page number for a character index in extracted text.
+function computePageNumber(text: string, matchIndex: number): number | null {
+  if (matchIndex < 0 || matchIndex > text.length) return null;
+  const before = text.slice(0, matchIndex);
+  const formFeeds = (before.match(/\f/g) || []).length;
+  if (formFeeds > 0) return formFeeds + 1;
+  const pageMarkers = before.match(/(?:^|\n)[-\s]*Page\s+(\d+)/gi);
+  if (pageMarkers && pageMarkers.length > 0) {
+    const lastMatch = pageMarkers[pageMarkers.length - 1];
+    const m = lastMatch.match(/(\d+)/);
+    if (m) return parseInt(m[1], 10);
+  }
+  return 1;
+}
+
 export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing<string> {
   const cands: ExtractedField<string>[] = [];
   // Reject pure-label values that slipped through (e.g., "Number", "Reference")
@@ -113,6 +129,7 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
         value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -173,6 +190,7 @@ export function extractDeadline(input: ExtractorInput): ExtractedFieldOrMissing<
         value: parsed,
         sourceQuote: trimQuote(window),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, ctx.index),
         confidence: "HIGH",
       });
       break;
@@ -208,6 +226,7 @@ export function extractSubmissionEmails(input: ExtractorInput): ExtractedFieldOr
       value: emails.join(", "),
       sourceQuote: captureAround(text, firstIndex, emails[0].length, 120, 80),
       sourceFile: file?.fileName ?? null,
+      sourcePage: computePageNumber(text, m?.index ?? 0),
       confidence: emails.length > 0 ? "HIGH" : "MEDIUM",
     });
   }
@@ -237,6 +256,7 @@ export function extractSubmissionMethod(input: ExtractorInput): ExtractedFieldOr
         value: p.value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -268,6 +288,7 @@ export function extractPageLimit(input: ExtractorInput): ExtractedFieldOrMissing
         value: n,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: "HIGH",
       });
       break;
@@ -300,6 +321,7 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
         value: days,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: "HIGH",
       });
       break;
@@ -328,6 +350,7 @@ export function extractBidBondAmount(input: ExtractorInput): ExtractedFieldOrMis
           value: { amount, currency },
           sourceQuote: captureAround(text, m.index, m[0].length),
           sourceFile: file?.fileName ?? null,
+          sourcePage: computePageNumber(text, m?.index ?? 0),
           confidence: currency ? "HIGH" : "MEDIUM",
         });
         continue;
@@ -343,6 +366,7 @@ export function extractBidBondAmount(input: ExtractorInput): ExtractedFieldOrMis
         value: { amount: 0, currency: "PERCENT" },
         sourceQuote: captureAround(text, pm.index, pm[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: "MEDIUM",
       });
     }
@@ -367,6 +391,7 @@ export function extractNumberOfCopies(input: ExtractorInput): ExtractedFieldOrMi
       value: n,
       sourceQuote: captureAround(text, m.index, m[0].length),
       sourceFile: file?.fileName ?? null,
+      sourcePage: computePageNumber(text, m?.index ?? 0),
       confidence: "HIGH",
     });
   }
@@ -390,6 +415,7 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
         value: true,
         sourceQuote: captureAround(text, req.index, req[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, req.index),
         confidence: "HIGH",
       });
       continue;
@@ -401,6 +427,7 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
         value: false,
         sourceQuote: captureAround(text, opt.index, opt[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, opt.index),
         confidence: "HIGH",
       });
       continue;
@@ -414,6 +441,7 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
         value: false,
         sourceQuote: captureAround(text, mention.index, mention[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, mention.index),
         confidence: "LOW",
       });
     }
@@ -483,6 +511,7 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -500,6 +529,7 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
             value: value.slice(0, 200),
             sourceQuote: trimQuote(m2[1]),
             sourceFile: file?.fileName ?? null,
+            sourcePage: computePageNumber(text, m2.index ?? 0),
             confidence: "MEDIUM",
           });
         }
@@ -534,6 +564,7 @@ export function extractSubmissionAddress(input: ExtractorInput): ExtractedFieldO
         value: raw.slice(0, 300),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -572,6 +603,7 @@ export function extractClientContactEmail(input: ExtractorInput): ExtractedField
         value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -603,6 +635,7 @@ export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldO
         value: d,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       };
     }
@@ -631,6 +664,7 @@ export function extractDonorAgency(input: ExtractorInput): ExtractedFieldOrMissi
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -660,6 +694,7 @@ export function extractImplementingAgency(input: ExtractorInput): ExtractedField
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -689,6 +724,7 @@ export function extractLegalClientName(input: ExtractorInput): ExtractedFieldOrM
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -718,6 +754,7 @@ export function extractClientContactName(input: ExtractorInput): ExtractedFieldO
         value: value.slice(0, 100),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -747,6 +784,7 @@ export function extractClientContactTitle(input: ExtractorInput): ExtractedField
         value: value.slice(0, 80),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -776,6 +814,7 @@ export function extractClientContactPhone(input: ExtractorInput): ExtractedField
         value: value.slice(0, 30),
         sourceQuote: trimQuote(line),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: "HIGH",
       });
       break;
@@ -806,6 +845,7 @@ export function extractClientAddress(input: ExtractorInput): ExtractedFieldOrMis
         value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -836,6 +876,7 @@ export function extractCountry(input: ExtractorInput): ExtractedFieldOrMissing<s
       value: canonical,
       sourceQuote: captureAround(text, m.index, m[0].length),
       sourceFile: file?.fileName ?? null,
+      sourcePage: computePageNumber(text, m?.index ?? 0),
       confidence: "HIGH",
     });
   }
@@ -863,6 +904,7 @@ export function extractClientCity(input: ExtractorInput): ExtractedFieldOrMissin
         value: value.slice(0, 100),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
@@ -893,6 +935,7 @@ export function extractClientWebsite(input: ExtractorInput): ExtractedFieldOrMis
         value: value.slice(0, 300),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0),
         confidence: p.confidence,
       });
       break;
