@@ -95,7 +95,7 @@ describe("persisted release plan model hardening", () => {
       requirementCount: 1,
       requirements: [{ priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "A meaningful exact tender quote", sourceFileActiveInTender: true }],
       criticalMetadataOk: true,
-      hasConfirmedPersistedPlan: false,
+      hasCurrentConfirmedBuildPlan: false,
       confirmedPlanDocumentsOk: true,
     };
     assert.equal(evaluateGenerationReadiness(base).blockerCode, "SUBMISSION_PLAN_MISSING");
