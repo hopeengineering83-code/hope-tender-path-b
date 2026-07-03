@@ -17,6 +17,13 @@ import { sanitizeError } from "../../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
+function inferPlanEnvelope(file: { exactFileName: string; documentType?: string | null }): PlanItemEnvelope {
+  const label = `${file.exactFileName} ${file.documentType ?? ""}`.toLowerCase();
+  if (/financial|price|commercial|boq|bill of quantities/.test(label)) return "FINANCIAL";
+  if (/registration|tax|legal|bid bond|security|declaration|form|annex|certificate/.test(label)) return "ADMIN";
+  return "TECHNICAL";
+}
+
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
