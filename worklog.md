@@ -765,3 +765,94 @@ Stage Summary:
 - Known structural limitations (re-extract, upload-first, ai-analyze reference
   fileId) documented for future refactors.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: metadata-source-enrichment
+Agent: main (Super Z / GLM)
+Task: Fix all remaining gaps — close the structural limitations in re-extract-metadata, tender-upload-first, and ai-analyze reference fileId.
+
+Work Log:
+- Created lib/engine/metadata-source-enrichment.ts — a new module that locates
+  each critical field's value inside an active file's extracted text and
+  produces the source-evidence columns (fileId, page, quote) the canonical
+  resolver reads. Best-effort: only fields where evidence is found are
+  returned; existing evidence is never overwritten with null.
+- The enrichment handles all 7 critical fields: clientName, title, deadline,
+  submissionMethod, submissionAddress, submissionEmails, and reference (via
+  contactDetailsSourceJson.procurementReferenceNumber with fileId).
+- Page numbers are computed from form feeds (\f) or "Page N" markers; defaults
+  to 1 for single-page documents.
+- Quote context is 200 chars centered on the match.
+- Active files are sorted by id for deterministic attribution.
+
+WIRING 1: re-extract-metadata route
+- After inferTenderMetadata + tryFill, the route now calls
+  enrichMetadataWithSourceEvidence with the update map + tender.files.
+- The enrichment result is Object.assign'd into the update map before
+  prisma.tender.update, so evidence columns are persisted atomically with the
+  scalar values.
+- Previously: re-extracted values were persisted as bare scalars with zero
+  source evidence → EXTRACTED_UNVERIFIED forever.
+- Now: re-extracted values that can be located in an active file's text get
+  full source evidence → can reach EXTRACTED_AND_GROUNDED.
+
+WIRING 2: tender-upload-first route
+- After the transaction commits (so persisted.fileRecords with file IDs are
+  available), the route calls enrichMetadataWithSourceEvidence with the
+  persisted tender values + the file records' IDs and extracted texts.
+- Only updates when enrichment found at least one field (Object.keys(enrichment).length > 0).
+- Previously: fresh tenders had zero grounded metadata until AI Analyze or
+  repair-metadata was run.
+- Now: fresh tenders get grounded metadata at upload time when the regex
+  extractors can locate the values in the uploaded file text.
+
+WIRING 3: ai-analyze reference fileId resolution
+- Added resolveReferenceFileId helper in the ai-analyze route.
+- After BOTH the streaming and non-streaming canonical-write transactions
+  commit, the route calls resolveReferenceFileId(tenderId, files).
+- The helper reads the just-written contactDetailsSourceJson, finds the
+  procurementReferenceNumber entry, resolves its fileId via
+  attributeMetadataSourceFileId on the quote, and updates the JSON entry.
+- Skips when fileId is already set and points to an active file (idempotent).
+- Wrapped in try/catch — non-fatal: if resolution fails, the reference field
+  stays EXTRACTED_UNVERIFIED until repair-metadata is called (analysis still
+  succeeds).
+- Previously: AI emitted { page, quote } for procurementReferenceNumber but
+  never fileId → reference could never be GROUNDED via AI alone.
+- Now: AI-extracted reference evidence is automatically enriched with fileId
+  so it can reach EXTRACTED_AND_GROUNDED after AI Analyze.
+
+Regression tests (tests/metadata-source-enrichment.test.ts, 31 tests):
+- Behavioral (14 tests): locates each critical field; merges reference into
+  existing contactDetailsSourceJson; does NOT set evidence when value not
+  found; does NOT search DELETED files; returns empty for null/empty/short
+  values; computes page from "Page N" markers; sorts active files by id.
+- re-extract wiring (4 tests): imports enrichment; calls before update; passes
+  all critical fields; Object.assigns into update map.
+- upload-first wiring (4 tests): imports enrichment; calls after transaction;
+  uses persisted.fileRecords; guards with Object.keys check.
+- ai-analyze wiring (7 tests): imports attributeMetadataSourceFileId; defines
+  resolveReferenceFileId helper; reads procurementReferenceNumber; resolves
+  fileId via attributeMetadataSourceFileId; skips when already set+active;
+  calls in both streaming and non-streaming paths; persists via
+  prisma.tender.update; wrapped in try/catch (non-fatal).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+- npx tsc --noEmit: PASS
+- npx eslint . --max-warnings 0: PASS
+- npx next build: PASS
+- RUN_DB_INTEGRATION=true npm test: 4939/4939 PASS (4908 from prior commit +
+  31 new).
+
+Stage Summary:
+- All 3 structural gaps closed.
+- re-extract-metadata: re-extracted values now get source evidence at
+  re-extract time (no longer EXTRACTED_UNVERIFIED forever).
+- tender-upload-first: fresh tenders now get grounded metadata at upload time
+  (no longer zero grounded metadata until AI/repair).
+- ai-analyze: AI-extracted reference evidence now gets fileId automatically
+  (no longer requires a follow-up repair-metadata call to ground reference).
+- The metadata-override route gap remains BY DESIGN (overrides confirm
+  existing evidence; they don't create new evidence).
+- 31 new regression tests pin every contract.
+- NOT merged, NOT deployed — awaiting explicit user authorization.

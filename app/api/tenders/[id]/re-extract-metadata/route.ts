@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
+import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import {
   isValidClientName,
@@ -259,6 +260,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fieldsAfter,
     });
   }
+
+  // Enrich source evidence: locate each critical field value in the active
+  // files' extracted text and persist the fileId + page + quote so the
+  // canonical resolver can mark them as EXTRACTED_AND_GROUNDED. Without this,
+  // re-extracted values stay EXTRACTED_UNVERIFIED forever. Only fields where
+  // evidence is found are added; existing evidence is NOT overwritten.
+  const enrichmentFiles = tender.files.map((f) => ({
+    id: f.id,
+    extractedText: f.extractedText,
+    deletionStatus: "ACTIVE" as const,
+  }));
+  const enrichment = enrichMetadataWithSourceEvidence({
+    title: update.title as string | undefined,
+    reference: update.reference as string | undefined,
+    clientName: update.clientName as string | undefined,
+    deadline: update.deadline as Date | undefined,
+    submissionMethod: update.submissionMethod as string | undefined,
+    submissionAddress: update.submissionAddress as string | undefined,
+    submissionEmails: update.submissionEmails as string | undefined,
+    existingContactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+  }, enrichmentFiles);
+  Object.assign(update, enrichment);
 
   await prisma.tender.update({ where: { id }, data: update });
   await logAction({

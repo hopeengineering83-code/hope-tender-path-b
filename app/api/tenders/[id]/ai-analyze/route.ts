@@ -69,6 +69,50 @@ function resolveMetadataSourceFileIds(
   };
 }
 
+
+/**
+ * After AI Analyze writes contactDetailsSourceJson, the
+ * procurementReferenceNumber entry has { page, quote } but NO fileId (AI
+ * never emits fileIds). Resolve the fileId via attributeMetadataSourceFileId
+ * on the quote and update the JSON entry so the reference field can achieve
+ * EXTRACTED_AND_GROUNDED status in the canonical resolver.
+ *
+ * Returns the updated contactDetailsSourceJson string, or null when no
+ * update is needed (no entry, no quote, or no active file contains the quote).
+ */
+async function resolveReferenceFileId(
+  tenderId: string,
+  files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
+): Promise<string | null> {
+  // Read the current contactDetailsSourceJson
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: { contactDetailsSourceJson: true, reference: true },
+  }).catch(() => null);
+  if (!tender?.contactDetailsSourceJson) return null;
+  let contactDetails: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }>;
+  try {
+    contactDetails = JSON.parse(tender.contactDetailsSourceJson);
+  } catch {
+    return null;
+  }
+  const refEntry = contactDetails["procurementReferenceNumber"];
+  if (!refEntry || !refEntry.quote || refEntry.quote.trim().length < 6) return null;
+  // Skip if fileId is already set and points to an active file
+  if (refEntry.fileId) {
+    const stillActive = files.some((f) => f.id === refEntry.fileId && (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
+    if (stillActive) return null;
+  }
+  const fileId = attributeMetadataSourceFileId(refEntry.quote, files);
+  if (!fileId) return null;
+  contactDetails["procurementReferenceNumber"] = {
+    page: refEntry.page ?? null,
+    quote: refEntry.quote,
+    fileId,
+  };
+  return JSON.stringify(contactDetails);
+}
+
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
   stepName: string;
   status: string;
@@ -706,6 +750,21 @@ async function handleStreamingAnalyze(
                   await promoteAnalysisToCanonical(analysisJob.id, runId, tx);
                 }
               });
+
+              // After the canonical write, resolve and persist the reference
+              // field's fileId so it can achieve EXTRACTED_AND_GROUNDED. AI
+              // emits { page, quote } for procurementReferenceNumber but never
+              // fileId; we resolve it from the active files' extracted text.
+              try {
+                const refJson = await resolveReferenceFileId(id, tenderRecord.files);
+                if (refJson) {
+                  await prisma.tender.update({ where: { id }, data: { contactDetailsSourceJson: refJson } });
+                }
+              } catch (e) {
+                // Non-fatal — the reference field will stay EXTRACTED_UNVERIFIED
+                // until repair-metadata is called. Log but do not fail the analysis.
+                logger.warn("[ai-analyze/stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
+              }
             }
 
             if (analysisJob) {
@@ -1397,6 +1456,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               data: canonicalTenderDataNonStream,
             });
           });
+
+          // After the canonical write, resolve and persist the reference
+          // field's fileId (non-streaming path — mirrors the streaming path).
+          try {
+            const refJson = await resolveReferenceFileId(id, tenderRecord.files);
+            if (refJson) {
+              await prisma.tender.update({ where: { id }, data: { contactDetailsSourceJson: refJson } });
+            }
+          } catch (e) {
+            logger.warn("[ai-analyze/non-stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
+          }
           if (!nsPromoSuperseded && analysisJob) {
             await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
           }
