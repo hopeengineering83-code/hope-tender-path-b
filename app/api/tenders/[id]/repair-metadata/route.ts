@@ -163,6 +163,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       outcomes.push({ field, status: "NOT_FOUND", reason: extraction.reason });
       continue;
     }
+    // ── DURABLE SOURCE-GROUNDING: applies to ALL critical fields BEFORE type dispatch ──
+    // Resolve durable file ID from the extractor's sourceFile (which is a
+    // fileName). This must happen BEFORE the type dispatch so deadline,
+    // string fields, and any other critical field all get the same grounding
+    // check. Without this block here, the `else if (field === 'deadline')`
+    // branch would skip straight to (updates)[field] = dt and bypass the
+    // active-file check, quote-containment check, and durable-file resolution.
+    //
+    // Fields WITHOUT dedicated source-evidence columns (bidBondAmount,
+    // numberOfCopiesRequired, mandatorySiteVisit, pageLimit, validityDays,
+    // preBidMeetingDate) are intentionally NOT in this set — they are not
+    // critical BuildPlan evidence fields and do not require source grounding.
+    const CRITICAL_SOURCE_GROUNDED_FIELDS = new Set([
+      "clientName", "title", "deadline", "submissionMethod",
+      "submissionAddress", "submissionEmails", "reference",
+    ]);
+
+    if (CRITICAL_SOURCE_GROUNDED_FIELDS.has(field)) {
+      // Resolve durable file ID from fileName → TenderFile.id
+      durableFileId = extraction.sourceFile ? (fileNameToId.get(extraction.sourceFile) ?? null) : null;
+      if (!durableFileId || !activeFileIds.has(durableFileId)) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source file for ${field} is not an active tender file. Re-grounding required.` });
+        continue;
+      }
+      // Verify source quote is present and meaningful
+      if (!extraction.sourceQuote || extraction.sourceQuote.trim().length < 5) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is missing or too short. Re-grounding required.` });
+        continue;
+      }
+      // Verify quote containment in the referenced active file
+      const quoteVerification = verifySourceQuote(extraction.sourceQuote, activeFilesForQuote);
+      if (!quoteVerification.verified || quoteVerification.sourceFileId !== durableFileId) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is not contained in the referenced active tender file. Re-grounding required.` });
+        continue;
+      }
+    }
+
+    // ── Type-specific value validation ────────────────────────────────────────────
     // bidBondAmount produces { amount, currency } — split into two DB columns.
     if (field === "bidBondAmount") {
       const v = extraction.value as { amount: number; currency: string | null };
@@ -194,21 +232,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         outcomes.push({ field, status: "REJECTED", reason: "Extracted value contains a placeholder pattern.", value: rawValue });
         continue;
       }
-      // ── DURABLE SOURCE-GROUNDING: require file ID, page, quote, containment ─
-      durableFileId = extraction.sourceFile ? (fileNameToId.get(extraction.sourceFile) ?? null) : null;
-      if (!durableFileId || !activeFileIds.has(durableFileId)) {
-        outcomes.push({ field, status: "UNRESOLVED", reason: `Source file for ${field} is not an active tender file. Re-grounding required.` });
-        continue;
-      }
-      if (!extraction.sourceQuote || extraction.sourceQuote.trim().length < 5) {
-        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is missing or too short. Re-grounding required.` });
-        continue;
-      }
-      const quoteVerification = verifySourceQuote(extraction.sourceQuote, activeFilesForQuote);
-      if (!quoteVerification.verified || quoteVerification.sourceFileId !== durableFileId) {
-        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is not contained in the referenced active tender file. Re-grounding required.` });
-        continue;
-      }
+      // Source grounding (durableFileId, active-file check, quote containment)
+      // is performed ABOVE in the CRITICAL_SOURCE_GROUNDED_FIELDS block, BEFORE
+      // the type dispatch. We do NOT repeat it here.
       (updates as Record<string, unknown>)[field] = rawValue;
       // When we repair clientName, also sync procuringEntityName if it's empty
       // and re-evaluate metadataContaminated with the new clean value.
@@ -241,11 +267,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // which the canonical resolver reads under "procurementReferenceNumber".
     if (field === "reference" && durableFileId) {
       const existingJson = (tender as any).contactDetailsSourceJson;
-      let contactDetails: Record<string, { page: number | null; quote: string | null }> = {};
+      let contactDetails: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
       try { contactDetails = typeof existingJson === "string" ? JSON.parse(existingJson) : (existingJson ?? {}); } catch { contactDetails = {}; }
+      // fileId MUST be persisted here — without it, the canonical resolver's
+      // getSourceEvidence() returns fileId: null for reference, and
+      // isGroundedEvidenceWithFileCheck() can NEVER mark reference as GROUNDED
+      // (it requires fileId ∈ activeTenderFileIds).
       contactDetails["procurementReferenceNumber"] = {
         page: extraction.sourcePage ?? null,
         quote: extraction.sourceQuote ?? null,
+        fileId: durableFileId,
       };
       (updates as Record<string, unknown>).contactDetailsSourceJson = JSON.stringify(contactDetails);
     }

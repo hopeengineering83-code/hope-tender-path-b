@@ -486,3 +486,98 @@ Stage Summary:
   is read directly for hashing. The hash and the gate use the SAME resolver
   output — zero possibility of divergence.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: repair-deadline-reference-regression
+Agent: main (Super Z / GLM)
+Task: User reported that the latest code (commit 261402cd) "improves source-page extraction, but reintroduces the deadline grounding bypass and still cannot fully ground reference evidence with a durable active TenderFile ID." Fix both defects.
+
+Work Log:
+- Verified the regression by reading the route at HEAD (261402cd): the
+  CRITICAL_SOURCE_GROUNDED_FIELDS block (which commit 544aa6ba had placed
+  BEFORE the type dispatch) had been removed; durable source grounding was
+  moved INSIDE the `else` (string fields) branch. The `else if (field ===
+  "deadline")` branch went straight to (updates)[field] = dt and bypassed
+  durableFileId resolution, the activeFileIds.has check, the source-quote
+  length check, and verifySourceQuote containment. This was exactly the
+  bug 544aa6ba had fixed.
+- Verified the second issue: reference evidence was persisted via
+  contactDetailsSourceJson with only { page, quote } (no fileId). The
+  canonical resolver's getSourceEvidence() returned fileId: null for any
+  contact-sourced field. isGroundedEvidenceWithFileCheck() requires a
+  non-null fileId that points to an active TenderFile, so reference could
+  NEVER achieve EXTRACTED_AND_GROUNDED in any production caller (generate
+  route, generation-readiness-gate, final-submission-readiness, build-plan-
+  hash all pass activeTenderFileIds).
+
+FIX 1 — Deadline source-grounding bypass (route.ts):
+- Restored the CRITICAL_SOURCE_GROUNDED_FIELDS block BEFORE the type
+  dispatch. All 7 critical fields (clientName, title, deadline,
+  submissionMethod, submissionAddress, submissionEmails, reference) now
+  go through durableFileId resolution, active-file check, source-quote
+  length check, and verifySourceQuote containment BEFORE the bidBondAmount
+  / deadline / string-field type dispatch.
+- Removed the duplicate source-grounding block from the `else` (string
+  fields) branch — it is now a comment pointing to the pre-dispatch block.
+- The deadline branch (else if) no longer re-resolves or re-checks
+  anything; it inherits durableFileId from the pre-dispatch block.
+
+FIX 2 — Reference evidence fileId (route.ts + canonical-field-state.ts):
+- route.ts: the reference evidence persistence block now writes
+  fileId: durableFileId alongside page and quote in the
+  procurementReferenceNumber entry of contactDetailsSourceJson.
+- canonical-field-state.ts: parseContactDetailsSource() now reads fileId
+  from each entry (string and non-empty, else null). The return type was
+  widened to include fileId: string | null.
+- canonical-field-state.ts: getSourceEvidence() now returns ce.fileId
+  (not hardcoded null) for contact-sourced fields. The signature was
+  widened to accept the fileId-inclusive contactDetails map.
+
+REGRESSION TESTS (tests/repair-deadline-reference-grounding.test.ts, 15 tests):
+- Source-inspection (5 tests): CRITICAL_SOURCE_GROUNDED_FIELDS contains
+  all 7 critical fields; the check runs BEFORE the type dispatch; the
+  deadline branch does NOT re-resolve durableFileId / call verifySourceQuote
+  / check activeFileIds.has; the else branch does NOT duplicate source
+  grounding; the reference evidence block writes fileId: durableFileId.
+- Source-inspection (2 tests): parseContactDetailsSource reads fileId;
+  getSourceEvidence returns ce.fileId (and the old buggy fileId: null
+  line is gone).
+- Behavioral (5 tests): reference with valid fileId in activeTenderFileIds
+  → EXTRACTED_AND_GROUNDED; reference with fileId NOT in activeTenderFileIds
+  → NOT EXTRACTED_AND_GROUNDED, isGrounded=false; reference with fileId
+  omitted (legacy contactDetailsSourceJson) → blocked when activeTenderFileIds
+  enforced; reference with valid fileId but no page → blocked; reference
+  with valid fileId but quote too short → blocked.
+- Behavioral (3 tests): deadline with valid fileId + page + quote →
+  EXTRACTED_AND_GROUNDED; deadline with fileId NOT in activeTenderFileIds
+  → blocked; deadline with null fileId → blocked when activeTenderFileIds
+  enforced (this is the exact state the bypass used to produce).
+
+Verification:
+- npx tsc --noEmit: PASS
+- npx eslint (changed files): PASS
+- New regression tests: 15/15 PASS
+- Related tests (canonical-field-state-behavioral, canonical-field-state-
+  resolver, canonical-field-grounding, canonical-contamination-grounding,
+  grounding-and-buildplan-enforcement, repair-source-grounding, metadata-
+  contamination-and-repair-route): 136/136 PASS
+- npm test (full suite): 4836/4842 PASS — the 6 failures are pre-existing
+  DB-integration tests (ai-promotion-evidence-persistence, build-plan-db-
+  integration, build-plan-route-integration, database-safety-integration,
+  metadata-evidence-proof, unified-snapshot-integration) that require a
+  real Postgres instance and fail identically on the prior HEAD 261402cd
+  (verified by stashing my changes and re-running).
+- prisma validate: blocked by .env (DATABASE_URL=SQLite) — not a code issue.
+- next build: blocked by .env (SESSION_SECRET missing) — not a code issue.
+
+Stage Summary:
+- Both user-reported regressions are fixed.
+- Deadline source-grounding bypass: CLOSED. The CRITICAL_SOURCE_GROUNDED_FIELDS
+  block is back BEFORE the type dispatch; the deadline branch inherits
+  grounding from it.
+- Reference evidence fileId: CLOSED. The repair route persists fileId in
+  contactDetailsSourceJson; the canonical resolver reads it and returns it
+  from getSourceEvidence; reference can now achieve EXTRACTED_AND_GROUNDED
+  when fileId is in activeTenderFileIds.
+- 15 new regression tests pin both contracts (source-inspection + behavioral).
+- NOT merged, NOT deployed — awaiting explicit user authorization.
