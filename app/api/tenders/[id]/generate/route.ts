@@ -249,7 +249,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     include: {
       requirements: true,
       files: {
-        select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
+        select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, deletionStatus: true },
       },
     },
   });
@@ -630,7 +630,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         submissionMethodContext: tender.submissionMethod ?? undefined,
         // Enforce active-file grounding: a fileId pointing to a
         // deleted/superseded TenderFile must NOT count as GROUNDED.
-        activeTenderFileIds: new Set((tender.files ?? []).map((f: any) => f.id)),
+        activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
       });
       const policyCtx = { submissionMethod: tender.submissionMethod };
       const missingCritical: string[] = canonicalState.fields

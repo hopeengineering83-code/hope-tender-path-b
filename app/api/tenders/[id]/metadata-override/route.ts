@@ -46,9 +46,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       preBidChannel: true, preBidMeetingDate: true, preBidMeetingLocation: true,
       evaluationMethodology: true, metadataContaminated: true,
       clientNameSourcePage: true, clientNameSourceQuote: true, clientNameSourceFileId: true,
+      titleSourcePage: true, titleSourceQuote: true, titleSourceFileId: true,
+      deadlineSourcePage: true, deadlineSourceQuote: true, deadlineSourceFileId: true,
       submissionMethodSourcePage: true, submissionMethodSourceQuote: true, submissionMethodSourceFileId: true,
       submissionAddressSourcePage: true, submissionAddressSourceQuote: true, submissionAddressSourceFileId: true,
-      submissionEmailSourcePage: true, submissionEmailSourceFileId: true, contactDetailsSourceJson: true,
+      submissionEmailSourcePage: true, submissionEmailSourceFileId: true, submissionEmailSourceQuote: true, contactDetailsSourceJson: true,
       requirements: { select: { id: true }, take: 1 },
       files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } },
     },
@@ -102,7 +104,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
         submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
         submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
+        titleSourcePage: (tender as any).titleSourcePage ?? null,
+        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         evaluationMethodology: tender.evaluationMethodology ?? null,
         legalClientName: tender.legalClientName ?? null, donorAgency: tender.donorAgency ?? null,
@@ -122,7 +131,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       submissionMethodContext: tender.submissionMethod ?? undefined,
       // Same canonical active-file grounding rule as the gates, so the dashboard
       // panel chips can never disagree with generation/export.
-      activeTenderFileIds: new Set((tender.files ?? []).map((f) => f.id)),
+      activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f) => f.id)),
     });
     for (const f of resolved.fields) {
       fieldStates[f.fieldKey] = {

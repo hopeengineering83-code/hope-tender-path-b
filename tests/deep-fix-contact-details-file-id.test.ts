@@ -145,8 +145,8 @@ describe("generate route — passes activeTenderFileIds + all source-evidence co
 
   it("passes activeTenderFileIds to resolveCanonicalFieldState", () => {
     assert.ok(
-      src.includes("activeTenderFileIds: new Set((tender.files ?? []).map((f: any) => f.id))"),
-      "generate route must pass activeTenderFileIds to resolveCanonicalFieldState",
+      src.includes("activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? \"ACTIVE\") === \"ACTIVE\").map((f: any) => f.id))"),
+      "generate route must pass activeTenderFileIds filtered to ACTIVE files to resolveCanonicalFieldState",
     );
   });
 
