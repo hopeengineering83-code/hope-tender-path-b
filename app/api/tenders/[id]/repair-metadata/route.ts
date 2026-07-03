@@ -152,6 +152,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   for (const field of SUPPORTED_EXTRACTORS) {
     if (!requestedFields.includes(field)) continue;
     let durableFileId: string | null = null;
+    let provenPage: number | null = null;
     const currentValue = (tender as unknown as Record<string, unknown>)[field];
     const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
     if (alreadyPopulated && !force) {
@@ -198,6 +199,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is not contained in the referenced active tender file. Re-grounding required.` });
         continue;
       }
+      // Use the extractor's computed sourcePage — it already uses the
+      // authoritative TenderFile.totalPages guard (via computePageNumber in
+      // tender-field-extractors.ts). The page is null when no reliable
+      // boundary exists and totalPages != 1. A null page means the field
+      // stays EXTRACTED_UNVERIFIED — never grounded, confirmed, generation-
+      // ready, or export-ready. The value and fileId are still written so
+      // the user doesn't have to re-enter the value manually.
+      provenPage = (extraction as ExtractedFieldOrMissing<unknown> & { sourcePage?: number | null }).sourcePage ?? null;
     }
 
     // ── Type-specific value validation ────────────────────────────────────────────
@@ -274,7 +283,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // isGroundedEvidenceWithFileCheck() can NEVER mark reference as GROUNDED
       // (it requires fileId ∈ activeTenderFileIds).
       contactDetails["procurementReferenceNumber"] = {
-        page: extraction.sourcePage ?? null,
+        page: provenPage ?? null,
         quote: extraction.sourceQuote ?? null,
         fileId: durableFileId,
       };
@@ -283,22 +292,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // strict BuildPlan metadata validator reads these first.
       (updates as Record<string, unknown>).referenceSourceFileId = durableFileId;
       (updates as Record<string, unknown>).referenceSourceQuote = extraction.sourceQuote ?? null;
-      if (extraction.sourcePage != null) {
-        (updates as Record<string, unknown>).referenceSourcePage = extraction.sourcePage;
+      if (provenPage != null) {
+        (updates as Record<string, unknown>).referenceSourcePage = provenPage;
       }
     }
     const evidenceCols = sourceEvidenceColumns[field];
     if (evidenceCols && durableFileId) {
       (updates as Record<string, unknown>)[evidenceCols.fileId] = durableFileId;
       (updates as Record<string, unknown>)[evidenceCols.quote] = extraction.sourceQuote;
-      // Persist sourcePage from the extractor — it computes page number from
-      // text position (form feeds / page markers). If null, leave existing
-      // page evidence untouched.
-      if (extraction.sourcePage != null) {
-        (updates as Record<string, unknown>)[evidenceCols.page] = extraction.sourcePage;
+      // Persist the proven page (computed from TenderFile.totalPages guard).
+      // This is the AUTHORITATIVE page number — not the extractor's heuristic.
+      if (provenPage != null) {
+        (updates as Record<string, unknown>)[evidenceCols.page] = provenPage;
       }
     }
-    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: extraction.sourcePage ?? null, sourceQuote: extraction.sourceQuote, value: extraction.value });
+    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: provenPage, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({
       userId: actor.id,
       action: "TENDER_METADATA_REPAIRED",
