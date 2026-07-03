@@ -74,10 +74,9 @@ describe("persisted release plan model hardening", () => {
     assert.match(source, /contentSha256/);
   });
 
-  it("release gate uses confirmed persisted plan and approved evidence instead of GeneratedDocument plan rows", () => {
-    assert.match(gateSource, /hasConfirmedPersistedPlan/);
-    assert.match(gateSource, /hasAllMandatoryEvidenceApproved/);
-    assert.match(gateSource, /REQUIREMENT_EVIDENCE_MISSING/);
+  it("release gate uses confirmed build plan and validated documents instead of raw GeneratedDocument counts", () => {
+    assert.match(gateSource, /hasCurrentConfirmedBuildPlan/);
+    assert.match(gateSource, /confirmedPlanDocumentsOk/);
     assert.doesNotMatch(gateSource, /generatedDocument\.count\(\{\s*where:\s*\{ tenderId, generationStatus: \{ not: "SUPERSEDED" \}/);
   });
 
@@ -100,7 +99,7 @@ describe("persisted release plan model hardening", () => {
       confirmedPlanDocumentsOk: true,
     };
     assert.equal(evaluateGenerationReadiness(base).blockerCode, "SUBMISSION_PLAN_MISSING");
-    assert.equal(evaluateGenerationReadiness({ ...base, hasCurrentConfirmedBuildPlan: true, hasApprovedRequirementEvidence: false }).blockerCode, "REQUIREMENT_EVIDENCE_MISSING");
+    assert.equal(evaluateGenerationReadiness({ ...base, hasCurrentConfirmedBuildPlan: true, confirmedPlanDocumentsOk: false }).blockerCode, "CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE");
   });
 
   it("uses real foreign keys for supported requirement-evidence asset references", () => {
