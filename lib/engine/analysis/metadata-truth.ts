@@ -13,7 +13,7 @@ import {
   isCriticalField,
   fieldDisplayLabel,
 } from "../tender-policy-registry";
-import { isGroundedEvidence as isGroundedSourceEvidence } from "../evidence-grounding";
+import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck } from "../evidence-grounding";
 // MetadataFactStatus is now the canonical shared type. Both this panel and the
 // Client & Submission Details panel use CanonicalFieldStatus, which is re-exported
 // here under the legacy name for backward compatibility. No per-panel status
@@ -110,8 +110,13 @@ const ALL_FIELD_KEYS = [
 
 type FieldKey = typeof ALL_FIELD_KEYS[number];
 
-/** Per-field tender-source evidence (Policy point 1). */
-type FieldEvidence = { page: number | null; quote: string | null };
+/** Per-field tender-source evidence (Policy point 1).
+ *  fileId is optional because the contactDetailsSourceJson shape
+ *  historically stored only { page, quote }. The repair-metadata route
+ *  now persists fileId for the procurementReferenceNumber entry so
+ *  reference evidence can be GROUNDED when activeTenderFileIds is
+ *  enforced by the caller. */
+type FieldEvidence = { page: number | null; quote: string | null; fileId: string | null };
 
 // ─── Internal helpers ──────────────────────────────────────────────────────
 
@@ -230,29 +235,40 @@ function isConfirmedStatus(status: MetadataFactStatus): boolean {
 }
 
 /**
- * Grounding (Policy point 1): a value may be GROUNDED only when it has both a
- * page number AND a direct supporting source quote. Manual overrides and
- * confirmations are valid-but-ungrounded (Policy point 2) and never qualify.
+ * Grounding (Policy point 1): a value may be GROUNDED only when it has a
+ * page number, a direct supporting source quote, AND (when activeTenderFileIds
+ * is provided) a fileId that points to an active TenderFile. Manual overrides
+ * and confirmations are valid-but-ungrounded (Policy point 2) and never qualify.
+ *
+ * When activeTenderFileIds is omitted (legacy callers), the check falls back
+ * to page+quote only — same as the Client & Submission panel resolver.
  */
-function hasGroundingEvidence(ev: FieldEvidence | undefined): boolean {
+function hasGroundingEvidence(
+  ev: FieldEvidence | undefined,
+  activeTenderFileIds?: Set<string>,
+): boolean {
   if (!ev) return false;
+  if (activeTenderFileIds) {
+    return isGroundedEvidenceWithFileCheck(ev.page, ev.quote, ev.fileId, activeTenderFileIds);
+  }
   // Use the shared grounding predicate so the Metadata Truth panel and the
   // Client & Submission panel / gates apply IDENTICAL grounding (page > 0 AND a
   // non-trivial quote) and can never contradict each other.
   return isGroundedSourceEvidence(ev.page, ev.quote);
 }
 
-/** Safely parse a JSON object of per-field { page, quote } evidence. */
+/** Safely parse a JSON object of per-field { page, quote, fileId? } evidence. */
 function parseContactEvidence(json: string | null | undefined): Record<string, FieldEvidence> {
   if (!json || typeof json !== "string") return {};
   try {
-    const parsed = JSON.parse(json) as Record<string, { page?: unknown; quote?: unknown }>;
+    const parsed = JSON.parse(json) as Record<string, { page?: unknown; quote?: unknown; fileId?: unknown }>;
     const out: Record<string, FieldEvidence> = {};
     for (const [k, v] of Object.entries(parsed ?? {})) {
       if (v && typeof v === "object") {
         out[k] = {
           page: typeof v.page === "number" ? v.page : null,
           quote: typeof v.quote === "string" ? v.quote : null,
+          fileId: typeof v.fileId === "string" && v.fileId.length > 0 ? v.fileId : null,
         };
       }
     }
@@ -297,12 +313,24 @@ export async function resolveMetadataTruth(
       // Per-field source-evidence columns (Policy point 1)
       clientNameSourcePage: true,
       clientNameSourceQuote: true,
+      clientNameSourceFileId: true,
+      titleSourcePage: true,
+      titleSourceQuote: true,
+      titleSourceFileId: true,
+      deadlineSourcePage: true,
+      deadlineSourceQuote: true,
+      deadlineSourceFileId: true,
       submissionMethodSourcePage: true,
       submissionMethodSourceQuote: true,
+      submissionMethodSourceFileId: true,
       submissionAddressSourcePage: true,
       submissionAddressSourceQuote: true,
+      submissionAddressSourceFileId: true,
       submissionEmailSourcePage: true,
+      submissionEmailSourceQuote: true,
+      submissionEmailSourceFileId: true,
       contactDetailsSourceJson: true,
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } },
       metadataOverrides: {
         select: {
           field: true,
@@ -344,17 +372,33 @@ export async function resolveMetadataTruth(
   const overrideByField = new Map(overrides.map((o) => [o.field, o]));
   const contactEvidence = parseContactEvidence(tender.contactDetailsSourceJson);
 
-  // Per-field tender-source evidence map. Fields without a source column
-  // (title, reference, deadline, country, currency) have NO evidence and can
-  // therefore never be GROUNDED — only EXTRACTED_UNVERIFIED. This is the
-  // honest Policy-point-1 behaviour: we do not claim grounding we cannot prove.
+  // Per-field tender-source evidence map. Every critical field now has
+  // dedicated source-evidence columns OR a contactDetailsSource entry — so
+  // title, deadline, and reference can be GROUNDED in the Metadata Truth
+  // panel when their evidence points to an active TenderFile.
+  //
+  // The fileId for clientName/title/deadline/submissionMethod/submissionAddress/
+  // submissionEmails comes from their dedicated *SourceFileId columns. The
+  // fileId for reference (and other contactDetailsSource entries) comes from
+  // the JSON entry itself — written by the repair-metadata route.
+  const refEvidence = contactEvidence["procurementReferenceNumber"];
   const evidenceByField: Partial<Record<FieldKey, FieldEvidence>> = {
-    clientName: { page: tender.clientNameSourcePage ?? null, quote: tender.clientNameSourceQuote ?? null },
-    submissionMethod: { page: tender.submissionMethodSourcePage ?? null, quote: tender.submissionMethodSourceQuote ?? null },
-    submissionAddress: { page: tender.submissionAddressSourcePage ?? null, quote: tender.submissionAddressSourceQuote ?? null },
-    submissionEmails: { page: tender.submissionEmailSourcePage ?? null, quote: contactEvidence.submissionEmails?.quote ?? null },
-    clientContactName: contactEvidence.clientContactName,
+    clientName: { page: tender.clientNameSourcePage ?? null, quote: tender.clientNameSourceQuote ?? null, fileId: tender.clientNameSourceFileId ?? null },
+    title: { page: tender.titleSourcePage ?? null, quote: tender.titleSourceQuote ?? null, fileId: tender.titleSourceFileId ?? null },
+    deadline: { page: tender.deadlineSourcePage ?? null, quote: tender.deadlineSourceQuote ?? null, fileId: tender.deadlineSourceFileId ?? null },
+    reference: refEvidence
+      ? { page: refEvidence.page, quote: refEvidence.quote, fileId: refEvidence.fileId }
+      : undefined,
+    submissionMethod: { page: tender.submissionMethodSourcePage ?? null, quote: tender.submissionMethodSourceQuote ?? null, fileId: tender.submissionMethodSourceFileId ?? null },
+    submissionAddress: { page: tender.submissionAddressSourcePage ?? null, quote: tender.submissionAddressSourceQuote ?? null, fileId: tender.submissionAddressSourceFileId ?? null },
+    submissionEmails: { page: tender.submissionEmailSourcePage ?? null, quote: tender.submissionEmailSourceQuote ?? contactEvidence.submissionEmails?.quote ?? null, fileId: tender.submissionEmailSourceFileId ?? null },
+    clientContactName: contactEvidence.clientContactName
+      ? { page: contactEvidence.clientContactName.page, quote: contactEvidence.clientContactName.quote, fileId: contactEvidence.clientContactName.fileId }
+      : undefined,
   };
+
+  // Active tender file IDs — when present, grounding requires fileId ∈ this set.
+  const activeTenderFileIds = new Set((tender.files ?? []).map((f) => f.id));
 
   const policyCtx = { submissionMethod: tender.submissionMethod ?? null };
 
@@ -400,7 +444,7 @@ export async function resolveMetadataTruth(
     // are eligible, and only when real tender-source evidence exists. Manual
     // overrides/confirmations are valid-but-ungrounded and never upgraded.
     const fieldIsGrounded =
-      status === "EXTRACTED_UNVERIFIED" && hasGroundingEvidence(evidenceByField[key]);
+      status === "EXTRACTED_UNVERIFIED" && hasGroundingEvidence(evidenceByField[key], activeTenderFileIds);
     if (fieldIsGrounded) status = "EXTRACTED_AND_GROUNDED";
 
     if (hasAnyValue(status)) detected++;

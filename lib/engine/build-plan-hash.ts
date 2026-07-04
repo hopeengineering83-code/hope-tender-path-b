@@ -326,7 +326,17 @@ export function buildCanonicalBuildPlanHashInput(
     })),
     hasExtractedRequirements: (tender.requirements ?? []).length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,
-    activeTenderFileIds: new Set((tender.files ?? []).map((f: any) => f.id)),
+    // Filter to ACTIVE files only — defense-in-depth. The sole caller
+    // (computeTenderBuildPlanHash) pre-filters files to deletionStatus=ACTIVE,
+    // but this function's own type doc says callers can pass the full file
+    // list. Filter here so a future caller passing unfiltered files cannot
+    // accidentally let a deleted/superseded TenderFile's evidence count
+    // as GROUNDED.
+    activeTenderFileIds: new Set(
+      (tender.files ?? [])
+        .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+        .map((f: any) => f.id),
+    ),
   });
 
   // Map the resolver output to the hash evidence format. Only include

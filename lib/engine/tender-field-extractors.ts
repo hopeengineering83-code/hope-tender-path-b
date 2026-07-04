@@ -34,12 +34,20 @@ export type ExtractedField<T> = {
   value: T;
   sourceQuote: string;
   sourceFile: string | null;
+  sourcePage: number | null;
   confidence: "HIGH" | "MEDIUM" | "LOW";
 };
 export type ExtractedFieldMissing = { found: false; reason: string };
 export type ExtractedFieldOrMissing<T> = ExtractedField<T> | ExtractedFieldMissing;
 
-export type TenderFileInput = { fileName?: string | null; extractedText?: string | null };
+export type TenderFileInput = {
+  fileName?: string | null;
+  extractedText?: string | null;
+  /** Total pages of the file when known — enables the verified single-page
+   *  fallback in page attribution. Without it, a document with no page
+   *  boundaries gets sourcePage: null (fail-closed), never a guessed "1". */
+  totalPages?: number | null;
+};
 export type ExtractorInput = { files: TenderFileInput[] };
 
 const QUOTE_MAX = 200;
@@ -76,24 +84,76 @@ const REFERENCE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> =
   // "Tender Reference: ABC-123" / "RFP ID: XYZ/2026/01" / "Tender Ref: ABC-123"
   // Uses "Reference" (full word) or "Ref." or "ID" — NOT "Ref" alone (which
   // would partially match "Reference" and capture "erence")
+  // The (?=[\s:#.-]) lookahead after each label word requires a real
+  // separator so label PREFIXES cannot match inside longer words —
+  // without it, "procurement IDentifiers" matched label "ID" and captured
+  // "entifiers" as the reference value.
   { rx: new RegExp(
-    "\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID)\\s*[:#-]?\\s*" +
+    "\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID)(?=[\\s:#.-])\\s*[:#-]?\\s*" +
     "(?!" + LABEL_WORDS + "\\b)" +
     "([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"
     ), confidence: "HIGH" },
   // "Reference No.: ABC-123" / "Reference Number: XYZ/2026/01"
   { rx: new RegExp(
-    "\\bReference\\s+(?:No\\.?|Number|#)\\s*[:.]?\\s*" +
+    "\\bReference\\s+(?:No\\.?|Number|#)(?=[\\s:#.-])\\s*[:.]?\\s*" +
     "(?!" + LABEL_WORDS + "\\b)" +
     "([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"
     ), confidence: "HIGH" },
   // "Procurement Plan No.: 12345" / "ITT No. 7777"
   { rx: new RegExp(
-    "\\b(?:Procurement|ITT|ITB|EOI|RFP)\\s+(?:Plan\\s+)?No\\.?\\s*[:#-]?\\s*" +
+    "\\b(?:Procurement|ITT|ITB|EOI|RFP)\\s+(?:Plan\\s+)?No\\.?(?=[\\s:#.-])\\s*[:#-]?\\s*" +
     "(?!" + LABEL_WORDS + "\\b)" +
     "([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"
     ), confidence: "MEDIUM" },
 ];
+
+// Compute the 1-based page number for a character index in extracted text.
+//
+// FAIL-CLOSED page attribution:
+//   - Form feeds (\f) anywhere in the text mean the extractor emitted per-page
+//     boundaries → page = form feeds before the index + 1.
+//   - Explicit "Page N" markers before the index → page = last marker's N.
+//   - NO boundaries → page 1 ONLY when the file is verified one page
+//     (totalPages === 1); otherwise null. A multi-page document with no
+//     boundary information must never have evidence attributed to page 1 by
+//     assumption.
+//   - A computed page beyond the file's known totalPages → null (unreliable
+//     markers must not persist an impossible page).
+function computePageNumber(text: string, matchIndex: number, totalPages?: number | null): number | null {
+  if (matchIndex < 0 || matchIndex > text.length) return null;
+  const clamp = (page: number): number | null =>
+    typeof totalPages === "number" && totalPages > 0 && page > totalPages ? null : page;
+  const before = text.slice(0, matchIndex);
+  // 1. "[Page N]" markers — the CANONICAL page-boundary format written by
+  //    lib/extract-text.ts at the start of every extracted page. The previous
+  //    regex only matched unbracketed "Page N", so this branch never fired on
+  //    the app's own extraction output and everything fell through to a
+  //    hardcoded page 1.
+  const bracketMarkers = before.match(/\[Page\s+(\d+)\]/gi);
+  if (bracketMarkers && bracketMarkers.length > 0) {
+    const m = bracketMarkers[bracketMarkers.length - 1].match(/(\d+)/);
+    if (m) return clamp(parseInt(m[1], 10));
+  }
+  if (/\[Page\s+\d+\]/i.test(text)) {
+    // Markers exist but none precede the match → content before the first
+    // marker. The extractor emits a marker at the very start of page 1, so a
+    // pre-marker match position cannot be attributed to a page reliably.
+    return totalPages === 1 ? 1 : null;
+  }
+  // 2. Form feeds (\f) — per-page boundaries from plain-text extractors.
+  const formFeeds = (before.match(/\f/g) || []).length;
+  if (formFeeds > 0 || text.includes("\f")) return clamp(formFeeds + 1);
+  // 3. Unbracketed "Page N" line markers (some OCR providers).
+  const pageMarkers = before.match(/(?:^|\n)[-\s]*Page\s+(\d+)/gi);
+  if (pageMarkers && pageMarkers.length > 0) {
+    const lastMatch = pageMarkers[pageMarkers.length - 1];
+    const m = lastMatch.match(/(\d+)/);
+    if (m) return clamp(parseInt(m[1], 10));
+  }
+  // 4. No boundaries at all → page 1 ONLY for a VERIFIED one-page file.
+  if (totalPages === 1) return 1;
+  return null;
+}
 
 export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing<string> {
   const cands: ExtractedField<string>[] = [];
@@ -113,6 +173,7 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
         value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -173,6 +234,7 @@ export function extractDeadline(input: ExtractorInput): ExtractedFieldOrMissing<
         value: parsed,
         sourceQuote: trimQuote(window),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, ctx.index, file?.totalPages),
         confidence: "HIGH",
       });
       break;
@@ -208,6 +270,7 @@ export function extractSubmissionEmails(input: ExtractorInput): ExtractedFieldOr
       value: emails.join(", "),
       sourceQuote: captureAround(text, firstIndex, emails[0].length, 120, 80),
       sourceFile: file?.fileName ?? null,
+      sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
       confidence: emails.length > 0 ? "HIGH" : "MEDIUM",
     });
   }
@@ -237,6 +300,7 @@ export function extractSubmissionMethod(input: ExtractorInput): ExtractedFieldOr
         value: p.value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -268,6 +332,7 @@ export function extractPageLimit(input: ExtractorInput): ExtractedFieldOrMissing
         value: n,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: "HIGH",
       });
       break;
@@ -300,6 +365,7 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
         value: days,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: "HIGH",
       });
       break;
@@ -328,6 +394,7 @@ export function extractBidBondAmount(input: ExtractorInput): ExtractedFieldOrMis
           value: { amount, currency },
           sourceQuote: captureAround(text, m.index, m[0].length),
           sourceFile: file?.fileName ?? null,
+          sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
           confidence: currency ? "HIGH" : "MEDIUM",
         });
         continue;
@@ -343,6 +410,7 @@ export function extractBidBondAmount(input: ExtractorInput): ExtractedFieldOrMis
         value: { amount: 0, currency: "PERCENT" },
         sourceQuote: captureAround(text, pm.index, pm[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: "MEDIUM",
       });
     }
@@ -367,6 +435,7 @@ export function extractNumberOfCopies(input: ExtractorInput): ExtractedFieldOrMi
       value: n,
       sourceQuote: captureAround(text, m.index, m[0].length),
       sourceFile: file?.fileName ?? null,
+      sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
       confidence: "HIGH",
     });
   }
@@ -390,6 +459,7 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
         value: true,
         sourceQuote: captureAround(text, req.index, req[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, req.index, file?.totalPages),
         confidence: "HIGH",
       });
       continue;
@@ -401,6 +471,7 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
         value: false,
         sourceQuote: captureAround(text, opt.index, opt[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, opt.index, file?.totalPages),
         confidence: "HIGH",
       });
       continue;
@@ -414,6 +485,7 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
         value: false,
         sourceQuote: captureAround(text, mention.index, mention[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, mention.index, file?.totalPages),
         confidence: "LOW",
       });
     }
@@ -483,6 +555,7 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -500,6 +573,7 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
             value: value.slice(0, 200),
             sourceQuote: trimQuote(m2[1]),
             sourceFile: file?.fileName ?? null,
+            sourcePage: computePageNumber(text, m2.index ?? 0, file?.totalPages),
             confidence: "MEDIUM",
           });
         }
@@ -534,6 +608,7 @@ export function extractSubmissionAddress(input: ExtractorInput): ExtractedFieldO
         value: raw.slice(0, 300),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -572,6 +647,7 @@ export function extractClientContactEmail(input: ExtractorInput): ExtractedField
         value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -603,6 +679,7 @@ export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldO
         value: d,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       };
     }
@@ -631,6 +708,7 @@ export function extractDonorAgency(input: ExtractorInput): ExtractedFieldOrMissi
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -660,6 +738,7 @@ export function extractImplementingAgency(input: ExtractorInput): ExtractedField
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -689,6 +768,7 @@ export function extractLegalClientName(input: ExtractorInput): ExtractedFieldOrM
         value: value.slice(0, 200),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -718,6 +798,7 @@ export function extractClientContactName(input: ExtractorInput): ExtractedFieldO
         value: value.slice(0, 100),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -747,6 +828,7 @@ export function extractClientContactTitle(input: ExtractorInput): ExtractedField
         value: value.slice(0, 80),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -776,6 +858,7 @@ export function extractClientContactPhone(input: ExtractorInput): ExtractedField
         value: value.slice(0, 30),
         sourceQuote: trimQuote(line),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: "HIGH",
       });
       break;
@@ -806,6 +889,7 @@ export function extractClientAddress(input: ExtractorInput): ExtractedFieldOrMis
         value,
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -836,6 +920,7 @@ export function extractCountry(input: ExtractorInput): ExtractedFieldOrMissing<s
       value: canonical,
       sourceQuote: captureAround(text, m.index, m[0].length),
       sourceFile: file?.fileName ?? null,
+      sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
       confidence: "HIGH",
     });
   }
@@ -863,6 +948,7 @@ export function extractClientCity(input: ExtractorInput): ExtractedFieldOrMissin
         value: value.slice(0, 100),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;
@@ -893,6 +979,7 @@ export function extractClientWebsite(input: ExtractorInput): ExtractedFieldOrMis
         value: value.slice(0, 300),
         sourceQuote: captureAround(text, m.index, m[0].length),
         sourceFile: file?.fileName ?? null,
+        sourcePage: computePageNumber(text, m?.index ?? 0, file?.totalPages),
         confidence: p.confidence,
       });
       break;

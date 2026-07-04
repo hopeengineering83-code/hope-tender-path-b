@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import type { CanonicalFieldState, CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
 
@@ -147,6 +148,7 @@ function FieldActionMenu({
 }
 
 export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
+  const router = useRouter();
   const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -225,6 +227,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
       setEditing(null);
       setEditValue("");
       await load();
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {

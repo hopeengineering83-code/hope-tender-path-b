@@ -39,6 +39,7 @@ function goodInput(overrides: Partial<GenerationReadinessInput> = {}): Generatio
     // BuildPlan enforcement is fail-closed: default to true so the "good"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true,
+    confirmedBuildPlanItemsValid: true,
     confirmedPlanDocumentsOk: true,
     recordedBuildPlanState: "VALID" as const,
     ...overrides,

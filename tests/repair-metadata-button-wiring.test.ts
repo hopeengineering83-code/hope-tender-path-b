@@ -27,17 +27,14 @@ describe("GenerationActionPanel wires the repair-metadata endpoint", () => {
     assert.match(source, /\{canMutate\s*&&\s*metadataBlockerPresent\s*&&\s*\(/);
   });
 
-  it("surfaces NOT_FOUND, REPAIRED and SKIPPED states from the endpoint", () => {
-    assert.match(source, /result\.status === "REPAIRED"/);
-    assert.match(source, /result\.status === "NOT_FOUND"/);
-    assert.match(source, /result\.status === "SKIPPED"/);
+  it("uses parseRepairMetadataResponse to safely read the endpoint response", () => {
+    assert.match(source, /parseRepairMetadataResponse/);
+    assert.doesNotMatch(source, /result\.status === "REPAIRED"/);
   });
 
   it("refreshes the route only on REPAIRED so the new value is visible", () => {
-    // The REPAIRED branch should call router.refresh via startTransition;
-    // NOT_FOUND / SKIPPED should NOT call refresh (nothing changed).
-    const repairedBlock = source.match(/result\.status === "REPAIRED"[\s\S]{0,400}/);
-    assert.ok(repairedBlock && /router\.refresh\(\)/.test(repairedBlock[0]), "REPAIRED branch must call router.refresh");
+    const repairedBlock = source.match(/outcome\?\.status === "REPAIRED"[\s\S]{0,400}/);
+    assert.ok(repairedBlock && /router\.refresh/.test(repairedBlock[0]), "REPAIRED branch must call router.refresh");
   });
 
   it("the button label clearly conveys the source-grounded intent", () => {

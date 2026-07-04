@@ -22,6 +22,7 @@ describe("Section C release safety", () => {
     // BuildPlan enforcement is fail-closed: default to true so the "passing"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true as boolean | undefined,
+    confirmedBuildPlanItemsValid: true as boolean | undefined,
     confirmedPlanDocumentsOk: true as boolean | undefined,
     exportReadyDocumentCount: 1,
   };

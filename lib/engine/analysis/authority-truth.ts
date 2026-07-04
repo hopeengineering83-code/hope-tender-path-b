@@ -1,7 +1,8 @@
 import { PrismaClient } from "@prisma/client";
 import { runAuthorityReview, AuthorityReviewResult } from "../authority-review";
 import { resolveTenderAnalysisState } from "../analysis-state-resolver";
-import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
+import { deriveSubmissionPlanStatus } from "../submission-plan";
 
 export type AuthorityTruthStatus =
   | "NOT_ASSESSED"
@@ -31,8 +32,14 @@ export async function resolveAuthorityTruth(
   if (!tender) throw new Error("Tender not found");
 
   const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
-  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
-  const planStatus = deriveSubmissionPlanStatus(tender, plan);
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
+  // A current CONFIRMED BuildPlan IS the verified plan. The
+  // tender.status === "PLAN_APPROVED" branch inside deriveSubmissionPlanStatus
+  // is unreachable in production (not a TENDER_STATUSES value, never written),
+  // so authority readiness keys on the confirmed plan itself.
+  const planStatus = confirmedPlan.ok ? "CANONICAL_APPROVED" : deriveSubmissionPlanStatus(tender, plan);
 
   const hasDocs = tender.generatedDocuments.length > 0;
   const planVerified = planStatus === "CANONICAL_APPROVED";

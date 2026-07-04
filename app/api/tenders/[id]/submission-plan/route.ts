@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
@@ -80,10 +81,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // export-readiness and admin audit routes that intentionally inspect bytes.
     const qualityFailedIds = new Set<string>();
 
+    // AUTHORITATIVE: when a current confirmed Build Plan exists, completeness
+    // is computed against ITS items so this panel can never disagree with the
+    // plan the generation/export gates enforce.
+    const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
     const report = resolveSubmissionPlanCompleteness({
       tender,
       generatedDocuments: tender.generatedDocuments.map((doc) => ({ ...doc, fileContent: null })),
       qualityFailedIds,
+      confirmedPlanItems: confirmedPlan.ok ? confirmedPlan.items : null,
     });
 
     return NextResponse.json({

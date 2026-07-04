@@ -7,7 +7,7 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -28,7 +28,7 @@ import { resolveCanonicalFieldState } from "../../../../../lib/engine/canonical-
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isCriticalField } from "../../../../../lib/engine/tender-policy-registry";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
-import { buildDraftBuildPlan } from "../../../../../lib/engine/build-plan";
+import { buildDraftBuildPlan, getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 // hasValidSubmissionPlan was REMOVED — GeneratedDocument rows must never be
 // used as a BuildPlan proxy. The authoritative plan check is enforced by
 // assertTenderReadyForGenerationAndExport (hasCurrentConfirmedBuildPlan +
@@ -249,7 +249,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     include: {
       requirements: true,
       files: {
-        select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
+        select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, deletionStatus: true },
       },
     },
   });
@@ -600,18 +600,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ...tender,
           submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
           clientContactEmail: (tender as any).clientContactEmail ?? null,
+          // Per-field source-evidence columns — forward ALL of them so the
+          // canonical resolver can ground every critical field, not just
+          // clientName/submissionMethod. Without these, title/deadline/
+          // reference/submissionAddress/submissionEmails can never be
+          // GROUNDED in the generate route even when the DB has the evidence.
           clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
           clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+          clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+          titleSourcePage: (tender as any).titleSourcePage ?? null,
+          titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+          titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+          deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+          deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+          deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
           submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
           submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+          submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
           submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
           submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+          submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
           submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
+          submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+          submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
           contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
         } as any,
         overrides: overrides as any[],
         hasExtractedRequirements: tender.requirements.length > 0,
         submissionMethodContext: tender.submissionMethod ?? undefined,
+        // Enforce active-file grounding: a fileId pointing to a
+        // deleted/superseded TenderFile must NOT count as GROUNDED.
+        activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
       });
       const policyCtx = { submissionMethod: tender.submissionMethod };
       const missingCritical: string[] = canonicalState.fields
@@ -848,8 +867,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const submissionPlan = buildSubmissionPlanWithDerivedFallback({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements, submissionMethod: tender.submissionMethod, tenderCategory: tender.category, analysisExtractionStatus: tender.analysisExtractionStatus });
-  const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
+  // AUTHORITATIVE: the generation reconciliation scope (which files control
+  // fill/missing/extra checks) comes from the current CONFIRMED BuildPlan
+  // only — never from a derived heuristic plan. The central gate below
+  // (purpose "generate") independently blocks when no current confirmed plan
+  // exists, so an empty scope here never authorizes anything.
+  const confirmedPlanForRun = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+  const submissionPlan = { files: confirmedPlanForRun.ok ? confirmedPlanForRun.items : [], warnings: [] as string[] } as any;
+  const explicitSubmissionScope = confirmedPlanForRun.ok;
   const plannedTargetFiles = explicitSubmissionScope ? plannedSubmissionTargetFiles(submissionPlan) : [];
   const plannedFileKeys = explicitSubmissionScope ? plannedSubmissionTargetKeys(submissionPlan) : undefined;
 
@@ -913,6 +938,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       planBuilt: true,
       planOnlyDryRun: true,
+      virtualOnly: true,
       authorizesGeneration: false,
       planRowsCreated,
       plannedFileCount: plannedFiles.length,

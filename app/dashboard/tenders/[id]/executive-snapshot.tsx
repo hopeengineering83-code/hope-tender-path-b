@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
+import { findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, type SubmissionPlan, type SubmissionPlanFile } from "@/lib/engine/submission-plan";
 import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
 import { detectAnalysisSource } from "@/lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
@@ -98,18 +98,15 @@ function bidOutcomeBadgeClass(outcome: string): string {
   return "bg-amber-100 text-amber-700 border-amber-200";
 }
 
-export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: TenderLike; canonicalReadiness?: CanonicalTenderReadiness | null }) {
+export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanItems }: { tender: TenderLike; canonicalReadiness?: CanonicalTenderReadiness | null; confirmedPlanItems?: SubmissionPlanFile[] | null }) {
   const requirements = tender.requirements ?? [];
   const gaps = tender.complianceGaps ?? [];
   const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
-  const submissionPlan = buildSubmissionPlan({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements,
-  });
+  // AUTHORITATIVE: dashboard planned-doc counts come from the current
+  // CONFIRMED BuildPlan only. Without one there are no trusted planned counts
+  // (the totals fall back to actual generated documents below) — a derived
+  // plan here would show numbers the gates do not enforce.
+  const submissionPlan = { files: confirmedPlanItems ?? [], warnings: [] as string[] } as SubmissionPlan as any;
   const missingPlannedDocs = findMissingGeneratedDocuments(submissionPlan, generatedDocs);
   const extraGeneratedDocs = findExtraGeneratedDocuments(submissionPlan, generatedDocs);
   const plannedDocCount = submissionPlanFileCount(submissionPlan);

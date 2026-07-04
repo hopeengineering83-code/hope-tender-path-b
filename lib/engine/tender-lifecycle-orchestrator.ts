@@ -21,6 +21,7 @@
 //   → EXPORT_READINESS_BLOCKED → EXPORT_READY → ZIP_READY
 
 import type { PrismaClient } from "@prisma/client";
+import { getCurrentConfirmedBuildPlan } from "./build-plan";
 import { assessExtractionQuality } from "../extraction-quality";
 import {
   isExtractionAcceptableForGeneration,
@@ -475,9 +476,13 @@ export async function computeTenderLifecycle(
     validationStatus: d.validationStatus ?? "",
     reviewStatus: d.reviewStatus ?? "",
   }));
+  // AUTHORITATIVE: lifecycle counts follow the confirmed Build Plan when one
+  // exists so dashboard counts cannot disagree with the gates.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId ?? "");
   const plan = resolveSubmissionPlanCompleteness({
     tender: tenderLike,
     generatedDocuments: docsSnap,
+    confirmedPlanItems: confirmedPlan.ok ? confirmedPlan.items : null,
   });
 
   // ── Derived counts ─────────────────────────────────────────────────────────

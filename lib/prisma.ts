@@ -1152,6 +1152,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_tenderFileId_key" ON "ExtractionQualityOverride"("tenderId", "tenderFileId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderId_idx" ON "ExtractionQualityOverride"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ExtractionQualityOverride_tenderFileId_idx" ON "ExtractionQualityOverride"("tenderFileId")`,
+
     `CREATE INDEX IF NOT EXISTS "BuildPlan_contentHash_idx" ON "BuildPlan"("contentHash")`,
   ];
   for (const sql of idxStatements) {
@@ -1204,6 +1205,40 @@ async function bootstrap(client: PrismaClient): Promise<void> {
       logger.warn("[bootstrap] FK constraint skipped:", { detail: e instanceof Error ? e.message : e });
     }
   }
+
+  // SubmissionPlanRevision: audit trail of plan revisions (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanRevision" (
+    "id" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "status" TEXT NOT NULL,
+    "contentHash" TEXT NOT NULL,
+    "itemsJson" TEXT NOT NULL,
+    "validationJson" TEXT,
+    "builtById" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SubmissionPlanRevision_pkey" PRIMARY KEY ("id")
+  )`);
+  // SubmissionPlanItem: individual items in a plan revision (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanItem" (
+    "id" TEXT NOT NULL,
+    "revisionId" TEXT NOT NULL,
+    "exactFileName" TEXT NOT NULL,
+    "exactOrder" INTEGER NOT NULL,
+    "documentType" TEXT,
+    "format" TEXT,
+    CONSTRAINT "SubmissionPlanItem_pkey" PRIMARY KEY ("id")
+  )`);
+  // RequirementEvidenceDecision: evidence approval decisions (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "RequirementEvidenceDecision" (
+    "id" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "requirementId" TEXT,
+    "decision" TEXT NOT NULL,
+    "decidedById" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "RequirementEvidenceDecision_pkey" PRIMARY KEY ("id")
+  )`);
 
   // ── seed roles ────────────────────────────────────────────────────────────
   const roleCount = await client.role.count();
@@ -1282,3 +1317,4 @@ export const prismaReady: PromiseLike<void> = {
     return ensureBootstrapped().then(onfulfilled, onrejected);
   },
 };
+

@@ -6,6 +6,7 @@ import { ensureCompanyForUser } from "./company-workspace";
 import { assessExtractionQuality } from "./extraction-quality";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
 import { inferTenderMetadata } from "./engine/tender-metadata";
+import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
@@ -236,7 +237,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         },
       });
 
-      const fileRecords: Array<{ id: string; originalFileName: string }> = [];
+      const fileRecords: Array<{ id: string; originalFileName: string; totalPages: number | null }> = [];
       for (const upload of storedUploads) {
         const metrics = deriveFileExtractionMetrics(upload.extractedText);
         fileRecords.push(await tx.tenderFile.create({
@@ -257,12 +258,40 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             extractionScore: metrics.extractionScore,
             extractionMethod: metrics.extractionMethod,
           },
-          select: { id: true, originalFileName: true },
+          select: { id: true, originalFileName: true, totalPages: true },
         }));
       }
 
       return { tender, fileRecords };
     }, { timeout: 30_000 });
+
+  // Enrich source evidence: locate each critical field value in the uploaded
+  // files' extracted text and persist the fileId + page + quote so the
+  // canonical resolver can mark them as EXTRACTED_AND_GROUNDED. Without this,
+  // fresh tenders have zero grounded metadata until AI Analyze or
+  // repair-metadata is run. The file IDs are available now (after the
+  // transaction committed); we run a targeted update with only the evidence
+  // columns that were found.
+  const enrichmentFiles = persisted.fileRecords.map((fr, i) => ({
+    id: fr.id,
+    extractedText: storedUploads[i]?.extractedText ?? null,
+    deletionStatus: "ACTIVE" as const,
+    totalPages: fr.totalPages,
+  }));
+  const enrichment = enrichMetadataWithSourceEvidence({
+    title: persisted.tender.title,
+    reference: persisted.tender.reference,
+    clientName: persisted.tender.clientName,
+    deadline: persisted.tender.deadline,
+    submissionMethod: persisted.tender.submissionMethod,
+    submissionAddress: persisted.tender.submissionAddress,
+    submissionEmails: persisted.tender.submissionEmails,
+    submissionEmailSubject: persisted.tender.submissionEmailSubject,
+    existingContactDetailsSourceJson: persisted.tender.contactDetailsSourceJson ?? null,
+  }, enrichmentFiles);
+  if (Object.keys(enrichment).length > 0) {
+    await prisma.tender.update({ where: { id: tenderId }, data: enrichment as Record<string, unknown> });
+  }
 
     for (const fileRecord of persisted.fileRecords) {
       const upload = storedUploads.find((item) => item.originalFileName === fileRecord.originalFileName);

@@ -496,7 +496,7 @@ export function getProviderModel(
         : entry.env.proposalModel;
 
   // Z.ai uses a dedicated resolver that validates endpoint/model compatibility.
-  // Coding Plan keys (open.bigmodel.cn) only support glm-4-coding/glm-4v-coding.
+  // Coding Plan keys only support glm-4-coding/glm-4v-coding.
   // General API keys (api.z.ai) only support glm-4-flash/glm-4-flashx.
   // Invalid configurations are skipped before consuming an attempt.
   if (provider === "zai") return resolveZaiConfiguration(useCase, env).model;
@@ -515,7 +515,7 @@ export function getProviderModel(
 // ─── Z.ai Configuration Resolver ────────────────────────────────────
 // Z.ai has two distinct API products with different endpoints and models:
 //   1. General API (api.z.ai) — glm-4-flash, glm-4-flashx
-//   2. Coding Plan (open.bigmodel.cn) — glm-4-coding, glm-4v-coding
+//   2. Coding Plan () — glm-4-coding, glm-4v-coding
 // Mixing a Coding Plan key with the General endpoint (or vice versa)
 // produces HTTP 400 code 1211 "Unknown Model". This resolver detects the
 // plan type from the base URL and validates the model/endpoint pairing
@@ -535,7 +535,7 @@ export type ZaiConfigurationResult = {
 
 const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 // Z.ai support confirmed: Coding Plan keys use the SAME endpoint as General API
-// (api.z.ai). The open.bigmodel.cn endpoint is a DIFFERENT platform (Zhipu AI)
+// (api.z.ai). The  endpoint is a DIFFERENT platform (Zhipu AI)
 // that does NOT accept Z.ai Coding Plan keys. Both plans share the same URL.
 const ZAI_CODING_PLAN_BASE_URL = "https://api.z.ai/api/paas/v4";
 const ZAI_GENERAL_MODELS = new Set(["glm-4-flash", "glm-4-flashx"]);

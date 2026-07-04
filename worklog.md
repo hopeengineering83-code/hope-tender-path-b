@@ -486,3 +486,373 @@ Stage Summary:
   is read directly for hashing. The hash and the gate use the SAME resolver
   output — zero possibility of divergence.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: repair-deadline-reference-regression
+Agent: main (Super Z / GLM)
+Task: User reported that the latest code (commit 261402cd) "improves source-page extraction, but reintroduces the deadline grounding bypass and still cannot fully ground reference evidence with a durable active TenderFile ID." Fix both defects.
+
+Work Log:
+- Verified the regression by reading the route at HEAD (261402cd): the
+  CRITICAL_SOURCE_GROUNDED_FIELDS block (which commit 544aa6ba had placed
+  BEFORE the type dispatch) had been removed; durable source grounding was
+  moved INSIDE the `else` (string fields) branch. The `else if (field ===
+  "deadline")` branch went straight to (updates)[field] = dt and bypassed
+  durableFileId resolution, the activeFileIds.has check, the source-quote
+  length check, and verifySourceQuote containment. This was exactly the
+  bug 544aa6ba had fixed.
+- Verified the second issue: reference evidence was persisted via
+  contactDetailsSourceJson with only { page, quote } (no fileId). The
+  canonical resolver's getSourceEvidence() returned fileId: null for any
+  contact-sourced field. isGroundedEvidenceWithFileCheck() requires a
+  non-null fileId that points to an active TenderFile, so reference could
+  NEVER achieve EXTRACTED_AND_GROUNDED in any production caller (generate
+  route, generation-readiness-gate, final-submission-readiness, build-plan-
+  hash all pass activeTenderFileIds).
+
+FIX 1 — Deadline source-grounding bypass (route.ts):
+- Restored the CRITICAL_SOURCE_GROUNDED_FIELDS block BEFORE the type
+  dispatch. All 7 critical fields (clientName, title, deadline,
+  submissionMethod, submissionAddress, submissionEmails, reference) now
+  go through durableFileId resolution, active-file check, source-quote
+  length check, and verifySourceQuote containment BEFORE the bidBondAmount
+  / deadline / string-field type dispatch.
+- Removed the duplicate source-grounding block from the `else` (string
+  fields) branch — it is now a comment pointing to the pre-dispatch block.
+- The deadline branch (else if) no longer re-resolves or re-checks
+  anything; it inherits durableFileId from the pre-dispatch block.
+
+FIX 2 — Reference evidence fileId (route.ts + canonical-field-state.ts):
+- route.ts: the reference evidence persistence block now writes
+  fileId: durableFileId alongside page and quote in the
+  procurementReferenceNumber entry of contactDetailsSourceJson.
+- canonical-field-state.ts: parseContactDetailsSource() now reads fileId
+  from each entry (string and non-empty, else null). The return type was
+  widened to include fileId: string | null.
+- canonical-field-state.ts: getSourceEvidence() now returns ce.fileId
+  (not hardcoded null) for contact-sourced fields. The signature was
+  widened to accept the fileId-inclusive contactDetails map.
+
+REGRESSION TESTS (tests/repair-deadline-reference-grounding.test.ts, 15 tests):
+- Source-inspection (5 tests): CRITICAL_SOURCE_GROUNDED_FIELDS contains
+  all 7 critical fields; the check runs BEFORE the type dispatch; the
+  deadline branch does NOT re-resolve durableFileId / call verifySourceQuote
+  / check activeFileIds.has; the else branch does NOT duplicate source
+  grounding; the reference evidence block writes fileId: durableFileId.
+- Source-inspection (2 tests): parseContactDetailsSource reads fileId;
+  getSourceEvidence returns ce.fileId (and the old buggy fileId: null
+  line is gone).
+- Behavioral (5 tests): reference with valid fileId in activeTenderFileIds
+  → EXTRACTED_AND_GROUNDED; reference with fileId NOT in activeTenderFileIds
+  → NOT EXTRACTED_AND_GROUNDED, isGrounded=false; reference with fileId
+  omitted (legacy contactDetailsSourceJson) → blocked when activeTenderFileIds
+  enforced; reference with valid fileId but no page → blocked; reference
+  with valid fileId but quote too short → blocked.
+- Behavioral (3 tests): deadline with valid fileId + page + quote →
+  EXTRACTED_AND_GROUNDED; deadline with fileId NOT in activeTenderFileIds
+  → blocked; deadline with null fileId → blocked when activeTenderFileIds
+  enforced (this is the exact state the bypass used to produce).
+
+Verification:
+- npx tsc --noEmit: PASS
+- npx eslint (changed files): PASS
+- New regression tests: 15/15 PASS
+- Related tests (canonical-field-state-behavioral, canonical-field-state-
+  resolver, canonical-field-grounding, canonical-contamination-grounding,
+  grounding-and-buildplan-enforcement, repair-source-grounding, metadata-
+  contamination-and-repair-route): 136/136 PASS
+- npm test (full suite): 4836/4842 PASS — the 6 failures are pre-existing
+  DB-integration tests (ai-promotion-evidence-persistence, build-plan-db-
+  integration, build-plan-route-integration, database-safety-integration,
+  metadata-evidence-proof, unified-snapshot-integration) that require a
+  real Postgres instance and fail identically on the prior HEAD 261402cd
+  (verified by stashing my changes and re-running).
+- prisma validate: blocked by .env (DATABASE_URL=SQLite) — not a code issue.
+- next build: blocked by .env (SESSION_SECRET missing) — not a code issue.
+
+Stage Summary:
+- Both user-reported regressions are fixed.
+- Deadline source-grounding bypass: CLOSED. The CRITICAL_SOURCE_GROUNDED_FIELDS
+  block is back BEFORE the type dispatch; the deadline branch inherits
+  grounding from it.
+- Reference evidence fileId: CLOSED. The repair route persists fileId in
+  contactDetailsSourceJson; the canonical resolver reads it and returns it
+  from getSourceEvidence; reference can now achieve EXTRACTED_AND_GROUNDED
+  when fileId is in activeTenderFileIds.
+- 15 new regression tests pin both contracts (source-inspection + behavioral).
+- NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: deep-fix-contact-details-file-id
+Agent: main (Super Z / GLM)
+Task: User said "Go deep and fix all". Deep audit of every contactDetailsSourceJson consumer and every resolveCanonicalFieldState caller; fix all gaps.
+
+Work Log:
+- Set up local PostgreSQL 16.4 (found at /tmp/pg-extract/bin/) on port 5434
+  with all migrations applied via `prisma migrate reset`. This let me run
+  the FULL test suite including the 6 DB-integration tests that previous
+  sessions had to skip. All 4876 tests pass with proper DB + migrations.
+- Audited every file that reads or writes contactDetailsSourceJson (via
+  subagent). Found 3 high-priority gaps:
+
+GAP 1: lib/engine/analysis/metadata-truth.ts had a SEPARATE duplicate parser
+  (parseContactEvidence) that didn't extract fileId. Worse, its evidenceByField
+  map didn't include title, deadline, or reference — it explicitly said
+  "Fields without a source column have NO evidence and can therefore never be
+  GROUNDED". But title and deadline DO have dedicated source columns (added by
+  migration 20260702000000), and reference evidence is now persisted via
+  contactDetailsSourceJson (commit 6f549591). So the Metadata Truth panel
+  could NEVER show title/deadline/reference as GROUNDED, even when the DB had
+  the evidence.
+  FIX: FieldEvidence type widened to include fileId; parseContactEvidence reads
+  fileId; hasGroundingEvidence uses isGroundedEvidenceWithFileCheck when
+  activeTenderFileIds is in scope; SELECT now includes titleSource*, deadlineSource*,
+  submissionEmailSourceQuote, all *SourceFileId columns, AND active files;
+  evidenceByField now includes title, deadline, reference, and fileId for every
+  field with a dedicated *SourceFileId column.
+
+GAP 2: app/api/tenders/[id]/generate/route.ts didn't pass activeTenderFileIds
+  to resolveCanonicalFieldState, AND didn't forward titleSource*, deadlineSource*,
+  *SourceFileId, or submissionEmailSourceQuote columns. Consequence: even with
+  the fileId fix from 6f549591, the generate route's canonical state couldn't
+  enforce active-file grounding, and title/deadline could never be GROUNDED in
+  the generate route even when the DB had the evidence.
+  FIX: the route now forwards ALL source-evidence columns AND passes
+  activeTenderFileIds: new Set((tender.files ?? []).map(f => f.id)).
+
+GAP 3: lib/ai.ts chunk-merge logic could silently unground reference. The
+  "best wins" merge checked only page !== null || quote !== null. If a user
+  repaired reference (writing { page, quote, fileId }) and then re-ran AI
+  Analyze, the AI's { page, quote } (no fileId — AI never emits fileId) could
+  overwrite the repaired entry — losing the fileId and ungrounding reference.
+  FIX: the merge now constructs a new entry that preserves
+  fileId: val.fileId ?? existing?.fileId ?? null. Covers all 3 directions.
+
+Type/comment cleanups:
+  - lib/ai.ts:1485 — contactDetailsSource type widened to include fileId.
+  - lib/engine/tender-metadata.ts:43 — same widening on TenderMetadata type.
+  - lib/engine/tender-metadata.ts:103 — same widening on sourceMap return type.
+  - prisma/schema.prisma:372-377 — comment mentions fileId and procurementReferenceNumber.
+
+Regression tests (tests/deep-fix-contact-details-file-id.test.ts, 23 tests):
+  - 9 source-inspection tests for metadata-truth.ts (FieldEvidence type,
+    parseContactEvidence, isGroundedEvidenceWithFileCheck import,
+    hasGroundingEvidence, SELECT columns, evidenceByField, fileId threading,
+    activeTenderFileIds).
+  - 4 source-inspection tests for generate route (activeTenderFileIds, title
+    columns, deadline columns, fileId + quote columns).
+  - 3 source-inspection tests for lib/ai.ts (type, merge logic, merge result).
+  - 3 source-inspection tests for type definitions across codebase.
+  - 4 behavioral tests for merge-preservation (3 directions + no-invention).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+  - npx tsc --noEmit: PASS
+  - npx eslint . --max-warnings 0: PASS
+  - npx prisma validate: PASS
+  - npx next build: PASS
+  - RUN_DB_INTEGRATION=true npm test: 4899/4899 PASS (4876 from prior commit +
+    23 new). The 6 previously-"pre-existing" DB-integration failures now ALL
+    PASS with proper DB + migrations, confirming they were env-related, not
+    code-related.
+
+Stage Summary:
+- All 3 high-priority gaps closed.
+- Metadata Truth panel can now GROUND title, deadline, and reference (previously
+  impossible even when the DB had the evidence).
+- Generate route now enforces active-file grounding for ALL critical fields
+  (previously only enforced page+quote, and omitted title/deadline/fileId
+  columns entirely).
+- AI re-runs no longer silently unground reference (fileId preserved through
+  the merge).
+- Type definitions across the codebase are now consistent (fileId included).
+- 23 new regression tests pin every contract.
+- NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: resolver-caller-source-evidence-fix
+Agent: main (Super Z / GLM)
+Task: Continue fixing remaining gaps genuinely — audit every canonical-resolver caller and every metadata-evidence writer.
+
+Work Log:
+- Audited every caller of resolveCanonicalFieldState and every writer of
+  metadata source evidence (via two subagents). Found 4 high-priority gaps
+  in resolver callers + 2 structural gaps in writers (documented as known
+  limitations, not fixed in this commit).
+
+GAPS FIXED (resolver callers):
+
+1. lib/engine/final-submission-readiness.ts — SELECT and resolver call both
+   omitted title/deadline/submissionEmailSourceQuote columns. Through the
+   export/ZIP gate, title/deadline/submissionEmails could never reach
+   EXTRACTED_AND_GROUNDED — always EXTRACTED_UNVERIFIED with evidenceReviewNeeded.
+   FIX: SELECT now includes titleSource*, deadlineSource*,
+   submissionEmailSourceQuote; resolver call forwards all of them with ?? null.
+
+2. lib/engine/tender-release-snapshot.ts — same gap, but HIGHER IMPACT because
+   the snapshot is the canonical UI source ("all panels read from this snapshot
+   or its exact server-derived sub-payload"). Every UI panel that reads the
+   snapshot saw title/deadline/submissionEmails as ungrounded even when the DB
+   had the evidence — directly contradicting the resolver's design goal of
+   "the same tender field must NEVER be green in one panel and invalid in another".
+   FIX: SELECT + resolver call now include title/deadline/submissionEmailSourceQuote.
+
+3. lib/engine/build-plan-hash.ts — activeTenderFileIds was NOT filtered to
+   deletionStatus=ACTIVE. Currently safe only because the sole caller
+   (computeTenderBuildPlanHash) pre-filters files. But the function's own type
+   doc says callers can pass the full file list — a latent gap if a future
+   caller passes unfiltered files (deleted-file evidence would count as GROUNDED).
+   FIX: activeTenderFileIds now filters to deletionStatus=ACTIVE inside the
+   function (defense-in-depth).
+
+4. app/api/tenders/[id]/route.ts — TENDER_DASHBOARD_SELECT omitted 9
+   source-evidence columns (clientNameSourceFileId, titleSource*,
+   deadlineSource*, submissionMethodSourceFileId, submissionAddressSourceFileId,
+   submissionEmailSourceFileId, submissionEmailSourceQuote) AND files.deletionStatus.
+   Client panels could not reconstruct active-file grounding state.
+   FIX: TENDER_DASHBOARD_SELECT now includes all source-evidence columns;
+   files select includes deletionStatus.
+
+CONSISTENCY FIX:
+- lib/engine/tender-metadata.ts sourceMap() — local `out` type was missing
+  fileId. Now explicitly writes fileId: null for each entry (the regex
+  extractors don't produce fileId — only AI Analyze + repair-metadata do).
+  This makes the shape consistent with the widened return type.
+
+KNOWN LIMITATIONS (documented, not fixed — structural refactors):
+- re-extract-metadata route: combines all files into one combinedText blob,
+  so per-file attribution is impossible. Re-extracted values are persisted
+  as bare scalars with zero source evidence → EXTRACTED_UNVERIFIED forever.
+  Fixing this requires refactoring inferTenderMetadata to return per-field
+  source evidence (fileId, page, quote) — a substantial change.
+- tender-upload-first route: same combinedText pattern. Fresh tenders have
+  zero grounded metadata until AI Analyze (grounds 6 of 7 critical fields)
+  or repair-metadata (grounds all 7) is run. The file IDs ARE available
+  after the transaction commits but are not used for source attribution.
+- ai-analyze route: AI never emits fileId (it sees extracted text only, not
+  TenderFile IDs). Reference evidence via contactDetailsSourceJson has no
+  fileId until repair-metadata is called. The lib/ai.ts merge logic now
+  preserves fileId if it exists, but AI cannot create one.
+- metadata-override route: by design does not write source evidence —
+  overrides confirm existing evidence. If no prior evidence exists, the
+  override stays MANUAL_CONFIRMED (blocked).
+
+Regression tests (tests/resolver-caller-source-evidence.test.ts, 9 tests):
+- final-submission-readiness: 3 tests (SELECT columns, resolver call forwards,
+  activeTenderFileIds filtered to ACTIVE).
+- tender-release-snapshot: 3 tests (SELECT columns, resolver call forwards,
+  activeTenderFileIds from activeFiles).
+- build-plan-hash: 1 test (activeTenderFileIds filters to ACTIVE; old
+  unfiltered construction removed).
+- route.ts TENDER_DASHBOARD_SELECT: 2 tests (all source-evidence columns,
+  files.deletionStatus).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+- npx tsc --noEmit: PASS
+- npx eslint . --max-warnings 0: PASS
+- npx next build: PASS
+- RUN_DB_INTEGRATION=true npm test: 4908/4908 PASS (4899 from prior commit +
+  9 new).
+
+Stage Summary:
+- All 4 resolver-caller gaps closed.
+- Final-submission-readiness, tender-release-snapshot, build-plan-hash, and
+  the dashboard GET route now all forward every source-evidence column AND
+  pass activeTenderFileIds filtered to ACTIVE files.
+- The Metadata Truth panel, export gate, ZIP gate, release snapshot, build
+  plan hash, and dashboard now all see IDENTICAL grounding state for every
+  critical field — no more "grounded in one panel, ungrounded in another".
+- 9 new regression tests pin the contracts.
+- Known structural limitations (re-extract, upload-first, ai-analyze reference
+  fileId) documented for future refactors.
+- NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: metadata-source-enrichment
+Agent: main (Super Z / GLM)
+Task: Fix all remaining gaps — close the structural limitations in re-extract-metadata, tender-upload-first, and ai-analyze reference fileId.
+
+Work Log:
+- Created lib/engine/metadata-source-enrichment.ts — a new module that locates
+  each critical field's value inside an active file's extracted text and
+  produces the source-evidence columns (fileId, page, quote) the canonical
+  resolver reads. Best-effort: only fields where evidence is found are
+  returned; existing evidence is never overwritten with null.
+- The enrichment handles all 7 critical fields: clientName, title, deadline,
+  submissionMethod, submissionAddress, submissionEmails, and reference (via
+  contactDetailsSourceJson.procurementReferenceNumber with fileId).
+- Page numbers are computed from form feeds (\f) or "Page N" markers; defaults
+  to 1 for single-page documents.
+- Quote context is 200 chars centered on the match.
+- Active files are sorted by id for deterministic attribution.
+
+WIRING 1: re-extract-metadata route
+- After inferTenderMetadata + tryFill, the route now calls
+  enrichMetadataWithSourceEvidence with the update map + tender.files.
+- The enrichment result is Object.assign'd into the update map before
+  prisma.tender.update, so evidence columns are persisted atomically with the
+  scalar values.
+- Previously: re-extracted values were persisted as bare scalars with zero
+  source evidence → EXTRACTED_UNVERIFIED forever.
+- Now: re-extracted values that can be located in an active file's text get
+  full source evidence → can reach EXTRACTED_AND_GROUNDED.
+
+WIRING 2: tender-upload-first route
+- After the transaction commits (so persisted.fileRecords with file IDs are
+  available), the route calls enrichMetadataWithSourceEvidence with the
+  persisted tender values + the file records' IDs and extracted texts.
+- Only updates when enrichment found at least one field (Object.keys(enrichment).length > 0).
+- Previously: fresh tenders had zero grounded metadata until AI Analyze or
+  repair-metadata was run.
+- Now: fresh tenders get grounded metadata at upload time when the regex
+  extractors can locate the values in the uploaded file text.
+
+WIRING 3: ai-analyze reference fileId resolution
+- Added resolveReferenceFileId helper in the ai-analyze route.
+- After BOTH the streaming and non-streaming canonical-write transactions
+  commit, the route calls resolveReferenceFileId(tenderId, files).
+- The helper reads the just-written contactDetailsSourceJson, finds the
+  procurementReferenceNumber entry, resolves its fileId via
+  attributeMetadataSourceFileId on the quote, and updates the JSON entry.
+- Skips when fileId is already set and points to an active file (idempotent).
+- Wrapped in try/catch — non-fatal: if resolution fails, the reference field
+  stays EXTRACTED_UNVERIFIED until repair-metadata is called (analysis still
+  succeeds).
+- Previously: AI emitted { page, quote } for procurementReferenceNumber but
+  never fileId → reference could never be GROUNDED via AI alone.
+- Now: AI-extracted reference evidence is automatically enriched with fileId
+  so it can reach EXTRACTED_AND_GROUNDED after AI Analyze.
+
+Regression tests (tests/metadata-source-enrichment.test.ts, 31 tests):
+- Behavioral (14 tests): locates each critical field; merges reference into
+  existing contactDetailsSourceJson; does NOT set evidence when value not
+  found; does NOT search DELETED files; returns empty for null/empty/short
+  values; computes page from "Page N" markers; sorts active files by id.
+- re-extract wiring (4 tests): imports enrichment; calls before update; passes
+  all critical fields; Object.assigns into update map.
+- upload-first wiring (4 tests): imports enrichment; calls after transaction;
+  uses persisted.fileRecords; guards with Object.keys check.
+- ai-analyze wiring (7 tests): imports attributeMetadataSourceFileId; defines
+  resolveReferenceFileId helper; reads procurementReferenceNumber; resolves
+  fileId via attributeMetadataSourceFileId; skips when already set+active;
+  calls in both streaming and non-streaming paths; persists via
+  prisma.tender.update; wrapped in try/catch (non-fatal).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+- npx tsc --noEmit: PASS
+- npx eslint . --max-warnings 0: PASS
+- npx next build: PASS
+- RUN_DB_INTEGRATION=true npm test: 4939/4939 PASS (4908 from prior commit +
+  31 new).
+
+Stage Summary:
+- All 3 structural gaps closed.
+- re-extract-metadata: re-extracted values now get source evidence at
+  re-extract time (no longer EXTRACTED_UNVERIFIED forever).
+- tender-upload-first: fresh tenders now get grounded metadata at upload time
+  (no longer zero grounded metadata until AI/repair).
+- ai-analyze: AI-extracted reference evidence now gets fileId automatically
+  (no longer requires a follow-up repair-metadata call to ground reference).
+- The metadata-override route gap remains BY DESIGN (overrides confirm
+  existing evidence; they don't create new evidence).
+- 31 new regression tests pin every contract.
+- NOT merged, NOT deployed — awaiting explicit user authorization.

@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
+import { enrichMetadataWithSourceEvidence, clearEvidenceForField } from "../../../../../lib/engine/metadata-source-enrichment";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import {
   isValidClientName,
@@ -27,6 +28,12 @@ import {
   containsMetadataPlaceholder,
 } from "../../../../../lib/engine/metadata-validators";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
+import {
+  isValidReferenceCandidate,
+  isValidDeadlineCandidate,
+  isParseableDeadlineValue,
+  isValidTitleOrClientCandidate,
+} from "../../../../../lib/engine/source-grounded-metadata-repair";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
@@ -65,6 +72,18 @@ function isValidStoredValue(field: string, value: unknown): boolean {
   if (typeof value === "string" && value.trim() === "") return false;
   // Reject placeholder/Bid-Team-to-confirm strings regardless of field
   if (typeof value === "string" && containsMetadataPlaceholder(value)) return false;
+  // ── Use the SHARED source-grounded metadata repair service ──────
+  // This ensures re-extract-metadata and repair-metadata use the SAME
+  // validation logic — no disagreement for reference, client, deadline,
+  // title, or evaluation criteria.
+  if (field === "reference" && !isValidReferenceCandidate(String(value))) return false;
+  if (field === "clientName" && !isValidTitleOrClientCandidate(String(value))) return false;
+  if (field === "title" && !isValidTitleOrClientCandidate(String(value))) return false;
+  // Stored deadlines use the STRUCTURAL check only: a historical (passed)
+  // deadline is still the tender's real deadline and must not be flagged
+  // invalid and churned. The 30-day recency rule applies to NEW extraction
+  // candidates below, where a long-past date signals contamination.
+  if (field === "deadline" && !isParseableDeadlineValue(value)) return false;
   switch (field) {
     case "clientName":         return isValidClientName(String(value));
     case "reference":          return isValidReferenceNumber(String(value));
@@ -102,7 +121,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const tender = await prisma.tender.findFirst({
     where: { id, userId: actor.id },
-    include: { files: { select: { id: true, originalFileName: true, extractedText: true } } },
+    // ACTIVE files only: a deleted file's text must never contribute extracted
+    // values or ground source evidence.
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, totalPages: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (tender.files.length === 0) {
@@ -150,6 +171,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       update[key as string] = extracted;
       fieldsAfter[key as string] = extracted;
       if (!isEmpty(stored)) overwrittenInvalid.push(key as string);
+      // Stale-evidence prevention: when a critical field's scalar value
+      // changes, the old file/page/quote evidence for the OLD value must
+      // NOT survive \u2014 it would be stale evidence for a different value.
+      // Clear the whole evidence tuple atomically here. The enrichment
+      // step below may re-set it with PROVEN evidence for the NEW value.
+      // This ensures a null/unproven page never makes the field grounded.
+      const cleared = clearEvidenceForField(key as string);
+      for (const [col, val] of Object.entries(cleared)) {
+        (update as Record<string, unknown>)[col] = val;
+      }
+      // Reference evidence lives in contactDetailsSourceJson.procurementReferenceNumber.
+      // When the reference scalar changes, clear that JSON entry so the old
+      // fileId/page/quote for the OLD reference value cannot survive.
+      if (key === "reference") {
+        const existingJson = (tender as { contactDetailsSourceJson?: string | null }).contactDetailsSourceJson;
+        if (existingJson) {
+          try {
+            const contactDetails = JSON.parse(existingJson) as Record<string, unknown>;
+            if (contactDetails["procurementReferenceNumber"]) {
+              delete contactDetails["procurementReferenceNumber"];
+              (update as Record<string, unknown>).contactDetailsSourceJson =
+                Object.keys(contactDetails).length > 0 ? JSON.stringify(contactDetails) : null;
+            }
+          } catch {
+            // malformed JSON \u2014 nothing to clear
+          }
+        }
+      }
     } else {
       fieldsAfter[key as string] = stored;
     }
@@ -182,7 +231,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   tryFill("evaluationMethodology", metadata.evaluationMethodology);
   tryFill("budget", metadata.budget);
   tryFill("currency", metadata.currency);
-  tryFill("deadline", metadata.deadline);
+  tryFill("deadline", isValidDeadlineCandidate(metadata.deadline) ? metadata.deadline : null);
   tryFill("submissionMethod", metadata.submissionMethod);
   tryFill("submissionAddress", metadata.submissionAddress);
   tryFill("pageLimit", metadata.pageLimit);
@@ -215,13 +264,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Refresh persisted page-level extraction diagnostics on every re-extract so
   // the Extraction Quality dashboard reflects the latest stored truth even when
   // no new metadata fields are discovered.
+  // PAGE-PROVENANCE GUARD: the stored TenderFile.totalPages (set at upload
+  // from the real PDF page count) is the AUTHORITATIVE page count. Do NOT
+  // overwrite it with assessExtractionQualityPerPage().totalDetectedPages —
+  // that is a diagnostic-derived heuristic, not proof of the real page count.
+  // Overwriting totalPages with it would let a single-page boundaryless text
+  // blob claim totalPages=1, which the page-provenance guard treats as proof
+  // that page 1 is valid — ungrounding fields that should stay EXTRACTED_UNVERIFIED.
+  const totalPagesByFileId = new Map<string, number | null>();
   for (const file of tender.files) {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
     const perPage = assessExtractionQualityPerPage(file.extractedText);
+    // Use the STORED totalPages (authoritative), NOT the diagnostic-derived count.
+    totalPagesByFileId.set(file.id, (file as { totalPages?: number | null }).totalPages ?? null);
     await prisma.tenderFile.update({
       where: { id: file.id },
       data: {
-        totalPages: perPage.totalDetectedPages,
+        // Do NOT overwrite totalPages — it is authoritative from upload.
         extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
         ocrPages: perPage.ocrPages.length,
         failedPages: perPage.failedPages.length,
@@ -241,6 +300,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fieldsAfter,
     });
   }
+
+  // Enrich source evidence: locate each critical field value in the active
+  // files' extracted text and persist the fileId + page + quote so the
+  // canonical resolver can mark them as EXTRACTED_AND_GROUNDED. Without this,
+  // re-extracted values stay EXTRACTED_UNVERIFIED forever. Only fields where
+  // evidence is found are added; existing evidence is NOT overwritten.
+  const enrichmentFiles = tender.files.map((f) => ({
+    id: f.id,
+    extractedText: f.extractedText,
+    deletionStatus: "ACTIVE" as const,
+    totalPages: totalPagesByFileId.get(f.id) ?? null,
+  }));
+  const enrichment = enrichMetadataWithSourceEvidence({
+    title: update.title as string | undefined,
+    reference: update.reference as string | undefined,
+    clientName: update.clientName as string | undefined,
+    deadline: update.deadline as Date | undefined,
+    submissionMethod: update.submissionMethod as string | undefined,
+    submissionAddress: update.submissionAddress as string | undefined,
+    submissionEmails: update.submissionEmails as string | undefined,
+    submissionEmailSubject: update.submissionEmailSubject as string | undefined,
+    existingContactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+  }, enrichmentFiles);
+  Object.assign(update, enrichment);
 
   await prisma.tender.update({ where: { id }, data: update });
   await logAction({

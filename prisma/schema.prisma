@@ -369,9 +369,13 @@ model Tender {
   // Email endpoint source quote (Blocker 2 — sourceFileId/Page existed but quote was missing)
   submissionEmailSourceQuote String?
   // JSON map of per-field source provenance for contact/location fields extracted
-  // by AI Analyze. Shape: { [fieldName]: { page: number|null, quote: string|null } }
+  // by AI Analyze. Shape: { [fieldName]: { page: number|null, quote: string|null, fileId?: string|null } }
+  // fileId is added by the repair-metadata route (AI Analyze does not emit it)
+  // so contact-sourced fields (e.g. procurementReferenceNumber for reference)
+  // can achieve GROUNDED status when fileId points to an active TenderFile.
   // Covers: clientContactName, clientContactTitle, clientContactEmail,
-  //         clientContactPhone, clientAddress, submissionAddress, country.
+  //         clientContactPhone, clientAddress, submissionAddress, country,
+  //         procurementReferenceNumber (for the reference field).
   contactDetailsSourceJson      String?
   // Source traceability for submission method and submission address
   submissionMethodSourcePage    Int?
@@ -383,6 +387,14 @@ model Tender {
   // Source file IDs for other metadata fields
   clientNameSourceFileId        String?
   submissionEmailSourceFileId   String?
+  // Reference number source evidence (policy-critical field)
+  referenceSourceFileId         String?
+  referenceSourcePage           Int?
+  referenceSourceQuote          String?
+  // Submission email subject source evidence (policy-critical field)
+  submissionEmailSubjectSourceFileId String?
+  submissionEmailSubjectSourcePage   Int?
+  submissionEmailSubjectSourceQuote  String?
   // Per-criterion source traceability for evaluation criteria
   // JSON array: [{ criterion, weight, sourcePage, sourceQuote }]
   evaluationCriteriaSourceJson  String?

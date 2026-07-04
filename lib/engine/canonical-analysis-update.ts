@@ -51,6 +51,11 @@ export type CanonicalAnalysisExisting = {
   // pass source-evidence validation for title or deadline.
   titleSourceFileId?: string | null;
   deadlineSourceFileId?: string | null;
+  // Existing contactDetailsSourceJson — when provided, AI's contactDetailsSource
+  // is MERGED with this (preserving fileId for entries AI doesn't re-emit).
+  // Without this, AI re-runs would overwrite the entire JSON and lose
+  // repair-written fileId for procurementReferenceNumber.
+  existingContactDetailsSourceJson?: string | null;
 };
 
 export type CanonicalAnalysisUpdate = {
@@ -91,6 +96,77 @@ export function buildAnalysisNotes(existingNotes: string | null | undefined): st
  * text ("Bid-Team to confirm", "TBD", "N/A") never enters canonical metadata,
  * and submissionMethod/submissionEmails only fill when not already set.
  */
+/**
+ * Merge AI's contactDetailsSource with the existing contactDetailsSourceJson.
+ *
+ * AI re-runs must NOT destroy repair-written fileId entries. When AI emits
+ * a contactDetailsSource, we merge it with the existing JSON:
+ *   - For keys AI re-emits: AI's value wins (AI may update page/quote), but
+ *     if AI's entry lacks fileId, preserve the existing fileId.
+ *   - For keys AI does NOT re-emit: preserve the existing entry entirely
+ *     (including fileId).
+ *
+ * This prevents the "AI re-run silently ungrounds reference" bug where a
+ * repair-written procurementReferenceNumber.fileId would be lost.
+ */
+function mergeContactDetailsSource(
+  aiSource: Record<string, { page: number | null; quote: string | null; fileId?: string | null }>,
+  existingJson: string | null | undefined,
+): Record<string, { page: number | null; quote: string | null; fileId?: string | null }> {
+  // Parse existing JSON (tolerant of null/malformed)
+  let existing: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }> = {};
+  if (existingJson) {
+    try {
+      existing = typeof existingJson === "string" ? JSON.parse(existingJson) : (existingJson ?? {});
+    } catch {
+      existing = {};
+    }
+  }
+
+  const merged: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> = {};
+
+  // First, copy all existing entries (preserves entries AI doesn't re-emit)
+  for (const [key, val] of Object.entries(existing)) {
+    if (val && typeof val === "object") {
+      merged[key] = {
+        page: typeof val.page === "number" ? val.page : null,
+        quote: typeof val.quote === "string" ? val.quote : null,
+        fileId: typeof val.fileId === "string" && val.fileId.length > 0 ? val.fileId : null,
+      };
+    }
+  }
+
+  // Then, overlay AI's entries. AI wins for page/quote. For fileId:
+  //   - If AI provides a fileId (rare — only from guardAiPageNumbers), use it.
+  //   - If AI does NOT provide a fileId BUT the quote is UNCHANGED from the
+  //     existing entry, preserve the existing fileId (it's still valid for
+  //     the same quote).
+  //   - If AI does NOT provide a fileId AND the quote CHANGED, drop the
+  //     existing fileId (it was attributed to the OLD quote and may not
+  //     point to a file containing the NEW quote). Let resolveReferenceFileId
+  //     or a subsequent repair re-resolve it.
+  for (const [key, val] of Object.entries(aiSource)) {
+    if (val && typeof val === "object") {
+      const existingEntry = merged[key];
+      const existingFileId = existingEntry?.fileId ?? null;
+      const existingQuote = existingEntry?.quote ?? null;
+      const newQuote = val.quote ?? null;
+      const quotesMatch = existingQuote !== null && newQuote !== null &&
+        existingQuote.toLowerCase().replace(/\s+/g, " ").trim() === newQuote.toLowerCase().replace(/\s+/g, " ").trim();
+      const aiFileId = typeof val.fileId === "string" && val.fileId.length > 0 ? val.fileId : null;
+      // Preserve existing fileId only when AI doesn't provide one AND the quote is unchanged
+      const fileId = aiFileId ?? (quotesMatch ? existingFileId : null) ?? null;
+      merged[key] = {
+        page: val.page ?? null,
+        quote: newQuote,
+        fileId,
+      };
+    }
+  }
+
+  return merged;
+}
+
 export function buildCanonicalAnalysisTenderUpdate(
   aiResult: AIAnalysisResult,
   existing: CanonicalAnalysisExisting = {},
@@ -162,7 +238,7 @@ export function buildCanonicalAnalysisTenderUpdate(
     // verify quote containment against the active file (previously only the
     // file ID and page were stored, so email evidence could not be verified).
     ...(aiResult.submissionEmailSourceQuote !== undefined ? { submissionEmailSourceQuote: aiResult.submissionEmailSourceQuote } : {}),
-    ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
+    ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(mergeContactDetailsSource(aiResult.contactDetailsSource, existing.existingContactDetailsSourceJson ?? null)) } : {}),
     ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
     ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
     ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),

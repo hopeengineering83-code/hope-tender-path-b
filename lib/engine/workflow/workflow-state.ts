@@ -2,7 +2,8 @@ import { PrismaClient } from "@prisma/client";
 import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
-import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
+import { deriveSubmissionPlanStatus } from "../submission-plan";
 import { detectAnalysisSource, ANALYSIS_APPROVAL_GAP_TITLE } from "../analysis-source";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
@@ -127,8 +128,16 @@ export async function getCanonicalTenderWorkflowState(
     analysisIsApprovedFallback,
   } as any);
 
-  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
-  const planStatus = deriveSubmissionPlanStatus(tender, plan);
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
+  // A current CONFIRMED BuildPlan IS the approved plan — getCurrentConfirmedBuildPlan
+  // already enforces confirmation, hash freshness, and metadata evidence.
+  // deriveSubmissionPlanStatus's own approval branch keys on
+  // tender.status === "PLAN_APPROVED", which is not a TENDER_STATUSES value and
+  // is never written in production, so without this the workflow would stay at
+  // BUILD_SUBMISSION_PLAN forever even after the plan is confirmed.
+  const planStatus = confirmedPlan.ok ? "CANONICAL_APPROVED" : deriveSubmissionPlanStatus(tender, plan);
   const planApproved = planStatus === "CANONICAL_APPROVED";
 
   const extractionStatus = (tender as any).analysisExtractionStatus ?? "";

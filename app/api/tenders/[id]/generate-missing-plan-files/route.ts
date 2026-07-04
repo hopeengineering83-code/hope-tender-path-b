@@ -3,12 +3,13 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -383,17 +384,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    submissionMethod: tender.submissionMethod,
-    tenderCategory: tender.category,
-    analysisExtractionStatus: tender.analysisExtractionStatus,
-    requirements: tender.requirements,
-  });
+  // AUTHORITATIVE: the set of "missing plan files" this route may create is
+  // defined by the current CONFIRMED BuildPlan only. Creating files from a
+  // derived heuristic plan could mint documents the confirmed plan never
+  // required. Fail closed when no current confirmed plan exists.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+  if (!confirmedPlan.ok) {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: "BUILD_PLAN_NOT_CONFIRMED",
+      error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`,
+      nextAction: "BUILD_SUBMISSION_PLAN",
+    }, { status: 422 });
+  }
+  const plan = { files: confirmedPlan.items, warnings: [] as string[] } as any;
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId: id, generationStatus: "PLANNED" },

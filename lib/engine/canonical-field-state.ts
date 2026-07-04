@@ -248,20 +248,21 @@ function getRawValue(tender: CanonicalResolverInput["tender"], field: string): s
 
 /** Parse the stored contactDetailsSourceJson (string or object) into a map of
  *  field → { page, quote }. Tolerant of malformed JSON. */
-function parseContactDetailsSource(raw: unknown): Record<string, { page: number | null; quote: string | null }> {
+function parseContactDetailsSource(raw: unknown): Record<string, { page: number | null; quote: string | null; fileId: string | null }> {
   if (!raw) return {};
   let obj: any = raw;
   if (typeof raw === "string") {
     try { obj = JSON.parse(raw); } catch { return {}; }
   }
   if (!obj || typeof obj !== "object") return {};
-  const out: Record<string, { page: number | null; quote: string | null }> = {};
+  const out: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
   for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
     if (v && typeof v === "object") {
       const e = v as Record<string, unknown>;
       out[k] = {
         page: typeof e.page === "number" && e.page > 0 ? e.page : null,
         quote: typeof e.quote === "string" ? e.quote : null,
+        fileId: typeof e.fileId === "string" && e.fileId.length > 0 ? e.fileId : null,
       };
     }
   }
@@ -277,7 +278,7 @@ const CONTACT_EVIDENCE_KEY: Record<string, string> = {
 function getSourceEvidence(
   tender: CanonicalResolverInput["tender"],
   field: string,
-  contactDetails: Record<string, { page: number | null; quote: string | null }>,
+  contactDetails: Record<string, { page: number | null; quote: string | null; fileId: string | null }>,
 ) {
   const dedicated: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {
     clientName: { page: tender.clientNameSourcePage, quote: tender.clientNameSourceQuote, fileId: tender.clientNameSourceFileId ?? null },
@@ -289,8 +290,11 @@ function getSourceEvidence(
   };
   if (dedicated[field]) return dedicated[field];
   // Fall back to the structured contactDetailsSource map for the extended fields.
+  // fileId is now persisted alongside page+quote (e.g. for reference via the
+  // repair-metadata route) so contactDetails-sourced fields can achieve full
+  // GROUNDED status when fileId points to an active TenderFile.
   const ce = contactDetails[CONTACT_EVIDENCE_KEY[field] ?? field];
-  if (ce) return { page: ce.page, quote: ce.quote, fileId: null };
+  if (ce) return { page: ce.page, quote: ce.quote, fileId: ce.fileId };
   return { page: null, quote: null, fileId: null };
 }
 

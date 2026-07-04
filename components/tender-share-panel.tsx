@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 
 interface ShareEntry {
   id: string;
@@ -16,6 +17,7 @@ interface TenderSharePanelProps {
 }
 
 export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePanelProps) {
+  const router = useRouter();
   const [shares, setShares] = useState<ShareEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -60,6 +62,7 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
         const fullUrl = window.location.origin + data.shareUrl;
         setNewShareUrl(fullUrl);
         await loadShares();
+        router.refresh();
       }
     } catch {
       // ignore

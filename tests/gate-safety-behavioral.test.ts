@@ -34,6 +34,7 @@ function makePassingInput(overrides: Partial<GenerationReadinessInput> = {}): Ge
     // BuildPlan enforcement is fail-closed: default to true so the "passing"
     // base case passes; tests that exercise the BuildPlan blocker override.
     hasCurrentConfirmedBuildPlan: true,
+    confirmedBuildPlanItemsValid: true,
     confirmedPlanDocumentsOk: true,
     recordedBuildPlanState: "VALID" as const,
     ...overrides,

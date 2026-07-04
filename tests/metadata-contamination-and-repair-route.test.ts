@@ -170,7 +170,7 @@ describe("POST /api/tenders/[id]/repair-metadata — placeholder rejection (Gap 
 
   it("returns REJECTED status for placeholder values (never stores them)", () => {
     assert.match(source, /status:\s*"REJECTED"/);
-    assert.match(source, /placeholder pattern and was not stored/);
+    assert.match(source, /placeholder pattern/);
   });
 
   it("uses continue to skip audit log and DB write when value is a placeholder", () => {

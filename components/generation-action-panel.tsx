@@ -3,6 +3,7 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { parseRepairMetadataResponse, buildRepairMessage } from "../lib/engine/repair-metadata-contract";
 import { GenerationProgressPanel } from "./generation-progress-panel";
 import { CanonicalStatusBadge } from "./canonical-status-badge";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
@@ -117,20 +118,36 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields: ["evaluationMethodology"] }),
       });
-      const result = await res.json().catch(() => ({})) as { status: string; value?: string };
-      if (result.status === "REPAIRED") {
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({})) as { error?: string };
+        setKind("error");
+        setMessage(errBody.error ?? `Repair failed (HTTP ${res.status}).`);
+        return;
+      }
+      const raw = await res.json().catch(() => null);
+      const parsed = parseRepairMetadataResponse(raw);
+      if (!parsed) {
+        setKind("error");
+        setMessage("Repair returned a malformed response. Try again or correct manually.");
+        return;
+      }
+      const outcome = parsed.outcomesByField["evaluationMethodology"];
+      if (outcome?.status === "REPAIRED") {
         setKind("success");
         setMessage("Evaluation criteria repaired from source.");
         startTransition(() => router.refresh());
-      } else if (result.status === "NOT_FOUND") {
+      } else if (outcome?.status === "NOT_FOUND") {
         setKind("info");
         setMessage("Evaluation criteria not found in the tender source.");
-      } else if (result.status === "SKIPPED") {
+      } else if (outcome?.status === "SKIPPED") {
         setKind("info");
         setMessage("Evaluation criteria repair was skipped (field already has a value).");
+      } else if (outcome?.status === "REJECTED") {
+        setKind("info");
+        setMessage("Evaluation criteria value was rejected (placeholder pattern).");
       } else {
         setKind("error");
-        setMessage("Repair failed.");
+        setMessage("Repair failed — no valid outcome returned.");
       }
     } catch (error) {
       setKind("error");
@@ -149,21 +166,24 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields: ALL_REPAIRABLE_FIELDS }),
       });
-      const data = await res.json().catch(() => ({ results: [] })) as { results: Array<{ field: string; status: string }> };
-      const results = data.results ?? [];
-      const repairedFields = results.filter((r) => r.status === "REPAIRED");
-      const notFoundFields = results.filter((r) => r.status === "NOT_FOUND");
-      const skippedFields = results.filter((r) => r.status === "SKIPPED");
-      if (repairedFields.length > 0) {
-        setKind("success");
-        setMessage(`Repaired ${repairedFields.length} field(s). ${notFoundFields.length} not found, ${skippedFields.length} skipped.`);
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({})) as { error?: string };
+        setKind("error");
+        setMessage(errBody.error ?? `Repair failed (HTTP ${res.status}). The blocker remains — review and correct manually.`);
+        return;
+      }
+      const raw = await res.json().catch(() => null);
+      const parsed = parseRepairMetadataResponse(raw);
+      if (!parsed) {
+        setKind("error");
+        setMessage("Repair returned a malformed response. The blocker remains — try again or correct manually.");
+        return;
+      }
+      const { message, kind } = buildRepairMessage(parsed.outcomes);
+      setKind(kind);
+      setMessage(message);
+      if (parsed.success) {
         startTransition(() => router.refresh());
-      } else if (notFoundFields.length > 0) {
-        setKind("info");
-        setMessage(`${notFoundFields.length} field(s) not found in source. ${skippedFields.length} skipped.`);
-      } else {
-        setKind("info");
-        setMessage(`All fields skipped (${skippedFields.length} already have values).`);
       }
     } catch (error) {
       setKind("error");

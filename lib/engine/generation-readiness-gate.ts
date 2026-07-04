@@ -36,7 +36,6 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
-import type { BuildPlanItem } from "./build-plan";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
@@ -101,6 +100,7 @@ export type GenerationBlockerCode =
   | "SUBMISSION_PLAN_MISSING"
   | "BUILD_PLAN_MISSING"
   | "BUILD_PLAN_STALE"
+  | "BUILD_PLAN_ITEMS_INVALID"
   | "NO_EXPORT_READY_DOCUMENTS"
   | "BUILD_PLAN_NOT_CONFIRMED"
   | "CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE"
@@ -185,6 +185,10 @@ export interface GenerationReadinessInput {
   exportReadyDocumentCount: number;
   // K — CONFIRMED BuildPlan: a current CONFIRMED BuildPlan with matching hash.
   hasCurrentConfirmedBuildPlan?: boolean;
+  // K2 — Confirmed BuildPlan items validation: all items must be valid, non-null,
+  //      with correct structure, no duplicates, and matching current tender scope.
+  confirmedBuildPlanItemsValid?: boolean;
+  confirmedBuildPlanItemBlockers?: string[];
   // L — Confirmed plan document reconciliation for export/ZIP.
   confirmedPlanDocumentsOk?: boolean;
   confirmedPlanDocumentBlockers?: string[];
@@ -334,6 +338,13 @@ export function evaluateGenerationReadiness(
   //     silently bypass the confirmed-plan requirement.
   if (input.hasCurrentConfirmedBuildPlan !== true) {
     return fail("BUILD_PLAN_NOT_CONFIRMED", "No current confirmed Build Plan exists. Build and confirm the Build Plan before any release action.");
+  }
+
+  // K2 — Confirmed BuildPlan items must be valid at runtime. A corrupted, invalid,
+  //      or malformed item must block generation/export.
+  if (input.confirmedBuildPlanItemsValid !== true) {
+    const blockerList = (input.confirmedBuildPlanItemBlockers ?? []).slice(0, 3).join("; ");
+    return fail("BUILD_PLAN_ITEMS_INVALID", `Build Plan items are invalid and cannot authorize generation/export: ${blockerList || "unspecified error"}`);
   }
 
   if (input.purpose === "export" || input.purpose === "final-zip") {
@@ -608,7 +619,6 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     or requirements with exactFileName), the plan must produce at least
     //     one required file. If there's no explicit scope, any tender with
     //     extracted requirements has a valid plan by default.
-    const { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } = await import("./submission-plan");
     // Virtual submission plan authority removed — release depends only on
     // persisted confirmed BuildPlan.
     // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
@@ -656,6 +666,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     (files added/removed/renamed, requirements changed, submission
     //     instructions changed, plan rebuilt but not re-confirmed) → false.
     let hasCurrentConfirmedBuildPlan = false;
+    let confirmedBuildPlanItemsValid: boolean | undefined;
+    let confirmedBuildPlanItemBlockers: string[] | undefined;
     let confirmedPlanDocumentsOk: boolean | undefined;
     let confirmedPlanDocumentBlockers: string[] | undefined;
     if (recordedBuildPlan && recordedBuildPlanState === "VALID") {
@@ -663,12 +675,18 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
       if (confirmed.ok) {
         hasCurrentConfirmedBuildPlan = true;
+        // K2 — Every item of the confirmed plan is re-validated at runtime:
+        // structure, duplicates, scope match, requirement links, template file
+        // references. A confirmed plan whose ITEMS are malformed must never
+        // authorize a release action even when its hash is fresh.
+        const itemValidation = await buildPlanModule.validateBuildPlanItemsAtRuntime(prisma, tenderId, userId, confirmed.items);
+        confirmedBuildPlanItemsValid = itemValidation.ok;
+        confirmedBuildPlanItemBlockers = itemValidation.blockers;
         // For export/final-zip, also validate that every required plan item has
         // a matching generated, validated, approved document with content — and
         // no extra/foreign documents exist outside the confirmed plan.
         if (purpose === "export" || purpose === "final-zip") {
-          const items = JSON.parse(confirmed.plan.itemsJson || "[]") as BuildPlanItem[];
-          const docValidation = await buildPlanModule.validateConfirmedPlanDocuments(prisma, tenderId, userId, items);
+          const docValidation = await buildPlanModule.validateConfirmedPlanDocuments(prisma, tenderId, userId, confirmed.items);
           confirmedPlanDocumentsOk = docValidation.ok;
           confirmedPlanDocumentBlockers = docValidation.blockers;
         }
@@ -704,6 +722,8 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       })()),
       recordedBuildPlanState,
       hasCurrentConfirmedBuildPlan,
+      confirmedBuildPlanItemsValid,
+      confirmedBuildPlanItemBlockers,
       confirmedPlanDocumentsOk,
       confirmedPlanDocumentBlockers,
       exportReadyDocumentCount,

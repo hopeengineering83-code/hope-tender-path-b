@@ -41,7 +41,7 @@ type Row = {
   recommendedAction: string;
 };
 
-type PlanState = "EXPLICIT_TENDER_PLAN" | "DERIVED_DRAFT_UNCONFIRMED" | "PLAN_NOT_BUILT" | "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" | "NO_REQUIREMENTS";
+type PlanState = "CONFIRMED_BUILD_PLAN" | "EXPLICIT_TENDER_PLAN" | "DERIVED_DRAFT_UNCONFIRMED" | "PLAN_NOT_BUILT" | "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" | "NO_REQUIREMENTS";
 
 type Summary = {
   totalRequired: number;
@@ -86,6 +86,7 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
 }
 
 function planStateLabel(state: PlanState): string {
+  if (state === "CONFIRMED_BUILD_PLAN") return "Confirmed Build Plan";
   if (state === "EXPLICIT_TENDER_PLAN") return "Explicit tender plan";
   if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Derived draft — confirm";
   if (state === "PLAN_NOT_BUILT") return "Plan not built";
@@ -94,6 +95,7 @@ function planStateLabel(state: PlanState): string {
 }
 
 function planStateTone(state: PlanState): "ok" | "warn" | "bad" | "neutral" {
+  if (state === "CONFIRMED_BUILD_PLAN") return "ok";
   if (state === "EXPLICIT_TENDER_PLAN") return "ok";
   if (state === "PLAN_NOT_BUILT") return "bad";
   if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "bad";

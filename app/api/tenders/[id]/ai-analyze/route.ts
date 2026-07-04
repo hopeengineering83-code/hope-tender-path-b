@@ -14,6 +14,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
 import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
+import { locateQuoteProvenPage } from "../../../../../lib/engine/page-provenance";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -67,6 +68,120 @@ function resolveMetadataSourceFileIds(
     titleSourceFileId: attributeMetadataSourceFileId(aiResult.tenderTitleSourceQuote, files),
     deadlineSourceFileId: attributeMetadataSourceFileId(aiResult.deadlineSourceQuote, files),
   };
+}
+
+/**
+ * Guard AI-claimed page numbers using locateQuoteProvenPage with the file's
+ * stored TenderFile.totalPages as the authoritative page-count guard.
+ *
+ * AI can hallucinate page numbers (e.g., page 99 for a 3-page file). Without
+ * this guard, the hallucinated page would be persisted to the DB and read by
+ * the canonical resolver as if it were proven. This function re-derives the
+ * page from the FULL quote's exact position in the attributed file's extracted
+ * text via locateQuoteProvenPage (no prefix matching, no offset-0 fallback,
+ * ambiguous multi-page occurrences → null).
+ *
+ * Returns a new aiResult with guarded page numbers (null when the page cannot
+ * be proven).
+ */
+function guardAiPageNumbers(
+  aiResult: AIAnalysisResult,
+  files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null; totalPages?: number | null }>,
+  sourceFileIds: { clientNameSourceFileId: string | null; submissionMethodSourceFileId: string | null; submissionAddressSourceFileId: string | null; submissionEmailSourceFileId: string | null; titleSourceFileId: string | null; deadlineSourceFileId: string | null },
+): AIAnalysisResult {
+  const guarded = { ...aiResult };
+
+  const guardPage = (quote: string | null | undefined, fileId: string | null): number | null => {
+    if (!quote || !fileId) return null;
+    const file = files.find((f) => f.id === fileId);
+    if (!file || !file.extractedText) return null;
+    // Canonical quote→page resolver: FULL-quote match (never a prefix), exact
+    // normalized→original offset mapping, null when the quote is absent or its
+    // occurrences resolve to different pages (ambiguous). Never guesses page 1.
+    return locateQuoteProvenPage(file.extractedText, quote, file.totalPages ?? null);
+  };
+
+  // Guard each AI-claimed page using the attributed file's totalPages
+  if (guarded.tenderTitleSourcePage !== undefined) {
+    guarded.tenderTitleSourcePage = guardPage(guarded.tenderTitleSourceQuote, sourceFileIds.titleSourceFileId);
+  }
+  if (guarded.deadlineSourcePage !== undefined) {
+    guarded.deadlineSourcePage = guardPage(guarded.deadlineSourceQuote, sourceFileIds.deadlineSourceFileId);
+  }
+  if (guarded.clientNameSourcePage !== undefined) {
+    guarded.clientNameSourcePage = guardPage(guarded.clientNameSourceQuote, sourceFileIds.clientNameSourceFileId);
+  }
+  if (guarded.submissionEmailSourcePage !== undefined) {
+    guarded.submissionEmailSourcePage = guardPage(guarded.submissionEmailSourceQuote, sourceFileIds.submissionEmailSourceFileId);
+  }
+  if (guarded.submissionMethodSourcePage !== undefined) {
+    guarded.submissionMethodSourcePage = guardPage(guarded.submissionMethodSourceQuote, sourceFileIds.submissionMethodSourceFileId);
+  }
+  if (guarded.submissionAddressSourcePage !== undefined) {
+    guarded.submissionAddressSourcePage = guardPage(guarded.submissionAddressSourceQuote, sourceFileIds.submissionAddressSourceFileId);
+  }
+
+  // Guard contactDetailsSource page numbers (e.g., procurementReferenceNumber)
+  if (guarded.contactDetailsSource) {
+    const guardedContact: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> = {};
+    for (const [key, entry] of Object.entries(guarded.contactDetailsSource)) {
+      if (entry && entry.quote) {
+        // Resolve fileId for this entry's quote
+        const entryFileId = attributeMetadataSourceFileId(entry.quote, files);
+        const entryPage = guardPage(entry.quote, entryFileId);
+        guardedContact[key] = { page: entryPage, quote: entry.quote, fileId: entryFileId };
+      } else if (entry) {
+        guardedContact[key] = { page: null, quote: entry?.quote ?? null, fileId: null };
+      }
+    }
+    guarded.contactDetailsSource = guardedContact;
+  }
+
+  return guarded;
+}
+
+
+/**
+ * After AI Analyze writes contactDetailsSourceJson, the
+ * procurementReferenceNumber entry has { page, quote } but NO fileId (AI
+ * never emits fileIds). Resolve the fileId via attributeMetadataSourceFileId
+ * on the quote and update the JSON entry so the reference field can achieve
+ * EXTRACTED_AND_GROUNDED status in the canonical resolver.
+ *
+ * Returns the updated contactDetailsSourceJson string, or null when no
+ * update is needed (no entry, no quote, or no active file contains the quote).
+ */
+async function resolveReferenceFileId(
+  tenderId: string,
+  files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
+): Promise<string | null> {
+  // Read the current contactDetailsSourceJson
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: { contactDetailsSourceJson: true, reference: true },
+  }).catch(() => null);
+  if (!tender?.contactDetailsSourceJson) return null;
+  let contactDetails: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }>;
+  try {
+    contactDetails = JSON.parse(tender.contactDetailsSourceJson);
+  } catch {
+    return null;
+  }
+  const refEntry = contactDetails["procurementReferenceNumber"];
+  if (!refEntry || !refEntry.quote || refEntry.quote.trim().length < 6) return null;
+  // Skip if fileId is already set and points to an active file
+  if (refEntry.fileId) {
+    const stillActive = files.some((f) => f.id === refEntry.fileId && (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
+    if (stillActive) return null;
+  }
+  const fileId = attributeMetadataSourceFileId(refEntry.quote, files);
+  if (!fileId) return null;
+  contactDetails["procurementReferenceNumber"] = {
+    page: refEntry.page ?? null,
+    quote: refEntry.quote,
+    fileId,
+  };
+  return JSON.stringify(contactDetails);
 }
 
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
@@ -654,12 +769,22 @@ async function handleStreamingAnalyze(
               // client/submission/source-traceability mapping + contamination
               // detection lives in the shared builder so all three analysis
               // paths persist identical canonical metadata.
-              const { data: canonicalTenderData } = buildCanonicalAnalysisTenderUpdate(aiResult, {
+              const sourceFileIds = resolveMetadataSourceFileIds(aiResult, tenderRecord.files);
+              // Guard AI-claimed page numbers using the authoritative
+              // TenderFile.totalPages guard. AI can hallucinate page numbers;
+              // without this guard, a hallucinated page (e.g., 99 for a 3-page
+              // file) would be persisted and read as proven by the canonical
+              // resolver. This also resolves fileId for contactDetailsSource
+              // entries (e.g., procurementReferenceNumber) so reference can
+              // achieve EXTRACTED_AND_GROUNDED.
+              const guardedAiResult = guardAiPageNumbers(aiResult, tenderRecord.files, sourceFileIds);
+              const { data: canonicalTenderData } = buildCanonicalAnalysisTenderUpdate(guardedAiResult, {
                 clientName: tenderRecord.clientName,
                 submissionMethod: tenderRecord.submissionMethod,
                 submissionEmails: tenderRecord.submissionEmails,
                 notes: tenderRecord.notes,
-                ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
+                ...sourceFileIds,
+                existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -706,6 +831,21 @@ async function handleStreamingAnalyze(
                   await promoteAnalysisToCanonical(analysisJob.id, runId, tx);
                 }
               });
+
+              // After the canonical write, resolve and persist the reference
+              // field's fileId so it can achieve EXTRACTED_AND_GROUNDED. AI
+              // emits { page, quote } for procurementReferenceNumber but never
+              // fileId; we resolve it from the active files' extracted text.
+              try {
+                const refJson = await resolveReferenceFileId(id, tenderRecord.files);
+                if (refJson) {
+                  await prisma.tender.update({ where: { id }, data: { contactDetailsSourceJson: refJson } });
+                }
+              } catch (e) {
+                // Non-fatal — the reference field will stay EXTRACTED_UNVERIFIED
+                // until repair-metadata is called. Log but do not fail the analysis.
+                logger.warn("[ai-analyze/stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
+              }
             }
 
             if (analysisJob) {
@@ -1346,12 +1486,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
           // Full success: promote atomically to canonical via the shared builder
           // (identical canonical metadata + contamination detection across all paths).
-          const { data: canonicalTenderDataNonStream } = buildCanonicalAnalysisTenderUpdate(aiResult, {
+          const sourceFileIdsNonStream = resolveMetadataSourceFileIds(aiResult, tenderRecord.files);
+          // Guard AI-claimed page numbers (same as streaming path).
+          const guardedAiResultNonStream = guardAiPageNumbers(aiResult, tenderRecord.files, sourceFileIdsNonStream);
+          const { data: canonicalTenderDataNonStream } = buildCanonicalAnalysisTenderUpdate(guardedAiResultNonStream, {
             clientName: tenderRecord.clientName,
             submissionMethod: tenderRecord.submissionMethod,
             submissionEmails: tenderRecord.submissionEmails,
             notes: tenderRecord.notes,
-            ...resolveMetadataSourceFileIds(aiResult, tenderRecord.files),
+            ...sourceFileIdsNonStream,
+            existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.
@@ -1397,6 +1541,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               data: canonicalTenderDataNonStream,
             });
           });
+
+          // After the canonical write, resolve and persist the reference
+          // field's fileId (non-streaming path — mirrors the streaming path).
+          try {
+            const refJson = await resolveReferenceFileId(id, tenderRecord.files);
+            if (refJson) {
+              await prisma.tender.update({ where: { id }, data: { contactDetailsSourceJson: refJson } });
+            }
+          } catch (e) {
+            logger.warn("[ai-analyze/non-stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
+          }
           if (!nsPromoSuperseded && analysisJob) {
             await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
           }

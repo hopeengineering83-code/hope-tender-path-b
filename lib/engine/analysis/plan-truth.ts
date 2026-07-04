@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
-import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus, SubmissionPlanStatus } from "../submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
+import { deriveSubmissionPlanStatus } from "../submission-plan";
 import { resolveTenderAnalysisState } from "../analysis-state-resolver";
 
 export type PlanTruthStatus =
@@ -31,8 +32,14 @@ export async function resolvePlanTruth(
   if (!tender) throw new Error("Tender not found");
 
   const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, userId);
-  const plan = buildSubmissionPlanWithDerivedFallback(tender as any);
-  const status = deriveSubmissionPlanStatus(tender, plan);
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId ?? "");
+  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
+  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
+  // A current CONFIRMED BuildPlan IS the approved plan. The
+  // tender.status === "PLAN_APPROVED" branch inside deriveSubmissionPlanStatus
+  // is unreachable in production (not a TENDER_STATUSES value, never written),
+  // so verification keys on the confirmed plan itself.
+  const status = confirmedPlan.ok ? "CANONICAL_APPROVED" : deriveSubmissionPlanStatus(tender, plan);
 
   const isVerified = status === "CANONICAL_APPROVED";
   const analysisTrusted = analysisInfo.state === "AI_SUCCEEDED" || analysisInfo.state === "HUMAN_APPROVED_FALLBACK";
@@ -45,7 +52,7 @@ export async function resolvePlanTruth(
   return {
     status: status as PlanTruthStatus,
     isVerified,
-    totalRequired: plan.files.filter(f => f.required).length,
+    totalRequired: plan.files.filter((f: any) => f.required).length,
     totalGenerated: tender.generatedDocuments.filter(d => d.generationStatus === "GENERATED").length,
     reason
   };

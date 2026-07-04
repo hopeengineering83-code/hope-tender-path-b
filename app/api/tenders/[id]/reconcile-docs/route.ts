@@ -18,7 +18,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../../../../../lib/engine/reconcile-generated-docs";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -62,17 +62,22 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    submissionMethod: (tender as any).submissionMethod,
-    tenderCategory: (tender as any).category,
-    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements: tender.requirements,
-  });
+  // AUTHORITATIVE: reconciliation supersedes/relinks GeneratedDocument rows,
+  // so it must run against the current CONFIRMED BuildPlan only. A derived
+  // heuristic plan could supersede documents that the confirmed plan requires.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, actor.id);
+  if (!confirmedPlan.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        code: "BUILD_PLAN_NOT_CONFIRMED",
+        message: `Reconciliation requires a current confirmed Build Plan. ${confirmedPlan.blocker}`,
+        nextAction: "BUILD_SUBMISSION_PLAN",
+      },
+      { status: 422 },
+    );
+  }
+  const plan = { files: confirmedPlan.items, warnings: [] as string[] } as any;
 
   const decisions = reconcileGeneratedDocuments({
     plan,

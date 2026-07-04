@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
+import { findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../lib/engine/build-plan";
 import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
@@ -40,24 +41,41 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
   });
   if (!tender) return null;
 
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    id: tender.id,
-    title: tender.title,
-    submissionMethod: tender.submissionMethod,
-    tenderCategory: tender.category,
-    analysisExtractionStatus: tender.analysisExtractionStatus,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements: tender.requirements,
-  });
-  const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
-  const extra = findExtraGeneratedDocuments(plan, tender.generatedDocuments);
-  const requiredCount = submissionPlanFileCount(plan);
+  const confirmed = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+  if (!confirmed.ok) {
+    return (
+      <section id="submission-plan-reconciliation" className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-600">Submission plan reconciliation</p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">No current confirmed Build Plan</h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-600">{confirmed.blocker} Document counts, export eligibility, and reconciliation are unavailable until a Build Plan is rebuilt and confirmed.</p>
+          </div>
+          <div className="flex flex-col items-stretch gap-2 lg:items-end">
+            <BuildSubmissionPlanButton tenderId={tenderId} />
+          </div>
+        </div>
+        {tender.generatedDocuments.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-white p-3 text-sm">
+            <p className="font-semibold text-amber-900">{tender.generatedDocuments.length} existing document(s) are NOT part of a confirmed plan</p>
+            <p className="mt-1 text-xs text-amber-700">These rows are preserved for audit but excluded from final-export counts until they match a current confirmed Build Plan.</p>
+          </div>
+        )}
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          <Link href={`/api/tenders/${tenderId}/export-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Open export readiness JSON</Link>
+        </div>
+      </section>
+    );
+  }
+  const planItems: BuildPlanItem[] = confirmed.items;
+  const requiredItems = planItems.filter((item) => item.required);
+  const requiredCount = requiredItems.length;
+  const missing = findMissingGeneratedDocuments({ files: planItems, warnings: [] } as any, tender.generatedDocuments);
+  const extra = findExtraGeneratedDocuments({ files: planItems, warnings: [] } as any, tender.generatedDocuments);
   const generatedCount = Math.max(0, requiredCount - missing.length);
   const ok = requiredCount > 0 && missing.length === 0 && extra.length === 0;
-
-  if (requiredCount === 0 && plan.warnings.length === 0) return null;
+  const plan = { files: planItems, warnings: [] as string[] };
+  if (requiredCount === 0) return null;
 
   return (
     <section id="submission-plan-reconciliation" className={`mb-4 rounded-2xl border p-5 shadow-sm ${statusClass(ok)}`}>
@@ -98,7 +116,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {plan.files.filter((file) => file.required).map((file) => {
+              {requiredItems.map((file) => {
                 const generated = tender.generatedDocuments.find((doc) => submissionPlanFileKey(doc.exactFileName ?? doc.name) === submissionPlanFileKey(file.exactFileName));
                 return (
                   <tr key={file.canonicalId}>

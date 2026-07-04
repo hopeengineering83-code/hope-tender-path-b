@@ -14,11 +14,7 @@ import {
   type DocumentLike,
 } from "../lib/engine/document-output-state";
 import { clientLogger } from "@/lib/ui/client-logger";
-import {
-  buildSubmissionPlan,
-  hasExplicitSubmissionScope,
-  plannedSubmissionTargetFiles,
-} from "../lib/engine/submission-plan";
+import { getCurrentConfirmedBuildPlan } from "../lib/engine/build-plan";
 
 type DocRow = {
   id: string;
@@ -151,16 +147,12 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
     if (!tender) return null;
     if (tender.generatedDocuments.length === 0) return null;
 
-    const submissionPlan = buildSubmissionPlan({
-      id: tender.id,
-      title: tender.title,
-      exactFileNaming: tender.exactFileNaming,
-      exactFileOrder: tender.exactFileOrder,
-      pageLimit: tender.pageLimit,
-      requirements: tender.requirements,
-    });
-    const hasExplicitPlan = hasExplicitSubmissionScope(tender);
-    const planTargets = hasExplicitPlan ? plannedSubmissionTargetFiles(submissionPlan) : [];
+    // AUTHORITATIVE: the pre-export manifest reflects the current CONFIRMED
+    // BuildPlan only, so it can never disagree with what the export gate
+    // enforces. Without one, no plan targets exist (fail closed).
+    const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+    const hasExplicitPlan = confirmedPlan.ok;
+    const planTargets = confirmedPlan.ok ? confirmedPlan.items.filter((item) => item.required) : [];
     const planTargetNames = new Set(planTargets.map((p) => p.exactFileName?.toLowerCase() ?? ""));
 
     const docs: DocRow[] = tender.generatedDocuments.map((d) => ({

@@ -11,6 +11,7 @@
 // - Low-confidence matches are saved but flagged with a warning.
 
 import { prisma } from "../prisma";
+import { computeProvenPageNumber } from "./page-provenance";
 
 export type RepairSourceGroundingResult = {
   checkedCount: number;
@@ -83,15 +84,11 @@ function findBestQuote(
 }
 
 // Attempt to detect a page number from the text around an offset.
-// Looks for page markers like "Page N", "- N -", or "[N]" near the offset.
-function detectPageNumber(text: string, offset: number): number | null {
-  const searchZone = text.slice(Math.max(0, offset - 200), offset + 200);
-  const match = searchZone.match(/\bpage\s+(\d{1,4})\b/i) ?? searchZone.match(/[-–]\s*(\d{1,4})\s*[-–]/);
-  if (match) {
-    const n = parseInt(match[1], 10);
-    return Number.isFinite(n) && n > 0 && n < 5000 ? n : null;
-  }
-  return null;
+// Uses computeProvenPageNumber with the file's stored totalPages as the
+// authoritative guard. Pages outside 1..totalPages are rejected; page 1
+// is only allowed when totalPages === 1 and there are no page boundaries.
+function detectPageNumber(text: string, offset: number, totalPages: number | null | undefined = null): number | null {
+  return computeProvenPageNumber(text, offset, totalPages);
 }
 
 // Attempt to detect the nearest preceding section heading.
@@ -124,7 +121,7 @@ export async function repairSourceGrounding(tenderId: string): Promise<RepairSou
   // Fetch tender files with usable extracted text.
   const tenderFiles = await prisma.tenderFile.findMany({
     where: { tenderId, extractedText: { not: null } },
-    select: { id: true, extractedText: true, fileName: true },
+    select: { id: true, extractedText: true, fileName: true, totalPages: true, deletionStatus: true },
   });
 
   const usableFiles = tenderFiles.filter(
@@ -159,7 +156,9 @@ export async function repairSourceGrounding(tenderId: string): Promise<RepairSou
           fileId: file.id,
           quote: result.quote,
           confidence: result.confidence,
-          page: detectPageNumber(text, result.offset),
+          page: detectPageNumber(text, result.offset, file.totalPages),
+          // Note: sourcePageNumber is always written below (even when null)
+          // to clear stale page evidence from a prior repair.
           heading: detectSectionHeading(text, result.offset),
         };
       }
@@ -188,7 +187,10 @@ export async function repairSourceGrounding(tenderId: string): Promise<RepairSou
         sourceTenderFileId: bestMatch.fileId,
         sourceExactQuote: bestMatch.quote.slice(0, 500),
         sourceConfidence: Math.round(bestMatch.confidence * 100) / 100,
-        ...(bestMatch.page !== null ? { sourcePageNumber: bestMatch.page } : {}),
+        // Always write sourcePageNumber — even when null — to clear stale
+        // page evidence from a prior repair that doesn't correspond to the
+        // new quote.
+        sourcePageNumber: bestMatch.page,
         ...(bestMatch.heading !== null ? { sourceSectionHeading: bestMatch.heading } : {}),
         updatedAt: new Date(),
       },
