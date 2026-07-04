@@ -338,6 +338,12 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
       submissionEmailSourceFileId: true, submissionEmailSourcePage: true, submissionEmailSourceQuote: true,
       titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true,
       deadlineSourceFileId: true, deadlineSourcePage: true, deadlineSourceQuote: true,
+      // Reference source evidence — dedicated columns read by the strict
+      // BuildPlan metadata validator (validateCriticalMetadataEvidenceForBuildPlan)
+      // AND by the canonical resolver's getSourceEvidence for fieldKey="reference".
+      // Without these in the select, the hash treats reference as ungrounded
+      // even when the columns are populated, diverging from the validator.
+      referenceSourceFileId: true, referenceSourcePage: true, referenceSourceQuote: true,
       files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true } },
       requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },

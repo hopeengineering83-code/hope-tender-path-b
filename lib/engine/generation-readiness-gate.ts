@@ -466,6 +466,14 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         deadlineSourceFileId: true,
         deadlineSourcePage: true,
         deadlineSourceQuote: true,
+        // Reference source evidence — dedicated columns read first by the
+        // canonical resolver's getSourceEvidence for fieldKey="reference".
+        // The resolver call below uses `...tender` spread, so selecting these
+        // columns is sufficient to forward them. Without this, the gate's
+        // reference grounding diverges from the strict BuildPlan validator.
+        referenceSourceFileId: true,
+        referenceSourcePage: true,
+        referenceSourceQuote: true,
         contactDetailsSourceJson: true,
         // Plan-driving fields for the shared Build Plan hash.
         exactFileNaming: true,

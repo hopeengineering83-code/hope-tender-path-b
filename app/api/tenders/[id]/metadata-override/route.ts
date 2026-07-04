@@ -18,6 +18,7 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { VALID_FIELD_STATES, KNOWN_METADATA_FIELDS, type MetadataFieldState } from "../../../../../lib/engine/metadata-override";
 import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../../lib/engine/canonical-field-state";
 import { isCriticalField, canBeNotApplicable } from "../../../../../lib/engine/tender-policy-registry";
+import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -48,6 +49,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       clientNameSourcePage: true, clientNameSourceQuote: true, clientNameSourceFileId: true,
       titleSourcePage: true, titleSourceQuote: true, titleSourceFileId: true,
       deadlineSourcePage: true, deadlineSourceQuote: true, deadlineSourceFileId: true,
+      // Reference source evidence — dedicated columns read first by the
+      // canonical resolver's getSourceEvidence for fieldKey="reference".
+      referenceSourcePage: true, referenceSourceQuote: true, referenceSourceFileId: true,
       submissionMethodSourcePage: true, submissionMethodSourceQuote: true, submissionMethodSourceFileId: true,
       submissionAddressSourcePage: true, submissionAddressSourceQuote: true, submissionAddressSourceFileId: true,
       submissionEmailSourcePage: true, submissionEmailSourceFileId: true, submissionEmailSourceQuote: true, contactDetailsSourceJson: true,
@@ -112,6 +116,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
         deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
         deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+        // Forward reference source-evidence columns to the resolver so the
+        // dedicated-column path in getSourceEvidence is taken (not just the
+        // contactDetailsSourceJson fallback). Matches the strict BuildPlan
+        // validator's view of the reference field.
+        referenceSourcePage: (tender as any).referenceSourcePage ?? null,
+        referenceSourceQuote: (tender as any).referenceSourceQuote ?? null,
+        referenceSourceFileId: (tender as any).referenceSourceFileId ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         evaluationMethodology: tender.evaluationMethodology ?? null,
         legalClientName: tender.legalClientName ?? null, donorAgency: tender.donorAgency ?? null,
@@ -385,6 +396,97 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     description: `Metadata field "${field}" set to ${fieldState}${reason ? `: ${reason}` : ""}`,
     metadata: { field, fieldState, overrideValue, reason, overrideId: upserted.id },
   });
+
+  // ─── Post-override source-evidence enrichment ─────────────────────────────
+  // Close the "USER_CONFIRMED with no prior evidence" gap: if the effective
+  // value (overrideValue ?? existing tender scalar) is locatable in an active
+  // tender file's extracted text, persist the source-evidence columns
+  // (fileId + page + quote) so the canonical resolver can mark the field as
+  // EXTRACTED_AND_GROUNDED instead of NOT_FOUND_CONFIRMED.
+  //
+  // This mirrors the post-extraction enrichment done by re-extract-metadata,
+  // tender-upload-first, and ai-analyze. It is BEST-EFFORT and NON-FATAL:
+  //   - Only runs for USER_CONFIRMED and USER_EDITED states (the only states
+  //     where source grounding can unblock the field).
+  //   - Only fields supported by enrichMetadataWithSourceEvidence are enriched
+  //     (clientName, title, reference, deadline, submissionMethod,
+  //     submissionAddress, submissionEmails, submissionEmailSubject). Extended
+  //     panel fields are skipped — the enrichment module does not handle them.
+  //   - Wrapped in try/catch: any failure (missing table, malformed text, etc.)
+  //     is swallowed. The override itself already succeeded; enrichment must
+  //     never block the response.
+  //   - Existing evidence is never overwritten with null — enrichment only
+  //     returns columns for fields where the value was found.
+  //
+  // Known limitation: for USER_EDITED where overrideValue differs from the
+  // raw tender scalar, enrichment writes evidence pointing to the override
+  // value, but the resolver's overrideMatchesGroundedSourceCheck still
+  // requires normalizedEdited === normalizedRaw. The field stays
+  // MANUAL_OVERRIDE_CONFIRMATION_REQUIRED in that case. Closing that gap
+  // requires also writing overrideValue into the tender scalar — a larger
+  // invariant change deferred to a follow-up.
+  if (fieldState === "USER_CONFIRMED" || fieldState === "USER_EDITED") {
+    try {
+      const ENRICHMENT_FIELD_MAP: Record<string, "clientName" | "title" | "reference" | "deadline" | "submissionMethod" | "submissionAddress" | "submissionEmails" | "submissionEmailSubject"> = {
+        clientName: "clientName",
+        title: "title",
+        reference: "reference",
+        deadline: "deadline",
+        submissionMethod: "submissionMethod",
+        submissionAddress: "submissionAddress",
+        submissionEmails: "submissionEmails",
+        submissionEmailSubject: "submissionEmailSubject",
+      };
+      const enrichmentKey = ENRICHMENT_FIELD_MAP[field];
+      if (enrichmentKey) {
+        // Resolve the effective value: overrideValue if provided, else the
+        // existing tender scalar (the USER_CONFIRMED-without-override case).
+        const existingScalar = (tenderData as any)?.[field];
+        let effectiveValue: string | Date | null = overrideValue ?? existingScalar ?? null;
+        // Convert deadline strings to Date for the enrichment module.
+        if (enrichmentKey === "deadline" && typeof effectiveValue === "string") {
+          const d = new Date(effectiveValue);
+          if (!isNaN(d.getTime())) effectiveValue = d;
+          else effectiveValue = null;
+        }
+        if (effectiveValue) {
+          const files = await prisma.tenderFile.findMany({
+            where: { tenderId: id, deletionStatus: "ACTIVE" },
+            select: { id: true, extractedText: true, totalPages: true, deletionStatus: true },
+          });
+          // Load existing contactDetailsSourceJson for the reference merge.
+          const existingContactDetails = await prisma.tender.findUnique({
+            where: { id },
+            select: { contactDetailsSourceJson: true },
+          });
+          const enrichmentInput: Record<string, unknown> = {
+            [enrichmentKey]: effectiveValue,
+            existingContactDetailsSourceJson: existingContactDetails?.contactDetailsSourceJson ?? null,
+          };
+          const enrichment = enrichMetadataWithSourceEvidence(
+            enrichmentInput as any,
+            files.map((f) => ({
+              id: f.id,
+              extractedText: f.extractedText ?? "",
+              totalPages: f.totalPages ?? null,
+              deletionStatus: f.deletionStatus ?? "ACTIVE",
+            })),
+          );
+          // Only update when enrichment found at least one field. This avoids
+          // a no-op prisma.tender.update and prevents overwriting existing
+          // evidence with undefined.
+          if (Object.keys(enrichment).length > 0) {
+            await prisma.tender.update({ where: { id }, data: enrichment });
+          }
+        }
+      }
+    } catch {
+      // Best-effort, non-fatal. The override itself already succeeded.
+      // The field stays in its pre-enrichment state (NOT_FOUND_CONFIRMED or
+      // MANUAL_OVERRIDE_CONFIRMATION_REQUIRED) until repair-metadata or AI
+      // Analyze is run.
+    }
+  }
 
   return NextResponse.json({ ok: true, override: upserted });
 }

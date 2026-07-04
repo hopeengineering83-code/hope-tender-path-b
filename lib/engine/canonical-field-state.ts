@@ -330,9 +330,15 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const override = overrides.find((o) => o.field === fieldKey);
     // clientName fallback to procuringEntityName (P1-B/C parity)
+    // evaluationCriteria is a virtual fieldKey that maps to the evaluationMethodology column
+    // (the field is named "Evaluation criteria" in the UI but stored as evaluationMethodology).
+    // Without this mapping, the resolver would always report INVALID for evaluationCriteria
+    // even when evaluationMethodology is populated, producing a spurious INVALID row.
     const rawValueRaw = (fieldKey === "clientName" && !tender.clientName)
       ? tender.procuringEntityName
-      : tender[fieldKey as keyof typeof tender];
+      : (fieldKey === "evaluationCriteria"
+        ? tender.evaluationMethodology
+        : tender[fieldKey as keyof typeof tender]);
     const rawValue = rawValueRaw instanceof Date ? rawValueRaw.toISOString() : typeof rawValueRaw === "string" ? rawValueRaw : rawValueRaw ? String(rawValueRaw) : null;
     const effectiveStr = override?.overrideValue ?? rawValue;
     const overrideState = override?.fieldState ?? null;

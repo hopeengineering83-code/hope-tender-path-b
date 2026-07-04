@@ -77,6 +77,10 @@ const TENDER_DASHBOARD_SELECT = {
   clientNameSourcePage: true, clientNameSourceQuote: true, clientNameSourceFileId: true,
   titleSourcePage: true, titleSourceQuote: true, titleSourceFileId: true,
   deadlineSourcePage: true, deadlineSourceQuote: true, deadlineSourceFileId: true,
+  // Reference source evidence — dedicated columns read first by the canonical
+  // resolver's getSourceEvidence for fieldKey="reference". Without these, the
+  // dashboard payload diverges from the strict BuildPlan validator's view.
+  referenceSourcePage: true, referenceSourceQuote: true, referenceSourceFileId: true,
   submissionMethodSourcePage: true, submissionMethodSourceQuote: true, submissionMethodSourceFileId: true,
   submissionAddressSourcePage: true, submissionAddressSourceQuote: true, submissionAddressSourceFileId: true,
   submissionEmailSourcePage: true, submissionEmailSourceFileId: true, submissionEmailSourceQuote: true,

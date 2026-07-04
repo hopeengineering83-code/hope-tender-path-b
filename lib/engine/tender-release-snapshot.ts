@@ -198,6 +198,14 @@ export async function getTenderReleaseSnapshot(
       deadlineSourcePage: true,
       deadlineSourceQuote: true,
       deadlineSourceFileId: true,
+      // Reference number source evidence — dedicated columns read first by the
+      // canonical resolver's getSourceEvidence for fieldKey="reference".
+      // Without these, the reference field can only reach EXTRACTED_AND_GROUNDED
+      // via the contactDetailsSourceJson fallback, which diverges from the
+      // strict BuildPlan validator that reads the dedicated columns.
+      referenceSourcePage: true,
+      referenceSourceQuote: true,
+      referenceSourceFileId: true,
       contactDetailsSourceJson: true,
       // Extended panel fields
       legalClientName: true,
@@ -382,6 +390,13 @@ export async function getTenderReleaseSnapshot(
       deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
       deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
       deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+      // Forward reference source-evidence columns to the resolver so the
+      // dedicated-column path in getSourceEvidence is taken (not just the
+      // contactDetailsSourceJson fallback). Matches the strict BuildPlan
+      // validator's view of the reference field.
+      referenceSourcePage: (tender as any).referenceSourcePage ?? null,
+      referenceSourceQuote: (tender as any).referenceSourceQuote ?? null,
+      referenceSourceFileId: (tender as any).referenceSourceFileId ?? null,
       contactDetailsSourceJson: tender.contactDetailsSourceJson,
       // Extended panel fields
       evaluationMethodology: tender.evaluationMethodology,
