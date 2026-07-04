@@ -278,19 +278,32 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     deletionStatus: "ACTIVE" as const,
     totalPages: fr.totalPages,
   }));
-  const enrichment = enrichMetadataWithSourceEvidence({
-    title: persisted.tender.title,
-    reference: persisted.tender.reference,
-    clientName: persisted.tender.clientName,
-    deadline: persisted.tender.deadline,
-    submissionMethod: persisted.tender.submissionMethod,
-    submissionAddress: persisted.tender.submissionAddress,
-    submissionEmails: persisted.tender.submissionEmails,
-    submissionEmailSubject: persisted.tender.submissionEmailSubject,
-    existingContactDetailsSourceJson: persisted.tender.contactDetailsSourceJson ?? null,
-  }, enrichmentFiles);
-  if (Object.keys(enrichment).length > 0) {
-    await prisma.tender.update({ where: { id: tenderId }, data: enrichment as Record<string, unknown> });
+  // Wrapped in try/catch (best-effort, non-fatal): if enrichment throws
+  // (e.g., a file with malformed text that defeats the normalized-index
+  // builder), the upload itself still succeeds — the tender and files are
+  // persisted, just without source evidence. Fields stay EXTRACTED_UNVERIFIED
+  // until AI Analyze or repair-metadata is run. This mirrors the try/catch
+  // pattern in metadata-override, ai-analyze, and re-extract-metadata.
+  try {
+    const enrichment = enrichMetadataWithSourceEvidence({
+      title: persisted.tender.title,
+      reference: persisted.tender.reference,
+      clientName: persisted.tender.clientName,
+      deadline: persisted.tender.deadline,
+      submissionMethod: persisted.tender.submissionMethod,
+      submissionAddress: persisted.tender.submissionAddress,
+      submissionEmails: persisted.tender.submissionEmails,
+      submissionEmailSubject: persisted.tender.submissionEmailSubject,
+      existingContactDetailsSourceJson: persisted.tender.contactDetailsSourceJson ?? null,
+    }, enrichmentFiles);
+    if (Object.keys(enrichment).length > 0) {
+      await prisma.tender.update({ where: { id: tenderId }, data: enrichment as Record<string, unknown> });
+    }
+  } catch {
+    // Best-effort, non-fatal. The tender and files are already persisted
+    // (transaction committed above); only the source-evidence enrichment
+    // is skipped. Fields stay EXTRACTED_UNVERIFIED until AI Analyze or
+    // repair-metadata is run.
   }
 
     for (const fileRecord of persisted.fileRecords) {

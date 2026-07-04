@@ -16,7 +16,9 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
-import { isGroundedEvidence } from "./evidence-grounding";
+// Note: isGroundedEvidence was previously imported but never used — the
+// detector uses field.isGrounded from the resolver's output instead.
+// Removed to satisfy strict lint.
 
 export type ReconciliationFinding = {
   field: string;
@@ -197,9 +199,20 @@ export async function reconcileTender(
       },
     }).catch(() => null);
     // Check idempotency key in metadata
-    const alreadyApplied = existing?.metadata && typeof existing.metadata === "string"
-      ? JSON.parse(existing.metadata).idempotencyKey === options.idempotencyKey
-      : false;
+    // Wrap JSON.parse in try/catch — a malformed metadata string (e.g., from
+    // a manual DB edit or a schema migration) would throw and abort the live
+    // reconciliation. On parse failure, treat as "not already applied" so the
+    // operation proceeds (fail-open for the idempotency check; the transaction
+    // + audit record below still provide safety).
+    let alreadyApplied = false;
+    if (existing?.metadata && typeof existing.metadata === "string") {
+      try {
+        const parsed = JSON.parse(existing.metadata);
+        alreadyApplied = parsed?.idempotencyKey === options.idempotencyKey;
+      } catch {
+        alreadyApplied = false;
+      }
+    }
 
     if (alreadyApplied) {
       lines.push(`NOTE: Reconciliation already applied with this idempotency key. No changes made.`);

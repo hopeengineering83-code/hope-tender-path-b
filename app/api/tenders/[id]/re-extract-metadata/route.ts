@@ -306,24 +306,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // canonical resolver can mark them as EXTRACTED_AND_GROUNDED. Without this,
   // re-extracted values stay EXTRACTED_UNVERIFIED forever. Only fields where
   // evidence is found are added; existing evidence is NOT overwritten.
+  //
+  // Wrapped in try/catch (best-effort, non-fatal): if enrichment throws
+  // (e.g., a file with malformed text that defeats the normalized-index
+  // builder), the re-extraction itself still succeeds — the scalar values
+  // are persisted, just without source evidence. The field stays
+  // EXTRACTED_UNVERIFIED until repair-metadata or AI Analyze is run.
+  // This mirrors the try/catch pattern in metadata-override and ai-analyze.
   const enrichmentFiles = tender.files.map((f) => ({
     id: f.id,
     extractedText: f.extractedText,
     deletionStatus: "ACTIVE" as const,
     totalPages: totalPagesByFileId.get(f.id) ?? null,
   }));
-  const enrichment = enrichMetadataWithSourceEvidence({
-    title: update.title as string | undefined,
-    reference: update.reference as string | undefined,
-    clientName: update.clientName as string | undefined,
-    deadline: update.deadline as Date | undefined,
-    submissionMethod: update.submissionMethod as string | undefined,
-    submissionAddress: update.submissionAddress as string | undefined,
-    submissionEmails: update.submissionEmails as string | undefined,
-    submissionEmailSubject: update.submissionEmailSubject as string | undefined,
-    existingContactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
-  }, enrichmentFiles);
-  Object.assign(update, enrichment);
+  try {
+    const enrichment = enrichMetadataWithSourceEvidence({
+      title: update.title as string | undefined,
+      reference: update.reference as string | undefined,
+      clientName: update.clientName as string | undefined,
+      deadline: update.deadline as Date | undefined,
+      submissionMethod: update.submissionMethod as string | undefined,
+      submissionAddress: update.submissionAddress as string | undefined,
+      submissionEmails: update.submissionEmails as string | undefined,
+      submissionEmailSubject: update.submissionEmailSubject as string | undefined,
+      existingContactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+    }, enrichmentFiles);
+    Object.assign(update, enrichment);
+  } catch {
+    // Best-effort, non-fatal. The scalar values in `update` are still
+    // persisted below; only the source-evidence columns are skipped.
+  }
 
   await prisma.tender.update({ where: { id }, data: update });
   await logAction({

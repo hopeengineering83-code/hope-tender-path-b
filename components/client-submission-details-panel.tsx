@@ -301,10 +301,16 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
         {metadata.fields.map((field) => {
           const badge = STATUS_BADGE[field.status] ?? STATUS_BADGE.INVALID;
           const isCritical = field.criticality === "always-critical";
-          // Grounding is shown from the canonical evidence: a field counts as
-          // sourced only when it has BOTH a real page AND a usable quote.
-          const source = { page: field.sourcePage, quote: field.sourceQuote };
-          const hasSource = !!(source?.page != null && source?.page > 0 && source?.quote && source.quote.trim().length > 5);
+          // Grounding is shown from the canonical isGrounded flag — the
+          // resolver's single source of truth. A field counts as sourced
+          // only when it has a real page AND a usable quote AND a valid
+          // fileId pointing to an ACTIVE tender file. Recomputing this
+          // client-side (e.g., page > 0 && quote.length > 5) would diverge
+          // from the canonical status badge in the orphaned-fileId edge
+          // case (page + quote present but fileId null or points to a
+          // deleted file). Using field.isGrounded guarantees the chip and
+          // the badge always agree.
+          const hasSource = !!field.isGrounded;
           const isEditing = editing === field.fieldKey;
           const isExpanded = expandedSource === field.fieldKey;
 
@@ -323,7 +329,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
                       </span>
                     )}
                     {hasSource && (
-                      <span className="rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600" title={`Page ${source.page}`}>
+                      <span className="rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600" title={`Page ${field.sourcePage}`}>
                         sourced
                       </span>
                     )}
@@ -365,7 +371,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
                   )}
                   {isExpanded && hasSource && (
                     <div className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-600">
-                      <span className="font-semibold">Page {source.page}:</span> “{source.quote}”
+                      <span className="font-semibold">Page {field.sourcePage}:</span> “{field.sourceQuote}”
                     </div>
                   )}
                 </div>

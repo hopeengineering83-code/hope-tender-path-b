@@ -109,15 +109,21 @@ describe("Canonical field-state resolver", () => {
     );
   });
 
-  it("client panel grounded check requires BOTH page AND quote", () => {
+  it("client panel grounded check uses canonical field.isGrounded (not client-side recompute)", () => {
     const src = read("components/client-submission-details-panel.tsx");
+    // The panel must use the resolver's field.isGrounded flag — the single
+    // source of truth — rather than recomputing grounding client-side.
+    // Recomputing client-side (page > 0 && quote.length > 5) would diverge
+    // from the canonical status badge in the orphaned-fileId edge case
+    // (page + quote present but fileId null or points to a deleted file).
     assert.ok(
-      src.includes("source?.page != null && source?.page > 0 && source?.quote"),
-      "hasSource must check both page AND quote",
+      src.includes("const hasSource = !!field.isGrounded;"),
+      "hasSource must use field.isGrounded (canonical single source of truth)",
     );
+    // The old client-side recompute must NOT be present
     assert.ok(
-      !src.includes("source?.page != null || source?.quote"),
-      "must NOT use OR for hasSource — must use AND",
+      !src.includes("source?.page != null && source?.page > 0 && source?.quote"),
+      "old client-side hasSource recompute must be removed",
     );
   });
 

@@ -196,6 +196,200 @@ describe("enrichMetadataWithSourceEvidence — behavioral", () => {
     );
     assert.equal(result.clientNameSourceFileId, "file-1");
   });
+
+  // ─── Idempotency + determinism contract ──────────────────────────────────
+
+  it("H3: is idempotent — calling twice with the same input produces deeply-equal output", () => {
+    const metadata = {
+      clientName: "Ministry of Health",
+      title: "Medical Equipment Supply",
+      reference: "REF-2026-001",
+      deadline: new Date("2026-12-30"),
+      submissionMethod: "email",
+      submissionAddress: "submit@example.com",
+      submissionEmails: ["submit@example.com"],
+      submissionEmailSubject: "Tender Submission",
+      existingContactDetailsSourceJson: JSON.stringify({
+        donorAgency: { page: 5, quote: "World Bank", fileId: null },
+      }),
+    };
+    const r1 = enrichMetadataWithSourceEvidence(metadata, files);
+    const r2 = enrichMetadataWithSourceEvidence(metadata, files);
+    assert.deepEqual(r1, r2);
+  });
+
+  it("M3: when the same value appears in 2 active files, the lower id wins — regardless of input order", () => {
+    const dupFiles = [
+      {
+        id: "file-bbb",
+        extractedText: "Page 1\nMinistry of Health\nPage 2 content",
+        deletionStatus: "ACTIVE",
+        totalPages: 2,
+      },
+      {
+        id: "file-aaa",
+        extractedText: "Page 1\nMinistry of Health\nPage 5 content",
+        deletionStatus: "ACTIVE",
+        totalPages: 5,
+      },
+    ];
+    const r1 = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, dupFiles);
+    const r2 = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, [...dupFiles].reverse());
+    assert.equal(r1.clientNameSourceFileId, "file-aaa", "lower id must win");
+    assert.equal(r2.clientNameSourceFileId, "file-aaa", "lower id must win regardless of input order");
+    assert.deepEqual(r1, r2, "output must be identical regardless of input order");
+  });
+
+  it("M4: overwrites (does NOT duplicate) an existing procurementReferenceNumber entry in contactDetailsSourceJson", () => {
+    const existing = JSON.stringify({
+      donorAgency: { page: 5, quote: "World Bank", fileId: null },
+      procurementReferenceNumber: {
+        page: 99,
+        quote: "OLD QUOTE — must be overwritten",
+        fileId: "old-file-id",
+      },
+    });
+    const result = enrichMetadataWithSourceEvidence(
+      { reference: "REF-2026-001", existingContactDetailsSourceJson: existing },
+      files,
+    );
+    assert.ok(result.contactDetailsSourceJson);
+    const parsed = JSON.parse(result.contactDetailsSourceJson!);
+    // Exactly ONE procurementReferenceNumber key — not an array, not duplicated
+    assert.equal(typeof parsed.procurementReferenceNumber, "object");
+    assert.ok(!Array.isArray(parsed.procurementReferenceNumber),
+      "must NOT be an array of duplicates");
+    const refKeys = Object.keys(parsed).filter((k) => k === "procurementReferenceNumber");
+    assert.equal(refKeys.length, 1, "exactly one procurementReferenceNumber key");
+    // Old evidence was overwritten — new evidence wins
+    assert.equal(parsed.procurementReferenceNumber.fileId, "file-1");
+    assert.notEqual(parsed.procurementReferenceNumber.page, 99);
+    assert.notEqual(parsed.procurementReferenceNumber.quote, "OLD QUOTE — must be overwritten");
+    // Unrelated existing entries preserved
+    assert.ok(parsed.donorAgency, "donorAgency must be preserved");
+    assert.equal(parsed.donorAgency.quote, "World Bank");
+  });
+
+  it("falls back to {} when existingContactDetailsSourceJson is malformed JSON", () => {
+    const result = enrichMetadataWithSourceEvidence(
+      { reference: "REF-2026-001", existingContactDetailsSourceJson: "not valid json{{{" },
+      files,
+    );
+    assert.ok(result.contactDetailsSourceJson);
+    const parsed = JSON.parse(result.contactDetailsSourceJson!);
+    assert.ok(parsed.procurementReferenceNumber, "reference evidence still added on top of {}");
+    assert.equal(Object.keys(parsed).length, 1, "no leftover garbage from the malformed JSON");
+  });
+
+  it("uses the FIRST occurrence of a value when it appears multiple times in one file", () => {
+    const multiFile = [{
+      id: "file-1",
+      extractedText: "Page 1\nFirst Ministry of Health mention\nPage 2\nSecond Ministry of Health mention",
+      deletionStatus: "ACTIVE",
+      totalPages: 2,
+    }];
+    const result = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, multiFile);
+    assert.equal(result.clientNameSourcePage, 1, "must attribute to page 1 (first occurrence), not page 2");
+  });
+
+  it("computes page number from form-feed (\\f) boundaries", () => {
+    const ffFile = [{
+      id: "file-1",
+      extractedText: "Page one content\fMinistry of Health on page two",
+      deletionStatus: "ACTIVE",
+      totalPages: 2,
+    }];
+    const result = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, ffFile);
+    assert.equal(result.clientNameSourcePage, 2);
+  });
+
+  it("returns null page when computed page exceeds totalPages (fail-closed)", () => {
+    const clampFile = [{
+      id: "file-1",
+      extractedText: "[Page 99]\nMinistry of Health",
+      deletionStatus: "ACTIVE",
+      totalPages: 2,
+    }];
+    const result = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, clampFile);
+    assert.equal(result.clientNameSourcePage, null, "must fail-closed when computed page > totalPages");
+    assert.equal(result.clientNameSourceFileId, "file-1", "fileId still set even when page is null");
+  });
+
+  it("multi-page file with NO boundaries → null page (fail-closed)", () => {
+    const noBoundaryFile = [{
+      id: "file-1",
+      extractedText: "Ministry of Health with no page markers and no form feeds",
+      deletionStatus: "ACTIVE",
+      totalPages: 5,
+    }];
+    const result = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, noBoundaryFile);
+    assert.equal(result.clientNameSourcePage, null, "multi-page file with no boundaries must NOT guess page 1");
+  });
+
+  it("verified one-page file with NO boundaries → page 1 (fail-open only when verified)", () => {
+    const onePageFile = [{
+      id: "file-1",
+      extractedText: "Ministry of Health with no page markers and no form feeds",
+      deletionStatus: "ACTIVE",
+      totalPages: 1,
+    }];
+    const result = enrichMetadataWithSourceEvidence({ clientName: "Ministry of Health" }, onePageFile);
+    assert.equal(result.clientNameSourcePage, 1, "verified one-page file may be attributed to page 1");
+  });
+
+  it("submissionEmails loop continues past emails not found in any file", () => {
+    const result = enrichMetadataWithSourceEvidence(
+      { submissionEmails: ["not-found@example.com", "submit@example.com"] },
+      files,
+    );
+    assert.equal(result.submissionEmailSourceFileId, "file-1");
+    assert.ok(result.submissionEmailSourceQuote?.includes("submit@example.com"));
+  });
+
+  it("locates submissionEmailSubject in an active file", () => {
+    const result = enrichMetadataWithSourceEvidence(
+      { submissionEmailSubject: "Tender Submission" },
+      [{ id: "file-1", extractedText: "Subject: Tender Submission Required", deletionStatus: "ACTIVE" }],
+    );
+    assert.equal(result.submissionEmailSubjectSourceFileId, "file-1");
+    assert.ok(result.submissionEmailSubjectSourceQuote?.includes("Tender Submission"));
+  });
+});
+
+// ─── 1b. Behavioral tests for clearEvidenceForField ─────────────────────────
+
+describe("clearEvidenceForField — behavioral", () => {
+  // Imported lazily to avoid unused-import lint if the export is renamed.
+  // The function is re-exported from the same module.
+  let clearEvidenceForField: (field: string) => Record<string, null>;
+  try {
+    const mod = require("../lib/engine/metadata-source-enrichment");
+    clearEvidenceForField = mod.clearEvidenceForField;
+  } catch {
+    clearEvidenceForField = () => ({});
+  }
+
+  it("returns the 3 null columns for each known scalar field", () => {
+    for (const field of ["clientName", "title", "deadline", "submissionMethod", "submissionAddress", "submissionEmails", "reference", "submissionEmailSubject"]) {
+      const cleared = clearEvidenceForField(field);
+      const vals = Object.values(cleared);
+      assert.ok(vals.every((v) => v === null), `${field}: all values must be null`);
+      assert.ok(Object.keys(cleared).length >= 3, `${field}: must clear at least 3 columns`);
+    }
+  });
+
+  it("returns {} for an unknown field name", () => {
+    assert.deepEqual(clearEvidenceForField("unknownField"), {});
+  });
+
+  it("clearEvidenceForField('reference') clears referenceSource* AND does NOT clear contactDetailsSourceJson", () => {
+    const cleared = clearEvidenceForField("reference");
+    assert.equal(cleared.referenceSourceFileId, null);
+    assert.equal(cleared.referenceSourcePage, null);
+    assert.equal(cleared.referenceSourceQuote, null);
+    assert.equal(cleared.contactDetailsSourceJson, undefined,
+      "contactDetailsSourceJson clearing is the CALLER's responsibility — clearEvidenceForField must NOT touch it");
+  });
 });
 
 // ─── 2. Source-inspection: re-extract-metadata wiring ────────────────────────
@@ -236,6 +430,20 @@ describe("re-extract-metadata route — enrichment wired in", () => {
       "must Object.assign enrichment into update map so evidence columns are persisted",
     );
   });
+
+  it("wraps enrichment in try/catch (best-effort, non-fatal — H1 route-level gap fix)", () => {
+    // The enrichment must be wrapped in try/catch so a failure (e.g., malformed
+    // file text that defeats the normalized-index builder) does NOT 500 the
+    // route. The scalar values in `update` must still be persisted.
+    const tryIdx = src.indexOf("try {");
+    const enrichIdx = src.indexOf("enrichMetadataWithSourceEvidence({");
+    const catchIdx = src.indexOf("// Best-effort, non-fatal. The scalar values in `update` are still");
+    assert.ok(tryIdx > -1, "must have a try block around enrichment");
+    assert.ok(enrichIdx > -1, "must call enrichMetadataWithSourceEvidence");
+    assert.ok(catchIdx > -1, "must have a catch block with non-fatal comment");
+    assert.ok(tryIdx < enrichIdx, "try must come before enrichment call");
+    assert.ok(enrichIdx < catchIdx, "catch must come after enrichment call");
+  });
 });
 
 // ─── 3. Source-inspection: tender-upload-first wiring ────────────────────────
@@ -273,6 +481,20 @@ describe("tender-upload-first — enrichment wired in", () => {
       src.includes('if (Object.keys(enrichment).length > 0)'),
       "must guard the update with Object.keys(enrichment).length > 0",
     );
+  });
+
+  it("wraps enrichment in try/catch (best-effort, non-fatal — H1 route-level gap fix)", () => {
+    // The enrichment must be wrapped in try/catch so a failure does NOT 500
+    // the upload. The tender and files are already persisted (transaction
+    // committed above); only the source-evidence enrichment is skipped.
+    const tryIdx = src.indexOf("try {");
+    const enrichIdx = src.indexOf("enrichMetadataWithSourceEvidence({");
+    const catchIdx = src.indexOf("// Best-effort, non-fatal. The tender and files are already persisted");
+    assert.ok(tryIdx > -1, "must have a try block around enrichment");
+    assert.ok(enrichIdx > -1, "must call enrichMetadataWithSourceEvidence");
+    assert.ok(catchIdx > -1, "must have a catch block with non-fatal comment");
+    assert.ok(tryIdx < enrichIdx, "try must come before enrichment call");
+    assert.ok(enrichIdx < catchIdx, "catch must come after enrichment call");
   });
 });
 
