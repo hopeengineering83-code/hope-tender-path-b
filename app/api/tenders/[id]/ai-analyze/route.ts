@@ -14,7 +14,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
 import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
-import { computeProvenPageNumber } from "../../../../../lib/engine/page-provenance";
+import { locateQuoteProvenPage } from "../../../../../lib/engine/page-provenance";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -71,14 +71,15 @@ function resolveMetadataSourceFileIds(
 }
 
 /**
- * Guard AI-claimed page numbers using computeProvenPageNumber with the file's
+ * Guard AI-claimed page numbers using locateQuoteProvenPage with the file's
  * stored TenderFile.totalPages as the authoritative page-count guard.
  *
  * AI can hallucinate page numbers (e.g., page 99 for a 3-page file). Without
  * this guard, the hallucinated page would be persisted to the DB and read by
  * the canonical resolver as if it were proven. This function re-derives the
- * page from the quote's position in the attributed file's extracted text,
- * using the same computeProvenPageNumber guard that re-extract and repair use.
+ * page from the FULL quote's exact position in the attributed file's extracted
+ * text via locateQuoteProvenPage (no prefix matching, no offset-0 fallback,
+ * ambiguous multi-page occurrences → null).
  *
  * Returns a new aiResult with guarded page numbers (null when the page cannot
  * be proven).
@@ -94,10 +95,10 @@ function guardAiPageNumbers(
     if (!quote || !fileId) return null;
     const file = files.find((f) => f.id === fileId);
     if (!file || !file.extractedText) return null;
-    const needle = quote.toLowerCase().replace(/\s+/g, " ").trim();
-    const haystack = file.extractedText.toLowerCase().replace(/\s+/g, " ").trim();
-    const idx = needle.length >= 6 ? haystack.indexOf(needle.slice(0, Math.min(20, needle.length))) : -1;
-    return computeProvenPageNumber(file.extractedText, idx >= 0 ? idx : 0, file.totalPages ?? null);
+    // Canonical quote→page resolver: FULL-quote match (never a prefix), exact
+    // normalized→original offset mapping, null when the quote is absent or its
+    // occurrences resolve to different pages (ambiguous). Never guesses page 1.
+    return locateQuoteProvenPage(file.extractedText, quote, file.totalPages ?? null);
   };
 
   // Guard each AI-claimed page using the attributed file's totalPages

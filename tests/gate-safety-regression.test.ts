@@ -61,7 +61,7 @@ describe("Gate safety — regex fallback never unlocks generation/export", () =>
     const result = evaluateGenerationReadiness(makeBaseInput({
       analysisState: "REGEX_FALLBACK_UNAPPROVED",
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.ok(result.blockerCode === "FALLBACK_NOT_ALLOWED" || result.blockerCode === "FALLBACK_UNAPPROVED",
       `Expected FALLBACK blocker, got ${result.blockerCode}`);
   });
@@ -73,7 +73,7 @@ describe("Gate safety — regex fallback never unlocks generation/export", () =>
       analysisState: "HUMAN_APPROVED_FALLBACK" as any,
       fallbackApprovalBound: true,
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "FALLBACK_NOT_ALLOWED");
   });
 });
@@ -86,7 +86,7 @@ describe("Gate safety — partial/failed analysis never unlocks", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       analysisState: "FAILED",
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.ok(result.blockerCode === "ANALYSIS_NOT_READY" || result.blockerCode === "FALLBACK_NOT_ALLOWED",
       `Expected ANALYSIS_NOT_READY, got ${result.blockerCode}`);
   });
@@ -95,14 +95,14 @@ describe("Gate safety — partial/failed analysis never unlocks", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       analysisState: "RUNNING",
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
   });
 
   it("blocks when analysisState is NO_ANALYSIS", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       analysisState: "NOT_STARTED",
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
   });
 });
 
@@ -114,7 +114,7 @@ describe("Gate safety — corrupted extraction is a hard block", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       extractionFiles: [{ fileId: "f1", corrupted: true, weak: false, hasOverride: false }],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "EXTRACTION_CORRUPTED");
   });
 
@@ -122,7 +122,7 @@ describe("Gate safety — corrupted extraction is a hard block", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       extractionFiles: [{ fileId: "f1", corrupted: true, weak: false, hasOverride: true }],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "EXTRACTION_CORRUPTED");
   });
 });
@@ -135,7 +135,7 @@ describe("Gate safety — weak extraction blocks without override", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       extractionFiles: [{ fileId: "f1", corrupted: false, weak: true, hasOverride: false }],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "EXTRACTION_WEAK_NO_OVERRIDE");
   });
 
@@ -152,15 +152,23 @@ describe("Gate safety — weak extraction blocks without override", () => {
 
 describe("Gate safety — missing submission plan blocks", () => {
 
-  it("blocks when exportReadyDocumentCount is 0", () => {
+  it("blocks generation when no confirmed BuildPlan exists (plan gate for generation)", () => {
+    // Generation is gated on the persisted CONFIRMED BuildPlan — NOT on
+    // exportReadyDocumentCount (documents cannot exist before generation).
     const result = evaluateGenerationReadiness(makeBaseInput({
-      exportReadyDocumentCount: 0,
-      purpose: "export",
       hasCurrentConfirmedBuildPlan: false,
     }));
-    // The gate may or may not block depending on which check fires first.
-    // Just verify it returns a valid result.
-    assert.ok(typeof result.ok === "boolean");
+    assert.equal(result.ok, false);
+    assert.equal(result.blockerCode, "BUILD_PLAN_NOT_CONFIRMED");
+  });
+
+  it("blocks export when exportReadyDocumentCount is 0", () => {
+    const result = evaluateGenerationReadiness(makeBaseInput({
+      purpose: "export",
+      exportReadyDocumentCount: 0,
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 });
 
@@ -172,7 +180,7 @@ describe("Gate safety — ownership check blocks", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       tenderExistsAndOwned: false,
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "OWNERSHIP_TENDER_NOT_FOUND");
   });
 });
@@ -185,7 +193,7 @@ describe("Gate safety — critical metadata contamination blocks", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       criticalMetadataOk: false,
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
   });
 });
@@ -200,7 +208,7 @@ describe("Gate safety — ungrounded mandatory requirements block", () => {
         { priority: "MANDATORY", sourceTenderFileId: null, sourcePageNumber: null, sourceExactQuote: null, sourceFileActiveInTender: false },
       ],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
@@ -210,7 +218,7 @@ describe("Gate safety — ungrounded mandatory requirements block", () => {
         { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: null, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true },
       ],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
@@ -220,7 +228,7 @@ describe("Gate safety — ungrounded mandatory requirements block", () => {
         { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: null, sourceFileActiveInTender: true },
       ],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
@@ -230,7 +238,7 @@ describe("Gate safety — ungrounded mandatory requirements block", () => {
         { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "short", sourceFileActiveInTender: true },
       ],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
@@ -240,7 +248,7 @@ describe("Gate safety — ungrounded mandatory requirements block", () => {
         { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful quote text", sourceFileActiveInTender: false },
       ],
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 });
@@ -255,7 +263,7 @@ describe("Gate safety — legacy analysis blocks", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       analysisState: "NOT_STARTED",
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.ok(result.blockerCode === "ANALYSIS_NOT_READY" || result.blockerCode === "LEGACY_ANALYSIS_BLOCKED",
       `Expected block, got ${result.blockerCode}`);
   });
@@ -270,7 +278,7 @@ describe("Gate safety — content hash mismatch blocks", () => {
       latestJobHash: "hash-abc",
       currentContentHash: "hash-xyz",
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
+    assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 });
@@ -290,23 +298,27 @@ describe("Gate safety — all conditions met unlocks", () => {
 
 describe("Gate safety — PLANNED/SUPERSEDED never count as generated/export-ready", () => {
 
-  it("blocks when exportReadyDocumentCount is 0 (PLANNED rows are virtual in PR #914)", () => {
+  it("blocks export when exportReadyDocumentCount is 0 (PLANNED rows are virtual in PR #914)", () => {
     // After PR #914, planOnly mode creates 0 GeneratedDocument rows.
-    // The gate must block generation when there are no real documents.
+    // The gate must block EXPORT/final-ZIP when there are no real documents.
+    // (Generation is intentionally NOT gated on this count — documents cannot
+    // exist before the first generation run.)
     const result = evaluateGenerationReadiness(makeBaseInput({
+      purpose: "export",
       exportReadyDocumentCount: 0,
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
-    // Gate may or may not block depending on which check fires first
+    assert.equal(result.ok, false);
+    assert.equal(result.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 
   it("does not count SUPERSEDED rows (excluded by 'not: SUPERSEDED' filter)", () => {
     // The gate input has exportReadyDocumentCount which counts non-superseded rows.
-    // If all rows are SUPERSEDED, count is 0 → blocked.
+    // If all rows are SUPERSEDED, count is 0 → export/final-ZIP blocked.
     const result = evaluateGenerationReadiness(makeBaseInput({
+      purpose: "final-zip",
       exportReadyDocumentCount: 0, // all rows superseded
     }));
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean");
-    // Gate may or may not block depending on which check fires first
+    assert.equal(result.ok, false);
+    assert.equal(result.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 });

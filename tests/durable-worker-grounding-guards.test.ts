@@ -5,7 +5,7 @@
  * These tests verify that the durable worker (the THIRD promotion path,
  * alongside streaming and non-streaming ai-analyze/route.ts) has the same
  * grounding guarantees:
- *   1. Guards AI-claimed page numbers via computeProvenPageNumber.
+ *   1. Guards AI-claimed page numbers via locateQuoteProvenPage (fail-closed).
  *   2. Passes existingContactDetailsSourceJson to buildCanonicalAnalysisTenderUpdate.
  *   3. Resolves reference fileId after the transaction.
  *   4. Re-resolves fileId when it points to a deleted/inactive file.
@@ -20,10 +20,10 @@ const read = (p: string) => readFileSync(p, "utf8");
 describe("analysis-job-service.ts — durable worker grounding guarantees", () => {
   const src = read("lib/ai-jobs/analysis-job-service.ts");
 
-  it("imports computeProvenPageNumber from page-provenance", () => {
+  it("imports locateQuoteProvenPage from page-provenance", () => {
     assert.ok(
-      src.includes('import { computeProvenPageNumber } from "../engine/page-provenance";'),
-      "durable worker must import computeProvenPageNumber",
+      src.includes('import { locateQuoteProvenPage } from "../engine/page-provenance";'),
+      "durable worker must import the canonical quote→page resolver locateQuoteProvenPage",
     );
   });
 
@@ -34,11 +34,21 @@ describe("analysis-job-service.ts — durable worker grounding guarantees", () =
     );
   });
 
-  it("guards AI page numbers via computeProvenPageNumber", () => {
-    // The guard is an inline guardPage function that calls computeProvenPageNumber.
+  it("guards AI page numbers via locateQuoteProvenPage (full-quote, fail-closed)", () => {
+    // The guard is an inline guardPage function that calls the canonical
+    // quote→page resolver. It must NOT use prefix matching or a normalized
+    // offset against the original text (the pre-#936 bugs).
     assert.ok(
-      src.includes("computeProvenPageNumber("),
-      "durable worker must call computeProvenPageNumber to guard AI page numbers",
+      src.includes("locateQuoteProvenPage("),
+      "durable worker must call locateQuoteProvenPage to guard AI page numbers",
+    );
+    assert.ok(
+      !src.includes("slice(0, Math.min(20"),
+      "durable worker must NOT prove pages from a 20-char quote prefix",
+    );
+    assert.ok(
+      !src.includes("idx >= 0 ? idx : 0"),
+      "durable worker must NOT fall back to offset 0 for unfound quotes (invents page 1)",
     );
     // Must guard all 6 critical fields
     for (const field of [

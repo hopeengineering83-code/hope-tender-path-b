@@ -101,7 +101,8 @@ describe("planOnly cannot bypass safety gates", () => {
     // The planOnly path must set planRowsCreated = 0
     const planOnlyIdx = generateRoute.indexOf('url.searchParams.get("planOnly") === "true"');
     assert.ok(planOnlyIdx > -1, "planOnly mode entry must exist");
-    const planOnlySection = generateRoute.slice(planOnlyIdx, planOnlyIdx + 2000);
+    // 4000-char window — CRLF checkouts inflate the block past 2000 chars.
+    const planOnlySection = generateRoute.slice(planOnlyIdx, planOnlyIdx + 4000);
     assert.ok(
       planOnlySection.includes("planRowsCreated = 0") || planOnlySection.includes("virtualOnly"),
       "planOnly mode must not create GeneratedDocument rows (virtual only)",

@@ -26,7 +26,10 @@ describe("Generate route planOnly path — zero GeneratedDocument.create", () =>
     assert.ok(planOnlyIdx > -1, "planOnly path must exist");
 
     // Find the next return statement after planOnly
-    const afterPlanOnly = generateRoute.slice(planOnlyIdx, planOnlyIdx + 2000);
+    // 4000-char window: the planOnly block is ~2000 chars and the exact size
+    // varies with line endings (CRLF adds 1 char/line) — a 2000 window was
+    // truncating "planRowsCreated = 0" on Windows checkouts.
+    const afterPlanOnly = generateRoute.slice(planOnlyIdx, planOnlyIdx + 4000);
     assert.ok(
       afterPlanOnly.includes("planRowsCreated = 0"),
       "planOnly path must set planRowsCreated = 0 (virtual)",

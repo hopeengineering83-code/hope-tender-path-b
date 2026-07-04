@@ -47,9 +47,22 @@ describe("Route-level gate safety — zero GeneratedDocument.create before readi
     );
   });
 
-  it("submission-plan/build route is the only route that creates PLANNED rows", () => {
-    // The build route creates zero GeneratedDocument rows (it builds a DRAFT plan).
-    assert.ok(true, "build route creates zero documents");
+  it("submission-plan/build route creates ZERO GeneratedDocument rows (BuildPlan is persisted instead)", () => {
+    // Post-#914 design: PLANNED rows are virtual. The build route persists a
+    // BuildPlan via the canonical buildDraftBuildPlan service and must never
+    // create GeneratedDocument rows (PLANNED or otherwise).
+    assert.ok(
+      !buildRoute.includes('generationStatus: "PLANNED"'),
+      "Build route must NOT create PLANNED GeneratedDocument rows",
+    );
+    assert.ok(
+      !buildRoute.includes("generatedDocument.create"),
+      "Build route must NOT create GeneratedDocument rows",
+    );
+    assert.ok(
+      buildRoute.includes("buildDraftBuildPlan"),
+      "Build route must delegate to the canonical buildDraftBuildPlan service",
+    );
   });
 
   it("generate route does NOT create PLANNED rows outside planOnly path", () => {
@@ -111,7 +124,7 @@ describe("Route-level gate safety — PLANNED/SUPERSEDED never count as export-r
     };
     const result = evaluateGenerationReadiness(input);
     assert.equal(result.ok, false);
-    assert.ok(result.blockerCode, "must have a blocker code");
+    assert.equal(result.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 
   it("gate allows when exportReadyDocumentCount > 0 (real documents exist)", () => {
@@ -134,10 +147,11 @@ describe("Route-level gate safety — PLANNED/SUPERSEDED never count as export-r
       recordedBuildPlanState: "VALID",
       hasCurrentConfirmedBuildPlan: true,
       confirmedPlanDocumentsOk: true,
+      confirmedBuildPlanItemsValid: true,
       exportReadyDocumentCount: 3, // Real documents exist
     };
     const result = evaluateGenerationReadiness(input);
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean result");
+    assert.equal(result.ok, true);
   });
 });
 
@@ -148,10 +162,6 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
     // evidence, criticalMetadataOk is false → blocked
     const input: GenerationReadinessInput = {
       purpose: "generate",
-      hasCurrentConfirmedBuildPlan: true,
-      confirmedPlanDocumentsOk: true,
-      confirmedBuildPlanItemsValid: true,
-      recordedBuildPlanState: "VALID",
       tenderExistsAndOwned: true,
       activeFileCount: 1,
       extractionFiles: [{ fileId: "f1", corrupted: false, weak: false, hasOverride: false }],
@@ -195,9 +205,10 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
       recordedBuildPlanState: "VALID",
       hasCurrentConfirmedBuildPlan: true,
       confirmedPlanDocumentsOk: true, // USER_CONFIRMED with exact-match grounded evidence
+      confirmedBuildPlanItemsValid: true,
       exportReadyDocumentCount: 3,
     };
     const result = evaluateGenerationReadiness(input);
-    assert.ok(typeof result.ok === "boolean", "gate must return a boolean result");
+    assert.equal(result.ok, true);
   });
 });

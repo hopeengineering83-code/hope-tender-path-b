@@ -15,7 +15,7 @@ import {
 import { upsertRequirements } from "../engine/stable-requirements";
 import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
 import { attributeMetadataSourceFileId } from "../engine/metadata-source-attribution";
-import { computeProvenPageNumber } from "../engine/page-provenance";
+import { locateQuoteProvenPage } from "../engine/page-provenance";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
@@ -480,10 +480,11 @@ export async function finalizeJob(jobId: string, userId: string) {
             if (!quote || !fileId) return null;
             const file = attrFiles.find((f: any) => f.id === fileId);
             if (!file || !file.extractedText) return null;
-            const needle = quote.toLowerCase().replace(/\s+/g, " ").trim();
-            const haystack = file.extractedText.toLowerCase().replace(/\s+/g, " ").trim();
-            const idx = needle.length >= 6 ? haystack.indexOf(needle.slice(0, Math.min(20, needle.length))) : -1;
-            return computeProvenPageNumber(file.extractedText, idx >= 0 ? idx : 0, (file as any).totalPages ?? null);
+            // Canonical quote→page resolver (same contract as the streaming/
+            // non-streaming ai-analyze paths): FULL-quote match, exact
+            // normalized→original offset mapping, null when absent or when
+            // occurrences resolve to different pages. Never guesses page 1.
+            return locateQuoteProvenPage(file.extractedText, quote, (file as any).totalPages ?? null);
         };
         if (guardedMerged.tenderTitleSourcePage !== undefined) guardedMerged.tenderTitleSourcePage = guardPage(guardedMerged.tenderTitleSourceQuote, sourceFileIds.titleSourceFileId);
         if (guardedMerged.deadlineSourcePage !== undefined) guardedMerged.deadlineSourcePage = guardPage(guardedMerged.deadlineSourceQuote, sourceFileIds.deadlineSourceFileId);
