@@ -26,7 +26,7 @@ function cleanTender(overrides: any = {}): any {
     deadline: new Date("2026-12-11T12:00:00Z"),
     currency: "USD",
     country: "Kenya",
-    submissionMethod: "Email",
+    submissionMethod: "Email submission",
     submissionAddress: null,
     submissionEmails: "procurement@health.go.ke",
     submissionEmailSubject: null,
@@ -43,6 +43,15 @@ function cleanTender(overrides: any = {}): any {
     submissionEmailSourcePage: 4,
     submissionEmailSourceQuote: "Submit to procurement@health.go.ke",
     submissionEmailSourceFileId: "file1",
+    titleSourcePage: 1,
+    titleSourceQuote: "Health Systems Strengthening Project",
+    titleSourceFileId: "file1",
+    deadlineSourcePage: 2,
+    deadlineSourceQuote: "Deadline: 11 Dec 2026",
+    deadlineSourceFileId: "file1",
+    referenceSourcePage: 1,
+    referenceSourceQuote: "Reference: MOH/RFP/2026/001",
+    referenceSourceFileId: "file1",
     ...overrides,
   };
 }
@@ -84,7 +93,7 @@ describe("canonical resolver — behavioral gate decisions", () => {
   });
 
   it("blocks when a critical field (clientName) is missing with no override", () => {
-    const r = resolve(cleanTender({ clientName: null, procuringEntityName: null }));
+    const r = resolve(cleanTender({ clientName: null, procuringEntityName: null, clientNameSourcePage: null, clientNameSourceQuote: null, clientNameSourceFileId: null }));
     assert.equal(r.hasGenerationBlocker, true);
     assert.notEqual(field(r, "clientName").blockerReason, null);
   });
@@ -131,14 +140,14 @@ describe("canonical resolver — behavioral gate decisions", () => {
   });
 
   it("does NOT block on a missing NON-critical field (reference)", () => {
-    const r = resolve(cleanTender({ reference: null }));
+    const r = resolve(cleanTender({ reference: null, referenceSourcePage: null, referenceSourceQuote: null, referenceSourceFileId: null }));
     assert.equal(r.hasGenerationBlocker, false);
     assert.equal(field(r, "reference").criticality, "non-critical");
   });
 
   it("marks a grounded critical field as EXTRACTED_AND_GROUNDED", () => {
     const r = resolve(cleanTender());
-    assert.equal(field(r, "clientName").isGrounded, true);
+    assert.equal(field(r, "clientName").status, "EXTRACTED_AND_GROUNDED");
     assert.ok(r.groundedFields >= 1);
   });
 });
@@ -151,6 +160,9 @@ describe("canonical resolver — extended panel fields + chip mapping", () => {
       implementingAgency: "County Health Department",
       clientCity: "Nairobi",
       clientWebsite: "https://health.go.ke",
+      legalClientNameSourcePage: 1,
+      legalClientNameSourceQuote: "Legal name: Republic of Kenya",
+      legalClientNameSourceFileId: "file1",
     }));
     assert.equal(r.hasGenerationBlocker, false);
   });
@@ -159,19 +171,18 @@ describe("canonical resolver — extended panel fields + chip mapping", () => {
     const r = resolve(cleanTender({
       legalClientName: "Republic of Kenya — Ministry of Health",
       contactDetailsSourceJson: JSON.stringify({
-        legalClientName: { page: 2, quote: "The legal entity is the Republic of Kenya — Ministry of Health." },
+        legalClientName: { page: 2, quote: "The legal entity is the Republic of Kenya — Ministry of Health.", fileId: "file1" },
       }),
     }));
     const f = field(r, "legalClientName");
     assert.equal(f.sourcePage, 2);
-    // Note: grounding also requires fileId which cleanTender doesn't provide for extended fields via contactDetailsSourceJson in this test helper
   });
 
   it("maps canonical statuses to the panel chip vocabulary", () => {
     const clean = resolve(cleanTender());
     assert.equal(canonicalToClientChip(field(clean, "clientName")), "EXTRACTED_GROUNDED");
 
-    const ungrounded = resolve(cleanTender({ titleSourcePage: null }));
+    const ungrounded = resolve(cleanTender({ titleSourcePage: null, titleSourceQuote: null, titleSourceFileId: null }));
     assert.equal(canonicalToClientChip(field(ungrounded, "title")), "EXTRACTED_NO_EVIDENCE");
 
     const placeholder = resolve(cleanTender({ clientName: "Bid-Team to confirm" }));

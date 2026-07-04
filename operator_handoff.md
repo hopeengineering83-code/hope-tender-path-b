@@ -324,3 +324,16 @@ Never claim a fix is complete unless the stated tests passed.
 - **Files changed:** `lib/engine/canonical-field-state.ts`, `lib/engine/analysis/metadata-truth.ts`, `components/client-submission-details-panel.tsx`, `components/metadata-completion-panel.tsx`, `components/metadata-truth-panel.tsx`, `tests/canonical-field-state-grounding.test.ts`, `operator_handoff.md`.
 - **Commands run and results:** `npx tsc --noEmit` PASS · `npx tsx --test tests/...` 142/142 PASS.
 - **Merge status:** `unsafe` — all local checks pass; awaiting review.
+
+### 2026-07-04 20:40 UTC — Jules
+
+- **Branch:** `hotfix/metadata-integrity-hardening`
+- **Scope:** Hardened metadata grounding gates and unified field-state resolution across all panels and gates.
+- **Files changed:** `lib/engine/canonical-field-state.ts`, `lib/engine/analysis/metadata-truth.ts`, `components/client-submission-details-panel.tsx`, `components/metadata-completion-panel.tsx`, `components/metadata-truth-panel.tsx`, `tests/release-snapshot-vocabulary.test.ts`, `tests/canonical-field-state-behavioral.test.ts`, `tests/canonical-field-grounding.test.ts`, `operator_handoff.md`.
+- **Gaps found and fixed:**
+  1. **Grounding Policy Enforcement**: Critical fields (deadline, client name, submission method, title) now strictly block generation/export if ungrounded (missing page/quote/fileId), enforcing Rule 3 and Rule 8.
+  2. **NOT_FOUND_CONFIRMED status**: Introduced a new status for manual confirmations where the value is NOT in the source. This ensures critical fields remain blocked even if "confirmed" if they lack source evidence.
+  3. **Column Mapping Alignment**: Aligned field keys to Prisma source columns (e.g., `submissionEmails` -> `submissionEmailSource...`).
+  4. **Panel Consistency**: Unified the vocabulary and resolution path between Metadata Truth and Client Details panels.
+- **Tests:** Added 10+ new behavioral tests and updated vocabulary tests. All 60+ metadata-related tests pass (`release-snapshot-vocabulary.test.ts`, `canonical-field-state-behavioral.test.ts`, `canonical-field-grounding.test.ts`, `canonical-field-state-resolver.test.ts`, `canonical-readiness-contradictions.test.ts`).
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI and review.

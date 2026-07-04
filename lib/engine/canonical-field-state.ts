@@ -57,10 +57,6 @@ export type CanonicalFieldStatus =
  * Shared metadata status type. Both the Client & Submission Details panel
  * and the Metadata Truth panel use this single vocabulary — no per-panel
  * status enum divergence is permitted.
- *
- * Migration note: metadata-truth.ts previously defined its own
- * MetadataFactStatus. That type is now an alias of CanonicalFieldStatus so
- * all panels always use the same controlled vocabulary.
  */
 export type MetadataFactStatus = CanonicalFieldStatus;
 
@@ -157,6 +153,14 @@ export type CanonicalResolverInput = {
     deadlineSourcePage?: number | null;
     deadlineSourceQuote?: string | null;
     deadlineSourceFileId?: string | null;
+    // Reference number source evidence
+    referenceSourceFileId?: string | null;
+    referenceSourcePage?: number | null;
+    referenceSourceQuote?: string | null;
+    // Submission email subject source evidence
+    submissionEmailSubjectSourceFileId?: string | null;
+    submissionEmailSubjectSourcePage?: number | null;
+    submissionEmailSubjectSourceQuote?: string | null;
     // Extended fields for dashboard
     evaluationMethodology?: string | null;
     legalClientName?: string | null;
@@ -241,8 +245,6 @@ function isGroundedEvidence(
   activeTenderFileIds?: Set<string>,
 ): boolean {
   // Grounded requires page AND a non-trivial quote + valid TenderFile ID.
-  // If activeTenderFileIds is provided, enforce that the fileId points to an
-  // active (non-deleted) TenderFile. If not provided, fall back to basic check.
   if (activeTenderFileIds) {
     return isGroundedEvidenceWithFileCheck(evidence.page, evidence.quote, evidence.fileId, activeTenderFileIds);
   }
@@ -258,13 +260,11 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
   const policyCtx = {
     submissionMethod: submissionMethodContext || tender.submissionMethod,
-    // We do NOT have a simple boolean for this here, but the resolver reads
-    // the email subject field directly — if it's missing it will block if critical.
   };
 
   const fieldKeys = [
     "clientName", "title", "reference", "deadline", "country", "currency",
-    "submissionMethod", "submissionEndpoint", "submissionAddress", "submissionEmails",
+    "submissionMethod", "submissionAddress", "submissionEmails",
     "requiredDocuments", "evaluationCriteria", "clientContactName", "clientContactEmail",
     "legalClientName", "donorAgency", "implementingAgency", "clientContactTitle", "clientContactPhone",
     "clientCity", "clientAddress", "clientWebsite", "clientRepresentative", "preBidChannel",
@@ -285,17 +285,21 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const criticality = ALWAYS_CRITICAL_FIELDS.has(fieldKey) ? "always-critical" : isCritical ? "conditionally-critical" : "non-critical";
 
     const override = overrides.find((o) => o.field === fieldKey);
-    const rawValueRaw = tender[fieldKey as keyof typeof tender];
+    // clientName fallback to procuringEntityName (P1-B/C parity)
+    const rawValueRaw = (fieldKey === "clientName" && !tender.clientName)
+      ? tender.procuringEntityName
+      : tender[fieldKey as keyof typeof tender];
     const rawValue = rawValueRaw instanceof Date ? rawValueRaw.toISOString() : typeof rawValueRaw === "string" ? rawValueRaw : rawValueRaw ? String(rawValueRaw) : null;
     const effectiveStr = override?.overrideValue ?? rawValue;
     const overrideState = override?.fieldState ?? null;
-    const isManuallyConfirmed = overrideState === "USER_CONFIRMED";
+    const isManuallyConfirmed = overrideState === "USER_CONFIRMED"; // isManuallyConfirmed = override.fieldState === "USER_CONFIRMED"
 
     // Evidence resolution
+    const sourceKeyBase = fieldKey === "submissionEmails" ? "submissionEmail" : fieldKey;
     const evidence: { page: number | null; quote: string | null; fileId: string | null } = {
-      page: (tender as any)[`${fieldKey}SourcePage`] ?? null,
-      quote: (tender as any)[`${fieldKey}SourceQuote`] ?? null,
-      fileId: (tender as any)[`${fieldKey}SourceFileId`] ?? null,
+      page: (tender as any)[`${sourceKeyBase}SourcePage`] ?? null,
+      quote: (tender as any)[`${sourceKeyBase}SourceQuote`] ?? null,
+      fileId: (tender as any)[`${sourceKeyBase}SourceFileId`] ?? null,
     };
 
     // Fallback evidence for reference (no dedicated columns) or prior extractions
@@ -314,9 +318,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const validation = validateFieldFormat(fieldKey, effectiveStr);
 
-    // Grounding Rule: a value is grounded only when it carries a valid fileId,
-    // page > 0, and quote > 5 chars. This state is used for valid/grounded
-    // counts, and dashboard metrics consistent with the status.
     const overrideMatchesGroundedForIsGrounded =
       override != null &&
       (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
@@ -333,10 +334,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     let warningReason: string | null = null;
 
     if (override?.fieldState === "NOT_APPLICABLE") {
-      // Not Applicable is never permitted on a critical field (always- OR
-      // conditionally-critical), and never on a never-N/A field (deadline).
-      // This mirrors the registry's allowedOverrideStates (Policy F1) so a
-      // user cannot dismiss a required field by marking it N/A.
       if (NEVER_NOT_APPLICABLE.has(fieldKey) || isCritical) {
         status = "BLOCKED";
         blockerReason = `Field "${label}" is critical. Not Applicable cannot unblock it. Record a candidate value or resolve from an active tender source.`;
@@ -349,12 +346,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         blockerReason = `Field "${label}" is critical. Not Stated cannot unblock it. Critical fields remain blocked until source-grounded.`;
       }
     } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr) {
-      // Contamination takes priority over validity (matches the Metadata Truth
-      // panel): a client/procuring name polluted by portal navigation or
-      // unrelated-tender text must be corrected before generation/export.
-      // A contaminated field stays blocked even if an override exists — the
-      // override must be independently proven by active field-specific
-      // tender evidence (page + quote matching the corrected value).
       const overrideMatchesGroundedSource =
         override != null &&
         (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
@@ -363,8 +354,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
         normalizeFieldValue(fieldKey, effectiveStr) !== "";
       if (overrideMatchesGroundedSource) {
-        // The override value matches the grounded extracted value — the
-        // contamination is resolved by independent source proof.
         status = "EXTRACTED_AND_GROUNDED";
       } else {
         status = "PORTAL_CONTAMINATION";
@@ -380,36 +369,25 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         : "INVALID_FORMAT";
       blockerReason = validation.reason;
     } else if (override?.fieldState === "USER_CONFIRMED") {
-      // USER_CONFIRMED unblocks a critical field ONLY when the confirmed value
-      // exactly matches the field-specific extracted value that has active
-      // tender-source evidence (valid page + meaningful quote from a current
-      // tender source file). Unrelated, stale, or missing evidence keeps the
-      // field blocked.
-      //
-      // Normalize dates before comparison so "2026-12-11" and "12/11/2026"
-      // are treated as the same value.
       const normalizedConfirmed = normalizeFieldValue(fieldKey, effectiveStr);
       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
+      const isGroundedSource = isGroundedEvidence(evidence, activeTenderFileIds);
       const confirmedMatchesGroundedSource =
         validation.valid &&
-        isGroundedEvidence(evidence, activeTenderFileIds) &&
+        isGroundedSource &&
         normalizedConfirmed === normalizedRaw &&
         normalizedConfirmed !== "";
       if (confirmedMatchesGroundedSource) {
         status = "EXTRACTED_AND_GROUNDED";
       } else {
-        status = isGroundedEvidence(evidence, activeTenderFileIds) ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
+        status = isGroundedSource ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
         if (isCritical && status === "NOT_FOUND_CONFIRMED") {
           blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Link to an active tender source to unblock generation.`;
-        } else if (isCritical && isGroundedEvidence(evidence, activeTenderFileIds) && normalizedConfirmed !== normalizedRaw) {
+        } else if (isCritical && isGroundedSource && normalizedConfirmed !== normalizedRaw) {
           blockerReason = `Field "${label}" was manually confirmed with a value that does not match the active tender-source evidence. The confirmed value must exactly match the extracted source value.`;
         }
       }
     } else if (override?.fieldState === "USER_EDITED") {
-      // USER_EDITED unblocks a critical field ONLY when the edited value
-      // exactly matches the field-specific extracted value with active
-      // tender-source evidence. A user edit of a *different* value is a
-      // candidate, not a grounded fact — it must not unlock generation.
       const normalizedEdited = normalizeFieldValue(fieldKey, effectiveStr);
       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
       const editedMatchesGroundedSource =
@@ -432,6 +410,9 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         // Rule 3 / Rule 8: Critical fields remain blocked until source-grounded.
         blockerReason = `Field "${label}" has a value but is not yet source-grounded (missing page, quote, or active file). Critical fields remain blocked until source-grounded.`;
+      } else {
+        evidenceReviewNeeded = true;
+        warningReason = `Field "${label}" has a value but is not yet linked to a source page + quote. Confirm the evidence for full traceability.`;
       }
     }
 
@@ -446,13 +427,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       }
     }
 
-    // A contaminated value is NOT valid and NOT grounded, regardless of whether
-    // its raw text passes format validation (it is polluted by portal text).
-    // Mirrors the Metadata Truth panel, which excludes PORTAL_CONTAMINATION from
-    // the valid/grounded metrics.
-    // A MANUAL_OVERRIDE_CONFIRMATION_REQUIRED value is a candidate — it has
-    // a valid format but is not usable for the generation gate until confirmed
-    // against an active tender source, so isValid = false.
     const contaminated = status === "PORTAL_CONTAMINATION";
     const candidateUnconfirmed = status === "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED";
     const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed;
@@ -523,12 +497,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     blockedFields: blockedCount,
   };
 }
-
-// ─── Client & Submission Details panel chip vocabulary ─────────────────────
-//
-// The panel renders a small set of human-readable chips. This mapper is the
-// SINGLE place the resolver's canonical status is translated to those chips,
-// so the panel never re-derives status from raw values client-side.
 
 export type ClientChipStatus =
   | "EXTRACTED_GROUNDED"
