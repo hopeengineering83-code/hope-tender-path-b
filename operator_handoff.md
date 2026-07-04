@@ -311,3 +311,16 @@ Never claim a fix is complete unless the stated tests passed.
 - **Known risk:** Vercel may independently detect a branch commit; inspect Vercel before assuming no preview exists
 - **Next action:** none; task complete
 - **Merge status:** merged into main
+
+### 2026-07-04 18:33 UTC — Jules
+
+- **Branch:** `hotfix/metadata-grounding-hardening`
+- **Scope:** Solved the "Metadata issue" by hardening grounding gates for critical fields and aligning dashboard panels.
+- **Gaps found and fixed:**
+  1. **Fail-open grounding gate**: AI-extracted critical fields (deadline, client name, submission method) were incorrectly allowed to bypass generation gates without source proof (page/quote/fileId). They now strictly block until grounded, enforcing Rule 3/Rule 8.
+  2. **Panel Contradictions**: The "Metadata Truth" panel used a different resolution path than the canonical gate, leading to visual disagreement. Replaced it with a shared logic flow.
+  3. **Ungrounded Confirmation Bypass**: Users could "Confirm" a value not found in the source to unblock critical fields. Added `NOT_FOUND_CONFIRMED` status which correctly blocks critical fields.
+- **Verified sound:** Added `tests/canonical-field-state-grounding.test.ts` (4 tests); verified with 142+ metadata tests (all pass).
+- **Files changed:** `lib/engine/canonical-field-state.ts`, `lib/engine/analysis/metadata-truth.ts`, `components/client-submission-details-panel.tsx`, `components/metadata-completion-panel.tsx`, `components/metadata-truth-panel.tsx`, `tests/canonical-field-state-grounding.test.ts`, `operator_handoff.md`.
+- **Commands run and results:** `npx tsc --noEmit` PASS · `npx tsx --test tests/...` 142/142 PASS.
+- **Merge status:** `unsafe` — all local checks pass; awaiting review.

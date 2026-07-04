@@ -63,7 +63,7 @@ type _RequirementRow = {
 };
 type _MetadataOverrideRow = {
   field: string;
-  fieldState: string;
+  fieldState: any;
   overrideValue: string | null;
   reason: string | null;
   overriddenBy: string | null;

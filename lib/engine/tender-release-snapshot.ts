@@ -38,7 +38,7 @@ type _FileRow = {
 };
 type _OverrideRow = {
   field: string;
-  fieldState: string;
+  fieldState: any;
   overrideValue: string | null;
   reason: string | null;
   overriddenBy: string | null;

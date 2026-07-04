@@ -124,7 +124,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
       },
       overrides: overrides.map((o) => ({
-        field: o.field, fieldState: o.fieldState, overrideValue: o.overrideValue ?? null,
+        field: o.field, fieldState: o.fieldState as MetadataFieldState, overrideValue: o.overrideValue ?? null,
         reason: o.reason ?? null, overriddenBy: o.overriddenBy ?? null, createdAt: o.createdAt ?? null,
       })),
       hasExtractedRequirements: tender.requirements.length > 0,

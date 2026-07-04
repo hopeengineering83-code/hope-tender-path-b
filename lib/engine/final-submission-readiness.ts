@@ -723,7 +723,7 @@ export async function getFinalSubmissionReadiness(
     },
     overrides: (tender.metadataOverrides ?? []).map((o) => ({
       field: o.field,
-      fieldState: o.fieldState,
+      fieldState: o.fieldState as any,
       overrideValue: o.overrideValue ?? null,
       reason: o.reason ?? null,
       overriddenBy: o.overriddenBy ?? null,

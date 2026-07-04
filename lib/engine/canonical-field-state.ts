@@ -41,6 +41,7 @@ export type CanonicalFieldStatus =
   | "MANUAL_OVERRIDE"          // User entered a candidate value (ungrounded; non-critical only)
   | "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" // User entered value on critical field — blocked until source-grounded
   | "MANUAL_CONFIRMED"         // User confirmed a value; blocks generation on critical fields unless source-grounded
+  | "NOT_FOUND_CONFIRMED"       // User confirmed value NOT found in source — blocked for critical fields
   | "NOT_STATED"               // Audited absence — field not stated in tender
   | "NOT_APPLICABLE"           // Field does not apply
   | "AMBIGUOUS_DATE"           // Date format ambiguous
@@ -101,9 +102,9 @@ export type CanonicalFieldState = {
   sourceFileId: string | null;
   sourcePage: number | null;
   sourceQuote: string | null;
-  extractionMethod: string | null;
+  // Audit (for overrides)
+  extractionMethod: "text" | "OCR" | "manual" | null;
   confidence: number;
-  // Audit
   overriddenBy: string | null;
   overrideReason: string | null;
   overrideTimestamp: Date | null;
@@ -120,8 +121,6 @@ export type CanonicalFieldStateResult = {
   blockedFields: number;
 };
 
-// ─── Input type ────────────────────────────────────────────────────────────
-
 export type CanonicalResolverInput = {
   tender: {
     id: string;
@@ -134,186 +133,104 @@ export type CanonicalResolverInput = {
     country: string | null;
     submissionMethod: string | null;
     submissionAddress: string | null;
+    preBidMeetingLocation?: string | null;
+    preBidMeetingDate?: string | null;
+    preBidChannel?: string | null;
+    clientRepresentative?: string | null;
+    clientWebsite?: string | null;
+    clientAddress?: string | null;
+    clientCity?: string | null;
+    clientContactPhone?: string | null;
+    clientContactTitle?: string | null;
+    implementingAgency?: string | null;
+    donorAgency?: string | null;
+    legalClientName?: string | null;
+    evaluationMethodology?: string | null;
     submissionEmails: string | null;
     submissionEmailSubject: string | null;
     clientContactName: string | null;
     clientContactEmail: string | null;
-    metadataContaminated: boolean;
-    clientNameSourcePage: number | null;
-    clientNameSourceQuote: string | null;
+    metadataContaminated?: boolean;
+    // Dedicated source-evidence columns for critical fields
+    clientNameSourcePage?: number | null;
+    clientNameSourceQuote?: string | null;
     clientNameSourceFileId?: string | null;
-    submissionMethodSourcePage: number | null;
-    submissionMethodSourceQuote: string | null;
+    submissionMethodSourcePage?: number | null;
+    submissionMethodSourceQuote?: string | null;
     submissionMethodSourceFileId?: string | null;
-    submissionAddressSourcePage: number | null;
-    submissionAddressSourceQuote: string | null;
+    submissionAddressSourcePage?: number | null;
+    submissionAddressSourceQuote?: string | null;
     submissionAddressSourceFileId?: string | null;
-    submissionEmailSourcePage: number | null;
-    submissionEmailSourceFileId?: string | null;
+    submissionEmailSourcePage?: number | null;
     submissionEmailSourceQuote?: string | null;
-    // Title + deadline source evidence — required for full source-grounding
-    // verification of these critical fields.
-    titleSourceFileId?: string | null;
+    submissionEmailSourceFileId?: string | null;
     titleSourcePage?: number | null;
     titleSourceQuote?: string | null;
-    deadlineSourceFileId?: string | null;
+    titleSourceFileId?: string | null;
     deadlineSourcePage?: number | null;
     deadlineSourceQuote?: string | null;
-    contactDetailsSourceJson: any;
-    // Extended client/submission fields surfaced in the Client & Submission
-    // Details panel. Optional so existing gate call sites (which only need the
-    // critical fields) keep compiling. All non-critical → never change gate
-    // blocking; they let the resolver be the single status source for the panel.
-    evaluationMethodology?: string | null;
-    legalClientName?: string | null;
-    donorAgency?: string | null;
-    implementingAgency?: string | null;
-    clientContactTitle?: string | null;
-    clientContactPhone?: string | null;
-    clientCity?: string | null;
-    clientAddress?: string | null;
-    clientWebsite?: string | null;
-    clientRepresentative?: string | null;
-    preBidChannel?: string | null;
-    preBidMeetingDate?: string | null;
-    preBidMeetingLocation?: string | null;
+    deadlineSourceFileId?: string | null;
+    // Catch-all for non-critical fields or prior-extraction formats
+    contactDetailsSourceJson?: unknown;
   };
-  overrides: Array<{
+  overrides: {
     field: string;
-    fieldState: string;
-    overrideValue: string | null;
-    reason: string | null;
-    overriddenBy: string | null;
-    createdAt: Date | null;
-  }>;
+    fieldState: PolicyFieldState;
+    overrideValue?: string | null;
+    reason?: string | null;
+    overriddenBy?: string | null;
+    createdAt?: Date | null;
+  }[];
+  activeTenderFileIds?: Set<string>;
   hasExtractedRequirements: boolean;
   submissionMethodContext?: string;
-  /** Set of ACTIVE TenderFile IDs for validating evidence source files. */
-  activeTenderFileIds?: Set<string>;
 };
 
-// ─── Resolver ──────────────────────────────────────────────────────────────
-
-// Core fields the GATES key off + extended fields the Client & Submission
-// Details panel renders. Extended fields are all non-critical.
-const FIELDS_TO_EVALUATE = [
-  "clientName", "procuringEntityName", "title", "reference", "deadline",
-  "currency", "country", "submissionMethod", "submissionAddress",
-  "submissionEmails", "submissionEmailSubject", "clientContactName",
-  "clientContactEmail", "requiredDocuments",
-  // Extended (panel) fields — non-critical:
-  "evaluationCriteria", "legalClientName", "donorAgency", "implementingAgency",
-  "clientContactTitle", "clientContactPhone", "clientCity", "clientAddress",
-  "clientWebsite", "clientRepresentative", "preBidChannel",
-  "preBidMeetingDate", "preBidMeetingLocation",
-] as const;
-
-function getRawValue(tender: CanonicalResolverInput["tender"], field: string): string | null {
-  const map: Record<string, string | null | undefined> = {
-    // Fall back to the AI-extracted procuring-entity name when clientName has
-    // not been back-filled yet — otherwise a tender that HAS a procuring entity
-    // would be wrongly blocked as "missing client name". Matches the completeness
-    // gate and the Metadata Truth panel, which both use clientName || procuringEntityName.
-    clientName: tender.clientName ?? tender.procuringEntityName,
-    procuringEntityName: tender.procuringEntityName,
-    title: tender.title,
-    reference: tender.reference,
-    deadline: tender.deadline ? tender.deadline.toISOString().split("T")[0] : null,
-    currency: tender.currency,
-    country: tender.country,
-    submissionMethod: tender.submissionMethod,
-    submissionAddress: tender.submissionAddress,
-    submissionEmails: tender.submissionEmails,
-    submissionEmailSubject: tender.submissionEmailSubject,
-    clientContactName: tender.clientContactName,
-    clientContactEmail: tender.clientContactEmail,
-    requiredDocuments: null, // Derived from extracted requirements
-    // Extended panel fields
-    evaluationCriteria: tender.evaluationMethodology ?? null,
-    legalClientName: tender.legalClientName ?? null,
-    donorAgency: tender.donorAgency ?? null,
-    implementingAgency: tender.implementingAgency ?? null,
-    clientContactTitle: tender.clientContactTitle ?? null,
-    clientContactPhone: tender.clientContactPhone ?? null,
-    clientCity: tender.clientCity ?? null,
-    clientAddress: tender.clientAddress ?? null,
-    clientWebsite: tender.clientWebsite ?? null,
-    clientRepresentative: tender.clientRepresentative ?? null,
-    preBidChannel: tender.preBidChannel ?? null,
-    preBidMeetingDate: tender.preBidMeetingDate ?? null,
-    preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
-  };
-  return map[field] ?? null;
+/**
+ * Normalise a metadata field value for exact comparison.
+ */
+function normalizeFieldValue(fieldKey: string, value: string): string {
+  const v = value.trim().toLowerCase();
+  if (fieldKey === "deadline" || fieldKey.toLowerCase().includes("date")) {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? v : d.toISOString().split("T")[0];
+  }
+  return v;
 }
 
-/** Parse the stored contactDetailsSourceJson (string or object) into a map of
- *  field → { page, quote }. Tolerant of malformed JSON. */
-function parseContactDetailsSource(raw: unknown): Record<string, { page: number | null; quote: string | null; fileId: string | null }> {
-  if (!raw) return {};
-  let obj: any = raw;
-  if (typeof raw === "string") {
-    try { obj = JSON.parse(raw); } catch { return {}; }
-  }
-  if (!obj || typeof obj !== "object") return {};
-  const out: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
-  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    if (v && typeof v === "object") {
-      const e = v as Record<string, unknown>;
-      out[k] = {
-        page: typeof e.page === "number" && e.page > 0 ? e.page : null,
-        quote: typeof e.quote === "string" ? e.quote : null,
-        fileId: typeof e.fileId === "string" && e.fileId.length > 0 ? e.fileId : null,
-      };
-    }
-  }
-  return out;
+/**
+ * Format a Date object as a human-readable string (e.g. 12 Dec 2026).
+ */
+export function formatDateUnambiguous(value: string | Date | null): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
-// Maps a panel field key to its key inside contactDetailsSourceJson.
-const CONTACT_EVIDENCE_KEY: Record<string, string> = {
-  reference: "procurementReferenceNumber",
-  // others share the same key name
-};
+function validateFieldFormat(fieldKey: string, value: string | null): { valid: boolean; reason: string | null } {
+  if (!value) return { valid: true, reason: null };
+  const trimmed = typeof value === "string" ? value.trim() : String(value);
+  if (trimmed.length === 0) return { valid: true, reason: null };
 
-function getSourceEvidence(
-  tender: CanonicalResolverInput["tender"],
-  field: string,
-  contactDetails: Record<string, { page: number | null; quote: string | null; fileId: string | null }>,
-) {
-  const dedicated: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {
-    clientName: { page: tender.clientNameSourcePage, quote: tender.clientNameSourceQuote, fileId: tender.clientNameSourceFileId ?? null },
-    submissionMethod: { page: tender.submissionMethodSourcePage, quote: tender.submissionMethodSourceQuote, fileId: tender.submissionMethodSourceFileId ?? null },
-    submissionAddress: { page: tender.submissionAddressSourcePage, quote: tender.submissionAddressSourceQuote, fileId: tender.submissionAddressSourceFileId ?? null },
-    submissionEmails: { page: tender.submissionEmailSourcePage, quote: tender.submissionEmailSourceQuote ?? null, fileId: tender.submissionEmailSourceFileId ?? null },
-    title: { page: tender.titleSourcePage ?? null, quote: tender.titleSourceQuote ?? null, fileId: tender.titleSourceFileId ?? null },
-    deadline: { page: tender.deadlineSourcePage ?? null, quote: tender.deadlineSourceQuote ?? null, fileId: tender.deadlineSourceFileId ?? null },
-  };
-  if (dedicated[field]) return dedicated[field];
-  // Fall back to the structured contactDetailsSource map for the extended fields.
-  // fileId is now persisted alongside page+quote (e.g. for reference via the
-  // repair-metadata route) so contactDetails-sourced fields can achieve full
-  // GROUNDED status when fileId points to an active TenderFile.
-  const ce = contactDetails[CONTACT_EVIDENCE_KEY[field] ?? field];
-  if (ce) return { page: ce.page, quote: ce.quote, fileId: ce.fileId };
-  return { page: null, quote: null, fileId: null };
-}
-
-function validateValue(field: string, value: string): { valid: boolean; reason: string | null } {
-  if (!value || value.trim().length === 0) return { valid: false, reason: "No value detected." };
-  if (containsMetadataPlaceholder(value) || looksLikeMetadataPlaceholder(value)) return { valid: false, reason: "Value contains a placeholder (TBD / N/A / Bid-Team to confirm)." };
-  // submissionMethod values like "Email", "Portal", "Physical" are single-word
-  // designators — a valid submission method; do not reject them as field labels.
-  if (field !== "submissionMethod" && isGenericFieldLabel(value)) {
-    return { valid: false, reason: "Value is a field heading, not real data." };
+  if (containsMetadataPlaceholder(trimmed) || looksLikeMetadataPlaceholder(trimmed)) {
+    return { valid: false, reason: "Value is a placeholder (e.g. TBD, Bid-Team to confirm) and must be replaced." };
   }
-  if (field === "clientName" || field === "procuringEntityName") {
-    if (!isValidClientName(value)) return { valid: false, reason: "Client name is too short or generic." };
+  if (isGenericFieldLabel(trimmed)) {
+    return { valid: false, reason: "Value is a generic field label (e.g. 'Reference Number') and not the actual data." };
   }
-  if (field === "reference") {
-    if (!isValidReferenceNumber(value)) return { valid: false, reason: "Reference must contain at least one digit." };
+  if (fieldKey === "clientName" && !isValidClientName(trimmed)) {
+    return { valid: false, reason: "Client name is too short or invalid." };
   }
-  if (field === "deadline") {
-    if (isAmbiguousDateString(value)) return { valid: false, reason: "Date format is ambiguous — use the date picker." };
+  if (fieldKey === "reference" && !isValidReferenceNumber(trimmed)) {
+    return { valid: false, reason: "Reference number format is invalid (no digits or too short)." };
+  }
+  if (fieldKey === "deadline") {
+    if (isAmbiguousDateString(trimmed)) return { valid: false, reason: "Date format is ambiguous — use the date picker." };
   }
   return { valid: true, reason: null };
 }
@@ -332,111 +249,77 @@ function isGroundedEvidence(
 }
 
 /**
- * Normalize a field value for comparison. For date fields, parse and
- * canonicalize to ISO format (YYYY-MM-DD) so "2026-12-11" and "12/11/2026"
- * compare equal. For all other fields, trim and lowercase for case-insensitive
- * comparison.
- *
- * This is used by the USER_EDITED / USER_CONFIRMED grounding logic to ensure
- * a manually confirmed value matches the extracted source value regardless
- * of formatting differences.
+ * Resolve the effective state of all tender metadata fields.
  */
-function normalizeFieldValue(fieldKey: string, value: string): string {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) return "";
-
-  // Date fields — normalize to ISO YYYY-MM-DD
-  const DATE_FIELDS = new Set(["deadline", "preBidMeetingDate"]);
-  if (DATE_FIELDS.has(fieldKey)) {
-    // Try ISO format first: 2026-12-11
-    const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(trimmed);
-    if (isoMatch) {
-      const [, y, m, d] = isoMatch;
-      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
-    }
-    // Try D/M/Y or M/D/Y format: 12/11/2026 or 12-11-2026
-    const slashMatch = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/.exec(trimmed);
-    if (slashMatch) {
-      let [, a, b, y] = slashMatch;
-      const year = y.length === 2 ? `20${y}` : y;
-      // Assume D/M/Y (international format) — the app targets Ethiopia/Africa
-      const day = a.padStart(2, "0");
-      const month = b.padStart(2, "0");
-      return `${year}-${month}-${day}`;
-    }
-    // Fallback: return as-is (will likely not match)
-    return trimmed.toLowerCase();
-  }
-
-  // All other fields — case-insensitive trimmed comparison
-  return trimmed.toLowerCase();
-}
-
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
-  const { tender, overrides, hasExtractedRequirements, activeTenderFileIds } = input;
-  const overrideMap = new Map(overrides.map(o => [o.field, o]));
-  const contactDetails = parseContactDetailsSource(tender.contactDetailsSourceJson);
+  const { tender, overrides, activeTenderFileIds, hasExtractedRequirements, submissionMethodContext } = input;
   const fields: CanonicalFieldState[] = [];
+
+  const policyCtx = {
+    submissionMethod: submissionMethodContext || tender.submissionMethod,
+    // We do NOT have a simple boolean for this here, but the resolver reads
+    // the email subject field directly — if it's missing it will block if critical.
+  };
+
+  const fieldKeys = [
+    "clientName", "title", "reference", "deadline", "country", "currency",
+    "submissionMethod", "submissionEndpoint", "submissionAddress", "submissionEmails",
+    "requiredDocuments", "evaluationCriteria", "clientContactName", "clientContactEmail",
+  ];
+
   let hasGenerationBlocker = false;
   let hasExportBlocker = false;
   let hasZipBlocker = false;
+
   let validCount = 0;
   let groundedCount = 0;
   let blockedCount = 0;
 
-  // Pre-compute the EFFECTIVE submissionMethod so conditionally-critical
-  // fields (submissionAddress, submissionEmailSubject) use the override-
-  // applied value, not the raw tender.submissionMethod. Without this, a
-  // USER_EDITED override changing submissionMethod from email to physical
-  // would NOT make submissionAddress conditionally critical.
-  const submissionMethodOverride = overrideMap.get("submissionMethod");
-  let effectiveSubmissionMethod = tender.submissionMethod ?? null;
-  if (submissionMethodOverride && (submissionMethodOverride.fieldState === "USER_EDITED" || submissionMethodOverride.fieldState === "USER_CONFIRMED")) {
-    effectiveSubmissionMethod = submissionMethodOverride.overrideValue ?? effectiveSubmissionMethod;
-  }
-
-  for (const fieldKey of FIELDS_TO_EVALUATE) {
-    const rawValue = getRawValue(tender, fieldKey);
-    const override = overrideMap.get(fieldKey);
-    const evidence = getSourceEvidence(tender, fieldKey, contactDetails);
+  for (const fieldKey of fieldKeys) {
     const label = fieldDisplayLabel(fieldKey);
-    const isCritical = ALWAYS_CRITICAL_FIELDS.has(fieldKey) || isCriticalField(fieldKey, { submissionMethod: effectiveSubmissionMethod ?? undefined });
-    const criticality: CanonicalFieldState["criticality"] = ALWAYS_CRITICAL_FIELDS.has(fieldKey)
-      ? "always-critical"
-      : isCritical ? "conditionally-critical" : "non-critical";
+    const isCritical = isCriticalField(fieldKey, policyCtx);
+    const criticality = ALWAYS_CRITICAL_FIELDS.has(fieldKey) ? "always-critical" : isCritical ? "conditionally-critical" : "non-critical";
 
-    // Determine effective value and override state
-    let effectiveValue = rawValue;
-    let overrideState: PolicyFieldState | null = null;
-    let isManuallyConfirmed = false;
+    const override = overrides.find((o) => o.field === fieldKey);
+    const rawValueRaw = tender[fieldKey as keyof typeof tender];
+    const rawValue = rawValueRaw instanceof Date ? rawValueRaw.toISOString() : typeof rawValueRaw === "string" ? rawValueRaw : rawValueRaw ? String(rawValueRaw) : null;
+    const effectiveStr = override?.overrideValue ?? rawValue;
+    const overrideState = override?.fieldState ?? null;
+    const isManuallyConfirmed = overrideState === "USER_CONFIRMED";
 
-    if (override) {
-      overrideState = override.fieldState as PolicyFieldState;
-      if (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") {
-        effectiveValue = override.overrideValue ?? rawValue;
-        isManuallyConfirmed = override.fieldState === "USER_CONFIRMED";
-      } else if (override.fieldState === "NOT_APPLICABLE" || override.fieldState === "IGNORED_WITH_REASON") {
-        // These are audited absence states — they do NOT provide a value
-        effectiveValue = rawValue; // Keep the raw value if any
-      }
+    // Evidence resolution
+    const evidence: { page: number | null; quote: string | null; fileId: string | null } = {
+      page: (tender as any)[`${fieldKey}SourcePage`] ?? null,
+      quote: (tender as any)[`${fieldKey}SourceQuote`] ?? null,
+      fileId: (tender as any)[`${fieldKey}SourceFileId`] ?? null,
+    };
+
+    // Fallback evidence for reference (no dedicated columns) or prior extractions
+    if (!evidence.fileId && tender.contactDetailsSourceJson) {
+      try {
+        const json = typeof tender.contactDetailsSourceJson === "string" ? JSON.parse(tender.contactDetailsSourceJson) : tender.contactDetailsSourceJson;
+        const key = fieldKey === "reference" ? "procurementReferenceNumber" : fieldKey;
+        const info = (json as Record<string, any>)[key];
+        if (info) {
+          if (!evidence.page) evidence.page = info.page ?? null;
+          if (!evidence.quote) evidence.quote = info.quote ?? null;
+          if (!evidence.fileId) evidence.fileId = info.fileId ?? null;
+        }
+      } catch {}
     }
 
-    // Validate the effective value
-    const effectiveStr = effectiveValue ?? "";
-    const validation = effectiveStr ? validateValue(fieldKey, effectiveStr) : { valid: false, reason: "No value detected." };
+    const validation = validateFieldFormat(fieldKey, effectiveStr);
 
-    // Determine grounding.
-    // isGrounded must agree with EXTRACTED_AND_GROUNDED status: when an override
-    // value matches the grounded extracted value, the field IS grounded (the
-    // override confirmed the extracted value). This keeps isGrounded, grounded
+    // Grounding Rule: a value is grounded only when it carries a valid fileId,
+    // page > 0, and quote > 5 chars. This state is used for valid/grounded
     // counts, and dashboard metrics consistent with the status.
     const overrideMatchesGroundedForIsGrounded =
       override != null &&
       (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
       validation.valid &&
       isGroundedEvidence(evidence, activeTenderFileIds) &&
-      normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
-      normalizeFieldValue(fieldKey, effectiveStr) !== "";
+      normalizeFieldValue(fieldKey, effectiveStr || "") === normalizeFieldValue(fieldKey, rawValue ?? "") &&
+      normalizeFieldValue(fieldKey, effectiveStr || "") !== "";
     const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds) && !override) || overrideMatchesGroundedForIsGrounded;
 
     // Determine status
@@ -511,7 +394,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (confirmedMatchesGroundedSource) {
         status = "EXTRACTED_AND_GROUNDED";
       } else {
-        status = "MANUAL_CONFIRMED";
+        status = isGroundedEvidence(evidence, activeTenderFileIds) ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
         if (isCritical && !isGroundedEvidence(evidence, activeTenderFileIds)) {
           blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Link to an active tender source to unblock generation.`;
         } else if (isCritical && isGroundedEvidence(evidence, activeTenderFileIds) && normalizedConfirmed !== normalizedRaw) {
@@ -541,15 +424,10 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";
     } else {
-      // Valid value, but no stored page+quote evidence. This is a TRACEABILITY
-      // warning ("review evidence"), NOT a hard gate blocker. A clean,
-      // fully-populated tender whose title/deadline have no source-evidence
-      // columns at all must still be allowed to generate and export. Grounding
-      // drives the grounded metric and the review prompt — never the block.
       status = "EXTRACTED_UNVERIFIED";
       if (isCritical) {
-        evidenceReviewNeeded = true;
-        warningReason = `Field "${label}" has a value but is not yet linked to a source page + quote. Confirm the evidence for full traceability.`;
+        // Rule 3 / Rule 8: Critical fields remain blocked until source-grounded.
+        blockerReason = `Field "${label}" has a value but is not yet source-grounded (missing page, quote, or active file). Critical fields remain blocked until source-grounded.`;
       }
     }
 
@@ -669,7 +547,8 @@ export function canonicalToClientChip(state: CanonicalFieldState): ClientChipSta
     case "EXTRACTED_UNVERIFIED": return "EXTRACTED_NO_EVIDENCE";
     case "MANUAL_OVERRIDE": return "MANUAL_OVERRIDE";
     case "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED": return "MANUAL_OVERRIDE";
-    case "MANUAL_CONFIRMED": return "MANUALLY_CONFIRMED";
+    case "MANUAL_CONFIRMED":
+    case "NOT_FOUND_CONFIRMED": return "MANUALLY_CONFIRMED";
     case "NOT_STATED": return "NOT_STATED";
     case "NOT_APPLICABLE": return "NOT_APPLICABLE";
     case "PORTAL_CONTAMINATION": return "CONTAMINATED";
