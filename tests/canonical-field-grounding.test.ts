@@ -199,9 +199,9 @@ describe("Stale/inactive/missing evidence does not qualify", () => {
     assert.equal(findField(result, "clientName").status, "NOT_FOUND_CONFIRMED");
   });
 
-  it("USER_CONFIRMED with short quote (< 10 chars) → NOT_FOUND_CONFIRMED", () => {
+  it("USER_CONFIRMED with short quote (<= 5 chars) → NOT_FOUND_CONFIRMED", () => {
     const input = makeBaseInput({
-      tender: makeBaseTender({ clientNameSourceQuote: "short" }),
+      tender: makeBaseTender({ clientNameSourceQuote: "abcde" }),
       overrides: [{
         field: "clientName",
         fieldState: "USER_CONFIRMED",

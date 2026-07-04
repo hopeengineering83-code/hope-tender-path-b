@@ -1,4 +1,11 @@
 // Behavioral tests proving the unified status vocabulary across panels.
+//
+// Verifies that:
+//   1. metadata-truth.ts MetadataFactStatus === canonical-field-state.ts CanonicalFieldStatus
+//   2. NOT_FOUND_CONFIRMED is now a valid status for ungrounded confirmation
+//   3. AMBIGUOUS_SOURCE_TEXT is gone (use EXTRACTED_UNVERIFIED)
+//   4. SOURCE_CONFLICT and BLOCKED are present in the shared vocabulary
+//   5. The resolver correctly blocks USER_EDITED and ungrounded USER_CONFIRMED on critical fields
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -6,8 +13,11 @@ import type { MetadataFactStatus } from "../lib/engine/analysis/metadata-truth";
 import type { CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
 import { resolveCanonicalFieldState, type CanonicalResolverInput } from "../lib/engine/canonical-field-state";
 
+// ─── Vocabulary parity ───────────────────────────────────────────────────────
+
 describe("shared status vocabulary — MetadataFactStatus === CanonicalFieldStatus", () => {
   it("MetadataFactStatus and CanonicalFieldStatus are the same type (structural equality)", () => {
+    // TypeScript structural equality: a value of one type must be assignable to the other.
     const v1: MetadataFactStatus = "EXTRACTED_AND_GROUNDED";
     const v2: CanonicalFieldStatus = v1;
     assert.equal(v1, v2);
@@ -15,15 +25,31 @@ describe("shared status vocabulary — MetadataFactStatus === CanonicalFieldStat
 
   it("status AMBIGUOUS_SOURCE_TEXT is not assignable", () => {
     const valid: CanonicalFieldStatus[] = [
-      "EXTRACTED_AND_GROUNDED", "EXTRACTED_UNVERIFIED", "MANUAL_OVERRIDE",
-      "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED", "MANUAL_CONFIRMED", "NOT_FOUND_CONFIRMED",
-      "NOT_STATED", "NOT_APPLICABLE", "AMBIGUOUS_DATE", "GENERIC_FIELD_LABEL",
-      "INTERNAL_PLACEHOLDER", "PORTAL_CONTAMINATION", "INVALID_FORMAT",
-      "SOURCE_CONFLICT", "INVALID", "BLOCKED",
+      "EXTRACTED_AND_GROUNDED",
+      "EXTRACTED_UNVERIFIED",
+      "MANUAL_OVERRIDE",
+      "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED",
+      "MANUAL_CONFIRMED",
+      "NOT_FOUND_CONFIRMED",
+      "NOT_STATED",
+      "NOT_APPLICABLE",
+      "AMBIGUOUS_DATE",
+      "GENERIC_FIELD_LABEL",
+      "INTERNAL_PLACEHOLDER",
+      "PORTAL_CONTAMINATION",
+      "INVALID_FORMAT",
+      "SOURCE_CONFLICT",
+      "INVALID",
+      "BLOCKED",
     ];
     assert.equal(valid.length, 16);
+    assert.ok(valid.includes("SOURCE_CONFLICT"));
+    assert.ok(valid.includes("BLOCKED"));
+    assert.ok(!(valid as string[]).includes("AMBIGUOUS_SOURCE_TEXT"));
   });
 });
+
+// ─── Resolver: USER_EDITED on critical fields is always blocked ───────────────
 
 function makeTender(overrides: Partial<CanonicalResolverInput["tender"]> = {}): CanonicalResolverInput["tender"] {
   return {
@@ -42,13 +68,19 @@ function makeTender(overrides: Partial<CanonicalResolverInput["tender"]> = {}): 
     clientContactName: "John Doe",
     clientContactEmail: "john@mot.go.ke",
     metadataContaminated: false,
-    // GROUND ALL CRITICAL FIELDS
+    // GROUND ALL CRITICAL FIELDS BY DEFAULT so we can isolate blockers
     clientNameSourcePage: 1,
     clientNameSourceQuote: "Ministry of Transport, Republic of Kenya invites sealed bids",
     clientNameSourceFileId: "file1",
     submissionMethodSourcePage: 4,
     submissionMethodSourceQuote: "Bids shall be submitted by email to procurement@mot.go.ke",
     submissionMethodSourceFileId: "file1",
+    submissionAddressSourcePage: null,
+    submissionAddressSourceQuote: null,
+    submissionAddressSourceFileId: null,
+    submissionEmailSourcePage: 4,
+    submissionEmailSourceQuote: "Bids shall be submitted by email to procurement@mot.go.ke",
+    submissionEmailSourceFileId: "file1",
     titleSourcePage: 1,
     titleSourceQuote: "Road Construction Tender",
     titleSourceFileId: "file1",
@@ -83,7 +115,9 @@ describe("resolver — USER_EDITED on critical field", () => {
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
     assert.equal(f.status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED");
+    assert.notEqual(f.blockerReason, null);
     assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(f.isValid, false);
   });
 
   it("does NOT block non-critical field with USER_EDITED", () => {
@@ -100,9 +134,14 @@ describe("resolver — USER_EDITED on critical field", () => {
       hasExtractedRequirements: true,
       activeTenderFileIds: new Set(["file1"]),
     });
+    const f = r.fields.find((x) => x.fieldKey === "reference")!;
+    assert.equal(f.status, "MANUAL_OVERRIDE");
+    assert.equal(f.blockerReason, null);
     assert.equal(r.hasGenerationBlocker, false);
   });
 });
+
+// ─── Resolver: USER_CONFIRMED without source evidence blocks critical fields ──
 
 describe("resolver — USER_CONFIRMED without source evidence", () => {
   it("blocks when clientName is USER_CONFIRMED but has no source page+quote", () => {
@@ -126,6 +165,7 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
     assert.equal(f.status, "NOT_FOUND_CONFIRMED");
+    assert.notEqual(f.blockerReason, null);
     assert.equal(r.hasGenerationBlocker, true);
   });
 
@@ -141,7 +181,32 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
       overrides: [{
         field: "clientName",
         fieldState: "USER_CONFIRMED" as any,
-        overrideValue: "Ministry of Transport",
+        overrideValue: "Ministry of Health", // Mismatch
+        reason: "confirmed",
+        overriddenBy: "user1",
+        createdAt: new Date(),
+      }],
+      hasExtractedRequirements: true,
+      activeTenderFileIds: new Set(["file1"]),
+    });
+    const f = r.fields.find((x) => x.fieldKey === "clientName")!;
+    // It's MANUAL_CONFIRMED but blocked because it doesn't match the source
+    assert.equal(f.status, "MANUAL_CONFIRMED");
+    assert.notEqual(f.blockerReason, null);
+    assert.equal(r.hasGenerationBlocker, true);
+
+    const r2 = resolveCanonicalFieldState({
+      tender: makeTender({
+        clientName: "Ministry of Transport",
+        procuringEntityName: null,
+        clientNameSourcePage: 1,
+        clientNameSourceQuote: "Ministry of Transport, Republic of Kenya invites sealed bids",
+        clientNameSourceFileId: "file1",
+      }),
+      overrides: [{
+        field: "clientName",
+        fieldState: "USER_CONFIRMED" as any,
+        overrideValue: "Ministry of Transport", // Match
         reason: "confirmed from page 1",
         overriddenBy: "user1",
         createdAt: new Date(),
@@ -149,9 +214,14 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
       hasExtractedRequirements: true,
       activeTenderFileIds: new Set(["file1"]),
     });
-    assert.equal(r.hasGenerationBlocker, false);
+    const f2 = r2.fields.find((x) => x.fieldKey === "clientName")!;
+    assert.equal(f2.status, "EXTRACTED_AND_GROUNDED");
+    assert.equal(f2.blockerReason, null);
+    assert.equal(r2.hasGenerationBlocker, false);
   });
 });
+
+// ─── NOT_APPLICABLE and NOT_STATED cannot unblock critical fields ─────────────
 
 describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical fields", () => {
   it("NOT_APPLICABLE on clientName (always-critical) sets BLOCKED", () => {
@@ -168,6 +238,9 @@ describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical field
       hasExtractedRequirements: true,
       activeTenderFileIds: new Set(["file1"]),
     });
+    const f = r.fields.find((x) => x.fieldKey === "clientName")!;
+    assert.equal(f.status, "BLOCKED");
+    assert.notEqual(f.blockerReason, null);
     assert.equal(r.hasGenerationBlocker, true);
   });
 
@@ -178,13 +251,16 @@ describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical field
         field: "deadline",
         fieldState: "IGNORED_WITH_REASON" as any,
         overrideValue: null,
-        reason: "no deadline",
+        reason: "no deadline in document",
         overriddenBy: "u",
         createdAt: new Date(),
       }],
       hasExtractedRequirements: true,
       activeTenderFileIds: new Set(["file1"]),
     });
+    const f = r.fields.find((x) => x.fieldKey === "deadline")!;
+    assert.equal(f.status, "NOT_STATED");
+    assert.notEqual(f.blockerReason, null);
     assert.equal(r.hasGenerationBlocker, true);
   });
 });

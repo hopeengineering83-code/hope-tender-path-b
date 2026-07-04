@@ -252,6 +252,30 @@ function isGroundedEvidence(
 }
 
 /**
+ * Safely parse the contactDetailsSourceJson to extract source evidence.
+ */
+function parseContactDetailsSource(json: unknown): Record<string, { page: number | null; quote: string | null; fileId: string | null }> {
+  try {
+    const data = typeof json === "string" ? JSON.parse(json) : json;
+    if (!data || typeof data !== "object") return {};
+    const result: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
+    for (const [k, v] of Object.entries(data as Record<string, any>)) {
+      if (v && typeof v === "object") {
+        const e = v as any;
+        result[k] = {
+          page: typeof e.page === "number" ? e.page : null,
+          quote: typeof e.quote === "string" ? e.quote : null,
+          fileId: typeof e.fileId === "string" && e.fileId.length > 0 ? e.fileId : null
+        };
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Resolve the effective state of all tender metadata fields.
  */
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
@@ -279,6 +303,26 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
   let groundedCount = 0;
   let blockedCount = 0;
 
+  const contactEvidenceMap = parseContactDetailsSource(tender.contactDetailsSourceJson);
+
+  function getSourceEvidence(fieldKey: string): { page: number | null; quote: string | null; fileId: string | null } {
+    const sourceKeyBase = fieldKey === "submissionEmails" ? "submissionEmail" : fieldKey;
+    const page = (tender as any)[`${sourceKeyBase}SourcePage`];
+    const quote = (tender as any)[`${sourceKeyBase}SourceQuote`];
+    const fileId = (tender as any)[`${sourceKeyBase}SourceFileId`];
+
+    if (typeof page === "number" || typeof quote === "string" || typeof fileId === "string") {
+      return { page: page ?? null, quote: quote ?? null, fileId: fileId ?? null };
+    }
+
+    // Fallback for reference or extended fields
+    const key = fieldKey === "reference" ? "procurementReferenceNumber" : fieldKey;
+    const ce = contactEvidenceMap[key];
+    if (ce) return { page: ce.page, quote: ce.quote, fileId: ce.fileId };
+
+    return { page: null, quote: null, fileId: null };
+  }
+
   for (const fieldKey of fieldKeys) {
     const label = fieldDisplayLabel(fieldKey);
     const isCritical = isCriticalField(fieldKey, policyCtx);
@@ -295,37 +339,21 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const isManuallyConfirmed = overrideState === "USER_CONFIRMED"; // isManuallyConfirmed = override.fieldState === "USER_CONFIRMED"
 
     // Evidence resolution
-    const sourceKeyBase = fieldKey === "submissionEmails" ? "submissionEmail" : fieldKey;
-    const evidence: { page: number | null; quote: string | null; fileId: string | null } = {
-      page: (tender as any)[`${sourceKeyBase}SourcePage`] ?? null,
-      quote: (tender as any)[`${sourceKeyBase}SourceQuote`] ?? null,
-      fileId: (tender as any)[`${sourceKeyBase}SourceFileId`] ?? null,
-    };
-
-    // Fallback evidence for reference (no dedicated columns) or prior extractions
-    if (!evidence.fileId && tender.contactDetailsSourceJson) {
-      try {
-        const json = typeof tender.contactDetailsSourceJson === "string" ? JSON.parse(tender.contactDetailsSourceJson) : tender.contactDetailsSourceJson;
-        const key = fieldKey === "reference" ? "procurementReferenceNumber" : fieldKey;
-        const info = (json as Record<string, any>)[key];
-        if (info) {
-          if (!evidence.page) evidence.page = info.page ?? null;
-          if (!evidence.quote) evidence.quote = info.quote ?? null;
-          if (!evidence.fileId) evidence.fileId = info.fileId ?? null;
-        }
-      } catch {}
-    }
+    const evidence = getSourceEvidence(fieldKey);
 
     const validation = validateFieldFormat(fieldKey, effectiveStr);
 
-    const overrideMatchesGroundedForIsGrounded =
-      override != null &&
-      (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
-      validation.valid &&
-      isGroundedEvidence(evidence, activeTenderFileIds) &&
-      normalizeFieldValue(fieldKey, effectiveStr || "") === normalizeFieldValue(fieldKey, rawValue ?? "") &&
-      normalizeFieldValue(fieldKey, effectiveStr || "") !== "";
-    const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds) && !override) || overrideMatchesGroundedForIsGrounded;
+    const overrideMatchesGroundedSourceCheck = (): boolean => {
+       if (!override || (override.fieldState !== "USER_EDITED" && override.fieldState !== "USER_CONFIRMED")) return false;
+       const normalizedEdited = normalizeFieldValue(fieldKey, effectiveStr || "");
+       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
+       return validation.valid &&
+         isGroundedEvidence(evidence, activeTenderFileIds) &&
+         normalizedEdited === normalizedRaw &&
+         normalizedEdited !== "";
+    };
+
+    const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds) && !override) || overrideMatchesGroundedSourceCheck();
 
     // Determine status
     let status: CanonicalFieldStatus;
@@ -346,14 +374,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         blockerReason = `Field "${label}" is critical. Not Stated cannot unblock it. Critical fields remain blocked until source-grounded.`;
       }
     } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr) {
-      const overrideMatchesGroundedSource =
-        override != null &&
-        (override.fieldState === "USER_EDITED" || override.fieldState === "USER_CONFIRMED") &&
-        validation.valid &&
-        isGroundedEvidence(evidence, activeTenderFileIds) &&
-        normalizeFieldValue(fieldKey, effectiveStr) === normalizeFieldValue(fieldKey, rawValue ?? "") &&
-        normalizeFieldValue(fieldKey, effectiveStr) !== "";
-      if (overrideMatchesGroundedSource) {
+      if (overrideMatchesGroundedSourceCheck()) {
         status = "EXTRACTED_AND_GROUNDED";
       } else {
         status = "PORTAL_CONTAMINATION";
@@ -388,14 +409,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         }
       }
     } else if (override?.fieldState === "USER_EDITED") {
-      const normalizedEdited = normalizeFieldValue(fieldKey, effectiveStr);
-      const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
-      const editedMatchesGroundedSource =
-        validation.valid &&
-        isGroundedEvidence(evidence, activeTenderFileIds) &&
-        normalizedEdited === normalizedRaw &&
-        normalizedEdited !== "";
-      if (editedMatchesGroundedSource) {
+      if (overrideMatchesGroundedSourceCheck()) {
         status = "EXTRACTED_AND_GROUNDED";
       } else {
         status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
