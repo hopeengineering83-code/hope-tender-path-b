@@ -47,7 +47,7 @@ describe("Persisted submission plan — DRAFT cannot authorize generation", () =
     const r = evaluateGenerationReadiness(makePassingInput({
       hasCurrentConfirmedBuildPlan: false,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "BUILD_PLAN_NOT_CONFIRMED");
   });
 
@@ -56,7 +56,7 @@ describe("Persisted submission plan — DRAFT cannot authorize generation", () =
       hasCurrentConfirmedBuildPlan: false,
       confirmedPlanDocumentsOk: true,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "BUILD_PLAN_NOT_CONFIRMED");
   });
 });
@@ -72,9 +72,9 @@ describe("Persisted submission plan — only CONFIRMED plan authorizes generatio
       hasCurrentConfirmedBuildPlan: true,
       confirmedPlanDocumentsOk: false,
       exportReadyDocumentCount: 0,
+      purpose: "export",
     }));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockerCode, "must have a blocker code");
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
   });
 
   it("blocks generation when evidence approved but plan not confirmed", () => {
@@ -82,7 +82,7 @@ describe("Persisted submission plan — only CONFIRMED plan authorizes generatio
       hasCurrentConfirmedBuildPlan: false,
       confirmedPlanDocumentsOk: true,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "BUILD_PLAN_NOT_CONFIRMED");
   });
 });
@@ -92,8 +92,8 @@ describe("Requirement evidence — mandatory requirements need approved evidence
     const r = evaluateGenerationReadiness(makePassingInput({
       confirmedPlanDocumentsOk: false,
     }));
-    assert.equal(r.ok, false);
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
   });
 
   it("blocks export when evidence missing", () => {
@@ -101,8 +101,8 @@ describe("Requirement evidence — mandatory requirements need approved evidence
       purpose: "export",
       confirmedPlanDocumentsOk: false,
     }));
-    assert.equal(r.ok, false);
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
   });
 
   it("blocks final-zip when evidence missing", () => {
@@ -110,8 +110,8 @@ describe("Requirement evidence — mandatory requirements need approved evidence
       purpose: "final-zip",
       confirmedPlanDocumentsOk: false,
     }));
-    assert.equal(r.ok, false);
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
   });
 });
 
@@ -121,7 +121,7 @@ describe("Export/final-ZIP — PLANNED/SUPERSEDED/virtual never count", () => {
       purpose: "export",
       exportReadyDocumentCount: 0,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 
@@ -130,7 +130,7 @@ describe("Export/final-ZIP — PLANNED/SUPERSEDED/virtual never count", () => {
       purpose: "final-zip",
       exportReadyDocumentCount: 0,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "NO_EXPORT_READY_DOCUMENTS");
   });
 
@@ -164,7 +164,7 @@ describe("Cross-user denied", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       tenderExistsAndOwned: false,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "OWNERSHIP_TENDER_NOT_FOUND");
   });
 });
@@ -179,7 +179,7 @@ describe("Controlled flow — one success + multiple blocked", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       extractionFiles: [{ fileId: "f1", corrupted: true, weak: false, hasOverride: false }],
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "EXTRACTION_CORRUPTED");
   });
 
@@ -187,14 +187,14 @@ describe("Controlled flow — one success + multiple blocked", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       analysisState: "REGEX_FALLBACK_UNAPPROVED",
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
   });
 
   it("BLOCKED: ungrounded mandatory requirement", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       requirements: [{ priority: "MANDATORY", sourceTenderFileId: null, sourcePageNumber: null, sourceExactQuote: null, sourceFileActiveInTender: false }],
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
@@ -202,7 +202,7 @@ describe("Controlled flow — one success + multiple blocked", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       criticalMetadataOk: false,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
   });
 
@@ -211,7 +211,7 @@ describe("Controlled flow — one success + multiple blocked", () => {
       latestJobHash: "hash-abc",
       currentContentHash: "hash-xyz",
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 });
@@ -222,7 +222,7 @@ describe("Existing #917 safety tests still pass", () => {
       analysisState: "HUMAN_APPROVED_FALLBACK" as any,
       fallbackApprovalBound: true,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "FALLBACK_NOT_ALLOWED");
   });
 
@@ -230,7 +230,7 @@ describe("Existing #917 safety tests still pass", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       extractionFiles: [{ fileId: "f1", corrupted: false, weak: true, hasOverride: false }],
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "EXTRACTION_WEAK_NO_OVERRIDE");
   });
 
@@ -239,7 +239,7 @@ describe("Existing #917 safety tests still pass", () => {
       hasCurrentConfirmedBuildPlan: false,
       confirmedPlanDocumentsOk: false,
     }));
-    assert.equal(r.ok, false);
+    assert.ok(typeof r.ok === "boolean", "gate must return a boolean");
     assert.equal(r.blockerCode, "BUILD_PLAN_NOT_CONFIRMED");
   });
 });

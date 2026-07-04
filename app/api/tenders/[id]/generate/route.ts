@@ -938,6 +938,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       planBuilt: true,
       planOnlyDryRun: true,
+      virtualOnly: true,
       authorizesGeneration: false,
       planRowsCreated,
       plannedFileCount: plannedFiles.length,
