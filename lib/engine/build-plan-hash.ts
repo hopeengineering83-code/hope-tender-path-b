@@ -353,16 +353,18 @@ export function buildCanonicalBuildPlanHashInput(
   // the confirmed BuildPlan.
   const submissionMethodField = fieldState.fields.find((f: any) => f.fieldKey === "submissionMethod");
   const effectiveMethod = submissionMethodField?.effectiveValue ?? null;
-  const criticalFieldKeys = new Set(["title", "clientName", "deadline", "submissionMethod"]);
+  const criticalFieldKeys = new Set(["title", "clientName", "deadline", "submissionMethod", "reference"]);
   // Add the applicable endpoint field(s) based on the EFFECTIVE submission
   // method from the resolver.
   if (isEmailSubmissionMethod(effectiveMethod)) {
     criticalFieldKeys.add("submissionEmails");
+    criticalFieldKeys.add("submissionEmailSubject");
   } else if (isPhysicalSubmissionMethod(effectiveMethod)) {
     criticalFieldKeys.add("submissionAddress");
   } else if (isPortalSubmissionMethod(effectiveMethod)) {
     criticalFieldKeys.add("submissionEmails");
     criticalFieldKeys.add("submissionAddress");
+    criticalFieldKeys.add("submissionEmailSubject");
   }
   // Unknown/empty effective submission method: only the 4 core fields are
   // included. The validator (validateCriticalMetadataEvidenceForBuildPlan)

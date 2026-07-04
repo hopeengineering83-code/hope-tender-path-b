@@ -538,7 +538,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
 
     // E — chunk integrity for the CURRENT content hash only.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { tenderId, contentHash: currentContentHash, tender: { userId } },
+      where: { tenderId, userId, contentHash: currentContentHash },
       select: { status: true, totalChunks: true },
     });
 
