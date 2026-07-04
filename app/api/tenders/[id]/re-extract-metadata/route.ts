@@ -123,7 +123,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: { id, userId: actor.id },
     // ACTIVE files only: a deleted file's text must never contribute extracted
     // values or ground source evidence.
-    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true } } },
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, totalPages: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (tender.files.length === 0) {
@@ -264,15 +264,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Refresh persisted page-level extraction diagnostics on every re-extract so
   // the Extraction Quality dashboard reflects the latest stored truth even when
   // no new metadata fields are discovered.
+  // PAGE-PROVENANCE GUARD: the stored TenderFile.totalPages (set at upload
+  // from the real PDF page count) is the AUTHORITATIVE page count. Do NOT
+  // overwrite it with assessExtractionQualityPerPage().totalDetectedPages —
+  // that is a diagnostic-derived heuristic, not proof of the real page count.
+  // Overwriting totalPages with it would let a single-page boundaryless text
+  // blob claim totalPages=1, which the page-provenance guard treats as proof
+  // that page 1 is valid — ungrounding fields that should stay EXTRACTED_UNVERIFIED.
   const totalPagesByFileId = new Map<string, number | null>();
   for (const file of tender.files) {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
     const perPage = assessExtractionQualityPerPage(file.extractedText);
-    totalPagesByFileId.set(file.id, perPage.totalDetectedPages ?? null);
+    // Use the STORED totalPages (authoritative), NOT the diagnostic-derived count.
+    totalPagesByFileId.set(file.id, (file as { totalPages?: number | null }).totalPages ?? null);
     await prisma.tenderFile.update({
       where: { id: file.id },
       data: {
-        totalPages: perPage.totalDetectedPages,
+        // Do NOT overwrite totalPages — it is authoritative from upload.
         extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
         ocrPages: perPage.ocrPages.length,
         failedPages: perPage.failedPages.length,

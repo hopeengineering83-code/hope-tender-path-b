@@ -191,6 +191,12 @@ function locateValueInFile(
   const origIdx = map[idx];
   if (typeof origIdx !== "number") return null;
   const page = computePageNumber(file.extractedText, origIdx, file.totalPages);
+  // Return the evidence even when page is null — the canonical resolver's
+  // isGroundedEvidenceWithFileCheck rejects null pages, so the field stays
+  // EXTRACTED_UNVERIFIED (not GROUNDED). The fileId + quote are still useful
+  // for the UI to show WHERE the value was found, even if the page is unproven.
+  // A null/unproven page must never make the field grounded, confirmed,
+  // generation-ready, or export-ready — enforced by the resolver, not here.
   // Capture surrounding context from the original text for the quote,
   // centered on the true occurrence.
   const quoteStart = Math.max(0, origIdx - Math.floor(QUOTE_CONTEXT_CHARS / 2));
