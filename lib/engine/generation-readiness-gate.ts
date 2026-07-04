@@ -537,8 +537,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     ]);
 
     // E — chunk integrity for the CURRENT content hash only.
+    // AiAnalyzeChunk has scalar tenderId and userId fields — it does NOT have
+    // a Tender relation. The previous `tender: { userId }` filter caused a
+    // Prisma runtime error (P2009) on every real evaluation, making the gate
+    // fail closed with GATE_INTERNAL_ERROR.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { tenderId, contentHash: currentContentHash, tender: { userId } },
+      where: { tenderId, userId, contentHash: currentContentHash },
       select: { status: true, totalChunks: true },
     });
 
