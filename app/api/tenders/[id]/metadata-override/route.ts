@@ -123,7 +123,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         preBidChannel: tender.preBidChannel ?? null, preBidMeetingDate: pbDate,
         preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
       },
-      overrides: overrides.map((o) => ({
+      overrides: (overrides as any[]).map((o) => ({
         field: o.field, fieldState: o.fieldState, overrideValue: o.overrideValue ?? null,
         reason: o.reason ?? null, overriddenBy: o.overriddenBy ?? null, createdAt: o.createdAt ?? null,
       })),

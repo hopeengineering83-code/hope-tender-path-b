@@ -593,7 +593,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
-      overrides: ((tender.metadataOverrides ?? []) as _MetadataOverrideRow[]).map((o) => ({
+      overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
         field: o.field,
         fieldState: o.fieldState,
         overrideValue: o.overrideValue,

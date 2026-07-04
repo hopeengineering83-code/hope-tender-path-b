@@ -721,7 +721,7 @@ export async function getFinalSubmissionReadiness(
       submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
       contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
     },
-    overrides: (tender.metadataOverrides ?? []).map((o) => ({
+    overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
       field: o.field,
       fieldState: o.fieldState,
       overrideValue: o.overrideValue ?? null,

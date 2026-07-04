@@ -96,7 +96,7 @@ describe("Grounding enforcement — activeTenderFileIds", () => {
       activeTenderFileIds: new Set(["file-active"]),
     });
     const field = findField(result, "clientName");
-    assert.equal(field.status, "MANUAL_CONFIRMED", `got ${field.status}`);
+    assert.equal(field.status, "NOT_FOUND_CONFIRMED", `got ${field.status}`);
     assert.ok(field.blockerReason);
     assert.equal(result.hasGenerationBlocker, true);
   });
@@ -108,7 +108,7 @@ describe("Grounding enforcement — activeTenderFileIds", () => {
       hasExtractedRequirements: true,
       activeTenderFileIds: new Set(["file-active"]),
     });
-    assert.equal(findField(result, "clientName").status, "MANUAL_CONFIRMED");
+    assert.equal(findField(result, "clientName").status, "NOT_FOUND_CONFIRMED");
   });
 
   it("backward-compatible: without activeTenderFileIds, page+quote alone still grounds", () => {

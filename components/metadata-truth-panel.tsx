@@ -15,6 +15,7 @@ const STATUS_BADGE: Record<CanonicalFieldStatus, { label: string; classes: strin
   EXTRACTED_UNVERIFIED:                { label: "Extracted — review evidence",         classes: "bg-blue-100 text-blue-700" },
   MANUAL_OVERRIDE:                     { label: "Candidate value (non-critical)",      classes: "bg-indigo-100 text-indigo-700" },
   MANUAL_OVERRIDE_CONFIRMATION_REQUIRED: { label: "Candidate — blocked (critical)",   classes: "bg-orange-100 text-orange-700" },
+  NOT_FOUND_CONFIRMED:                 { label: "Confirmed — not in source",         classes: "bg-amber-100 text-amber-700" },
   MANUAL_CONFIRMED:                    { label: "Confirmed — needs source",            classes: "bg-amber-100 text-amber-700" },
   NOT_STATED:                          { label: "Not stated in tender",                classes: "bg-slate-100 text-slate-600" },
   NOT_APPLICABLE:                      { label: "Not applicable",                      classes: "bg-slate-100 text-slate-500" },

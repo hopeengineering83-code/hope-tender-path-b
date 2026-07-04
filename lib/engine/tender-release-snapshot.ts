@@ -398,7 +398,7 @@ export async function getTenderReleaseSnapshot(
       preBidMeetingDate: tender.preBidMeetingDate?.toISOString() ?? null,
       preBidMeetingLocation: tender.preBidMeetingLocation,
     },
-    overrides: ((tender.metadataOverrides ?? []) as _OverrideRow[]).map((o) => ({
+    overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
       field: o.field,
       fieldState: o.fieldState,
       overrideValue: o.overrideValue,
@@ -521,7 +521,7 @@ export async function getTenderReleaseSnapshot(
     analysisState: analysisDetail.state,
     analysisJobId: analysisDetail.canonicalJobId,
     requirementCount: allReqs.length,
-    overrides: (tender.metadataOverrides ?? []).map((o) => ({
+    overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
       field: o.field,
       fieldState: o.fieldState,
       overrideValue: o.overrideValue,
