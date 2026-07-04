@@ -595,7 +595,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       },
       overrides: ((tender.metadataOverrides ?? []) as _MetadataOverrideRow[]).map((o) => ({
         field: o.field,
-        fieldState: o.fieldState,
+        fieldState: o.fieldState as any,
         overrideValue: o.overrideValue,
         reason: o.reason,
         overriddenBy: o.overriddenBy,

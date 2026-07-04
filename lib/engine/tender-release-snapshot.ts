@@ -400,7 +400,7 @@ export async function getTenderReleaseSnapshot(
     },
     overrides: ((tender.metadataOverrides ?? []) as _OverrideRow[]).map((o) => ({
       field: o.field,
-      fieldState: o.fieldState,
+      fieldState: o.fieldState as any,
       overrideValue: o.overrideValue,
       reason: o.reason,
       overriddenBy: o.overriddenBy,
@@ -523,7 +523,7 @@ export async function getTenderReleaseSnapshot(
     requirementCount: allReqs.length,
     overrides: (tender.metadataOverrides ?? []).map((o) => ({
       field: o.field,
-      fieldState: o.fieldState,
+      fieldState: o.fieldState as any,
       overrideValue: o.overrideValue,
     })),
     documentCount: buildPlanCount,

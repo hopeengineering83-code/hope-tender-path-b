@@ -86,7 +86,7 @@ describe("USER_CONFIRMED grounding — exact match required", () => {
     assert.equal(field.blockerReason, null);
   });
 
-  it("USER_CONFIRMED with non-matching value → MANUAL_CONFIRMED (blocked for critical)", () => {
+  it("USER_CONFIRMED with non-matching value → MANUAL_CONFIRMED (blocked) (blocked for critical)", () => {
     const input = makeBaseInput({
       tender: makeBaseTender({
         clientName: "Pharo Ventures",
@@ -104,12 +104,12 @@ describe("USER_CONFIRMED grounding — exact match required", () => {
     });
     const result = resolveCanonicalFieldState(input);
     const field = findField(result, "clientName");
-    assert.equal(field.status, "MANUAL_CONFIRMED",
+    assert.equal(field.status, "NOT_FOUND_CONFIRMED",
       `USER_CONFIRMED with non-matching value should be MANUAL_CONFIRMED, got ${field.status}`);
     assert.ok(field.blockerReason, "Should have a blocker reason for critical field mismatch");
   });
 
-  it("USER_CONFIRMED without source evidence → MANUAL_CONFIRMED (blocked for critical)", () => {
+  it("USER_CONFIRMED without source evidence → NOT_FOUND_CONFIRMED (blocked for critical)", () => {
     const input = makeBaseInput({
       tender: makeBaseTender({
         clientName: "Pharo Ventures",
@@ -127,7 +127,7 @@ describe("USER_CONFIRMED grounding — exact match required", () => {
     });
     const result = resolveCanonicalFieldState(input);
     const field = findField(result, "clientName");
-    assert.equal(field.status, "MANUAL_CONFIRMED",
+    assert.equal(field.status, "NOT_FOUND_CONFIRMED",
       `USER_CONFIRMED without evidence should be MANUAL_CONFIRMED, got ${field.status}`);
     assert.ok(field.blockerReason, "Should have a blocker for critical field without evidence");
   });

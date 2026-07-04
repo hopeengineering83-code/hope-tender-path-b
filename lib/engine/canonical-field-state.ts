@@ -133,19 +133,6 @@ export type CanonicalResolverInput = {
     country: string | null;
     submissionMethod: string | null;
     submissionAddress: string | null;
-    preBidMeetingLocation?: string | null;
-    preBidMeetingDate?: string | null;
-    preBidChannel?: string | null;
-    clientRepresentative?: string | null;
-    clientWebsite?: string | null;
-    clientAddress?: string | null;
-    clientCity?: string | null;
-    clientContactPhone?: string | null;
-    clientContactTitle?: string | null;
-    implementingAgency?: string | null;
-    donorAgency?: string | null;
-    legalClientName?: string | null;
-    evaluationMethodology?: string | null;
     submissionEmails: string | null;
     submissionEmailSubject: string | null;
     clientContactName: string | null;
@@ -170,6 +157,20 @@ export type CanonicalResolverInput = {
     deadlineSourcePage?: number | null;
     deadlineSourceQuote?: string | null;
     deadlineSourceFileId?: string | null;
+    // Extended fields for dashboard
+    evaluationMethodology?: string | null;
+    legalClientName?: string | null;
+    donorAgency?: string | null;
+    implementingAgency?: string | null;
+    clientContactTitle?: string | null;
+    clientContactPhone?: string | null;
+    clientCity?: string | null;
+    clientAddress?: string | null;
+    clientWebsite?: string | null;
+    clientRepresentative?: string | null;
+    preBidChannel?: string | null;
+    preBidMeetingDate?: string | null;
+    preBidMeetingLocation?: string | null;
     // Catch-all for non-critical fields or prior-extraction formats
     contactDetailsSourceJson?: unknown;
   };
@@ -265,6 +266,9 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     "clientName", "title", "reference", "deadline", "country", "currency",
     "submissionMethod", "submissionEndpoint", "submissionAddress", "submissionEmails",
     "requiredDocuments", "evaluationCriteria", "clientContactName", "clientContactEmail",
+    "legalClientName", "donorAgency", "implementingAgency", "clientContactTitle", "clientContactPhone",
+    "clientCity", "clientAddress", "clientWebsite", "clientRepresentative", "preBidChannel",
+    "preBidMeetingDate", "preBidMeetingLocation",
   ];
 
   let hasGenerationBlocker = false;
@@ -395,7 +399,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         status = "EXTRACTED_AND_GROUNDED";
       } else {
         status = isGroundedEvidence(evidence, activeTenderFileIds) ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
-        if (isCritical && !isGroundedEvidence(evidence, activeTenderFileIds)) {
+        if (isCritical && status === "NOT_FOUND_CONFIRMED") {
           blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Link to an active tender source to unblock generation.`;
         } else if (isCritical && isGroundedEvidence(evidence, activeTenderFileIds) && normalizedConfirmed !== normalizedRaw) {
           blockerReason = `Field "${label}" was manually confirmed with a value that does not match the active tender-source evidence. The confirmed value must exactly match the extracted source value.`;
