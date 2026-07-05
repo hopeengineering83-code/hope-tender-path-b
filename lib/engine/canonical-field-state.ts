@@ -237,6 +237,19 @@ function validateFieldFormat(fieldKey: string, value: string | null): { valid: b
   if (fieldKey === "deadline") {
     if (isAmbiguousDateString(trimmed)) return { valid: false, reason: "Date format is ambiguous — use the date picker." };
   }
+  // Submission method must be classifiable as email, physical, or portal.
+  // An unclassifiable method means the required submission endpoint cannot be
+  // determined — the BuildPlan validator fails closed on this, so the resolver
+  // must too (otherwise the panel shows green while the gate blocks).
+  if (fieldKey === "submissionMethod") {
+    if (
+      !isEmailSubmissionMethod(trimmed) &&
+      !isPhysicalSubmissionMethod(trimmed) &&
+      !isPortalSubmissionMethod(trimmed)
+    ) {
+      return { valid: false, reason: "Submission method is not recognized as email, physical, or portal — the required submission endpoint cannot be determined." };
+    }
+  }
   return { valid: true, reason: null };
 }
 

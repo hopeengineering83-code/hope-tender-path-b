@@ -720,10 +720,13 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             where: { id: tenderId, userId },
             include: {
               files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true, deletionStatus: true, totalPages: true } },
+              // Load metadata overrides so the validator checks EFFECTIVE values
+              // (override ?? raw), mirroring the canonical hash.
+              metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
             },
           });
           if (!fullTender) return false;
-          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[]);
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
           return metaValidation.ok;
         } catch { return false; }
       })()),
