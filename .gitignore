@@ -34,3 +34,6 @@ skills/
 
 # User uploads (transient — screenshots, etc.)
 upload/
+
+# Tool-generated persisted outputs (Read tool large outputs)
+tool-results/

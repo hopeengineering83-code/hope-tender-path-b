@@ -1,0 +1,307 @@
+/**
+ * Snapshot ↔ Gate Agreement — Source-Inspection + Decision-Function Tests
+ *
+ * The release snapshot (lib/engine/tender-release-snapshot.ts) is consumed by
+ * ALL UI panels. The generation gate (lib/engine/generation-readiness-gate.ts)
+ * is the authoritative gate for generation/export/ZIP. A prior audit (H8)
+ * found NO tests verify that the snapshot's metadata.hasGenerationBlocker,
+ * requirements.allMandatoryGrounded, and buildPlan.valid agree with the gate's
+ * corresponding blockers.
+ *
+ * This file pins:
+ *   1. Input-shape parity — both call resolveCanonicalFieldState with the same
+ *      critical source-evidence columns + activeTenderFileIds filtered to ACTIVE.
+ *   2. Decision-function parity — the snapshot's metadata blocker agrees with
+ *      the gate's METADATA_CRITICAL_FIELD_INVALID for a missing critical field.
+ *   3. Known divergences — documents (as regression sentinels) that the
+ *      snapshot's buildPlan.valid uses a count check while the gate uses a
+ *      6-condition strict check, and that the snapshot's requirements grounding
+ *      is looser than the gate's (no quote-containment check).
+ *
+ * Tier A tests are pure source-inspection (no DB). Tier B tests are pure
+ * decision-function (no DB, call evaluateGenerationReadiness +
+ * resolveCanonicalFieldState directly). Tier C (DB-integration) tests are
+ * deferred to a future commit — they require a fully-migrated PostgreSQL
+ * instance and are documented in the audit report.
+ */
+
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { resolveCanonicalFieldState } from "../lib/engine/canonical-field-state";
+import { evaluateGenerationReadiness } from "../lib/engine/generation-readiness-gate";
+
+const read = (p: string) => readFileSync(p, "utf8");
+
+// ─── Tier A: Source-inspection — input-shape parity ─────────────────────────
+
+describe("Snapshot ↔ Gate input-shape parity (Tier A source-inspection)", () => {
+  const snapshotSrc = read("lib/engine/tender-release-snapshot.ts");
+  const gateSrc = read("lib/engine/generation-readiness-gate.ts");
+
+  it("both SELECT referenceSource{Page,Quote,FileId} columns", () => {
+    // The resolver reads these dynamically via getSourceEvidence for
+    // fieldKey="reference". Both callers must select them so the resolver
+    // takes the dedicated-column path (not just the contactDetailsSourceJson
+    // fallback).
+    for (const col of ["referenceSourcePage", "referenceSourceQuote", "referenceSourceFileId"]) {
+      assert.ok(snapshotSrc.includes(`${col}: true`), `snapshot SELECT must include ${col}: true`);
+      assert.ok(gateSrc.includes(`${col}: true`), `gate SELECT must include ${col}: true`);
+    }
+  });
+
+  it("both build activeTenderFileIds from files filtered to deletionStatus=ACTIVE", () => {
+    assert.ok(
+      snapshotSrc.includes("activeTenderFileIds: new Set(activeFiles.map((f) => f.id))"),
+      "snapshot must build activeTenderFileIds from activeFiles (pre-filtered to ACTIVE)",
+    );
+    assert.ok(
+      gateSrc.includes("activeFileIds: activeFileIds") || gateSrc.includes("activeTenderFileIds: activeFileIds"),
+      "gate must forward activeFileIds (built from activeFiles filtered to ACTIVE)",
+    );
+  });
+
+  it("both call resolveCanonicalFieldState (not a parallel metadata-blocker path)", () => {
+    assert.ok(
+      snapshotSrc.includes("resolveCanonicalFieldState({"),
+      "snapshot must call resolveCanonicalFieldState directly",
+    );
+    assert.ok(
+      gateSrc.includes("resolveCanonicalFieldState({"),
+      "gate must call resolveCanonicalFieldState directly",
+    );
+  });
+
+  it("snapshot forwards contactDetailsSourceJson (reference fallback)", () => {
+    assert.ok(
+      snapshotSrc.includes("contactDetailsSourceJson: tender.contactDetailsSourceJson"),
+      "snapshot must forward contactDetailsSourceJson for the reference fallback path",
+    );
+  });
+
+  it("gate forwards contactDetailsSourceJson (reference fallback)", () => {
+    assert.ok(
+      gateSrc.includes("contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null"),
+      "gate must forward contactDetailsSourceJson for the reference fallback path",
+    );
+  });
+});
+
+// ─── Tier A: BuildPlan divergence (resolved via gateValid) + metadata divergence ─
+
+describe("Snapshot ↔ Gate buildPlan + metadata alignment (Tier A)", () => {
+  const snapshotSrc = read("lib/engine/tender-release-snapshot.ts");
+  const gateSrc = read("lib/engine/generation-readiness-gate.ts");
+
+  it("RESOLVED: snapshot exposes gateValid via getCurrentConfirmedBuildPlan (buildPlan divergence closed)", () => {
+    // The snapshot's buildPlan.valid is still a count check (retained for
+    // backward-compatible UI display), but the snapshot NOW ALSO exposes
+    // buildPlan.gateValid — a gate-aligned strict check computed via the SAME
+    // helpers the gate uses (computeTenderBuildPlanHash + getCurrentConfirmedBuildPlan
+    // + validateBuildPlanItemsAtRuntime). Consumers that need gate-parity can
+    // read gateValid instead of valid.
+    assert.ok(
+      snapshotSrc.includes("gateValid"),
+      "snapshot must expose gateValid (gate-aligned strict check)",
+    );
+    assert.ok(
+      snapshotSrc.includes("gateBlocker"),
+      "snapshot must expose gateBlocker (first strict-check failure reason)",
+    );
+    assert.ok(
+      snapshotSrc.includes("computeTenderBuildPlanHash"),
+      "snapshot must call computeTenderBuildPlanHash (same helper as the gate)",
+    );
+    assert.ok(
+      snapshotSrc.includes("getCurrentConfirmedBuildPlan"),
+      "snapshot must call getCurrentConfirmedBuildPlan (same helper as the gate)",
+    );
+    assert.ok(
+      snapshotSrc.includes("validateBuildPlanItemsAtRuntime"),
+      "snapshot must call validateBuildPlanItemsAtRuntime (same helper as the gate)",
+    );
+    // The count-based valid is still there for backward compatibility
+    assert.ok(
+      snapshotSrc.includes("valid: buildPlanCount > 0"),
+      "snapshot retains count-based valid for backward-compatible UI display",
+    );
+  });
+
+  it("RESOLVED: snapshot requirements grounding checks quote containment + page-bounds (divergence closed)", () => {
+    // The snapshot's groundedMandatory filter now mirrors the gate's check:
+    // sourcePage <= totalPages AND the quote is contained (normalized) in the
+    // file's extractedText. This keeps snapshot.requirements.allMandatoryGrounded
+    // in lock-step with the gate's REQUIREMENT_SOURCE_UNGROUNDED /
+    // REQUIREMENT_QUOTE_NOT_IN_FILE blockers.
+    assert.ok(
+      snapshotSrc.includes("fileText.includes(normalizedQuote)"),
+      "snapshot must check quote containment in extracted text (mirrors gate)",
+    );
+    assert.ok(
+      snapshotSrc.includes("r.sourcePageNumber > file.totalPages"),
+      "snapshot must check sourcePage <= totalPages (mirrors gate)",
+    );
+    assert.ok(
+      snapshotSrc.includes("totalPages: true"),
+      "snapshot SELECT must include totalPages (required for the page-bounds check)",
+    );
+  });
+
+  it("DIVERGENCE (remaining): snapshot metadata blocker uses resolver only; gate adds validateCriticalMetadataEvidenceForBuildPlan", () => {
+    // The snapshot's metadata.hasGenerationBlocker comes directly from
+    // resolveCanonicalFieldState. The gate additionally calls
+    // validateCriticalMetadataEvidenceForBuildPlan which enforces quote
+    // containment + page <= totalPages.
+    // This divergence is the LAST remaining one — fixing it requires the
+    // snapshot to call validateCriticalMetadataEvidenceForBuildPlan, which
+    // is a larger refactor that could change UI behavior.
+    assert.ok(
+      snapshotSrc.includes("metadata.hasGenerationBlocker"),
+      "snapshot uses resolver's hasGenerationBlocker directly",
+    );
+    assert.ok(
+      gateSrc.includes("validateCriticalMetadataEvidenceForBuildPlan"),
+      "gate adds validateCriticalMetadataEvidenceForBuildPlan (stricter second-layer check)",
+    );
+  });
+});
+
+// ─── Tier B: Decision-function parity ───────────────────────────────────────
+
+describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
+  it("resolver says hasGenerationBlocker=true → gate returns METADATA_CRITICAL_FIELD_INVALID", () => {
+    // Construct a CanonicalResolverInput where a critical field (deadline) is
+    // INVALID (no value, no override). The resolver must set
+    // hasGenerationBlocker=true. The gate's evaluateGenerationReadiness must
+    // return blockerCode=METADATA_CRITICAL_FIELD_INVALID when
+    // criticalMetadataOk=false.
+    const resolverResult = resolveCanonicalFieldState({
+      tender: {
+        id: "tender-1",
+        title: "Test Tender",
+        reference: null,
+        clientName: "Ministry of Test",
+        procuringEntityName: null,
+        deadline: null, // MISSING — always-critical field
+        currency: null,
+        country: null,
+        submissionMethod: "Email",
+        submissionAddress: null,
+        submissionEmails: "test@example.com",
+        submissionEmailSubject: null,
+        clientContactName: null,
+        clientContactEmail: null,
+        metadataContaminated: false,
+        // No source evidence for any field
+      },
+      overrides: [],
+      activeTenderFileIds: new Set(["file-1"]),
+      hasExtractedRequirements: true,
+    });
+    assert.equal(resolverResult.hasGenerationBlocker, true, "resolver must flag blocker for missing deadline");
+
+    // Now call the gate's pure decision function with criticalMetadataOk=false
+    // (simulating what the gate would compute from the resolver result).
+    const gateResult = evaluateGenerationReadiness({
+      purpose: "generate",
+      tenderExistsAndOwned: true,
+      activeFileCount: 1,
+      extractionFiles: [{ fileId: "file-1", corrupted: false, weak: false, hasOverride: false }],
+      analysisState: "AI_SUCCEEDED",
+      canonicalJobId: "job-1",
+      latestJobHash: "hash-1",
+      currentContentHash: "hash-1",
+      fallbackApprovalBound: false,
+      currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
+      requirementCount: 1,
+      requirements: [{
+        priority: "MANDATORY",
+        sourceTenderFileId: "file-1",
+        sourcePageNumber: 1,
+        sourceExactQuote: "A meaningful requirement quote that is long enough.",
+        sourceFileActiveInTender: true,
+        sourceFileExtractedText: "A meaningful requirement quote that is long enough.",
+        sourceFileTotalPages: 5,
+      }],
+      criticalMetadataOk: false, // mirrors resolverResult.hasGenerationBlocker=true
+      recordedBuildPlanState: "VALID",
+      hasCurrentConfirmedBuildPlan: true,
+      confirmedBuildPlanItemsValid: true,
+      exportReadyDocumentCount: 0,
+    });
+    assert.equal(gateResult.ok, false, "gate must block when criticalMetadataOk=false");
+    assert.equal(gateResult.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+  });
+
+  it("resolver says hasGenerationBlocker=false → gate can still block on OTHER conditions", () => {
+    // The resolver may say no metadata blocker, but the gate can still block
+    // on analysis, chunks, requirements, or build plan. This is NOT a
+    // divergence — it's the gate's additional strictness.
+    const resolverResult = resolveCanonicalFieldState({
+      tender: {
+        id: "tender-1",
+        title: "Test Tender for Infrastructure Development",
+        reference: "REF-2026-001",
+        clientName: "Ministry of Test",
+        procuringEntityName: null,
+        deadline: new Date("2026-12-30"),
+        currency: "USD",
+        country: "Ethiopia",
+        submissionMethod: "Email submission",
+        submissionAddress: null,
+        submissionEmails: "test@example.com",
+        submissionEmailSubject: null,
+        clientContactName: null,
+        clientContactEmail: null,
+        metadataContaminated: false,
+        clientNameSourceFileId: "file-1",
+        clientNameSourcePage: 1,
+        clientNameSourceQuote: "The procuring entity is the Ministry of Test.",
+        titleSourceFileId: "file-1",
+        titleSourcePage: 1,
+        titleSourceQuote: "Tender Notice: Test Tender for Infrastructure Development",
+        deadlineSourceFileId: "file-1",
+        deadlineSourcePage: 1,
+        deadlineSourceQuote: "Submission Deadline: 2026-12-30",
+        submissionMethodSourceFileId: "file-1",
+        submissionMethodSourcePage: 1,
+        submissionMethodSourceQuote: "Submit by Email submission to the address below.",
+      },
+      overrides: [],
+      activeTenderFileIds: new Set(["file-1"]),
+      hasExtractedRequirements: true,
+    });
+    assert.equal(resolverResult.hasGenerationBlocker, false, "all critical fields grounded → no blocker");
+
+    // Gate blocks on analysis state (not metadata)
+    const gateResult = evaluateGenerationReadiness({
+      purpose: "generate",
+      tenderExistsAndOwned: true,
+      activeFileCount: 1,
+      extractionFiles: [{ fileId: "file-1", corrupted: false, weak: false, hasOverride: false }],
+      analysisState: "NOT_STARTED", // gate blocks here
+      canonicalJobId: null,
+      latestJobHash: null,
+      currentContentHash: "hash-1",
+      fallbackApprovalBound: false,
+      currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
+      requirementCount: 1,
+      requirements: [{
+        priority: "MANDATORY",
+        sourceTenderFileId: "file-1",
+        sourcePageNumber: 1,
+        sourceExactQuote: "A meaningful requirement quote that is long enough.",
+        sourceFileActiveInTender: true,
+        sourceFileExtractedText: "A meaningful requirement quote that is long enough.",
+        sourceFileTotalPages: 5,
+      }],
+      criticalMetadataOk: true,
+      recordedBuildPlanState: "VALID",
+      hasCurrentConfirmedBuildPlan: true,
+      confirmedBuildPlanItemsValid: true,
+      exportReadyDocumentCount: 0,
+    });
+    assert.equal(gateResult.ok, false);
+    assert.equal(gateResult.blockerCode, "ANALYSIS_NOT_READY");
+  });
+});

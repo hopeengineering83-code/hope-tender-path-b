@@ -399,6 +399,10 @@ export async function getFinalSubmissionReadiness(
       clientContactName: true,
       clientContactEmail: true,
       clientContactPhone: true,
+      // clientContactTitle is required by the canonical resolver's extended
+      // field iteration (fieldKeys includes "clientContactTitle"). Without it
+      // in the SELECT, the resolver sees undefined → spurious INVALID row.
+      clientContactTitle: true,
       // Contamination flag — set by AI Analyze when client name is polluted
       metadataContaminated: true,
       // Per-field source-evidence columns + manual overrides — consumed by the
@@ -422,6 +426,13 @@ export async function getFinalSubmissionReadiness(
       deadlineSourcePage: true,
       deadlineSourceQuote: true,
       deadlineSourceFileId: true,
+      // Reference source evidence — dedicated columns read first by the
+      // canonical resolver's getSourceEvidence for fieldKey="reference".
+      // Without these, the export/ZIP gate's reference grounding diverges
+      // from the strict BuildPlan validator (which reads these columns).
+      referenceSourcePage: true,
+      referenceSourceQuote: true,
+      referenceSourceFileId: true,
       contactDetailsSourceJson: true,
       metadataOverrides: {
         select: { field: true, fieldState: true, overrideValue: true, reason: true, overriddenBy: true, createdAt: true },
@@ -715,15 +726,40 @@ export async function getFinalSubmissionReadiness(
       deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
       deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
       deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+      // Forward reference source-evidence columns to the resolver so the
+      // dedicated-column path in getSourceEvidence is taken. Without this,
+      // the export/ZIP gate's reference grounding depends solely on the
+      // contactDetailsSourceJson fallback and diverges from the strict
+      // BuildPlan validator's view (which reads the dedicated columns).
+      referenceSourcePage: (tender as any).referenceSourcePage ?? null,
+      referenceSourceQuote: (tender as any).referenceSourceQuote ?? null,
+      referenceSourceFileId: (tender as any).referenceSourceFileId ?? null,
       clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
       submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
       submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
       submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
       contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+      // Extended panel fields — the resolver iterates these as fieldKeys.
+      // Forwarding them prevents spurious INVALID rows in the export gate's
+      // canonical state and keeps the export gate's view consistent with the
+      // release snapshot and the dashboard route.
+      evaluationMethodology: tender.evaluationMethodology ?? null,
+      legalClientName: tender.legalClientName ?? null,
+      donorAgency: tender.donorAgency ?? null,
+      implementingAgency: tender.implementingAgency ?? null,
+      clientContactTitle: tender.clientContactTitle ?? null,
+      clientContactPhone: tender.clientContactPhone ?? null,
+      clientCity: tender.clientCity ?? null,
+      clientAddress: tender.clientAddress ?? null,
+      clientWebsite: tender.clientWebsite ?? null,
+      clientRepresentative: tender.clientRepresentative ?? null,
+      preBidChannel: tender.preBidChannel ?? null,
+      preBidMeetingDate: tender.preBidMeetingDate instanceof Date ? tender.preBidMeetingDate.toISOString() : (tender.preBidMeetingDate ?? null),
+      preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
     },
-    overrides: (tender.metadataOverrides ?? []).map((o) => ({
+    overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
       field: o.field,
-      fieldState: o.fieldState as any,
+      fieldState: o.fieldState,
       overrideValue: o.overrideValue ?? null,
       reason: o.reason ?? null,
       overriddenBy: o.overriddenBy ?? null,

@@ -141,9 +141,19 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
         "generate-missing-plan-files route must call the central gate BEFORE generatedDocument.create");
     });
 
-    it("exempts SUBMISSION_PLAN_MISSING (chicken-and-egg — this route builds the plan)", () => {
+    it("does NOT exempt any blocker code (dead SUBMISSION_PLAN_MISSING carve-out removed)", () => {
+      // The previous carve-out `centralGate.blockerCode !== "SUBMISSION_PLAN_MISSING"`
+      // was dead code — the gate never emits SUBMISSION_PLAN_MISSING (the enum
+      // value exists but is never passed to fail()). The route requires a
+      // confirmed plan (see getCurrentConfirmedBuildPlan check downstream) and
+      // must fail closed on every central-gate blocker, including
+      // BUILD_PLAN_MISSING and BUILD_PLAN_NOT_CONFIRMED.
       const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
-      expectContains(src, /centralGate\.blockerCode\s*!==\s*["']SUBMISSION_PLAN_MISSING["']/);
+      expectContains(src, /if\s*\(\s*!centralGate\.ok\s*\)\s*\{/);
+      // The old dead carve-out must NOT be present
+      if (src.includes('blockerCode !== "SUBMISSION_PLAN_MISSING"') || src.includes("blockerCode !== 'SUBMISSION_PLAN_MISSING'")) {
+        throw new Error("dead SUBMISSION_PLAN_MISSING carve-out must be removed — the gate never emits that code");
+      }
     });
 
     it("uses a distinct purpose string for audit traceability", () => {

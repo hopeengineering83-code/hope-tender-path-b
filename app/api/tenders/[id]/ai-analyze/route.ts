@@ -148,22 +148,33 @@ function guardAiPageNumbers(
  * on the quote and update the JSON entry so the reference field can achieve
  * EXTRACTED_AND_GROUNDED status in the canonical resolver.
  *
- * Returns the updated contactDetailsSourceJson string, or null when no
- * update is needed (no entry, no quote, or no active file contains the quote).
+ * Returns { originalJson, updatedJson } where originalJson is the value read
+ * from the DB (used as an optimistic-concurrency guard in the caller's
+ * updateMany WHERE clause) and updatedJson is the patched value to write.
+ * Returns null when no update is needed (no entry, no quote, or no active
+ * file contains the quote).
+ *
+ * RACE-SAFETY: the caller MUST use prisma.tender.updateMany with
+ * `where: { id, contactDetailsSourceJson: originalJson }` so a concurrent
+ * AI re-run that wrote a different value between our read and write is
+ * NOT silently overwritten. If updateMany affects 0 rows, a concurrent run
+ * won — log and skip (the concurrent run's fileId resolution will run on
+ * its own read).
  */
 async function resolveReferenceFileId(
   tenderId: string,
   files: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null }>,
-): Promise<string | null> {
+): Promise<{ originalJson: string; updatedJson: string } | null> {
   // Read the current contactDetailsSourceJson
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
     select: { contactDetailsSourceJson: true, reference: true },
   }).catch(() => null);
   if (!tender?.contactDetailsSourceJson) return null;
+  const originalJson = tender.contactDetailsSourceJson;
   let contactDetails: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }>;
   try {
-    contactDetails = JSON.parse(tender.contactDetailsSourceJson);
+    contactDetails = JSON.parse(originalJson);
   } catch {
     return null;
   }
@@ -181,7 +192,7 @@ async function resolveReferenceFileId(
     quote: refEntry.quote,
     fileId,
   };
-  return JSON.stringify(contactDetails);
+  return { originalJson, updatedJson: JSON.stringify(contactDetails) };
 }
 
 function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
@@ -836,10 +847,22 @@ async function handleStreamingAnalyze(
               // field's fileId so it can achieve EXTRACTED_AND_GROUNDED. AI
               // emits { page, quote } for procurementReferenceNumber but never
               // fileId; we resolve it from the active files' extracted text.
+              //
+              // RACE-SAFETY: use updateMany with an optimistic-concurrency WHERE
+              // clause (contactDetailsSourceJson === originalJson) so a concurrent
+              // AI re-run that wrote a different value between our read and write
+              // is NOT silently overwritten. If 0 rows are affected, a concurrent
+              // run won — log and skip.
               try {
-                const refJson = await resolveReferenceFileId(id, tenderRecord.files);
-                if (refJson) {
-                  await prisma.tender.update({ where: { id }, data: { contactDetailsSourceJson: refJson } });
+                const refResult = await resolveReferenceFileId(id, tenderRecord.files);
+                if (refResult) {
+                  const result = await prisma.tender.updateMany({
+                    where: { id, contactDetailsSourceJson: refResult.originalJson },
+                    data: { contactDetailsSourceJson: refResult.updatedJson },
+                  });
+                  if (result.count === 0) {
+                    logger.info("[ai-analyze/stream] reference fileId resolution skipped — concurrent run wrote a newer value (optimistic-concurrency guard)");
+                  }
                 }
               } catch (e) {
                 // Non-fatal — the reference field will stay EXTRACTED_UNVERIFIED
@@ -1544,10 +1567,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
           // After the canonical write, resolve and persist the reference
           // field's fileId (non-streaming path — mirrors the streaming path).
+          // RACE-SAFETY: use updateMany with an optimistic-concurrency WHERE
+          // clause so a concurrent AI re-run that wrote a different value is
+          // NOT silently overwritten. If 0 rows are affected, a concurrent run
+          // won — log and skip.
           try {
-            const refJson = await resolveReferenceFileId(id, tenderRecord.files);
-            if (refJson) {
-              await prisma.tender.update({ where: { id }, data: { contactDetailsSourceJson: refJson } });
+            const refResult = await resolveReferenceFileId(id, tenderRecord.files);
+            if (refResult) {
+              const result = await prisma.tender.updateMany({
+                where: { id, contactDetailsSourceJson: refResult.originalJson },
+                data: { contactDetailsSourceJson: refResult.updatedJson },
+              });
+              if (result.count === 0) {
+                logger.info("[ai-analyze/non-stream] reference fileId resolution skipped — concurrent run wrote a newer value (optimistic-concurrency guard)");
+              }
             }
           } catch (e) {
             logger.warn("[ai-analyze/non-stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });

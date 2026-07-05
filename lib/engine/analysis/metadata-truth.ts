@@ -44,20 +44,21 @@ const BLOCKER_REASONS: Partial<Record<MetadataFactStatus, string>> = {
   INVALID_FORMAT:        "Value does not pass format validation. Re-run AI Analyze or enter a value.",
   MANUAL_OVERRIDE_CONFIRMATION_REQUIRED: "Candidate value entered. Critical fields remain blocked until linked to an active tender source.",
   MANUAL_CONFIRMED:      "Manually confirmed but not source-grounded. Link to an active tender source to unblock generation.",
+  NOT_FOUND_CONFIRMED:   "Manually confirmed but has no active tender-source evidence. Link to an active tender source to unblock generation.",
   SOURCE_CONFLICT:       "Multiple contradictory source values detected. Resolve the conflict before generating.",
 };
 
 /**
- * Counts used for X-of-Y metric display.
- *
- *   total     — number of fields evaluated
- *   detected  — fields where ANY value exists (extracted or overridden)
- *   valid     — fields that pass field-specific format/content validation AND
- *               carry a real value (audited-absence states are excluded — see
- *               Manual Override & Evidence Policy point 5)
- *   grounded  — valid fields with tender-source evidence (page + quote)
- *   confirmed — fields manually confirmed by the user
+ * Metadata fields visible in the dashboard's Metadata Truth panel.
  */
+const ALL_FIELD_KEYS = [
+  "clientName", "title", "reference", "deadline", "country",
+  "submissionMethod", "submissionAddress", "submissionEmails",
+  "currency", "clientContactName",
+] as const;
+
+export type FieldKey = (typeof ALL_FIELD_KEYS)[number];
+
 export type MetadataTruthCounts = {
   total: number;
   detected: number;
@@ -69,7 +70,7 @@ export type MetadataTruthCounts = {
 /**
  * Full manual-override audit record surfaced to the panels (Policy point 3).
  * A manual override may be valid but ungrounded — the UI must show who set it,
- * when, why, and what it replaced.
+ * when, and why.
  */
 export type OverrideAudit = {
   fieldState: string;
@@ -79,174 +80,48 @@ export type OverrideAudit = {
   previousValue: string | null;
 };
 
-export type MetadataTruthFieldEntry = {
+export type MetadataFact = {
   status: MetadataFactStatus;
   value: string | null;
   isCritical: boolean;
   label: string;
   blockerReason?: string;
-  /** True when the value carries tender-source evidence (page + quote). */
   grounded: boolean;
-  /** Present only when a user override exists for this field. */
   override?: OverrideAudit;
 };
 
 export type MetadataTruthSummary = {
   counts: MetadataTruthCounts;
-  // Legacy ratio fields kept for backward compatibility with existing consumers
-  extractionCoverage: number;
-  readinessScore: number;
-  groundingCoverage: number;
-  confirmationCoverage: number;
-  fields: Record<string, MetadataTruthFieldEntry>;
+  extractionCoverage: number; // Ratio of detected fields
+  readinessScore: number;     // Aggregate completeness (0.0 to 1.0)
+  groundingCoverage: number;  // Ratio of valid fields that are grounded
+  confirmationCoverage: number; // Ratio of confirmed fields
+  fields: Record<string, MetadataFact>;
 };
 
-// All field keys in evaluation order
-const ALL_FIELD_KEYS = [
-  "clientName", "title", "reference", "deadline", "country",
-  "submissionMethod", "submissionAddress", "submissionEmails",
-  "currency", "clientContactName",
-] as const;
-
-type FieldKey = typeof ALL_FIELD_KEYS[number];
-
-/** Per-field tender-source evidence (Policy point 1).
- *  fileId is optional because the contactDetailsSourceJson shape
- *  historically stored only { page, quote }. The repair-metadata route
- *  now persists fileId for the procurementReferenceNumber entry so
- *  reference evidence can be GROUNDED when activeTenderFileIds is
- *  enforced by the caller. */
 type FieldEvidence = { page: number | null; quote: string | null; fileId: string | null };
 
-// ─── Internal helpers ──────────────────────────────────────────────────────
+// ─── Resolver logic ────────────────────────────────────────────────────────────
 
-/**
- * Decides a field's status from its value and override state. This is a PURE
- * value/format classifier — it never asserts EXTRACTED_AND_GROUNDED, because
- * grounding requires tender-source evidence the caller supplies separately.
- * A clean, valid, non-overridden value resolves to EXTRACTED_UNVERIFIED; the
- * caller upgrades it to EXTRACTED_AND_GROUNDED only when evidence is present.
- */
-function resolveFieldStatus(
-  key: FieldKey,
-  rawValue: unknown,
-  overrideFieldState: string | undefined,
-  isContaminated: boolean,
-): MetadataFactStatus {
-  const val = typeof rawValue === "string" ? rawValue.trim() : null;
-  const dateObj = rawValue instanceof Date ? rawValue : null;
-
-  // Override states take priority over everything except contamination
-  if (overrideFieldState === "NOT_APPLICABLE") {
-    // Critical / never-N/A fields (e.g. deadline) cannot be dismissed as N/A
-    return NEVER_NOT_APPLICABLE.has(key) ? "INVALID" : "NOT_APPLICABLE";
-  }
-  if (overrideFieldState === "USER_CONFIRMED") return "MANUAL_CONFIRMED";
-  if (overrideFieldState === "USER_EDITED") {
-    // User-edited value still needs format validation
-    if (!val) return "INVALID";
-    if (key === "deadline" && isAmbiguousDateString(val)) return "AMBIGUOUS_DATE";
-    return "MANUAL_OVERRIDE";
-  }
-  // NOT_STATED (canonical) = IGNORED_WITH_REASON override = audited field absence.
-  if (overrideFieldState === "IGNORED_WITH_REASON") return "NOT_STATED";
-
-  // Contamination only applies to clientName
-  if (isContaminated && key === "clientName") return "PORTAL_CONTAMINATION";
-
-  // Normalise the raw value to a string for validators
-  const strVal = dateObj ? dateObj.toISOString() : val;
-
-  if (!strVal) return "INVALID";
-
-  // Generic field-label check — catches "Number", "Title", "Client Name" etc.
-  if (isGenericFieldLabel(strVal)) return "GENERIC_FIELD_LABEL";
-
-  // Placeholder check — catches TBD, N/A, "Bid-Team to confirm" etc. Consults
-  // BOTH the validators' set and the export/completeness gate's broader set
-  // (e.g. "not available", "to be provided") so the Metadata Truth panel never
-  // disagrees with the Client & Submission panel or the export gate.
-  if (containsMetadataPlaceholder(strVal) || looksLikeMetadataPlaceholder(strVal)) return "INTERNAL_PLACEHOLDER";
-
-  // Field-specific format validation
-  if (key === "deadline") {
-    if (dateObj) {
-      // A real Date is unambiguous and well-formed, but it is still UNVERIFIED
-      // until tender-source evidence is supplied by the caller.
-      return "EXTRACTED_UNVERIFIED";
-    }
-    if (isAmbiguousDateString(strVal)) return "AMBIGUOUS_DATE";
-    const parsed = new Date(strVal);
-    if (isNaN(parsed.getTime())) return "INVALID_FORMAT";
-    return "EXTRACTED_UNVERIFIED";
-  }
-
-  if (key === "reference") {
-    if (!isValidReferenceNumber(strVal)) return "INVALID_FORMAT";
-  }
-
-  if (key === "clientName") {
-    // A short/ambiguous client name maps to EXTRACTED_UNVERIFIED (valid but not
-    // fully trusted) — AMBIGUOUS_SOURCE_TEXT is removed from the shared vocab.
-    if (!isValidClientName(strVal)) return "EXTRACTED_UNVERIFIED";
-  }
-
-  // Length heuristic: very short values are suspicious for most fields.
-  // Map to EXTRACTED_UNVERIFIED (valid but review recommended) to stay within
-  // the shared canonical vocabulary.
-  if (strVal.length < 3) return "EXTRACTED_UNVERIFIED";
-
-  // Clean, valid value but no evidence yet. The caller upgrades this to
-  // EXTRACTED_AND_GROUNDED only when tender-source evidence exists.
-  return "EXTRACTED_UNVERIFIED";
+function hasAnyValue(status: MetadataFactStatus): boolean {
+  return status !== "INVALID";
 }
 
-/**
- * Returns true when the field has a VALID, real value (Policy point 5:
- * audited-absence states do NOT count as valid). Manual overrides and
- * confirmations count; NOT_APPLICABLE / NOT_STATED do not.
- */
 function isValidValueStatus(status: MetadataFactStatus): boolean {
   return (
     status === "EXTRACTED_AND_GROUNDED" ||
     status === "EXTRACTED_UNVERIFIED" ||
     status === "MANUAL_OVERRIDE" ||
-    status === "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" ||
-    status === "MANUAL_CONFIRMED"
+    status === "MANUAL_CONFIRMED" ||
+    status === "NOT_FOUND_CONFIRMED"
   );
 }
 
-/**
- * Returns true when the status indicates a value is present (extracted or
- * overridden), regardless of validity. Absence states have no value.
- */
-function hasAnyValue(status: MetadataFactStatus): boolean {
-  return (
-    status !== "INVALID" &&
-    status !== "INVALID_FORMAT" &&
-    status !== "NOT_APPLICABLE" &&
-    status !== "NOT_STATED"
-  );
-}
-
-/** Returns true when the status represents a user-confirmed field. */
 function isConfirmedStatus(status: MetadataFactStatus): boolean {
-  return status === "MANUAL_CONFIRMED" || status === "NOT_STATED";
+  return status === "MANUAL_CONFIRMED" || status === "NOT_FOUND_CONFIRMED";
 }
 
-/**
- * Grounding (Policy point 1): a value may be GROUNDED only when it has a
- * page number, a direct supporting source quote, AND (when activeTenderFileIds
- * is provided) a fileId that points to an active TenderFile. Manual overrides
- * and confirmations are valid-but-ungrounded (Policy point 2) and never qualify.
- *
- * When activeTenderFileIds is omitted (legacy callers), the check falls back
- * to page+quote only — same as the Client & Submission panel resolver.
- */
-function hasGroundingEvidence(
-  ev: FieldEvidence | undefined,
-  activeTenderFileIds?: Set<string>,
-): boolean {
+function hasGroundingEvidence(ev: FieldEvidence | undefined, activeTenderFileIds: Set<string>): boolean {
   if (!ev) return false;
   if (activeTenderFileIds) {
     return isGroundedEvidenceWithFileCheck(ev.page, ev.quote, ev.fileId, activeTenderFileIds);
@@ -261,7 +136,7 @@ function hasGroundingEvidence(
 function parseContactEvidence(json: string | null | undefined): Record<string, FieldEvidence> {
   if (!json || typeof json !== "string") return {};
   try {
-    const parsed = JSON.parse(json) as Record<string, { page?: unknown; quote?: unknown; fileId?: unknown }>;
+    const parsed = JSON.parse(json) as Record<string, any>;
     const out: Record<string, FieldEvidence> = {};
     for (const [k, v] of Object.entries(parsed ?? {})) {
       if (v && typeof v === "object") {
@@ -372,15 +247,7 @@ export async function resolveMetadataTruth(
   const overrideByField = new Map(overrides.map((o) => [o.field, o]));
   const contactEvidence = parseContactEvidence(tender.contactDetailsSourceJson);
 
-  // Per-field tender-source evidence map. Every critical field now has
-  // dedicated source-evidence columns OR a contactDetailsSource entry — so
-  // title, deadline, and reference can be GROUNDED in the Metadata Truth
-  // panel when their evidence points to an active TenderFile.
-  //
-  // The fileId for clientName/title/deadline/submissionMethod/submissionAddress/
-  // submissionEmails comes from their dedicated *SourceFileId columns. The
-  // fileId for reference (and other contactDetailsSource entries) comes from
-  // the JSON entry itself — written by the repair-metadata route.
+  // Per-field tender-source evidence map.
   const refEvidence = contactEvidence["procurementReferenceNumber"];
   const evidenceByField: Partial<Record<FieldKey, FieldEvidence>> = {
     clientName: { page: tender.clientNameSourcePage ?? null, quote: tender.clientNameSourceQuote ?? null, fileId: tender.clientNameSourceFileId ?? null },
@@ -391,13 +258,12 @@ export async function resolveMetadataTruth(
       : undefined,
     submissionMethod: { page: tender.submissionMethodSourcePage ?? null, quote: tender.submissionMethodSourceQuote ?? null, fileId: tender.submissionMethodSourceFileId ?? null },
     submissionAddress: { page: tender.submissionAddressSourcePage ?? null, quote: tender.submissionAddressSourceQuote ?? null, fileId: tender.submissionAddressSourceFileId ?? null },
-    submissionEmails: { page: tender.submissionEmailSourcePage ?? null, quote: tender.submissionEmailSourceQuote ?? contactEvidence.submissionEmails?.quote ?? null, fileId: tender.submissionEmailSourceFileId ?? null },
+    submissionEmails: { page: tender.submissionEmailSourcePage ?? null, quote: tender.submissionEmailSourceQuote ?? (contactEvidence.submissionEmails?.quote ?? null), fileId: tender.submissionEmailSourceFileId ?? null },
     clientContactName: contactEvidence.clientContactName
       ? { page: contactEvidence.clientContactName.page, quote: contactEvidence.clientContactName.quote, fileId: contactEvidence.clientContactName.fileId }
       : undefined,
   };
 
-  // Active tender file IDs — when present, grounding requires fileId ∈ this set.
   const activeTenderFileIds = new Set((tender.files ?? []).map((f) => f.id));
 
   const policyCtx = { submissionMethod: tender.submissionMethod ?? null };
@@ -427,7 +293,6 @@ export async function resolveMetadataTruth(
     const override = overrideByField.get(key);
     const overrideFieldState = override?.fieldState;
 
-    // When a USER_EDITED override exists, use the override value for validation
     const effectiveValue =
       overrideFieldState === "USER_EDITED" && override?.overrideValue
         ? override.overrideValue
@@ -440,12 +305,16 @@ export async function resolveMetadataTruth(
       Boolean(tender.metadataContaminated),
     );
 
-    // Grounding upgrade (Policy points 1 & 2): only EXTRACTED_UNVERIFIED values
-    // are eligible, and only when real tender-source evidence exists. Manual
-    // overrides/confirmations are valid-but-ungrounded and never upgraded.
-    const fieldIsGrounded =
-      status === "EXTRACTED_UNVERIFIED" && hasGroundingEvidence(evidenceByField[key], activeTenderFileIds);
-    if (fieldIsGrounded) status = "EXTRACTED_AND_GROUNDED";
+    // Grounding upgrade
+    const evidence = evidenceByField[key];
+    const isGroundedSource = hasGroundingEvidence(evidence, activeTenderFileIds);
+
+    if (status === "EXTRACTED_UNVERIFIED" && isGroundedSource) {
+      status = "EXTRACTED_AND_GROUNDED";
+    } else if (overrideFieldState === "USER_CONFIRMED") {
+      // Align with canonical-field-state.ts: USER_CONFIRMED without source is NOT_FOUND_CONFIRMED
+      status = isGroundedSource ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
+    }
 
     if (hasAnyValue(status)) detected++;
     if (isValidValueStatus(status)) valid++;
@@ -485,11 +354,53 @@ export async function resolveMetadataTruth(
 
   return {
     counts,
-    // Legacy ratios (kept for backward-compat)
     extractionCoverage: detected / total,
     readinessScore: metaReport.overallRatio,
     groundingCoverage: grounded / Math.max(1, valid),
     confirmationCoverage: confirmed / total,
     fields,
   };
+}
+
+// ─── Internal helpers ──────────────────────────────────────────────────────
+
+/**
+ * Decides a field's status from its value and override state. This is a PURE
+ * value/format classifier — it never asserts EXTRACTED_AND_GROUNDED, because
+ * grounding requires tender-source evidence the caller supplies separately.
+ */
+function resolveFieldStatus(
+  key: FieldKey,
+  rawValue: unknown,
+  overrideFieldState: string | undefined,
+  isContaminated: boolean,
+): MetadataFactStatus {
+  const val = typeof rawValue === "string" ? rawValue.trim() : null;
+  const dateObj = rawValue instanceof Date ? rawValue : null;
+
+  if (overrideFieldState === "NOT_APPLICABLE") {
+    if (NEVER_NOT_APPLICABLE.has(key)) return "INVALID";
+    return "NOT_APPLICABLE";
+  }
+
+  if (overrideFieldState === "USER_EDITED") {
+    if (!val) return "INVALID";
+    if (key === "deadline" && isAmbiguousDateString(val)) return "AMBIGUOUS_DATE";
+    return "MANUAL_OVERRIDE";
+  }
+
+  if (overrideFieldState === "IGNORED_WITH_REASON") return "NOT_STATED";
+
+  if (isContaminated && key === "clientName") return "PORTAL_CONTAMINATION";
+
+  const strVal = dateObj ? dateObj.toISOString() : val;
+  if (!strVal) return "INVALID";
+
+  if (isGenericFieldLabel(strVal)) return "GENERIC_FIELD_LABEL";
+  if (containsMetadataPlaceholder(strVal) || looksLikeMetadataPlaceholder(strVal)) return "INTERNAL_PLACEHOLDER";
+  if (key === "clientName" && !isValidClientName(strVal)) return "INVALID_FORMAT";
+  if (key === "reference" && !isValidReferenceNumber(strVal)) return "INVALID_FORMAT";
+  if (key === "deadline" && isAmbiguousDateString(strVal)) return "AMBIGUOUS_DATE";
+
+  return "EXTRACTED_UNVERIFIED";
 }

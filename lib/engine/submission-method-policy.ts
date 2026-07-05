@@ -16,7 +16,7 @@
  */
 export function isPhysicalSubmissionMethod(method?: string | null): boolean {
   if (!method) return false;
-  return /sealed\s*envelope|hard\s*copy|physical\s*deliver|hand\s*deliver|in\s*person|drop[\s-]?off|courier|registered\s*mail|post|by\s*hand/i.test(method);
+  return /sealed[\s_-]*envelope|hard[\s_-]*copy|physical[\s_-]*deliver|hand[\s_-]*deliver|in[\s_-]*person|drop[\s_-]?off|courier|registered[\s_-]*mail|post|by[\s_-]*hand/i.test(method);
 }
 
 /**
@@ -33,5 +33,5 @@ export function isEmailSubmissionMethod(method?: string | null): boolean {
  */
 export function isPortalSubmissionMethod(method?: string | null): boolean {
   if (!method) return false;
-  return /portal|online\s*submission|upload|e-?procurement|e-?tender/i.test(method);
+  return /portal|online[\s_-]*submission|upload|e[\s_-]?procurement|e[\s_-]?tender/i.test(method);
 }

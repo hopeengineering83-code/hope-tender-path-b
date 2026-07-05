@@ -63,7 +63,7 @@ type _RequirementRow = {
 };
 type _MetadataOverrideRow = {
   field: string;
-  fieldState: any;
+  fieldState: string;
   overrideValue: string | null;
   reason: string | null;
   overriddenBy: string | null;
@@ -97,7 +97,6 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "REQUIREMENT_QUOTE_NOT_IN_FILE"
   | "METADATA_CRITICAL_FIELD_INVALID"
-  | "SUBMISSION_PLAN_MISSING"
   | "BUILD_PLAN_MISSING"
   | "BUILD_PLAN_STALE"
   | "BUILD_PLAN_ITEMS_INVALID"
@@ -466,6 +465,14 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         deadlineSourceFileId: true,
         deadlineSourcePage: true,
         deadlineSourceQuote: true,
+        // Reference source evidence — dedicated columns read first by the
+        // canonical resolver's getSourceEvidence for fieldKey="reference".
+        // The resolver call below uses `...tender` spread, so selecting these
+        // columns is sufficient to forward them. Without this, the gate's
+        // reference grounding diverges from the strict BuildPlan validator.
+        referenceSourceFileId: true,
+        referenceSourcePage: true,
+        referenceSourceQuote: true,
         contactDetailsSourceJson: true,
         // Plan-driving fields for the shared Build Plan hash.
         exactFileNaming: true,
@@ -538,7 +545,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
 
     // E — chunk integrity for the CURRENT content hash only.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { tenderId, contentHash: currentContentHash, tender: { userId } },
+      where: { tenderId, userId, contentHash: currentContentHash },
       select: { status: true, totalChunks: true },
     });
 
@@ -593,9 +600,9 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
-      overrides: ((tender.metadataOverrides ?? []) as _MetadataOverrideRow[]).map((o) => ({
+      overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
         field: o.field,
-        fieldState: o.fieldState as any,
+        fieldState: o.fieldState,
         overrideValue: o.overrideValue,
         reason: o.reason,
         overriddenBy: o.overriddenBy,
@@ -713,10 +720,13 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             where: { id: tenderId, userId },
             include: {
               files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true, deletionStatus: true, totalPages: true } },
+              // Load metadata overrides so the validator checks EFFECTIVE values
+              // (override ?? raw), mirroring the canonical hash.
+              metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
             },
           });
           if (!fullTender) return false;
-          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[]);
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
           return metaValidation.ok;
         } catch { return false; }
       })()),

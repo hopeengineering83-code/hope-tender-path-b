@@ -518,6 +518,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       chunkNum !== undefined
         ? proposal.length > 100
         : proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
+    // Track whether the persist was blocked by the central gate so the
+    // response can inform the client. Previously the route returned
+    // { success: true } even when the persist was skipped, leaving the UI
+    // with no indication that the proposal was NOT saved as a
+    // GeneratedDocument. The audit called this a UX gap (G5).
+    let persistBlocked = false;
+    let persistBlockerCode: string | null = null;
+    let persistBlockerDetail: string | null = null;
     if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
       const accumulated = typeof body.accumulatedProposal === "string" && body.accumulatedProposal.length > 200 && body.accumulatedProposal.length <= 500_000
         ? body.accumulatedProposal
@@ -543,6 +551,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         purpose: "ai-proposal-persist",
       });
       if (!centralGate.ok) {
+        persistBlocked = true;
+        persistBlockerCode = centralGate.blockerCode ?? null;
+        persistBlockerDetail = centralGate.blockerDetail ?? null;
         await logAction({
           userId,
           action: "AI_PROPOSAL_PERSIST_BLOCKED",
@@ -586,7 +597,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // PR T FIX — see note above; intakeSummary must NOT be overwritten
     // with generated-proposal text or every regeneration feeds the
     // previous one back as input to the next.
-    return NextResponse.json({ success: true, proposal, fallback, cached: false, proposalJobId });
+    return NextResponse.json({
+      success: true,
+      proposal,
+      fallback,
+      cached: false,
+      proposalJobId,
+      // Surface the persist-blocked state to the client so the UI can show
+      // the user that their proposal was NOT saved as a GeneratedDocument.
+      // The proposal text is still returned (above) so the user can see the
+      // draft; this flag just makes it clear that they need to fix the
+      // tender-level blockers (analysis, build plan, critical metadata, etc.)
+      // before the draft will be persisted.
+      ...(persistBlocked ? {
+        persistBlocked: true,
+        persistBlockerCode,
+        persistBlockerDetail,
+      } : {}),
+    });
   } catch (error) {
     const safeError = sanitizeError(error).slice(0, 500);
     // Mark the AiJob as FAILED so the client knows to offer a retry

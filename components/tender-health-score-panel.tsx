@@ -282,6 +282,10 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
   const healthBg = healthPct >= 80 ? "border-emerald-200 bg-emerald-50" : healthPct >= 50 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
   const healthLabel = healthPct >= 80 ? "Strong" : healthPct >= 60 ? "Acceptable" : healthPct >= 40 ? "Needs Work" : "Critical Issues";
   const healthState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";
+  // When canonical release is blocked, override the health label so the UI
+  // never says "Acceptable" while generation/export is blocked.
+  const releaseBlocked = healthState === "BLOCKED" || healthState === "STALE" || healthState === "NOT_RUN";
+  const displayLabel = releaseBlocked ? "Advisory only — release blocked" : healthLabel;
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${healthBg}`}>
@@ -291,7 +295,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
           <div className="mt-1 flex items-baseline gap-2">
             <span className={`text-4xl font-extrabold ${healthColor}`}>{healthPct}</span>
             <span className="text-lg text-slate-400">/100</span>
-            <span className={`rounded-full px-3 py-0.5 text-sm font-semibold ${healthColor} bg-white border`}>{healthLabel}</span>
+            <span className={`rounded-full px-3 py-0.5 text-sm font-semibold ${healthColor} bg-white border`}>{displayLabel}</span>
             <CanonicalStatusBadge status={healthState} size="sm" />
           </div>
           <p className="mt-1 text-sm text-slate-600">Composite score across {dimensions.length} quality dimensions. Canonical icon/state comes from the shared readiness payload; numeric score cannot override blockers.</p>

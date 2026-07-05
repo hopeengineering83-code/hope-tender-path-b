@@ -12,12 +12,15 @@
  *
  * 2. Reference evidence fileId: the canonical resolver's
  *    isGroundedEvidenceWithFileCheck requires a non-null fileId that points
- *    to an active TenderFile. Reference has no dedicated source-evidence
- *    columns (no referenceSourceFileId in the schema) — its evidence is
- *    persisted via contactDetailsSourceJson under "procurementReferenceNumber".
- *    Without fileId in that JSON entry, reference can NEVER be GROUNDED when
- *    activeTenderFileIds is enforced (which it is, in every production caller).
- *    This test pins the contract that:
+ *    to an active TenderFile. Reference now has DEDICATED source-evidence
+ *    columns (referenceSourceFileId / referenceSourcePage / referenceSourceQuote,
+ *    added in migration 20260703000000_add_reference_submission_email_subject_source_evidence)
+ *    which are read FIRST by getSourceEvidence for fieldKey="reference". The
+ *    contactDetailsSourceJson["procurementReferenceNumber"] entry remains as a
+ *    fallback for backward compatibility with prior AI Analyze writes. Without
+ *    fileId in either dedicated column or JSON entry, reference can NEVER be
+ *    GROUNDED when activeTenderFileIds is enforced (which it is, in every
+ *    production caller). This test pins the contract that:
  *      (a) the repair route writes fileId into contactDetailsSourceJson
  *      (b) parseContactDetailsSource reads fileId
  *      (c) getSourceEvidence returns ce.fileId (not null) for contact-sourced

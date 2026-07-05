@@ -237,6 +237,19 @@ function validateFieldFormat(fieldKey: string, value: string | null): { valid: b
   if (fieldKey === "deadline") {
     if (isAmbiguousDateString(trimmed)) return { valid: false, reason: "Date format is ambiguous — use the date picker." };
   }
+  // Submission method must be classifiable as email, physical, or portal.
+  // An unclassifiable method means the required submission endpoint cannot be
+  // determined — the BuildPlan validator fails closed on this, so the resolver
+  // must too (otherwise the panel shows green while the gate blocks).
+  if (fieldKey === "submissionMethod") {
+    if (
+      !isEmailSubmissionMethod(trimmed) &&
+      !isPhysicalSubmissionMethod(trimmed) &&
+      !isPortalSubmissionMethod(trimmed)
+    ) {
+      return { valid: false, reason: "Submission method is not recognized as email, physical, or portal — the required submission endpoint cannot be determined." };
+    }
+  }
   return { valid: true, reason: null };
 }
 
@@ -288,7 +301,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
   const fieldKeys = [
     "clientName", "title", "reference", "deadline", "country", "currency",
-    "submissionMethod", "submissionAddress", "submissionEmails",
+    "submissionMethod", "submissionAddress", "submissionEmails", "submissionEmailSubject",
     "requiredDocuments", "evaluationCriteria", "clientContactName", "clientContactEmail",
     "legalClientName", "donorAgency", "implementingAgency", "clientContactTitle", "clientContactPhone",
     "clientCity", "clientAddress", "clientWebsite", "clientRepresentative", "preBidChannel",
@@ -330,9 +343,15 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const override = overrides.find((o) => o.field === fieldKey);
     // clientName fallback to procuringEntityName (P1-B/C parity)
+    // evaluationCriteria is a virtual fieldKey that maps to the evaluationMethodology column
+    // (the field is named "Evaluation criteria" in the UI but stored as evaluationMethodology).
+    // Without this mapping, the resolver would always report INVALID for evaluationCriteria
+    // even when evaluationMethodology is populated, producing a spurious INVALID row.
     const rawValueRaw = (fieldKey === "clientName" && !tender.clientName)
       ? tender.procuringEntityName
-      : tender[fieldKey as keyof typeof tender];
+      : (fieldKey === "evaluationCriteria"
+        ? tender.evaluationMethodology
+        : tender[fieldKey as keyof typeof tender]);
     const rawValue = rawValueRaw instanceof Date ? rawValueRaw.toISOString() : typeof rawValueRaw === "string" ? rawValueRaw : rawValueRaw ? String(rawValueRaw) : null;
     const effectiveStr = override?.overrideValue ?? rawValue;
     const overrideState = override?.fieldState ?? null;

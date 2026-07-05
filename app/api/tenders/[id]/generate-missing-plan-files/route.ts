@@ -274,21 +274,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // checks. Fail-closed: a blocked gate creates ZERO GeneratedDocument
   // rows.
   //
-  // NOTE: This route may legitimately run BEFORE the full submission plan
-  // exists (it builds the missing files). The central gate's
-  // SUBMISSION_PLAN_MISSING check could therefore be a chicken-and-egg
-  // blocker here. To handle that, we evaluate the gate but only block on
-  // the analysis-side blockers (ANALYSIS_NOT_READY, ANALYSIS_HASH_MISMATCH,
-  // CHUNKS_INCOMPLETE, REQUIREMENT_SOURCE_UNGROUNDED, EXTRACTION_*,
-  // FALLBACK_UNAPPROVED) — NOT on SUBMISSION_PLAN_MISSING, which this
-  // route is specifically trying to satisfy.
+  // ── Central generation readiness gate ──────────────────────────────────
+  // This route creates GENERATED GeneratedDocument rows (narrative drafts,
+  // replacement controls), which is a generation act that must pass the SAME
+  // central gate as /generate, /ai-proposal, /export, and /download. Without
+  // this, the missing-plan-files path could create GENERATED documents on a
+  // tender whose analysis is partial/failed/regex-fallback, bypassing
+  // hash-binding, chunk-integrity, source-grounding, and confirmed-plan
+  // checks. Fail-closed: a blocked gate creates ZERO GeneratedDocument rows.
+  //
+  // NOTE: this route is NOT a chicken-and-egg escape hatch. "Missing plan
+  // files" means "files that the CONFIRMED BuildPlan already specifies but
+  // which have not yet been generated" — see the getCurrentConfirmedBuildPlan
+  // check below. The route therefore requires a confirmed plan and must fail
+  // closed on every central-gate blocker, including BUILD_PLAN_MISSING and
+  // BUILD_PLAN_NOT_CONFIRMED. (The previous carve-out for an unused
+  // SUBMISSION_PLAN_MISSING code was dead — the gate never emits that code;
+  // the enum value exists but is never passed to fail().)
   const centralGate = await assertTenderReadyForGenerationAndExport({
     prisma,
     tenderId: id,
     userId: actor.id,
     purpose: "generate-missing-plan-files",
   });
-  if (!centralGate.ok && centralGate.blockerCode !== "SUBMISSION_PLAN_MISSING") {
+  if (!centralGate.ok) {
     return NextResponse.json({
       success: false, ok: false,
       code: centralGate.blockerCode,

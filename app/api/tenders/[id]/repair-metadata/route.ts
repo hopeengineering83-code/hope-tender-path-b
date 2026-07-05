@@ -189,7 +189,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         continue;
       }
       // Verify source quote is present and meaningful
-      if (!extraction.sourceQuote || extraction.sourceQuote.trim().length < 5) {
+      if (!extraction.sourceQuote || extraction.sourceQuote.trim().length < 10) {
         outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is missing or too short. Re-grounding required.` });
         continue;
       }

@@ -376,13 +376,31 @@ function inferSubmissionMethod(text: string): string | null {
     const e = explicit.trim().toLowerCase();
     if (/email|e-?mail/i.test(e)) return "Email";
     if (/portal|e-procurement|online|electronic/i.test(e)) return "Portal";
-    if (/hard\s+copy|sealed|physical|hand\s+deliv|courier/i.test(e)) return "Hard copy";
+    // Split physical-delivery canonicalization so each keyword survives as a
+    // distinct value. The previous single-branch "Hard copy" return lost the
+    // /physical/i keyword (and broke enrichment, which grounds by literal
+    // substring search — "Hard copy" is not a substring of "physical delivery").
+    // The downstream isPhysicalSubmissionMethod recognises each of these.
+    if (/hard\s+copy/i.test(e)) return "Hard copy";
+    if (/sealed/i.test(e)) return "Sealed envelope";
+    if (/physical/i.test(e)) return "Physical delivery";
+    if (/hand\s+deliv/i.test(e)) return "Hand delivery";
+    if (/courier/i.test(e)) return "Courier";
     return explicit.trim().slice(0, 80);
   }
-  // Submission-specific email context (not just any "email" mention)
-  if (/(?:submit|send|forward|email)\s+.*?bid|bid.*?(?:submit|send|forward|email)|submission.*?email|email.*?submission/i.test(text)) return "Email";
+  // Submission-specific email context (not just any "email" mention).
+  // Added the "submit(ted) by/via email" alternative so phrasings like
+  // "Submit by email to: tenders@example.gov" are caught even when neither
+  // "bid" nor "submission" appears on the same line.
+  if (/(?:submit|send|forward|email)\s+.*?bid|bid.*?(?:submit|send|forward|email)|submission.*?email|email.*?submission|submit(?:ted)?\s+(?:by\s+|via\s+)?email\b/i.test(text)) return "Email";
   if (/portal|e-procurement|electronic\s+procurement|online\s+submission/i.test(text)) return "Portal";
-  if (/sealed\s+envelope|hard\s+copy|physical\s+submission|hand\s+deliver/i.test(text)) return "Hard copy";
+  // Split physical-delivery body-branch canonicalization (mirrors the explicit
+  // branch above). Widened "physical submission" to "physical submission|
+  // delivery|deliver" so "Submit by physical delivery to ERA HQ" is caught.
+  if (/hard\s+copy/i.test(text)) return "Hard copy";
+  if (/sealed\s+envelope/i.test(text)) return "Sealed envelope";
+  if (/physical\s+(?:submission|delivery|deliver)/i.test(text)) return "Physical delivery";
+  if (/hand\s+deliver/i.test(text)) return "Hand delivery";
   if (/courier/i.test(text)) return "Courier";
   return null;
 }

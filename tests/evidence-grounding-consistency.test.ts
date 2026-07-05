@@ -11,22 +11,22 @@ import { isGroundedEvidence, MIN_GROUNDING_QUOTE_LENGTH } from "../lib/engine/ev
 
 describe("evidence-grounding — shared predicate", () => {
   it("requires a real page (> 0)", () => {
-    assert.equal(isGroundedEvidence(0, "A valid supporting quote"), false);
-    assert.equal(isGroundedEvidence(-1, "A valid supporting quote"), false);
-    assert.equal(isGroundedEvidence(null, "A valid supporting quote"), false);
-    assert.equal(isGroundedEvidence(2, "A valid supporting quote"), true);
+    assert.equal(isGroundedEvidence(0, "A valid supporting quote exceeding length"), false);
+    assert.equal(isGroundedEvidence(-1, "A valid supporting quote exceeding length"), false);
+    assert.equal(isGroundedEvidence(null, "A valid supporting quote exceeding length"), false);
+    assert.equal(isGroundedEvidence(2, "A valid supporting quote exceeding length"), true);
   });
 
-  it("requires a non-trivial quote (> 5 non-space chars)", () => {
+  it("requires a non-trivial quote (>= 10 non-space chars)", () => {
     assert.equal(isGroundedEvidence(2, "ABC"), false, "3-char quote is not evidence");
-    assert.equal(isGroundedEvidence(2, "12345"), false, "5-char quote is at the boundary, not grounded");
-    assert.equal(isGroundedEvidence(2, "123456"), true);
+    assert.equal(isGroundedEvidence(2, "123456789"), false, "9-char quote is below boundary, not grounded");
+    assert.equal(isGroundedEvidence(2, "1234567890"), true, "10-char quote is exactly at boundary, grounded");
     assert.equal(isGroundedEvidence(2, "     "), false, "whitespace-only quote is not evidence");
     assert.equal(isGroundedEvidence(2, null), false);
   });
 
   it("exposes the threshold constant used by both resolvers", () => {
-    assert.equal(MIN_GROUNDING_QUOTE_LENGTH, 5);
+    assert.equal(MIN_GROUNDING_QUOTE_LENGTH, 10);
   });
 });
 
