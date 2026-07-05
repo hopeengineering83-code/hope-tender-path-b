@@ -5,7 +5,11 @@ import { logger } from "./observability";
 
 import { isExtractionCorrupted } from "./engine/extraction-quality-gate";
 
-const MAX_EXTRACTED_TEXT_CHARS = 500_000;
+// Exported so limitExtractedText (lib/upload-security.ts) can DETECT that
+// this inner limiter fired: normalizeExtractedText slices to exactly this
+// length, so output text at this length means the document's tail was cut
+// and the extraction is partial (extractionTruncated must be true).
+export const MAX_EXTRACTED_TEXT_CHARS = 500_000;
 const LEGACY_TEXT_LIMIT = 80_000;
 
 export async function extractTextFromBuffer(

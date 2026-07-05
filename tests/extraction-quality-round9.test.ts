@@ -83,17 +83,23 @@ describe("extraction quality round 9 — dead code deleted", () => {
   });
 });
 
-describe("extraction quality round 9 — MAX_EXTRACTED_TEXT_CHARS conflict documented", () => {
+describe("extraction quality round 9/14 — MAX_EXTRACTED_TEXT_CHARS conflict FIXED (inner-cap detection)", () => {
   const src = read("lib/upload-security.ts");
 
-  it("documents the 500K vs 2M conflict", () => {
+  it("documents the 500K vs 2M interaction and the inner-cap detection", () => {
     assert.ok(
       src.includes("fires FIRST") && src.includes("500_000"),
       "must document that the 500K inner limiter fires before the 2M outer limiter",
     );
+    // The old "effectively always false" limitation is FIXED: limitExtractedText
+    // now detects text cut at the inner cap and reports truncated=true.
     assert.ok(
-      src.includes("extractionTruncated flag is therefore effectively always"),
-      "must document that extractionTruncated is effectively always false",
+      src.includes("INNER_EXTRACTION_CHAR_LIMIT"),
+      "limitExtractedText must detect the inner extraction cap",
+    );
+    assert.ok(
+      !src.includes("extractionTruncated flag is therefore effectively always"),
+      "the stale always-false limitation note must be gone",
     );
   });
 });
@@ -120,6 +126,40 @@ describe("extraction quality round 9 — reimport surfaces failures", () => {
     assert.ok(
       src.includes("failedFiles,"),
       "must include the failedFiles array in the response body",
+    );
+  });
+});
+
+describe("extraction truncation flag — behavioral (round 14)", () => {
+  it("flags text cut at the inner 500K cap as truncated (was silently partial)", async () => {
+    const { limitExtractedText } = await import("../lib/upload-security");
+    const { MAX_EXTRACTED_TEXT_CHARS: INNER } = await import("../lib/extract-text");
+    const atCap = "x".repeat(INNER);
+    const r = limitExtractedText(atCap);
+    assert.equal(r.truncated, true, "text at exactly the inner cap means normalizeExtractedText cut the tail");
+    assert.equal(r.text.length, INNER, "text at the inner cap is not sliced further");
+  });
+
+  it("does not flag text below the inner cap", async () => {
+    const { limitExtractedText } = await import("../lib/upload-security");
+    const { MAX_EXTRACTED_TEXT_CHARS: INNER } = await import("../lib/extract-text");
+    const below = "x".repeat(INNER - 1);
+    assert.deepEqual(limitExtractedText(below), { text: below, truncated: false });
+  });
+
+  it("still slices and flags text above the 2M outer cap", async () => {
+    const { limitExtractedText, MAX_EXTRACTED_TEXT_CHARS: OUTER } = await import("../lib/upload-security");
+    const over = "x".repeat(OUTER + 10);
+    const r = limitExtractedText(over);
+    assert.equal(r.truncated, true);
+    assert.equal(r.text.length, OUTER);
+  });
+
+  it("upload paths surface the flag as a user-visible partial-extraction warning", () => {
+    const uploadFirst = read("lib/tender-upload-first.ts");
+    assert.ok(
+      uploadFirst.includes("extracted text was truncated to the safe analysis limit"),
+      "tender-upload-first must warn when extraction is truncated",
     );
   });
 });
