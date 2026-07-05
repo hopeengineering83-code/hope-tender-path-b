@@ -8,8 +8,9 @@
 //   { added: number; removed: number; hunks: Array<{ type: "add"|"remove"|"context"; lines: string[] }> }
 
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../../../lib/auth";
+import { getCurrentUser } from "../../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../../lib/prisma";
+import { requireTenderAccess } from "../../../../../../../lib/tender-ownership";
 
 export const dynamic = "force-dynamic";
 
@@ -89,15 +90,15 @@ function computeDiff(baseText: string, newText: string): { added: number; remove
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const actor = await getCurrentUser();
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
   const { id, versionId } = await params;
   const compareToId = new URL(req.url).searchParams.get("compare_to");
   if (!compareToId) return NextResponse.json({ error: "compare_to query parameter is required" }, { status: 400 });
 
-  const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
+  const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

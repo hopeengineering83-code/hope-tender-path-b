@@ -1,33 +1,27 @@
 // Single-version routes:
 //
 // GET  /api/tenders/[id]/proposal-versions/[versionId]
-//   Returns the full markdown (and optionally fileContent) of one version.
-//   Used to preview a previous generation before deciding to restore it.
-//
-// POST /api/tenders/[id]/proposal-versions/[versionId]/restore  →
-//   handled by the dedicated restore sub-route below.
-//
+// POST /api/tenders/[id]/proposal-versions/[versionId] (action: "restore")
 // DELETE /api/tenders/[id]/proposal-versions/[versionId]
-//   Permanently removes a single version (user-initiated cleanup).
 
 import { NextResponse } from "next/server";
-import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse, getCurrentUser } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
+import { requireTenderAccess } from "../../../../../../lib/tender-ownership";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const actor = await getCurrentUser();
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
   const { id, versionId } = await params;
 
-  const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
+  const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // PR XX-A — typed access via Prisma model.
   const version = await prisma.proposalVersion.findFirst({
     where: { id: versionId, tenderId: id },
   });
@@ -46,16 +40,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   await prismaReady;
   const { id, versionId } = await params;
 
-  // Authorization: owner-scoped two-tier lookup (matches the GET sibling at
-  // line 27 and the /controls/suggestions/reject convention). The previous
-  // implementation did NO tender authorization at all — the comment claimed
-  // "scope the delete to the correct tender to avoid cross-tenant mutations"
-  // but `tenderId: id` only ensures the version belongs to the URL's tenderId;
-  // it does NOT verify the actor has any access to that tender. Any
-  // PROPOSAL_MANAGER who knew a tenderId+versionId pair could delete another
-  // tenant's versions.
-  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } })
-    ?? await prisma.tender.findFirst({ where: { id }, select: { id: true } });
+  // Authorization: strict two-tier owner-scoped lookup.
+  // PROPOSAL_MANAGER must NEVER access another user's tender.
+  const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   await prisma.proposalVersion.deleteMany({
@@ -65,10 +52,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   return NextResponse.json({ success: true });
 }
 
-// POST /api/tenders/[id]/proposal-versions/[versionId] with body { action: "restore" }
-// Copies the selected version's markdown back into the active GeneratedDocument
-// for this tender. Does NOT re-run the engine — just replaces the DOCX content
-// with the saved snapshot so the user can download the restored version.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
@@ -82,26 +65,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   if (body.action !== "restore") return NextResponse.json({ error: "Unsupported action. Send { action: \"restore\" }." }, { status: 400 });
 
-  // Authorization: owner-scoped by default (matches /export, /download, and
-  // the GET sibling in this file at line 27). ADMIN/PROPOSAL_MANAGER fall back
-  // to the unscoped lookup so privileged operators can restore versions on any
-  // tender — this is the codebase's two-tier convention (see
-  // /controls/suggestions/reject/route.ts). The previous implementation used
-  // a bare unscoped lookup for ALL callers, which let any PROPOSAL_MANAGER
-  // mutate another tenant's tender content (restore writes
-  // GeneratedDocument.fileContent).
-  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } })
-    ?? await prisma.tender.findFirst({ where: { id }, select: { id: true } });
+  // Authorization: strict two-tier owner-scoped lookup.
+  const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // PR XX-A — typed access via Prisma model.
   const v = await prisma.proposalVersion.findFirst({
     where: { id: versionId, tenderId: id },
     select: { id: true, version: true, markdown: true, fileContent: true, summary: true },
   });
   if (!v) return NextResponse.json({ error: "Version not found" }, { status: 404 });
 
-  // Update the live Technical Proposal generated document for this tender.
   const existing = await prisma.generatedDocument.findFirst({
     where: {
       tenderId: id,
@@ -117,9 +90,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fileContent: v.fileContent ?? existing.fileContent,
         contentSummary: `[Restored from version ${v.version}] ${v.summary ?? ""}`.slice(0, 500),
         generationStatus: "GENERATED",
-        // Reset quality gate fields: restoring an old snapshot may bring back
-        // stale content, so both status fields must be re-evaluated before the
-        // document can be marked READY_FOR_EXPORT again.
         validationStatus: "PENDING",
         reviewStatus: "PENDING",
         updatedAt: new Date(),
