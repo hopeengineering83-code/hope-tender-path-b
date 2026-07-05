@@ -18,10 +18,18 @@ describe("round 13 — schema unique constraints", () => {
     );
   });
 
-  it("GeneratedDocument has @@unique([tenderId, exactFileName])", () => {
+  it("GeneratedDocument has @@index([tenderId, exactFileName]) (partial unique via migration)", () => {
+    // The full @@unique was replaced with a PARTIAL unique index (via migration
+    // 20260705000000) that only applies to non-SUPERSEDED rows. The schema
+    // uses @@index because Prisma doesn't support partial unique indexes in
+    // the schema language — the actual unique constraint is in the migration SQL.
     assert.ok(
-      schema.includes("@@unique([tenderId, exactFileName])"),
-      "GeneratedDocument must have @@unique([tenderId, exactFileName]) — prevents duplicate docs",
+      schema.includes("@@index([tenderId, exactFileName])"),
+      "GeneratedDocument must have @@index([tenderId, exactFileName]) (partial unique via migration)",
+    );
+    assert.ok(
+      !schema.includes("@@unique([tenderId, exactFileName])"),
+      "full @@unique must be removed (replaced by partial unique index in migration)",
     );
   });
 

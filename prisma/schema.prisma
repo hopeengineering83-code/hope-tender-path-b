@@ -633,7 +633,11 @@ model GeneratedDocument {
   // Audit DB-002 (2026-06-20): every tender-detail panel loads docs by tenderId.
   // Was a sequential scan before this index.
   @@index([tenderId])
-  @@unique([tenderId, exactFileName]) // Prevents duplicate docs from concurrent /generate
+  // Partial unique index — only enforces uniqueness among non-SUPERSEDED rows.
+  // The full @@unique was replaced because the engine supersedes documents while
+  // preserving exactFileName, then inserts new rows with the same name.
+  // See migration 20260705000000_generated_document_partial_unique_index.
+  @@index([tenderId, exactFileName])
 }
 
 // Per-document review action audit trail (PR #247).

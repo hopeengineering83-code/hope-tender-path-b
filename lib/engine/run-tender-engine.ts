@@ -387,7 +387,10 @@ export async function runTenderEngine(
           })),
         },
       });
-      await prisma.generatedDocument.updateMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED", reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`, updatedAt: new Date() } });
+      // NOTE: supersede is now done INSIDE the transaction below (atomic with create).
+      // Previously this was a standalone updateMany outside the tx — if the tx
+      // failed, the prior active documents were already SUPERSEDED with no
+      // replacement, leaving the tender with zero active documents.
     }
 
     progress("engine.persist", `Persisting ${requirementRows.length} requirement(s), ${matching.expertMatches.length} expert match(es), ${matching.projectMatches.length} project match(es) to DB`);
@@ -429,7 +432,36 @@ export async function runTenderEngine(
     }
     const documentRows = documentPlan.documents.map((document) => ({ tenderId, name: document.name, documentType: document.documentType, exactFileName: document.exactFileName ?? null, exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null, contentSummary: document.contentSummary }));
 
+    // ─── Atomic supersede + create in one transaction ──────────────────────
+    // Previously: supersede ran OUTSIDE the transaction (line 390), then create
+    // ran INSIDE the transaction (line 443). If the transaction failed, the
+    // prior active documents were already SUPERSEDED — the tender had ZERO
+    // active documents. Now: supersede + create are in the SAME transaction,
+    // so a failure rolls back the supersede too (prior docs stay active).
+    //
+    // The transaction also acquires a pg_advisory_xact_lock to serialize
+    // concurrent engine runs for the same tender — prevents two runs from
+    // both superseding + both creating, which would violate the partial
+    // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED.
     await prisma.$transaction(async (tx) => {
+      // Serialize concurrent engine runs for this tender.
+      // The lock is transaction-scoped (released on commit/rollback).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenderId}))`;
+
+      // Supersede active documents INSIDE the transaction.
+      if (activeGeneratedDocuments.length > 0) {
+        await tx.generatedDocument.updateMany({
+          where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+          data: {
+            generationStatus: "SUPERSEDED",
+            validationStatus: "SUPERSEDED",
+            reviewStatus: "SUPERSEDED",
+            reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`,
+            updatedAt: new Date(),
+          },
+        });
+      }
+
       await tx.tenderExpertMatch.deleteMany({ where: { tenderId } });
       await tx.tenderProjectMatch.deleteMany({ where: { tenderId } });
       await tx.complianceGap.deleteMany({ where: { tenderId } });
@@ -440,6 +472,9 @@ export async function runTenderEngine(
       for (const batch of chunks(projectMatchRows, 100)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
       for (const batch of chunks(matrixRows, 100)) await tx.complianceMatrix.createMany({ data: batch });
       for (const batch of chunks(gapRows, 100)) await tx.complianceGap.createMany({ data: batch });
+      // Create new document-plan rows. The partial unique index
+      // (tenderId, exactFileName) WHERE non-SUPERSEDED ensures no duplicates
+      // among active docs. SUPERSEDED history rows keep their exactFileName.
       for (const batch of chunks(documentRows, 100)) await tx.generatedDocument.createMany({ data: batch });
       await tx.tender.update({
         where: { id: tenderId },

@@ -311,3 +311,46 @@ Never claim a fix is complete unless the stated tests passed.
 - **Known risk:** Vercel may independently detect a branch commit; inspect Vercel before assuming no preview exists
 - **Next action:** none; task complete
 - **Merge status:** merged into main
+
+---
+
+## 2026-07-05 — GeneratedDocument unique-constraint failure fix
+
+**Branch:** `fix/generated-document-unique-constraint`
+**Status:** NOT merged — ready for review
+**Risk:** HIGH (live production failure — engine rerun crashes on unique constraint)
+
+### Problem
+
+`lib/engine/run-tender-engine.ts` supersedes documents (sets `generationStatus='SUPERSEDED'`) while preserving `exactFileName`, then inserts new document-plan rows with `createMany` using the same `exactFileName`. The full unique constraint `@@unique([tenderId, exactFileName])` (added in migration `20260704000000`) rejected this because SUPERSEDED rows still hold the name — causing a `P2002` unique constraint violation on every engine rerun.
+
+Additionally, the supersede ran OUTSIDE the transaction — if the transaction failed, prior active documents were already SUPERSEDED with no replacement, leaving the tender with zero active documents.
+
+### Fix
+
+1. **Migration `20260705000000`**: Drops the full unique index, deduplicates any existing duplicate ACTIVE rows, creates a PARTIAL unique index `WHERE "exactFileName" IS NOT NULL AND "generationStatus" != 'SUPERSEDED'`. This allows SUPERSEDED history rows to keep their original `exactFileName` while preventing duplicates among active docs.
+
+2. **Schema**: Replaced `@@unique([tenderId, exactFileName])` with `@@index([tenderId, exactFileName])` (Prisma doesn't support partial unique indexes in the schema language — the actual constraint is in the migration SQL).
+
+3. **`run-tender-engine.ts`**: Moved the supersede `updateMany` INSIDE the `$transaction` (was outside). Added `pg_advisory_xact_lock(hashtext(tenderId))` to serialize concurrent engine runs for the same tender. If the transaction fails, the supersede is rolled back — prior active documents remain active.
+
+### What was NOT changed
+- AI provider order, AI Analyze policy, metadata rules, BuildPlan, export/ZIP gates, or unrelated UI
+- No `skipDuplicates` or blind upsert
+- History, audit records, and strict generation/export/final-ZIP gates preserved
+
+### Tests
+- `tests/generated-document-unique-constraint.test.ts` — 4 DB-integration tests (requires `RUN_DB_INTEGRATION=true`)
+- `tests/schema-migration-round13.test.ts` — updated to assert partial index instead of full unique
+
+### Verification
+- `npx prisma validate`: PASS
+- `npx tsc --noEmit`: PASS
+- `npm run lint`: PASS
+- 383/383 non-DB tests: PASS
+- DB-integration tests: require PostgreSQL (run with `RUN_DB_INTEGRATION=true`)
+
+### Deployment notes
+- Run `npx prisma migrate deploy` after merge to apply the partial unique index
+- The migration includes a dedup step that auto-supersedes any existing duplicate ACTIVE rows
+- The migration is safe to run on a live database (no data loss — duplicates are SUPERSEDED, not deleted)
