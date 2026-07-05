@@ -1,5 +1,6 @@
 import path from "path";
 import JSZip from "jszip";
+import { MAX_EXTRACTED_TEXT_CHARS as INNER_EXTRACTION_CHAR_LIMIT } from "./extract-text";
 
 export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_UPLOAD_FILES = 10;
@@ -7,12 +8,13 @@ export const MAX_UPLOAD_TOTAL_BYTES = 30 * 1024 * 1024;
 // NOTE: This 2M constant is the outer limiter for limitExtractedText(). The
 // inner limiter in lib/extract-text.ts (MAX_EXTRACTED_TEXT_CHARS = 500_000)
 // fires FIRST during normalizeExtractedText() — so by the time text reaches
-// limitExtractedText(), it's already <= 500K chars and this 2M check never
-// triggers. The extractionTruncated flag is therefore effectively always
-// false. This is a known limitation — to fix it, normalizeExtractedText
-// would need to return { text, truncated } and propagate the flag through
-// extractPdf → extractTextFromBuffer. For now, the 500K cap in extract-text.ts
-// is the effective limit and is documented there.
+// limitExtractedText(), it's already <= 500K chars and this 2M slice never
+// runs. limitExtractedText therefore ALSO detects the inner cap: output text
+// at exactly the inner limit means normalizeExtractedText cut the document's
+// tail, and the truncated flag must be true so the upload paths can warn
+// that the extraction is partial (CLAUDE.md: "Warning if the document is
+// only partially extracted"). A genuine document landing on exactly 500,000
+// chars is treated as truncated too — the fail-closed direction.
 export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const MAX_ARCHIVE_ENTRIES = 2_000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 80 * 1024 * 1024;
@@ -130,6 +132,11 @@ export function validateUploadBatch(files: File[]): string | null {
 }
 
 export function limitExtractedText(text: string): { text: string; truncated: boolean } {
+  // Inner-cap detection: normalizeExtractedText (lib/extract-text.ts) slices
+  // to INNER_EXTRACTION_CHAR_LIMIT, so text AT that length was cut there.
+  if (text.length >= INNER_EXTRACTION_CHAR_LIMIT && text.length <= MAX_EXTRACTED_TEXT_CHARS) {
+    return { text, truncated: true };
+  }
   if (text.length <= MAX_EXTRACTED_TEXT_CHARS) return { text, truncated: false };
   return { text: text.slice(0, MAX_EXTRACTED_TEXT_CHARS), truncated: true };
 }
