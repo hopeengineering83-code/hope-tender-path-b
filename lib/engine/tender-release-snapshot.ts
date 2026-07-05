@@ -35,6 +35,8 @@ type _FileRow = {
   extractedText: string | null;
   extractionScore: number | null;
   deletionStatus: string | null;
+  // totalPages is required to mirror the gate's sourcePage <= totalPages check.
+  totalPages: number | null;
 };
 type _OverrideRow = {
   field: string;
@@ -104,8 +106,24 @@ export type SnapshotEvidenceState = {
 
 export type SnapshotBuildPlanState = {
   documentCount: number;
+  /**
+   * Count-based validity: ≥1 non-SUPERSEDED GeneratedDocument exists.
+   * Retained for backward-compatible UI display (workflow-center stage 6).
+   * Does NOT agree with the generation gate — see `gateValid`.
+   */
   valid: boolean;
   blocker: string | null;
+  /**
+   * Gate-aligned strict validity. Mirrors generation-readiness-gate.ts:
+   * persisted BuildPlan row exists, contentHash matches the canonical hash,
+   * status=CONFIRMED, confirmedRevision/confirmedContentHash match, critical
+   * metadata evidence valid, items valid at runtime. Computed via the SAME
+   * helpers the gate uses (computeTenderBuildPlanHash + getCurrentConfirmedBuildPlan
+   * + validateBuildPlanItemsAtRuntime) so it can never disagree with the gate.
+   */
+  gateValid: boolean;
+  /** First strict-check failure reason, or null when gateValid=true. */
+  gateBlocker: string | null;
 };
 
 export type SnapshotVaultState = {
@@ -228,6 +246,9 @@ export async function getTenderReleaseSnapshot(
           extractedText: true,
           extractionScore: true,
           deletionStatus: true,
+          // totalPages is required to mirror the gate's sourcePage <= totalPages
+          // check in the requirements grounding filter.
+          totalPages: true,
         },
       },
       metadataOverrides: {
@@ -428,18 +449,46 @@ export async function getTenderReleaseSnapshot(
     activeTenderFileIds: new Set(activeFiles.map((f) => f.id)),
   });
 
-  // Requirements grounding.
+  // Requirements grounding — mirrors generation-readiness-gate.ts (page <= totalPages
+  // + normalized quote containment in the source file's extractedText). Keeps the
+  // release snapshot's requirements.allMandatoryGrounded in lock-step with the gate
+  // so the UI never shows a requirement as grounded when the gate would block on it.
   const allReqs = tender.requirements as _ReqRow[];
   const mandatory = allReqs.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
   const activeFileIds = new Set(activeFiles.map((f) => f.id));
+  // O(1) lookup of extractedText + totalPages per requirement's source file.
+  const activeFileById = new Map(activeFiles.map((f) => [f.id, f]));
   const groundedMandatory = mandatory.filter((r) => {
     const quote = (r.sourceExactQuote ?? "").trim();
-    return (
-      !!r.sourceTenderFileId &&
-      activeFileIds.has(r.sourceTenderFileId) &&
-      isGroundedEvidence(r.sourcePageNumber, quote) &&
-      quote.length >= MIN_MEANINGFUL_QUOTE_CHARS
-    );
+    if (
+      !r.sourceTenderFileId ||
+      !activeFileIds.has(r.sourceTenderFileId) ||
+      !isGroundedEvidence(r.sourcePageNumber, quote) ||
+      quote.length < MIN_MEANINGFUL_QUOTE_CHARS
+    ) {
+      return false;
+    }
+    const file = activeFileById.get(r.sourceTenderFileId);
+    if (!file) return false;
+    // ENFORCE sourcePage <= totalPages when totalPages exists — fabricated page
+    // references must be blocked (mirrors the gate).
+    if (
+      typeof r.sourcePageNumber === "number" &&
+      typeof file.totalPages === "number" &&
+      file.totalPages > 0 &&
+      r.sourcePageNumber > file.totalPages
+    ) {
+      return false;
+    }
+    // QUOTE CONTAINMENT: the normalized quote must appear in the file's
+    // extracted text (mirrors the gate). Foreign / guessed / unsupported
+    // evidence is rejected.
+    const fileText = (file.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    if (fileText.length === 0 || !fileText.includes(normalizedQuote)) {
+      return false;
+    }
+    return true;
   }).length;
 
   const requirementsBlocker: string | null =
@@ -470,10 +519,77 @@ export async function getTenderReleaseSnapshot(
 
   // Build plan / submission plan.
   const buildPlanCount = tender.generatedDocuments.length;
+
+  // GATE-ALIGNED STRICT CHECK — mirrors generation-readiness-gate.ts lines 647-702.
+  // Uses the SAME shared helpers so the snapshot's gateValid can never disagree
+  // with the gate's hasCurrentConfirmedBuildPlan + confirmedBuildPlanItemsValid.
+  // Fail-closed: any thrown error or missing step leaves gateValid=false.
+  let gateValid = false;
+  let gateBlocker: string | null = "No submission plan / generated documents exist. Build the plan first.";
+  try {
+    const buildPlanModule: typeof import("./build-plan") = await import("./build-plan");
+    const recordedBuildPlan = await prisma.buildPlan.findUnique({
+      where: { tenderId },
+      select: {
+        contentHash: true,
+        status: true,
+        revision: true,
+        confirmedRevision: true,
+        confirmedContentHash: true,
+        itemsJson: true,
+      },
+    });
+    if (!recordedBuildPlan) {
+      gateBlocker = "No Build Plan exists. Build and confirm the plan first.";
+    } else {
+      const persistedItems = recordedBuildPlan.itemsJson
+        ? (JSON.parse(recordedBuildPlan.itemsJson) as any[])
+        : [];
+      const currentPlanHash = await buildPlanModule.computeTenderBuildPlanHash(
+        prisma,
+        tenderId,
+        userId,
+        persistedItems as any,
+      );
+      if (recordedBuildPlan.contentHash !== currentPlanHash) {
+        gateBlocker = "Build Plan is stale — tender data changed since the plan was built. Rebuild and re-confirm.";
+      } else {
+        const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(
+          prisma,
+          tenderId,
+          userId,
+        );
+        if (!confirmed.ok) {
+          gateBlocker = confirmed.blocker;
+        } else {
+          const itemValidation = await buildPlanModule.validateBuildPlanItemsAtRuntime(
+            prisma,
+            tenderId,
+            userId,
+            confirmed.items,
+          );
+          if (!itemValidation.ok) {
+            gateBlocker = itemValidation.blockers[0] ?? "Build Plan items are invalid.";
+          } else {
+            gateValid = true;
+            gateBlocker = null;
+          }
+        }
+      }
+    }
+  } catch {
+    // Fail closed — never let a thrown error read as gateValid=true.
+    gateValid = false;
+    gateBlocker = "Build Plan gate check failed (internal error).";
+  }
+
   const buildPlan: SnapshotBuildPlanState = {
     documentCount: buildPlanCount,
+    // Count-based validity — retained for backward-compatible UI display.
     valid: buildPlanCount > 0,
     blocker: buildPlanCount < 1 ? "No submission plan / generated documents exist. Build the plan first." : null,
+    gateValid,
+    gateBlocker,
   };
 
   // Vault matches.

@@ -87,64 +87,74 @@ describe("Snapshot ↔ Gate input-shape parity (Tier A source-inspection)", () =
   });
 });
 
-// ─── Tier A: Known divergences — source-inspection sentinels ────────────────
+// ─── Tier A: BuildPlan divergence (resolved via gateValid) + metadata divergence ─
 
-describe("Snapshot ↔ Gate known divergences (Tier A sentinels)", () => {
+describe("Snapshot ↔ Gate buildPlan + metadata alignment (Tier A)", () => {
   const snapshotSrc = read("lib/engine/tender-release-snapshot.ts");
   const gateSrc = read("lib/engine/generation-readiness-gate.ts");
 
-  it("DIVERGENCE: snapshot.buildPlan.valid uses generatedDocuments count, not getCurrentConfirmedBuildPlan", () => {
-    // The snapshot's buildPlan.valid is `buildPlanCount > 0` where
-    // buildPlanCount = tender.generatedDocuments.length (excluding SUPERSEDED).
-    // The gate uses a 6-condition strict check including a persisted BuildPlan
-    // row, hash match, CONFIRMED status, items validation, and (for export)
-    // document reconciliation + export-ready count.
-    // This means snapshot.buildPlan.valid can be true while the gate returns
-    // BUILD_PLAN_MISSING or BUILD_PLAN_NOT_CONFIRMED.
-    // This test DOCUMENTS the divergence so a future fix can replace the
-    // snapshot's count check with getCurrentConfirmedBuildPlan.
+  it("RESOLVED: snapshot exposes gateValid via getCurrentConfirmedBuildPlan (buildPlan divergence closed)", () => {
+    // The snapshot's buildPlan.valid is still a count check (retained for
+    // backward-compatible UI display), but the snapshot NOW ALSO exposes
+    // buildPlan.gateValid — a gate-aligned strict check computed via the SAME
+    // helpers the gate uses (computeTenderBuildPlanHash + getCurrentConfirmedBuildPlan
+    // + validateBuildPlanItemsAtRuntime). Consumers that need gate-parity can
+    // read gateValid instead of valid.
     assert.ok(
-      snapshotSrc.includes("const buildPlanCount = tender.generatedDocuments.length"),
-      "snapshot currently uses generatedDocuments.length for buildPlan.valid (known divergence from gate)",
+      snapshotSrc.includes("gateValid"),
+      "snapshot must expose gateValid (gate-aligned strict check)",
     );
+    assert.ok(
+      snapshotSrc.includes("gateBlocker"),
+      "snapshot must expose gateBlocker (first strict-check failure reason)",
+    );
+    assert.ok(
+      snapshotSrc.includes("computeTenderBuildPlanHash"),
+      "snapshot must call computeTenderBuildPlanHash (same helper as the gate)",
+    );
+    assert.ok(
+      snapshotSrc.includes("getCurrentConfirmedBuildPlan"),
+      "snapshot must call getCurrentConfirmedBuildPlan (same helper as the gate)",
+    );
+    assert.ok(
+      snapshotSrc.includes("validateBuildPlanItemsAtRuntime"),
+      "snapshot must call validateBuildPlanItemsAtRuntime (same helper as the gate)",
+    );
+    // The count-based valid is still there for backward compatibility
     assert.ok(
       snapshotSrc.includes("valid: buildPlanCount > 0"),
-      "snapshot currently uses buildPlanCount > 0 (known divergence from gate's 6-condition check)",
-    );
-    // The gate uses the strict check
-    assert.ok(
-      gateSrc.includes("getCurrentConfirmedBuildPlan"),
-      "gate uses getCurrentConfirmedBuildPlan (the strict check the snapshot should eventually adopt)",
+      "snapshot retains count-based valid for backward-compatible UI display",
     );
   });
 
-  it("DIVERGENCE: snapshot requirements grounding does NOT check quote containment in extracted text", () => {
-    // The snapshot's groundedMandatory filter checks: sourceTenderFileId in
-    // activeFileIds, isGroundedEvidence(page, quote), quote.length >= 10.
-    // The gate additionally checks: sourcePage <= totalPages AND the quote
-    // is contained (normalized) in the file's extractedText.
-    // This means snapshot.requirements.allMandatoryGrounded can be true while
-    // the gate returns REQUIREMENT_SOURCE_UNGROUNDED or REQUIREMENT_QUOTE_NOT_IN_FILE.
+  it("RESOLVED: snapshot requirements grounding checks quote containment + page-bounds (divergence closed)", () => {
+    // The snapshot's groundedMandatory filter now mirrors the gate's check:
+    // sourcePage <= totalPages AND the quote is contained (normalized) in the
+    // file's extractedText. This keeps snapshot.requirements.allMandatoryGrounded
+    // in lock-step with the gate's REQUIREMENT_SOURCE_UNGROUNDED /
+    // REQUIREMENT_QUOTE_NOT_IN_FILE blockers.
     assert.ok(
-      snapshotSrc.includes("isGroundedEvidence(r.sourcePageNumber, quote)"),
-      "snapshot uses isGroundedEvidence (page + quote length only)",
+      snapshotSrc.includes("fileText.includes(normalizedQuote)"),
+      "snapshot must check quote containment in extracted text (mirrors gate)",
     );
     assert.ok(
-      !snapshotSrc.includes("quoteSupported") && !snapshotSrc.includes("extractedText.includes"),
-      "snapshot does NOT check quote containment in extracted text (known divergence from gate)",
+      snapshotSrc.includes("r.sourcePageNumber > file.totalPages"),
+      "snapshot must check sourcePage <= totalPages (mirrors gate)",
     );
-    // The gate DOES check quote containment
     assert.ok(
-      gateSrc.includes("sourceFileExtractedText") || gateSrc.includes("quoteSupported"),
-      "gate checks quote containment in the source file's extracted text",
+      snapshotSrc.includes("totalPages: true"),
+      "snapshot SELECT must include totalPages (required for the page-bounds check)",
     );
   });
 
-  it("DIVERGENCE: snapshot metadata blocker uses resolver only; gate adds validateCriticalMetadataEvidenceForBuildPlan", () => {
+  it("DIVERGENCE (remaining): snapshot metadata blocker uses resolver only; gate adds validateCriticalMetadataEvidenceForBuildPlan", () => {
     // The snapshot's metadata.hasGenerationBlocker comes directly from
     // resolveCanonicalFieldState. The gate additionally calls
     // validateCriticalMetadataEvidenceForBuildPlan which enforces quote
     // containment + page <= totalPages.
+    // This divergence is the LAST remaining one — fixing it requires the
+    // snapshot to call validateCriticalMetadataEvidenceForBuildPlan, which
+    // is a larger refactor that could change UI behavior.
     assert.ok(
       snapshotSrc.includes("metadata.hasGenerationBlocker"),
       "snapshot uses resolver's hasGenerationBlocker directly",

@@ -547,10 +547,34 @@ describe("ai-analyze route — reference fileId resolution wired in", () => {
     );
   });
 
-  it("persists the resolved fileId via prisma.tender.update on contactDetailsSourceJson", () => {
+  it("persists the resolved fileId via prisma.tender.updateMany with optimistic-concurrency guard (TOCTOU race fix)", () => {
+    // The previous implementation used prisma.tender.update (unconditional),
+    // which had a TOCTOU race: a concurrent AI re-run that wrote a different
+    // contactDetailsSourceJson between our read and write would be silently
+    // overwritten. The fix uses prisma.tender.updateMany with a WHERE clause
+    // that checks contactDetailsSourceJson === originalJson (optimistic
+    // concurrency). If 0 rows are affected, a concurrent run won — log + skip.
     assert.ok(
-      src.includes('data: { contactDetailsSourceJson: refJson }'),
-      "must persist the resolved fileId via prisma.tender.update on contactDetailsSourceJson",
+      src.includes("prisma.tender.updateMany"),
+      "must use prisma.tender.updateMany (optimistic-concurrency guard)",
+    );
+    assert.ok(
+      src.includes("where: { id, contactDetailsSourceJson: refResult.originalJson }"),
+      "must guard the update with contactDetailsSourceJson === originalJson (optimistic concurrency)",
+    );
+    assert.ok(
+      src.includes("data: { contactDetailsSourceJson: refResult.updatedJson }"),
+      "must write the updatedJson from resolveReferenceFileId",
+    );
+    assert.ok(
+      src.includes("result.count === 0"),
+      "must check result.count === 0 to detect a concurrent run that won",
+    );
+    // The old unconditional prisma.tender.update pattern must NOT be present
+    // for the contactDetailsSourceJson write.
+    assert.ok(
+      !src.includes("data: { contactDetailsSourceJson: refJson }"),
+      "old unconditional prisma.tender.update pattern must be removed (TOCTOU race fix)",
     );
   });
 

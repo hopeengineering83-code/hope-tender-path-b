@@ -1298,3 +1298,120 @@ Stage Summary:
 - The snapshot/gate divergences are now documented with regression
   sentinels — future fixes will be visible.
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: deep-gap-closure-round-4
+Agent: main (Super Z / GLM)
+Task: Continue fixing remaining gaps — audit round 4 covering snapshot buildPlan divergence, snapshot requirements grounding divergence, ai-analyze TOCTOU race, dead code, and type drift.
+
+Work Log:
+- Launched 4 parallel deep-audit subagents covering: (1) snapshot buildPlan
+  divergence fix plan, (2) remaining dead code + type drift, (3) ai-analyze
+  reference fileId error path + race, (4) snapshot requirements grounding
+  divergence fix plan.
+- Audits surfaced 5 actionable gaps. All 5 fixed.
+
+GAPS FIXED:
+
+1. Snapshot requirements grounding divergence (H8 — CLOSED):
+   The snapshot's groundedMandatory filter checked: sourceTenderFileId in
+   activeFileIds, isGroundedEvidence(page, quote), quote.length >= 10.
+   The gate additionally checked: sourcePage <= totalPages AND the quote
+   is contained (normalized) in the file's extractedText. This meant
+   snapshot.requirements.allMandatoryGrounded could be true while the gate
+   returned REQUIREMENT_SOURCE_UNGROUNDED or REQUIREMENT_QUOTE_NOT_IN_FILE.
+   FIX: Added `totalPages: true` to the snapshot's files SELECT (zero new
+   DB queries — reuses existing data). Replaced the filter body to mirror
+   the gate's 3 layered checks: structural (fileId + active + page + quote
+   length), page-bounds (sourcePage <= totalPages), quote containment
+   (normalized quote in extractedText). Now the snapshot's
+   allMandatoryGrounded is in lock-step with the gate.
+
+2. ai-analyze TOCTOU race in resolveReferenceFileId (CORRECTNESS BUG):
+   resolveReferenceFileId read contactDetailsSourceJson, modified it in
+   memory, and wrote it back unconditionally via prisma.tender.update —
+   OUTSIDE the advisory lock. A concurrent AI re-run that committed
+   between the read and write would have its contactDetailsSourceJson
+   silently overwritten. The race window was ~5-15ms (two DB round-trips
+   + JSON parse), and concurrent AI runs on the same tender were uncommon
+   but possible.
+   FIX: Changed resolveReferenceFileId to return { originalJson, updatedJson }
+   instead of just the updated string. Both call sites (streaming +
+   non-streaming) now use prisma.tender.updateMany with
+   `where: { id, contactDetailsSourceJson: originalJson }` (optimistic
+   concurrency). If result.count === 0, a concurrent run won — log + skip.
+   This is the classic optimistic-concurrency pattern; no transaction or
+   lock changes needed.
+
+3. Snapshot buildPlan divergence (H8 — CLOSED via additive gateValid):
+   The snapshot's buildPlan.valid used generatedDocuments count (excluding
+   SUPERSEDED). The gate used a 6-condition strict check (persisted
+   BuildPlan row, hash match, CONFIRMED status, items valid, etc.).
+   snapshot.buildPlan.valid could be true while the gate returned
+   BUILD_PLAN_MISSING or BUILD_PLAN_NOT_CONFIRMED.
+   FIX (Option B — additive, non-breaking): Added `gateValid` +
+   `gateBlocker` fields to SnapshotBuildPlanState. The snapshot now
+   computes gateValid via the SAME helpers the gate uses
+   (computeTenderBuildPlanHash + getCurrentConfirmedBuildPlan +
+   validateBuildPlanItemsAtRuntime) so it can never disagree with the
+   gate. The count-based `valid` + `blocker` are retained for backward-
+   compatible UI display (workflow-center stage 6). Consumers that need
+   gate-parity can read `gateValid` instead of `valid`. Fail-closed: any
+   thrown error leaves gateValid=false. Cost: ~7 new DB queries per
+   snapshot fetch (acceptable — the snapshot is already a multi-query
+   operation).
+
+4. submissionEmailSubject dead declarations (RESOLVED):
+   The resolver declared submissionEmailSubjectSource{FileId,Page,Quote}
+   in CanonicalResolverInput but never read them — submissionEmailSubject
+   was NOT in the fieldKeys iteration array. The columns were populated
+   by enrichment and read by validateCriticalMetadataEvidenceForBuildPlan,
+   but skipped the resolver entirely. UI panels never displayed subject
+   evidence even when it was persisted.
+   FIX: Added "submissionEmailSubject" to the fieldKeys array. The
+   resolver now iterates it, reads the dedicated columns via
+   getSourceEvidence, and produces a CanonicalFieldState for the subject
+   field. The submissionEmailSubject field is conditionally-critical
+   (via isConditionallyCriticalField) — only critical when the tender
+   explicitly requires it AND the method is email-based.
+
+5. SUBMISSION_PLAN_MISSING dead enum value (CLEANUP):
+   The GenerationBlockerCode union included "SUBMISSION_PLAN_MISSING" but
+   the gate never emitted it (no fail("SUBMISSION_PLAN_MISSING") call
+   existed). The G1 fix (round 3) removed the dead carve-out that
+   referenced it; the enum value itself was left in the union for
+   backwards-compat. Now removed — the union is cleaner and the
+   central-generation-gate-coverage test sentinel (round 3) already pins
+   that no code references it.
+
+ALSO UPDATED:
+- tests/snapshot-gate-agreement.test.ts: 2 of 3 divergence sentinels
+  converted to RESOLVED sentinels (buildPlan now exposes gateValid;
+  requirements grounding now checks quote containment + page-bounds).
+  Only 1 divergence sentinel remains (metadata second-layer check).
+- tests/snapshot-basic.test.ts + tests/panel-unification.test.ts: mock
+  buildPlan shape updated to include gateValid + gateBlocker.
+- tests/metadata-source-enrichment.test.ts: ai-analyze wiring test
+  updated to assert the new updateMany + optimistic-concurrency pattern
+  (was asserting the old unconditional prisma.tender.update).
+
+Verification (all with local PostgreSQL 16.4 + all migrations applied):
+- npx tsc --noEmit: PASS (0 errors)
+- npm run lint: PASS (0 warnings)
+- Full test suite (400 test files, 5362 tests): 5362/5362 PASS, 0 FAIL
+  - 18 most-affected files: 323/323 PASS
+  - 382 remaining files (run in 3 batches): 5039/5039 PASS
+
+Stage Summary:
+- 5 genuine gaps closed (requirements grounding divergence, TOCTOU race,
+  buildPlan divergence, submissionEmailSubject dead declarations,
+  SUBMISSION_PLAN_MISSING dead enum).
+- 2 of 3 snapshot/gate divergences are now CLOSED (requirements grounding
+  + buildPlan). Only 1 remains (metadata second-layer check) — documented
+  with a sentinel, requires a larger refactor to fix.
+- The ai-analyze route's reference fileId resolution is now race-safe via
+  optimistic concurrency.
+- The resolver now iterates submissionEmailSubject, so UI panels can
+  display subject evidence when it's persisted.
+- 5362/5362 tests pass (0 failures).
+- NOT merged, NOT deployed — awaiting explicit user authorization.

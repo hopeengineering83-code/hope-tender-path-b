@@ -66,6 +66,8 @@ test("snapshot type has required fields", () => {
       documentCount: 0,
       valid: false,
       blocker: null,
+      gateValid: false,
+      gateBlocker: null,
     },
     vault: {
       expertRequirementExists: false,

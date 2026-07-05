@@ -288,7 +288,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
   const fieldKeys = [
     "clientName", "title", "reference", "deadline", "country", "currency",
-    "submissionMethod", "submissionAddress", "submissionEmails",
+    "submissionMethod", "submissionAddress", "submissionEmails", "submissionEmailSubject",
     "requiredDocuments", "evaluationCriteria", "clientContactName", "clientContactEmail",
     "legalClientName", "donorAgency", "implementingAgency", "clientContactTitle", "clientContactPhone",
     "clientCity", "clientAddress", "clientWebsite", "clientRepresentative", "preBidChannel",
