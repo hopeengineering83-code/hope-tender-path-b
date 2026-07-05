@@ -54,7 +54,15 @@ async function setAuthCookie(userId: string): Promise<void> {
   await prisma.session.create({ data: { token: hashToken(token), userId, expiresAt } });
   __TEST_COOKIE_STORE[SESSION_COOKIE] = token;
 }
-function clearAuthCookie(): void { __TEST_COOKIE_STORE = {}; }
+
+// FIX: Made async to actually delete the session record from the DB
+async function clearAuthCookie(): Promise<void> {
+  const token = __TEST_COOKIE_STORE[SESSION_COOKIE];
+  if (token) {
+    await prisma.session.deleteMany({ where: { token: hashToken(token) } }).catch(() => {});
+  }
+  __TEST_COOKIE_STORE = {};
+}
 
 describe("Proposal Version Ownership Enforcement", () => {
   let ownerUser: any, foreignUser: any, adminUser: any, tender: any, version: any, routeModule: any;
@@ -73,6 +81,16 @@ describe("Proposal Version Ownership Enforcement", () => {
   });
 
   after(async () => {
+    // FIX: Clean up sessions FIRST to prevent foreign key constraint violations 
+    // when deleting the test users below.
+    await prisma.session.deleteMany({
+      where: {
+        userId: {
+          in: [ownerUser?.id, foreignUser?.id, adminUser?.id].filter(Boolean)
+        }
+      }
+    }).catch(() => {});
+
     if (version) await (prisma as any).proposalVersion.delete({ where: { id: version.id } }).catch(() => {});
     if (tender) await prisma.tender.delete({ where: { id: tender.id } }).catch(() => {});
     if (ownerUser) await prisma.user.delete({ where: { id: ownerUser.id } }).catch(() => {});
@@ -85,7 +103,7 @@ describe("Proposal Version Ownership Enforcement", () => {
     const req = new Request("http://localhost/api/tenders/" + tender.id + "/proposal-versions/" + version.id, { method: "POST", body: JSON.stringify({ action: "restore" }), headers: { "Content-Type": "application/json" } });
     const res = await routeModule.POST(req, { params: Promise.resolve({ id: tender.id, versionId: version.id }) });
     assert.strictEqual(res.status, 200);
-    clearAuthCookie();
+    await clearAuthCookie();
   });
 
   it("PROPOSAL_MANAGER receives 404 for foreign tender (restore)", async () => {
@@ -93,7 +111,7 @@ describe("Proposal Version Ownership Enforcement", () => {
     const req = new Request("http://localhost/api/tenders/" + tender.id + "/proposal-versions/" + version.id, { method: "POST", body: JSON.stringify({ action: "restore" }), headers: { "Content-Type": "application/json" } });
     const res = await routeModule.POST(req, { params: Promise.resolve({ id: tender.id, versionId: version.id }) });
     assert.strictEqual(res.status, 404, "Foreign IDs must never leak existence -> 404");
-    clearAuthCookie();
+    await clearAuthCookie();
   });
 
   it("ADMIN may perform global restore on foreign tender", async () => {
@@ -101,7 +119,7 @@ describe("Proposal Version Ownership Enforcement", () => {
     const req = new Request("http://localhost/api/tenders/" + tender.id + "/proposal-versions/" + version.id, { method: "POST", body: JSON.stringify({ action: "restore" }), headers: { "Content-Type": "application/json" } });
     const res = await routeModule.POST(req, { params: Promise.resolve({ id: tender.id, versionId: version.id }) });
     assert.strictEqual(res.status, 200);
-    clearAuthCookie();
+    await clearAuthCookie();
   });
 
   it("owner can delete own version", async () => {
@@ -112,7 +130,7 @@ describe("Proposal Version Ownership Enforcement", () => {
     const res = await routeModule.DELETE(req, { params: Promise.resolve({ id: tender.id, versionId: tempVersion.id }) });
     assert.strictEqual(res.status, 200);
     assert.strictEqual(await pv.findFirst({ where: { id: tempVersion.id } }), null);
-    clearAuthCookie();
+    await clearAuthCookie();
   });
 
   it("cross-tenant rollback (DELETE) blocked for PROPOSAL_MANAGER", async () => {
@@ -124,6 +142,6 @@ describe("Proposal Version Ownership Enforcement", () => {
     assert.strictEqual(res.status, 404);
     assert.ok(await pv.findFirst({ where: { id: tempVersion.id } }), "Version must NOT be deleted by foreign PM");
     await pv.delete({ where: { id: tempVersion.id } });
-    clearAuthCookie();
+    await clearAuthCookie();
   });
 });
