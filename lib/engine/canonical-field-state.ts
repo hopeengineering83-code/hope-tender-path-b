@@ -24,7 +24,7 @@ import {
   isAmbiguousDateString,
 } from "./metadata-validators";
 import { isPhysicalSubmissionMethod, isEmailSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
-import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck } from "./evidence-grounding";
+import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck, isGroundedEvidenceInActiveFiles, type GroundingActiveFile } from "./evidence-grounding";
 // The export/completeness gate's placeholder set is broader than the validators'
 // (e.g. "not available", "to be provided", mid-text "TBA", "fill in here"). The
 // resolver consults it too so the Client & Submission panel never shows a value
@@ -187,6 +187,15 @@ export type CanonicalResolverInput = {
     createdAt?: Date | null;
   }[];
   activeTenderFileIds?: Set<string>;
+  /**
+   * ACTIVE TenderFile rows with extracted text / totalPages. When provided,
+   * grounding uses the STRONGEST shared check (quote containment in the
+   * referenced file's text + source page <= totalPages) — the same evidence
+   * rules validateCriticalMetadataEvidenceForBuildPlan enforces, so a field
+   * can never show "grounded" (green) here while the gate rejects its
+   * evidence. Callers that have the file rows loaded MUST pass this.
+   */
+  activeFiles?: ReadonlyArray<GroundingActiveFile>;
   hasExtractedRequirements: boolean;
   submissionMethodContext?: string;
 };
@@ -256,8 +265,17 @@ function validateFieldFormat(fieldKey: string, value: string | null): { valid: b
 function isGroundedEvidence(
   evidence: { page: number | null; quote: string | null; fileId: string | null },
   activeTenderFileIds?: Set<string>,
+  activeFiles?: ReadonlyArray<GroundingActiveFile>,
 ): boolean {
   // Grounded requires page AND a non-trivial quote + valid TenderFile ID.
+  // When ACTIVE file rows (with extracted text / totalPages) are available,
+  // apply the STRONGEST shared check — quote containment + page bound — the
+  // same evidence rules the BuildPlan validator and release gates enforce.
+  // With only the ID set, enforce active-file membership. With neither, fall
+  // back to the basic page+quote check (legacy callers).
+  if (activeFiles && activeFiles.length > 0) {
+    return isGroundedEvidenceInActiveFiles(evidence.page, evidence.quote, evidence.fileId, activeFiles);
+  }
   if (activeTenderFileIds) {
     return isGroundedEvidenceWithFileCheck(evidence.page, evidence.quote, evidence.fileId, activeTenderFileIds);
   }
@@ -292,12 +310,43 @@ function parseContactDetailsSource(json: unknown): Record<string, { page: number
  * Resolve the effective state of all tender metadata fields.
  */
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
-  const { tender, overrides, activeTenderFileIds, hasExtractedRequirements, submissionMethodContext } = input;
+  const { tender, overrides, activeTenderFileIds, activeFiles, hasExtractedRequirements, submissionMethodContext } = input;
   const fields: CanonicalFieldState[] = [];
 
+  // EFFECTIVE submission method (override-aware) drives conditional
+  // criticality AND the value-driven email-subject rule — a USER_EDITED /
+  // USER_CONFIRMED method override switches the applicable endpoint here
+  // exactly like effectiveValue() does in the BuildPlan validator and the
+  // canonical hash. Without this, overriding email→physical would leave the
+  // panel demanding an email endpoint the gate no longer requires (and vice
+  // versa).
+  const methodOverride = overrides.find((o) => o.field === "submissionMethod");
+  const effectiveSubmissionMethod =
+    (methodOverride && (methodOverride.fieldState === "USER_EDITED" || methodOverride.fieldState === "USER_CONFIRMED") && methodOverride.overrideValue)
+      ? methodOverride.overrideValue
+      : (submissionMethodContext || tender.submissionMethod);
+
   const policyCtx = {
-    submissionMethod: submissionMethodContext || tender.submissionMethod,
+    submissionMethod: effectiveSubmissionMethod,
   };
+
+  // EFFECTIVE endpoint values (override-aware) — needed to mirror the
+  // BuildPlan validator's portal endpoint selection: on portal methods the
+  // validator requires ONE fully grounded endpoint, preferring email when an
+  // email candidate (value + source file + page) exists. The email-subject
+  // value-driven rule follows the SAME selection (the validator only checks
+  // the subject when the email endpoint is in play).
+  const endpointOverride = (field: string, raw: string | null): string | null => {
+    const ov = overrides.find((o) => o.field === field);
+    if (ov && (ov.fieldState === "USER_EDITED" || ov.fieldState === "USER_CONFIRMED")) {
+      return ov.overrideValue ?? null;
+    }
+    return raw ?? null;
+  };
+  const effectiveEmailsValue = endpointOverride("submissionEmails", tender.submissionEmails);
+  const effectiveAddressValue = endpointOverride("submissionAddress", tender.submissionAddress);
+  const portalHasEmailCandidate = !!(effectiveEmailsValue && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage);
+  const portalHasAddressCandidate = !!(effectiveAddressValue && tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage);
 
   const fieldKeys = [
     "clientName", "title", "reference", "deadline", "country", "currency",
@@ -367,12 +416,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
        const normalizedEdited = normalizeFieldValue(fieldKey, effectiveStr || "");
        const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
        return validation.valid &&
-         isGroundedEvidence(evidence, activeTenderFileIds) &&
+         isGroundedEvidence(evidence, activeTenderFileIds, activeFiles) &&
          normalizedEdited === normalizedRaw &&
          normalizedEdited !== "";
     };
 
-    const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds) && !override) || overrideMatchesGroundedSourceCheck();
+    const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds, activeFiles) && !override) || overrideMatchesGroundedSourceCheck();
 
     // Value-driven evidence-mandatory fields: the BuildPlan validator
     // (validateCriticalMetadataEvidenceForBuildPlan, build-plan.ts) enforces
@@ -385,7 +434,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       fieldKey === "reference" ||
       (fieldKey === "submissionEmailSubject" &&
         (isEmailSubmissionMethod(policyCtx.submissionMethod) ||
-         isPortalSubmissionMethod(policyCtx.submissionMethod)))
+         (isPortalSubmissionMethod(policyCtx.submissionMethod) && portalHasEmailCandidate)))
     );
 
     // Determine status
@@ -425,7 +474,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     } else if (override?.fieldState === "USER_CONFIRMED") {
       const normalizedConfirmed = normalizeFieldValue(fieldKey, effectiveStr);
       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
-      const isGroundedSource = isGroundedEvidence(evidence, activeTenderFileIds);
+      const isGroundedSource = isGroundedEvidence(evidence, activeTenderFileIds, activeFiles);
       const confirmedMatchesGroundedSource =
         validation.valid &&
         isGroundedSource &&
@@ -543,6 +592,45 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       overrideReason: override?.reason ?? null,
       overrideTimestamp: override?.createdAt ?? null,
     });
+  }
+
+  // PORTAL one-of-two endpoint rule (mirrors the BuildPlan validator's portal
+  // branch): a portal-method tender must have at least ONE fully grounded
+  // declared endpoint (submission email or address). Per-field criticality
+  // cannot express a one-of-two constraint, so it is enforced here as a
+  // post-pass — otherwise both endpoint fields read as harmless warnings
+  // while validateCriticalMetadataEvidenceForBuildPlan blocks the build.
+  if (isPortalSubmissionMethod(effectiveSubmissionMethod)) {
+    const emailsField = fields.find((f) => f.fieldKey === "submissionEmails");
+    const addressField = fields.find((f) => f.fieldKey === "submissionAddress");
+    let portalBlockReason: string | null = null;
+    let fieldsToBlock: CanonicalFieldState[] = [];
+    if (!portalHasEmailCandidate && !portalHasAddressCandidate) {
+      portalBlockReason = "Portal submission requires at least one fully grounded endpoint (email or address with source file + page).";
+      fieldsToBlock = [emailsField, addressField].filter((f): f is CanonicalFieldState => !!f);
+    } else if (portalHasEmailCandidate) {
+      // The validator picks the email endpoint and applies the full evidence
+      // check to it — the resolver must agree that it is grounded.
+      if (emailsField && !(emailsField.isGrounded && emailsField.effectiveValue)) {
+        portalBlockReason = "Portal submission's email endpoint is not fully source-grounded (active file + page + contained quote required).";
+        fieldsToBlock = [emailsField];
+      }
+    } else if (addressField && !(addressField.isGrounded && addressField.effectiveValue)) {
+      portalBlockReason = "Portal submission's address endpoint is not fully source-grounded (active file + page + contained quote required).";
+      fieldsToBlock = [addressField];
+    }
+    if (portalBlockReason && fieldsToBlock.length > 0) {
+      for (const f of fieldsToBlock) {
+        if (f.blockerReason === null) blockedCount++;
+        f.blockerReason = f.blockerReason ?? portalBlockReason;
+        f.generationEligible = false;
+        f.exportEligible = false;
+        f.zipEligible = false;
+      }
+      hasGenerationBlocker = true;
+      hasExportBlocker = true;
+      hasZipBlocker = true;
+    }
   }
 
   return {

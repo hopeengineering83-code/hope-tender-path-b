@@ -82,6 +82,9 @@ export async function reconcileTender(
     overrides: tender.metadataOverrides as any,
     hasExtractedRequirements: tender.requirements.length > 0,
     activeTenderFileIds: activeFileIds,
+    // Full active-file rows enable the STRONGEST shared grounding check
+    // (quote containment + page <= totalPages) — same rule as the gates.
+    activeFiles: tender.files.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages })),
   });
 
   for (const field of canonicalState.fields) {

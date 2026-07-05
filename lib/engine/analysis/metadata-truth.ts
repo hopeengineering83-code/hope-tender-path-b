@@ -13,7 +13,7 @@ import {
   isCriticalField,
   fieldDisplayLabel,
 } from "../tender-policy-registry";
-import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck } from "../evidence-grounding";
+import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck, isGroundedEvidenceInActiveFiles, type GroundingActiveFile } from "../evidence-grounding";
 // MetadataFactStatus is now the canonical shared type. Both this panel and the
 // Client & Submission Details panel use CanonicalFieldStatus, which is re-exported
 // here under the legacy name for backward compatibility. No per-panel status
@@ -246,8 +246,15 @@ function isConfirmedStatus(status: MetadataFactStatus): boolean {
 function hasGroundingEvidence(
   ev: FieldEvidence | undefined,
   activeTenderFileIds?: Set<string>,
+  activeFiles?: ReadonlyArray<GroundingActiveFile>,
 ): boolean {
   if (!ev) return false;
+  // When ACTIVE file rows (with extracted text / totalPages) are available,
+  // apply the STRONGEST shared check — quote containment + page bound — the
+  // same evidence rules the BuildPlan validator and release gates enforce.
+  if (activeFiles && activeFiles.length > 0) {
+    return isGroundedEvidenceInActiveFiles(ev.page, ev.quote, ev.fileId, activeFiles);
+  }
   if (activeTenderFileIds) {
     return isGroundedEvidenceWithFileCheck(ev.page, ev.quote, ev.fileId, activeTenderFileIds);
   }
@@ -330,7 +337,9 @@ export async function resolveMetadataTruth(
       submissionEmailSourceQuote: true,
       submissionEmailSourceFileId: true,
       contactDetailsSourceJson: true,
-      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } },
+      // extractedText + totalPages let the panel apply the FULL grounding
+      // rule (quote containment + page bounds) — same as the gates.
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, totalPages: true } },
       metadataOverrides: {
         select: {
           field: true,
@@ -399,6 +408,13 @@ export async function resolveMetadataTruth(
 
   // Active tender file IDs — when present, grounding requires fileId ∈ this set.
   const activeTenderFileIds = new Set((tender.files ?? []).map((f) => f.id));
+  // Full active-file rows — enable quote-containment + page-bound grounding
+  // (the same rules the BuildPlan validator and release gates apply).
+  const activeFileRows: GroundingActiveFile[] = (tender.files ?? []).map((f) => ({
+    id: f.id,
+    extractedText: (f as any).extractedText ?? null,
+    totalPages: (f as any).totalPages ?? null,
+  }));
 
   const policyCtx = { submissionMethod: tender.submissionMethod ?? null };
 
@@ -444,7 +460,7 @@ export async function resolveMetadataTruth(
     // are eligible, and only when real tender-source evidence exists. Manual
     // overrides/confirmations are valid-but-ungrounded and never upgraded.
     const fieldIsGrounded =
-      status === "EXTRACTED_UNVERIFIED" && hasGroundingEvidence(evidenceByField[key], activeTenderFileIds);
+      status === "EXTRACTED_UNVERIFIED" && hasGroundingEvidence(evidenceByField[key], activeTenderFileIds, activeFileRows);
     if (fieldIsGrounded) status = "EXTRACTED_AND_GROUNDED";
 
     if (hasAnyValue(status)) detected++;

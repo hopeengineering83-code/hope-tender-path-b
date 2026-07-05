@@ -38,6 +38,12 @@ function makeBaseTender(overrides: Partial<CanonicalResolverInput["tender"]> = {
     referenceSourcePage: 1,
     referenceSourceQuote: "The reference number is REF-001",
     referenceSourceFileId: "file1",
+    // submissionEmails is critical on an email-method tender (the BuildPlan
+    // validator hard-requires a grounded email endpoint), so the baseline
+    // fixture must ground it for blocker-isolation tests to work.
+    submissionEmailSourcePage: 2,
+    submissionEmailSourceQuote: "Submit by email to test@example.com",
+    submissionEmailSourceFileId: "file1",
     contactDetailsSourceJson: null,
     ...overrides,
   };

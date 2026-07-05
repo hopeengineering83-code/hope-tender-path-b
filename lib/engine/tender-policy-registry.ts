@@ -148,6 +148,10 @@ export type TenderPolicyContext = {
  *
  *   submissionAddress     — critical when the method is physical / sealed
  *                           envelope (the bidder cannot deliver without it).
+ *   submissionEmails      — critical when the method is email-based (the
+ *                           BuildPlan validator hard-requires a grounded
+ *                           email endpoint for email submission; the panel
+ *                           must block on the same rule).
  *   submissionEmailSubject — critical when the method is email-based AND the
  *                           tender specifies a required subject line.
  */
@@ -157,6 +161,9 @@ export function isConditionallyCriticalField(
 ): boolean {
   if (field === "submissionAddress") {
     return isPhysicalSubmissionMethod(ctx.submissionMethod);
+  }
+  if (field === "submissionEmails") {
+    return isEmailSubmissionMethod(ctx.submissionMethod);
   }
   if (field === "submissionEmailSubject") {
     // Email subject is critical ONLY when the tender explicitly requires it.
