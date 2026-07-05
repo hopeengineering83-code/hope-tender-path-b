@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "./auth";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
-import { assessExtractionQuality } from "./extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
 import { inferTenderMetadata } from "./engine/tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
@@ -44,7 +44,14 @@ function deriveFileExtractionMetrics(extractedText: string): {
   // so ocrPages was always null from this path. Now matches the actual marker.
   const ocrPageMarkers = (extractedText.match(/\[PDF text extracted via Claude vision OCR[^\]]*\]/gi) ?? []).length;
   const failedPageMarkers = (extractedText.match(/\[Extraction failed for[^\]]*\]/gi) ?? []).length;
-  const totalPages = pageMarkers > 0 ? pageMarkers : null;
+  // Use assessExtractionQualityPerPage to derive totalPages — mirrors the
+  // secure-upload-handler path. For PDFs with [Page N] markers, returns the
+  // marker count. For DOCX/XLSX/PPTX/CSV (no markers), falls back to
+  // DOCUMENT_LEVEL mode and returns 1 (was null — blocked all non-PDF tenders
+  // from generation via hasUnknownPageCount). For empty/failed extraction,
+  // returns 0 → totalPages stays null (correctly blocks).
+  const perPageReport = assessExtractionQualityPerPage(extractedText);
+  const totalPages = perPageReport.totalDetectedPages > 0 ? perPageReport.totalDetectedPages : null;
   const ocrPages = ocrPageMarkers > 0 ? ocrPageMarkers : null;
   const failedPages = failedPageMarkers > 0 ? failedPageMarkers : null;
   const extractedPages = totalPages === null ? null : Math.max(0, totalPages - (failedPages ?? 0));

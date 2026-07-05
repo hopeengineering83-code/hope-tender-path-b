@@ -4,6 +4,15 @@ import JSZip from "jszip";
 export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_TOTAL_BYTES = 30 * 1024 * 1024;
+// NOTE: This 2M constant is the outer limiter for limitExtractedText(). The
+// inner limiter in lib/extract-text.ts (MAX_EXTRACTED_TEXT_CHARS = 500_000)
+// fires FIRST during normalizeExtractedText() — so by the time text reaches
+// limitExtractedText(), it's already <= 500K chars and this 2M check never
+// triggers. The extractionTruncated flag is therefore effectively always
+// false. This is a known limitation — to fix it, normalizeExtractedText
+// would need to return { text, truncated } and propagate the flag through
+// extractPdf → extractTextFromBuffer. For now, the 500K cap in extract-text.ts
+// is the effective limit and is documented there.
 export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const MAX_ARCHIVE_ENTRIES = 2_000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 80 * 1024 * 1024;

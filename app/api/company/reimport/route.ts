@@ -31,6 +31,7 @@ export async function POST() {
   });
 
   let reextracted = 0;
+  const failedFiles: Array<{ name: string; error: string }> = [];
   for (const doc of docs) {
     if (!doc.fileContent && !doc.storagePath) continue;
     try {
@@ -64,7 +65,11 @@ export async function POST() {
       });
       reextracted += 1;
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error(`[reimport] re-extract failed for ${doc.originalFileName}:`, { detail: err });
+      // Collect failed files so the user can see WHICH files failed and WHY
+      // (previously: only logged, not surfaced in the response body).
+      failedFiles.push({ name: doc.originalFileName, error: errorMsg.slice(0, 200) });
     }
   }
 
@@ -82,6 +87,8 @@ export async function POST() {
   return NextResponse.json({
     success: true,
     docsReextracted: reextracted,
+    docsFailed: failedFiles.length,
+    failedFiles, // Array<{ name, error }> — surfaces which files failed and why
     docsProcessed: primary.docsProcessed,
     expertsCreated: primary.expertsCreated + safety.expertsCreated,
     projectsCreated: primary.projectsCreated + safety.projectsCreated,

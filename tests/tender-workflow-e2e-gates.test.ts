@@ -206,7 +206,8 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       const { resolve } = await import("node:path");
       const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/export/route.ts"), "utf8");
 
-      assert.ok(src.includes("isExtractionAcceptableForExport(tender.files)"), "Export route must check extraction quality");
+      assert.ok(src.includes("isExtractionAcceptableForExport(effectiveExtractionFiles)"), "Export route must check extraction quality (re-assessed from extractedText)");
+      assert.ok(src.includes("assessExtractionQuality"), "Export route must re-assess extraction quality from extractedText (not just stored metrics)");
       assert.ok(src.includes("code: \"EXTRACTION_QUALITY_INSUFFICIENT\""), "Export route must use correct error code for poor extraction");
     });
   });

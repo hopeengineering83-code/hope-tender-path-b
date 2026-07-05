@@ -8,6 +8,7 @@ import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/d
 import { logAction } from "../../../../../lib/audit";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
+import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
 import { reportError, logger } from "../../../../../lib/observability";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
@@ -33,6 +34,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         generatedDocuments: true,
         files: {
           select: {
+            id: true,
+            originalFileName: true,
+            extractedText: true,
             extractionScore: true,
             totalPages: true,
             extractedPages: true,
@@ -54,7 +58,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     // Block export when page extraction is too poor to trust the submitted documents.
     // CLAUDE.md Export/ZIP gate: poor extraction, unknown page count, or failed pages.
-    if (!isExtractionAcceptableForExport(tender.files)) {
+    // Re-assess extraction quality from extractedText — stored extractionScore may be
+    // stale if the file was re-uploaded/overwritten with garbage after the original score.
+    // Mirrors the generate route's re-assessment pattern (generate/route.ts:400-404).
+    const effectiveExtractionFiles = tender.files.map((file) => {
+      const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+    });
+    if (!isExtractionAcceptableForExport(effectiveExtractionFiles)) {
       return NextResponse.json(
         {
           error: "Export blocked: tender document extraction quality is insufficient. Re-upload a clearer document or run OCR before exporting.",
