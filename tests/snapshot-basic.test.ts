@@ -49,6 +49,8 @@ test("snapshot type has required fields", () => {
       validFields: 0,
       groundedFields: 0,
       blockedFields: 0,
+      gateValid: false,
+      gateBlocker: null,
     },
     requirements: {
       total: 0,

@@ -40,6 +40,8 @@ const mockSnapshot = (overrides: Partial<TenderReleaseSnapshot> = {}): TenderRel
     validFields: 0,
     groundedFields: 0,
     blockedFields: 1,
+    gateValid: false,
+    gateBlocker: null,
   },
   requirements: { total: 0, mandatory: 0, groundedMandatory: 0, allMandatoryGrounded: false, blocker: null },
   evidence: { total: 0, covered: 0, coveragePercent: 0 },
@@ -100,6 +102,8 @@ test("Snapshot: ungrounded manual deadline has BLOCKED status and blockerReason 
       validFields: 1,
       groundedFields: 0,
       blockedFields: 1,
+      gateValid: false,
+      gateBlocker: null,
     },
     generationBlockers: ["Deadline is required"],
   });
@@ -151,6 +155,8 @@ test("Snapshot: missing critical deadline with hasGenerationBlocker never allows
       validFields: 0,
       groundedFields: 0,
       blockedFields: 1,
+      gateValid: false,
+      gateBlocker: null,
     },
   });
 
@@ -201,6 +207,8 @@ test("Snapshot: ungrounded manual deadline shows identical state across snapshot
       validFields: 1,
       groundedFields: 0,
       blockedFields: 1,
+      gateValid: false,
+      gateBlocker: null,
     },
   });
 
@@ -253,6 +261,8 @@ test("Snapshot: both panels receive identical metadata.hasGenerationBlocker flag
       validFields: 0,
       groundedFields: 0,
       blockedFields: 1,
+      gateValid: false,
+      gateBlocker: null,
     },
   });
 

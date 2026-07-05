@@ -1599,3 +1599,80 @@ Stage Summary:
 - 6 test files updated to reflect the new behavior.
 - 5354/5354 non-DB tests pass (0 code failures).
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: deep-gap-closure-round-7
+Agent: main (Super Z / GLM)
+Task: Go deep and fix remaining gaps without merging — audit round 7 covering metadata second-layer check, metadata-truth.ts orphan, and unused exports.
+
+Work Log:
+- Launched 3 parallel deep-audit subagents covering: (1) metadata second-layer
+  check fix plan, (2) metadata-truth.ts panel consistency, (3) unused exports
+  safe-deletion verification.
+- Audits surfaced 3 actionable items. All 3 applied.
+
+GAPS FIXED:
+
+1. Metadata second-layer check (LAST snapshot/gate divergence — CLOSED):
+   The snapshot's metadata.hasGenerationBlocker came directly from
+   resolveCanonicalFieldState (resolver-only). The gate ADDITIONALLY called
+   validateCriticalMetadataEvidenceForBuildPlan (quote containment + page <=
+   totalPages + effective-value aware). This was the LAST remaining
+   snapshot/gate divergence (documented as the sole remaining sentinel).
+   FIX (Option C — additive, non-breaking, mirrors round-4 buildPlan pattern):
+   - Added SnapshotMetadataState type = CanonicalFieldStateResult & {
+     gateValid: boolean; gateBlocker: string | null }.
+   - Added 3 missing submissionEmailSubjectSource{Page,Quote,FileId} columns
+     to the snapshot's Prisma select (were missing — the validator reads them
+     via the dedicated-column path).
+   - Added gateValid computation: short-circuits when resolver flags a blocker
+     (defense in depth, same as gate), then calls the SAME pure helper the gate
+     uses (validateCriticalMetadataEvidenceForBuildPlan) with the snapshot's
+     already-loaded tender + activeFiles + metadataOverrides. Zero new DB
+     queries (validator is pure). Fail-closed on errors.
+   - Existing hasGenerationBlocker retained for backward-compatible UI display.
+   - Updated tests/snapshot-gate-agreement.test.ts: flipped the LAST divergence
+     sentinel from "DIVERGENCE (remaining)" to "RESOLVED".
+   ALL 3 snapshot/gate divergences are now CLOSED (buildPlan, requirements
+   grounding, metadata second-layer).
+
+2. Dead-code deletion — winning-proposal-benchmark.ts (54 LOC):
+   Audit confirmed zero references anywhere (no imports, no dynamic imports,
+   no file path strings, no string literals). Safe to delete. Deleted entire
+   file.
+
+3. Dead-code deletion — proposal-benchmark-guard.ts 2 wrapper functions (8 LOC):
+   appendBenchmarkQualityReview and enforceBenchmarkProposalMarkdown were
+   never called internally and never imported externally (they just wrapped
+   finalizeClientReadyProposalMarkdown). Safe to delete. Deleted both.
+
+NOT applied (audit findings that were deferred):
+- metadata-truth.ts deletion: the audit found it's orphaned (zero runtime
+  callers — the panel reads the canonical snapshot). But 4 test files
+  reference it via readFileSync source-inspection. Deletion would require
+  coordinated test updates. Deferred to a separate cleanup PR to keep this
+  commit focused on the divergence fix.
+- analysis/authority-truth.ts + plan-truth.ts deletion: exports are unused
+  but file paths are referenced via readFileSync in
+  tests/confirmed-build-plan-fail-closed.test.ts. Deferred (same reason).
+- proposal-sections.ts 5 prompt constants: used internally by
+  buildProposalSectionSpecs — cannot delete, only un-export. Low value
+  (0 LOC savings). Deferred.
+
+Verification:
+- npx tsc --noEmit: PASS
+- npm run lint: PASS
+- 5392 non-DB tests PASS (515 most-affected + 4877 regression)
+- 9 DB-integration tests NOT run (PostgreSQL unavailable — /tmp cleaned).
+  Code changes validated by tsc + lint + 5392 non-DB tests.
+
+Stage Summary:
+- 1 genuine gap closed (metadata second-layer check — the LAST snapshot/gate
+  divergence).
+- 62 LOC of dead code removed (winning-proposal-benchmark.ts + 2 wrapper funcs).
+- ALL 3 snapshot/gate divergences are now CLOSED. The snapshot's
+  metadata.gateValid, buildPlan.gateValid, and requirements.allMandatoryGrounded
+  all use the SAME helpers the gate uses, so the snapshot and gate can never
+  disagree by construction.
+- 5392/5392 non-DB tests pass (0 code failures).
+- NOT merged, NOT deployed — awaiting explicit user authorization.

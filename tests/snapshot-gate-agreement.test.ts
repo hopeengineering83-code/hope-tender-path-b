@@ -147,22 +147,36 @@ describe("Snapshot ↔ Gate buildPlan + metadata alignment (Tier A)", () => {
     );
   });
 
-  it("DIVERGENCE (remaining): snapshot metadata blocker uses resolver only; gate adds validateCriticalMetadataEvidenceForBuildPlan", () => {
-    // The snapshot's metadata.hasGenerationBlocker comes directly from
-    // resolveCanonicalFieldState. The gate additionally calls
-    // validateCriticalMetadataEvidenceForBuildPlan which enforces quote
-    // containment + page <= totalPages.
-    // This divergence is the LAST remaining one — fixing it requires the
-    // snapshot to call validateCriticalMetadataEvidenceForBuildPlan, which
-    // is a larger refactor that could change UI behavior.
+  it("RESOLVED: snapshot exposes metadata.gateValid via validateCriticalMetadataEvidenceForBuildPlan (metadata divergence closed)", () => {
+    // The snapshot's metadata now exposes gateValid + gateBlocker — a gate-aligned
+    // strict check computed via the SAME pure helper the gate uses
+    // (validateCriticalMetadataEvidenceForBuildPlan). The existing
+    // hasGenerationBlocker (resolver-only) is retained for backward-compatible
+    // UI display. This closes the LAST snapshot/gate divergence.
+    assert.ok(
+      snapshotSrc.includes("metadataGateValid") || snapshotSrc.includes("gateValid: metadataGateValid"),
+      "snapshot must compute metadataGateValid (gate-aligned strict check)",
+    );
+    assert.ok(
+      snapshotSrc.includes("metadataGateBlocker") || snapshotSrc.includes("gateBlocker: metadataGateBlocker"),
+      "snapshot must expose metadataGateBlocker",
+    );
+    assert.ok(
+      snapshotSrc.includes("validateCriticalMetadataEvidenceForBuildPlan"),
+      "snapshot must call validateCriticalMetadataEvidenceForBuildPlan (same helper as the gate)",
+    );
+    // Additive: existing resolver-based blocker retained for backward compatibility
     assert.ok(
       snapshotSrc.includes("metadata.hasGenerationBlocker"),
-      "snapshot uses resolver's hasGenerationBlocker directly",
+      "snapshot retains metadata.hasGenerationBlocker for backward-compatible UI display",
     );
-    assert.ok(
-      gateSrc.includes("validateCriticalMetadataEvidenceForBuildPlan"),
-      "gate adds validateCriticalMetadataEvidenceForBuildPlan (stricter second-layer check)",
-    );
+    // The 3 email-subject source columns must now be SELECTed (were missing before)
+    for (const col of ["submissionEmailSubjectSourcePage", "submissionEmailSubjectSourceQuote", "submissionEmailSubjectSourceFileId"]) {
+      assert.ok(
+        snapshotSrc.includes(`${col}: true`),
+        `snapshot SELECT must include ${col}: true (required by the validator)`,
+      );
+    }
   });
 });
 

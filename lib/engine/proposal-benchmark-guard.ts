@@ -363,12 +363,3 @@ export function finalizeClientReadyProposalMarkdown(markdown: string, input: Ben
   const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
   return { markdown: clientReady, score, firstScore, internalSummary };
 }
-
-export function appendBenchmarkQualityReview(markdown: string, input: BenchmarkGuardInput): { markdown: string; score: BenchmarkScore } {
-  const finalized = finalizeClientReadyProposalMarkdown(markdown, input);
-  return { markdown: finalized.markdown, score: finalized.score };
-}
-
-export function enforceBenchmarkProposalMarkdown(markdown: string, input: BenchmarkGuardInput): string {
-  return finalizeClientReadyProposalMarkdown(markdown, input).markdown;
-}

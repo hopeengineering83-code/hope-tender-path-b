@@ -135,6 +135,27 @@ export type SnapshotVaultState = {
   blocker: string | null;
 };
 
+/**
+ * Metadata state with gate-aligned strict validity. Extends the canonical
+ * resolver's result with a second-layer strict check (validateCriticalMetadataEvidenceForBuildPlan)
+ * that mirrors generation-readiness-gate.ts. The existing hasGenerationBlocker
+ * (resolver-only) is retained for backward-compatible UI display; gateValid +
+ * gateBlocker expose the gate-aligned view so consumers that need gate-parity
+ * can read them instead.
+ */
+export type SnapshotMetadataState = CanonicalFieldStateResult & {
+  /**
+   * Gate-aligned strict validity. Mirrors generation-readiness-gate.ts:
+   * resolver's hasGenerationBlocker is false AND
+   * validateCriticalMetadataEvidenceForBuildPlan returns ok (quote containment
+   * + page <= totalPages + override/effective-value aware). Computed via the
+   * SAME pure helper the gate uses so it can never disagree with the gate.
+   */
+  gateValid: boolean;
+  /** First strict-check failure reason, or null when gateValid=true. */
+  gateBlocker: string | null;
+};
+
 export type TenderReleaseSnapshot = {
   // ─── Identity ────────────────────────────────────────────────────────────
   tenderId: string;
@@ -149,7 +170,7 @@ export type TenderReleaseSnapshot = {
   extraction: SnapshotExtractionState;
   analysis: SnapshotAnalysisState;
   /** Authoritative metadata field states — consumed by ALL panels. */
-  metadata: CanonicalFieldStateResult;
+  metadata: SnapshotMetadataState;
   requirements: SnapshotRequirementsState;
   evidence: SnapshotEvidenceState;
   buildPlan: SnapshotBuildPlanState;
@@ -224,6 +245,13 @@ export async function getTenderReleaseSnapshot(
       referenceSourcePage: true,
       referenceSourceQuote: true,
       referenceSourceFileId: true,
+      // Email-subject source evidence — read by validateCriticalMetadataEvidenceForBuildPlan
+      // via the dedicated-column path (mirrors the gate, which include's all Tender columns).
+      // Without these, the snapshot's metadata.gateValid could disagree with the gate when
+      // the subject evidence is in these columns rather than contactDetailsSourceJson.
+      submissionEmailSubjectSourcePage: true,
+      submissionEmailSubjectSourceQuote: true,
+      submissionEmailSubjectSourceFileId: true,
       contactDetailsSourceJson: true,
       // Extended panel fields
       legalClientName: true,
@@ -376,7 +404,7 @@ export async function getTenderReleaseSnapshot(
   };
 
   // Metadata field states — canonical, single truth for all panels.
-  const metadata = resolveCanonicalFieldState({
+  const metadataResult = resolveCanonicalFieldState({
     tender: {
       id: tender.id,
       title: tender.title,
@@ -448,6 +476,44 @@ export async function getTenderReleaseSnapshot(
     // snapshot's metadata states match generation/export exactly.
     activeTenderFileIds: new Set(activeFiles.map((f) => f.id)),
   });
+
+  // GATE-ALIGNED STRICT METADATA CHECK — mirrors generation-readiness-gate.ts:716-732.
+  // Uses the SAME pure helper the gate uses (validateCriticalMetadataEvidenceForBuildPlan)
+  // so the snapshot's metadata.gateValid can never disagree with the gate's criticalMetadataOk.
+  // Short-circuits when the resolver already flags a blocker (defense in depth — same as the gate).
+  // Zero new DB queries: the validator is pure and the snapshot already loaded all needed data.
+  let metadataGateValid = !metadataResult.hasGenerationBlocker;
+  let metadataGateBlocker: string | null = metadataResult.hasGenerationBlocker
+    ? "One or more critical metadata fields are invalid or ungrounded."
+    : null;
+  if (metadataGateValid) {
+    try {
+      const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
+      const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(
+        tender as any,
+        activeFiles,
+        ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
+          field: o.field,
+          fieldState: o.fieldState,
+          overrideValue: o.overrideValue,
+        })),
+      );
+      if (!metaValidation.ok) {
+        metadataGateValid = false;
+        metadataGateBlocker = metaValidation.blockers[0]
+          ?? "Critical metadata evidence is missing or invalid.";
+      }
+    } catch {
+      // Fail closed — never let a thrown error read as gateValid=true.
+      metadataGateValid = false;
+      metadataGateBlocker = "Metadata gate check failed (internal error).";
+    }
+  }
+  const metadata: SnapshotMetadataState = {
+    ...metadataResult,
+    gateValid: metadataGateValid,
+    gateBlocker: metadataGateBlocker,
+  };
 
   // Requirements grounding — mirrors generation-readiness-gate.ts (page <= totalPages
   // + normalized quote containment in the source file's extractedText). Keeps the
