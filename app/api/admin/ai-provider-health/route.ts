@@ -15,6 +15,7 @@ import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { getAllProviderHealth, resetProviderHealth, type AiProviderName } from "../../../../lib/ai-provider-health";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,13 @@ export async function POST(req: Request) {
     let actor;
     try { actor = await requireRole("ADMIN"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+    const rl = await rateLimitPersistent(`provider-health-reset:${actor.id}`, MUTATION_RATE_LIMIT);
+    if (!rl.allowed) {
+      const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+      return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+    }
+
     const body = await req.json().catch(() => ({}));
     if (body.reset === true) {
       const provider = typeof body.provider === "string" ? (body.provider as AiProviderName) : undefined;

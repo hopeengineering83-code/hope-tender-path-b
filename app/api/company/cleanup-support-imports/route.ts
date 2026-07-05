@@ -3,6 +3,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 
 const SUPPORT_ONLY_CATEGORIES = new Set([
   "COMPANY_PROFILE",
@@ -21,6 +22,12 @@ function isSupportOnly(category: string) {
 export async function POST() {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = await rateLimitPersistent(`cleanup-support:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   await prismaReady;
   const company = await ensureCompanyForUser(prisma, userId);

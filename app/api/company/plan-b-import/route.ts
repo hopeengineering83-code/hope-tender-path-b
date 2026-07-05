@@ -5,6 +5,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
 import { sanitizeError } from "../../../../lib/sanitize-error";
 import { safeParse } from "../../../../lib/safe-json";
@@ -366,6 +367,12 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
 export async function POST(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = await rateLimitPersistent(`plan-b-import:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   await prismaReady;
   const company = await ensureCompanyForUser(prisma, userId);
