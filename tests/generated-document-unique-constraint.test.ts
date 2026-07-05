@@ -31,7 +31,8 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
       data: {
         id: testUserId,
         email: `test-${Date.now()}@test.local`,
-        passwordHash: "test-hash",
+        name: "Test User",
+        passwordHash: "$2a$10$test",
         role: "ADMIN",
       },
     });
