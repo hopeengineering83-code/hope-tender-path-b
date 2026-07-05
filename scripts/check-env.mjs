@@ -131,8 +131,8 @@ const OPERATIONAL_WARNINGS = [
     description: "Vercel-managed Cron secret. Required when Vercel Cron is wired to /api/cron/* endpoints. Set in the Vercel dashboard, not here.",
   },
   {
-    name: "PDF_OCR_MAX_RACES",
-    description: "Optional OCR concurrency/race guard. Recommended production value: 1, which keeps scanned-PDF OCR conservative on Vercel and avoids unnecessary provider/API races.",
+    name: "PDF_OCR_TIMEOUT_MS",
+    description: "OCR call timeout in milliseconds (default 40000). Prevents Vercel FUNCTION_RUNTIME_LIMIT when the Anthropic API is slow. Set to 40000 for Vercel Hobby (60s maxDuration) or 120000 for Pro (300s maxDuration).",
   },
 ];
 

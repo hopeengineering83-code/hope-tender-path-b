@@ -78,7 +78,11 @@ export function isExtractionCorrupted(text: string | null | undefined): Extracti
   const normalized = raw.replace(/\s+/g, " ").trim();
   const length = normalized.length;
   const signals: string[] = [];
-  if (length < 250) return { corrupted: false, signals, symbolRatio: 0, isolatedLetterRatio: 0, commonWordRatio: 0, brokenSpacingRatio: 0 };
+  // Lowered from 250 to 50 — the 20-250 char range was a dead zone where
+  // 100-char garbage extractions scored 90 (just -10 for characterCount < 1000)
+  // and passed all gates. Now the corruption detector runs on any text >= 50
+  // chars, catching garbage that would otherwise reach AI Analyze.
+  if (length < 50) return { corrupted: false, signals, symbolRatio: 0, isolatedLetterRatio: 0, commonWordRatio: 0, brokenSpacingRatio: 0 };
 
   const symbols = countMatches(normalized, /[■□�⬛⬜◆◇●○▲▼▶◀→←↔↕☐☑✓✗×÷≠≤≥≈~`^_={}\[\]<>|\\]/g);
   const symbolRatio = symbols / Math.max(1, length);

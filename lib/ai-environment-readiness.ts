@@ -76,7 +76,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
     status("PDF_OCR_MAX_PAGES", "ocr", "recommended", "Caps OCR pages to avoid serverless timeout/cost overrun."),
-    status("PDF_OCR_MAX_RACES", "ocr", "optional", "Optional OCR race/concurrency guard. Recommended production value: 1 for conservative Vercel OCR behavior."),
+    status("PDF_OCR_TIMEOUT_MS", "ocr", "optional", "OCR call timeout in milliseconds (default 40000). Prevents Vercel FUNCTION_RUNTIME_LIMIT."),
     status("DATABASE_URL", "database", "critical", "Persistent database connection."),
     status("SESSION_SECRET", "auth", "critical", "Required for secure login/session cookies."),
     status("AI_ANALYSIS_TIMEOUT_MS", "runtime", "recommended", "Tender-analysis timeout guard."),
@@ -111,8 +111,10 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
-  if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. Scanned PDFs may extract poorly unless OCR defaults are enabled elsewhere.");
-  if (!present("PDF_OCR_MAX_RACES")) warnings.push("PDF_OCR_MAX_RACES is not set. Recommended value: 1 to keep OCR provider races/concurrency conservative on Vercel.");
+  if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. OCR runs by default when ANTHROPIC_API_KEY is present. Set PDF_OCR_ENABLED=false to disable, or PDF_OCR_ENABLED=true to make it explicit.");
+  // PDF_OCR_MAX_RACES removed — it was a phantom env var that was never read
+  // by any code. The "race/concurrency guard" described in its docstring did
+  // not exist. Removed to stop giving operators a false sense of safety.
   if (!present("ANTHROPIC_TIER") && present("ANTHROPIC_API_KEY")) warnings.push("ANTHROPIC_TIER is not set. Claude output-token defaults may not match your Tier 2 account.");
 
   return {

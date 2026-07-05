@@ -248,7 +248,7 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return "";
 
-  let Anthropic: { new (config: { apiKey: string }): unknown };
+  let Anthropic: { new (config: { apiKey: string; timeout?: number }): unknown };
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
@@ -275,14 +275,29 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
   const rawModel = process.env.PDF_OCR_MODEL || "claude-3-5-sonnet-latest";
   const modelName = rawModel.trim().toLowerCase().replace(/[._\s]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
 
-  const client = new (Anthropic as new (config: { apiKey: string }) => {
-    messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
-  })({ apiKey });
+  // OCR timeout — prevents Vercel FUNCTION_RUNTIME_LIMIT (504) when the
+  // Anthropic API hangs or is slow. Default 40s leaves ~20s headroom under
+  // the upload route's 60s maxDuration for the 3 text-layer extractors +
+  // storage + DB writes. Configurable via PDF_OCR_TIMEOUT_MS.
+  const ocrTimeoutMs = (() => {
+    const raw = Number(process.env.PDF_OCR_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw > 5000 && raw <= 120000 ? raw : 40_000;
+  })();
+
+  const client = new (Anthropic as new (config: { apiKey: string; timeout?: number }) => {
+    messages: { create: (input: unknown, options?: { signal?: AbortSignal }) => Promise<{ content: Array<{ type: string; text?: string }>; stop_reason?: string }> };
+  })({ apiKey, timeout: ocrTimeoutMs });
+
+  // AbortController for hard timeout — the SDK's timeout option is a
+  // connection-level timeout; the AbortController ensures the request is
+  // aborted even if the connection is established but the response is slow.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ocrTimeoutMs);
 
   try {
     const response = await client.messages.create({
       model: modelName,
-      max_tokens: 8000,
+      max_tokens: 16_000, // raised from 8K — a 50-page PDF holds ~25-50K chars (~8-15K tokens)
       system: "You are a precise OCR engine. Extract ALL visible text from the attached PDF document, preserving paragraph structure and table contents where possible. Output ONLY the extracted text — no commentary, no markdown fences, no preamble. If a section is unreadable, write [unreadable] inline. Preserve page breaks with the marker [Page N] at the start of each page's text.",
       messages: [
         {
@@ -303,27 +318,94 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
           ],
         },
       ],
-    });
+    }, { signal: controller.signal });
     const text = response.content
       .filter((c) => c.type === "text")
       .map((c) => c.text ?? "")
       .join("\n")
       .trim();
+    // Detect truncation — if stop_reason is "max_tokens", the output was
+    // cut mid-document. Log a warning so operators know the OCR was partial.
+    if (response.stop_reason === "max_tokens") {
+      logger.warn(`[extract-text] Claude vision OCR truncated at max_tokens (16K) — PDF may have more content. Consider splitting large PDFs or raising the limit. Model: ${modelName}, pages: ${pageCount}.`);
+    }
     return text;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // Distinguish OCR error classes so the user gets actionable advice
+    // instead of the generic "upload a higher-resolution scan" message.
+    if (err instanceof Error && (err.name === "AbortError" || /abort/i.test(msg))) {
+      logger.warn(`[extract-text] Claude vision OCR timed out after ${ocrTimeoutMs}ms (model: ${modelName}, pages: ${pageCount}).`);
+      return "[OCR_TIMEOUT — the OCR call exceeded the time budget. Try uploading a smaller PDF or split into pages.]";
+    }
+    if (/401|403|invalid api key|authentication/i.test(msg)) {
+      logger.warn(`[extract-text] Claude vision OCR auth failed (model: ${modelName}):`, { detail: msg });
+      return "[OCR_AUTH_FAILED — ANTHROPIC_API_KEY is invalid or expired. Contact admin.]";
+    }
+    if (/429|rate.?limit|overloaded/i.test(msg)) {
+      logger.warn(`[extract-text] Claude vision OCR rate-limited (model: ${modelName}):`, { detail: msg });
+      return "[OCR_RATE_LIMITED — Anthropic rate limit hit. Retry in a few minutes.]";
+    }
     logger.warn(`[extract-text] Claude vision OCR failed (${modelName}):`, { detail: msg });
     return "";
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
-  const results: Array<{ source: string; text: string; pages: number }> = [];
-  try { const r = await extractPdfWithPdfParse(buffer); results.push({ source: "pdf-parse", ...r }); } catch (error) { logger.warn("[extract-text] pdf-parse failed:", { detail: error }); }
-  try { const r = await extractPdfWithPdf2Json(buffer); results.push({ source: "pdf2json", ...r }); } catch (error) { logger.warn("[extract-text] pdf2json failed:", { detail: error }); }
-  try { const r = await extractPdfWithPdfJs(buffer); results.push({ source: "pdfjs", ...r }); } catch (error) { logger.warn("[extract-text] pdfjs failed:", { detail: error }); }
+  // Race the 3 text-layer extractors with a per-extractor timeout.
+  // Previously these ran sequentially (15-30s for a 50-page PDF), exhausting
+  // the 60s Vercel budget before OCR could even start. Now each gets 10s;
+  // the first non-corrupted result with > 1000 chars wins. If all fail or
+  // return garbage, we fall through to the OCR path.
+  const extractorTimeout = 10_000; // 10s per extractor
+  const extractors = [
+    { source: "pdf-parse", fn: () => extractPdfWithPdfParse(buffer) },
+    { source: "pdf2json", fn: () => extractPdfWithPdf2Json(buffer) },
+    { source: "pdfjs", fn: () => extractPdfWithPdfJs(buffer) },
+  ];
 
-  const best = results.sort((a, b) => b.text.length - a.text.length)[0];
+  const results: Array<{ source: string; text: string; pages: number }> = [];
+  await Promise.allSettled(
+    extractors.map(async (ext) => {
+      try {
+        const result = await Promise.race([
+          ext.fn(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`${ext.source} timed out after ${extractorTimeout}ms`)), extractorTimeout),
+          ),
+        ]);
+        results.push({ source: ext.source, ...result });
+      } catch (error) {
+        logger.warn(`[extract-text] ${ext.source} failed:`, { detail: error instanceof Error ? error.message : String(error) });
+      }
+    }),
+  );
+
+  // Pick the best extractor by quality score, not text length.
+  // Previously: `results.sort((a, b) => b.text.length - a.text.length)[0]`
+  // — this picked 100K chars of garbage over 80K chars of clean text.
+  // Now: score each result with scorePageTextQuality and pick the highest
+  // non-corrupted score, breaking ties by length.
+  const { scorePageTextQuality } = await import("./engine/extraction-quality-gate");
+  let best: { source: string; text: string; pages: number } | undefined;
+  let bestScore = -1;
+  for (const r of results) {
+    if (!r.text || r.text.length < 20) continue;
+    const quality = scorePageTextQuality(r.text);
+    // Prefer non-corrupted results; among corrupted, prefer longer (for OCR trigger)
+    const score = quality.isCorrupted ? -100 + r.text.length : quality.score + r.text.length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = r;
+    }
+  }
+  // If no non-corrupted result, fall back to longest (for OCR trigger detection)
+  if (!best && results.length > 0) {
+    best = results.sort((a, b) => b.text.length - a.text.length)[0];
+  }
+
   const pages = best?.pages || results.find((r) => r.pages > 0)?.pages || "unknown";
 
   // 4th-engine fallback: Claude vision OCR for scanned PDFs.
@@ -359,11 +441,20 @@ async function extractPdf(buffer: Buffer): Promise<string> {
       logger.info(`[extract-text] PDF text layer detected as corrupted (${best!.text.length} chars, garbage content) — running Claude vision OCR fallback. ocrReason=${ocrReason}`);
     }
     const ocrText = await extractPdfWithClaudeVision(buffer, pages);
-    if (ocrText && ocrText.length >= 20) {
+    // OCR can return error-class markers ([OCR_TIMEOUT...], [OCR_AUTH_FAILED...],
+    // [OCR_RATE_LIMITED...]). Treat these as "OCR failed" — don't store them
+    // as extracted text. The user sees the scanned-PDF placeholder instead.
+    const isOcrErrorMarker = ocrText.startsWith("[OCR_");
+    if (ocrText && !isOcrErrorMarker && ocrText.length >= 20) {
       // Normalize once on the fully assembled string. Calling normalizeExtractedText
       // twice (once on ocrText, once on the prefixed string) would silently truncate
       // ~58 chars of OCR content when the output is near the 500 K char limit.
       return normalizeExtractedText(`[PDF text extracted via Claude vision OCR — ${pages} page(s). ocrReason=${ocrReason}]\n\n${ocrText.trim()}`);
+    }
+    if (isOcrErrorMarker) {
+      // OCR returned an error marker — log it and fall through to the
+      // scanned-PDF placeholder. The marker text is NOT stored as extractedText.
+      logger.warn(`[extract-text] Claude vision OCR returned error marker: ${ocrText.slice(0, 120)}`);
     }
     if (hasCorruptedText) {
       logger.warn("[extract-text] Claude vision OCR returned empty for corrupted text — falling back to corrupted extraction.");

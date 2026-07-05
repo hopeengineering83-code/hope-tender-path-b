@@ -13,6 +13,10 @@ async function companyForUser(userId: string) {
   return prisma.company.findUnique({ where: { userId } });
 }
 
+// maxDuration = 60 — extraction (especially OCR on scanned PDFs) can take
+// 30-40s. Without this, Vercel Hobby defaults to 10s and the route times out.
+export const maxDuration = 60;
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },

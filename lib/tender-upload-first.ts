@@ -39,7 +39,10 @@ function deriveFileExtractionMetrics(extractedText: string): {
 } {
   const quality = assessExtractionQuality(extractedText);
   const pageMarkers = (extractedText.match(/\[Page\s+\d+\]/gi) ?? []).length;
-  const ocrPageMarkers = (extractedText.match(/\[OCR text[^\]]*\]/gi) ?? []).length;
+  // Fixed: the regex was looking for "[OCR text...]" but extract-text.ts emits
+  // "[PDF text extracted via Claude vision OCR...]". The old regex never matched,
+  // so ocrPages was always null from this path. Now matches the actual marker.
+  const ocrPageMarkers = (extractedText.match(/\[PDF text extracted via Claude vision OCR[^\]]*\]/gi) ?? []).length;
   const failedPageMarkers = (extractedText.match(/\[Extraction failed for[^\]]*\]/gi) ?? []).length;
   const totalPages = pageMarkers > 0 ? pageMarkers : null;
   const ocrPages = ocrPageMarkers > 0 ? ocrPageMarkers : null;
@@ -108,7 +111,18 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     const errors: string[] = [];
     const warnings: string[] = [];
 
+    // Per-file deadline — prevents a single slow OCR call from consuming the
+    // entire 60s Vercel budget. 45s leaves ~15s for storage + DB writes +
+    // response. Matches the admin-repair route's deadline pattern.
+    const uploadDeadline = Date.now() + 45_000;
+
     for (const file of files) {
+      // Check deadline before each file — if exceeded, skip remaining files
+      // and return a warning so the user knows not all files were processed.
+      if (Date.now() > uploadDeadline) {
+        warnings.push(`Time budget exceeded — remaining files skipped. Re-upload remaining files separately.`);
+        break;
+      }
       const buffer = Buffer.from(await file.arrayBuffer());
       const validation = await validateUploadFile(file, buffer);
       if (!validation.ok) {

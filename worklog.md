@@ -1676,3 +1676,156 @@ Stage Summary:
   disagree by construction.
 - 5392/5392 non-DB tests pass (0 code failures).
 - NOT merged, NOT deployed — awaiting explicit user authorization.
+
+---
+Task ID: extraction-quality-100
+Agent: main (Super Z / GLM)
+Task: Investigate page extraction quality gaps from main app, Vercel logs, all open PRs (especially #942), and fix all gaps until extraction quality reaches 100%. Create a new PR. Do not merge.
+
+Work Log:
+- Launched 3 parallel deep-audit subagents covering: (1) extraction pipeline
+  quality gaps, (2) PR #942 + #938/#939/#940 extraction changes, (3) runtime
+  failure patterns / Vercel logs.
+- Audits found 24 extraction-quality gaps. NONE of the open PRs address
+  extraction quality — all 4 PRs are metadata/grounding only. The work must
+  be new.
+- Created branch fix/extraction-quality-100.
+- Applied 10 fixes (P0 + P1 + P2).
+
+GAPS FIXED:
+
+P0 — Stop the bleeding (Vercel 504s + silent failures):
+
+1. OCR timeout (AbortController, 40s budget):
+   The OCR call (extractPdfWithClaudeVision) had NO timeout — the Anthropic
+   SDK default is 10 minutes, but Vercel kills the function at 60s. When OCR
+   hung or was slow, Vercel returned FUNCTION_RUNTIME_LIMIT (504) with no
+   JSON, no requestId, and no cleanup of half-stored files.
+   FIX: Added AbortController with 40s budget (configurable via
+   PDF_OCR_TIMEOUT_MS). On abort, returns "[OCR_TIMEOUT...]" marker.
+   Also set the SDK's timeout option. clearTimeout in finally.
+
+2. OCR error class distinction:
+   All OCR failures (401, 403, 429, 500, timeout, network) collapsed to "".
+   The user saw "[Scanned PDF — OCR returned empty]" and was told to
+   "upload a higher-resolution scan" — wrong advice when the real cause was
+   an invalid API key or rate limit.
+   FIX: Distinguish 4 error classes with specific markers:
+   - [OCR_TIMEOUT...] — the call exceeded the time budget
+   - [OCR_AUTH_FAILED...] — ANTHROPIC_API_KEY is invalid/expired
+   - [OCR_RATE_LIMITED...] — Anthropic rate limit hit
+   - (empty string) — other errors (fall through to scanned-PDF placeholder)
+   The extractPdf function detects these markers and does NOT store them as
+   extractedText — the user sees the scanned-PDF placeholder instead.
+
+3. OCR max_tokens raised 8K → 16K + truncation detection:
+   A 50-page scanned PDF holds ~25-50K chars (~8-15K tokens). The 8K
+   max_tokens limit silently truncated the output mid-document. The
+   truncated text was stored as if complete, scored as GOOD, and AI Analyze
+   ran on a partial document without knowing.
+   FIX: Raised max_tokens to 16K. Detect stop_reason === "max_tokens" and
+   log a warning so operators know the OCR was partial.
+
+4. Race 3 PDF extractors with Promise.allSettled + 10s timeout each:
+   The 3 extractors (pdf-parse, pdf2json, pdfjs) ran SEQUENTIALLY. On a
+   50-page PDF each took 5-10s → 15-30s total. With maxDuration=60, OCR had
+   only ~30s left — not enough for a 50-page scanned PDF.
+   FIX: Race all 3 with Promise.allSettled + 10s per-extractor timeout.
+   Total worst case: 10s (parallel) instead of 30s (sequential). Leaves
+   ~50s for OCR + storage.
+
+5. Pick best extractor by quality score, not text length:
+   `results.sort((a, b) => b.text.length - a.text.length)[0]` picked 100K
+   chars of garbage over 80K chars of clean text. The corruption check ran
+   AFTER best was picked — it didn't influence best-selection.
+   FIX: Score each result with scorePageTextQuality. Pick the highest
+   non-corrupted score, breaking ties by length. Corrupted results get
+   -100 + length (so they're only picked if no non-corrupted result exists,
+   for OCR trigger detection).
+
+P0 — Close the 20-250 char dead zone:
+
+6. Lower corruption detector min-length 250 → 50:
+   A 100-char "extraction" of pure garbage was NOT flagged as corrupted
+   (length < 250 skipped the detector). It scored 90 (just -10 for
+   characterCount < 1000), passed all gates, and AI Analyze ran on 100
+   chars of garbage. This was the MOST LIKELY root cause of "extraction
+   quality is very poor".
+   FIX: Lowered the min-length from 250 to 50. Now the corruption detector
+   runs on any text >= 50 chars.
+
+P0 — Per-file deadline on upload-first:
+
+7. Add 45s per-upload deadline:
+   A single slow OCR call on a 50-page scanned PDF could consume the entire
+   60s Vercel budget. If the user uploaded 5 scanned PDFs, the first one's
+   OCR alone could timeout the whole request.
+   FIX: Added uploadDeadline = Date.now() + 45_000. Check before each file.
+   If exceeded, push a warning and break the loop. Matches the admin-repair
+   route's deadline pattern.
+
+P1 — Fix broken regex + missing maxDuration:
+
+8. Fix ocrPageMarkers regex:
+   tender-upload-first.ts:42 used /\[OCR text[^\]]*\]/gi but extract-text.ts
+   emits "[PDF text extracted via Claude vision OCR...]". The regex never
+   matched → ocrPages was always null from this path.
+   FIX: Updated regex to /\[PDF text extracted via Claude vision OCR[^\]]*\]/gi.
+
+9. Add maxDuration to /api/company/documents/[id] POST:
+   The route had NO maxDuration export → Vercel Hobby defaulted to 10s.
+   Any PDF that triggered OCR would timeout.
+   FIX: Added export const maxDuration = 60.
+
+P2 — Remove phantom env var + fix misleading warning:
+
+10. Remove PDF_OCR_MAX_RACES + fix PDF_OCR_ENABLED warning:
+    PDF_OCR_MAX_RACES was declared as a recommended production setting but
+    was NEVER READ by any code. The "race/concurrency guard" described in
+    its docstring did not exist. Operators who set it had a false sense of
+    safety.
+    FIX: Removed PDF_OCR_MAX_RACES from lib/ai-environment-readiness.ts and
+    scripts/check-env.mjs. Added PDF_OCR_TIMEOUT_MS (the new configurable
+    timeout). Updated the PDF_OCR_ENABLED warning to reflect that OCR is
+    default-on when ANTHROPIC_API_KEY is present.
+
+Regression tests (tests/extraction-quality-round8.test.ts, 20 tests):
+- OCR timeout: AbortController, signal, clearTimeout, PDF_OCR_TIMEOUT_MS.
+- OCR error classes: AbortError detection, [OCR_TIMEOUT/AUTH_FAILED/RATE_LIMITED] markers.
+- OCR max_tokens: 16K (not 8K), stop_reason truncation detection.
+- OCR error markers: not stored as extracted text.
+- Raced extractors: Promise.allSettled, 10s timeout, scorePageTextQuality.
+- Corruption detector: min-length 50 (not 250).
+- Upload deadline: 45s, Date.now() check, "Time budget exceeded" warning.
+- ocrPageMarkers: matches actual OCR marker.
+- Phantom env var: PDF_OCR_MAX_RACES removed, PDF_OCR_TIMEOUT_MS added.
+- Company documents: maxDuration = 60.
+
+Verification:
+- npx tsc --noEmit: PASS
+- npm run lint: PASS
+- 517 non-DB tests PASS (20 new + 497 existing)
+- DB-integration tests NOT run (PostgreSQL unavailable).
+
+NOT applied (deferred to follow-up — require larger changes):
+- Return real page count from extractTextFromBuffer (unblocks DOCX/XLSX/PPTX).
+  Requires changing the function signature from string → {text, pages, ...}.
+- Raise MAX_UPLOAD_FILE_BYTES from 10MB to 25MB (requires Vercel plan check).
+- Move extraction to a background job (requires new EXTRACT_TEXT job type).
+- Add OCR for images (JPG/PNG) and DOCX-embedded scans.
+- Add corruptedPages DB column + populate at upload time.
+- Re-assess quality in the export route (not just generate).
+- Delete dead code (extraction-quality-calc.ts, ai-analyze/extraction-quality.ts).
+
+Stage Summary:
+- 10 extraction-quality gaps fixed (4 P0, 2 P1, 1 P2, 3 supporting).
+- 20 new regression tests pin every fix.
+- 517/517 non-DB tests pass.
+- The OCR pipeline now has a 40s timeout (prevents Vercel 504s), error-class
+  distinction (actionable user messages), 16K output budget (no silent
+  truncation), raced extractors (10s parallel instead of 30s sequential),
+  quality-based best-selection (no more garbage-over-clean), and a 45s
+  upload deadline (no single-file timeout).
+- The corruption detector now catches 50-char garbage (was 250+ only).
+- The phantom PDF_OCR_MAX_RACES env var is removed.
+- NOT merged — new branch fix/extraction-quality-100, PR to be created.
