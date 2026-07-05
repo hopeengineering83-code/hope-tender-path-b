@@ -70,8 +70,15 @@ export async function GET(
       {
         stage: 5,
         label: "Confirm Metadata",
-        status: snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
+        // Gate parity: a stage must never show READY while the generation
+        // gate's metadata check (snapshot.metadata.gateValid — the SAME pure
+        // validator the gate runs) would block. The >80%-valid ratio only
+        // distinguishes READY from WARNING once the gate check passes.
+        status: !snapshot.metadata.gateValid
+          ? "BLOCKED"
+          : snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
         explanation: `Metadata: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
+        blocker: !snapshot.metadata.gateValid ? (snapshot.metadata.gateBlocker ?? "Critical metadata evidence is invalid or ungrounded.") : undefined,
         actionLabel: "Edit Metadata",
         actionName: "EDIT_TENDER_METADATA",
         actionKind: isMutationAction("EDIT_TENDER_METADATA") ? "mutation" as const : "readonly" as const,
@@ -79,8 +86,11 @@ export async function GET(
       {
         stage: 6,
         label: "Verified Submission Plan",
-        status: snapshot.buildPlan.valid ? "READY" : "BLOCKED",
-        explanation: snapshot.buildPlan.blocker ?? "Build plan pending.",
+        // Gate parity: buildPlan.valid is count-based (≥1 non-SUPERSEDED
+        // GeneratedDocument) and explicitly does NOT agree with the gate —
+        // gateValid mirrors the generation gate's strict confirmed-plan check.
+        status: snapshot.buildPlan.gateValid ? "READY" : "BLOCKED",
+        explanation: snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Build plan pending.",
         actionLabel: "Build Plan",
         actionName: "BUILD_SUBMISSION_PLAN",
         actionKind: isMutationAction("BUILD_SUBMISSION_PLAN") ? "mutation" as const : "readonly" as const,

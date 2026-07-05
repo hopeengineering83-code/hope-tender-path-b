@@ -107,3 +107,53 @@ describe("metadata-override route — post-override enrichment wired in", () => 
     assert.ok(catchIdx > tryIdx, "catch must come after the try block");
   });
 });
+
+describe("metadata-override route — USER_EDITED value promotion (verified manual extraction)", () => {
+  const src = read("app/api/tenders/[id]/metadata-override/route.ts");
+
+  it("promotes the override value into the tender scalar ONLY when this field's evidence was found", () => {
+    // The promotion closes the documented follow-up: a USER_EDITED value that
+    // enrichment PROVED is contained in an active file's text becomes the raw
+    // scalar (same write re-extract-metadata performs), so the resolver's
+    // exact-match rule and the BuildPlan validator both see it grounded.
+    assert.ok(
+      src.includes('fieldState === "USER_EDITED" && overrideValue && evidenceFound'),
+      "promotion must be gated on USER_EDITED + a value + evidenceFound",
+    );
+    assert.ok(
+      src.includes("const evidenceFound = Boolean((enrichment as Record<string, unknown>)[evidenceKeyByField[field] ?? \"\"]);"),
+      "evidenceFound must be derived from the enrichment result for THIS field, not any field",
+    );
+  });
+
+  it("maps every enrichment-supported field to its SourceFileId evidence key", () => {
+    for (const pair of [
+      'clientName: "clientNameSourceFileId"',
+      'title: "titleSourceFileId"',
+      'reference: "referenceSourceFileId"',
+      'deadline: "deadlineSourceFileId"',
+      'submissionMethod: "submissionMethodSourceFileId"',
+      'submissionAddress: "submissionAddressSourceFileId"',
+      'submissionEmails: "submissionEmailSourceFileId"',
+      'submissionEmailSubject: "submissionEmailSubjectSourceFileId"',
+    ]) {
+      assert.ok(src.includes(pair), `evidenceKeyByField must contain ${pair}`);
+    }
+  });
+
+  it("converts a promoted deadline to a Date and leaves other fields as strings", () => {
+    assert.ok(
+      src.includes('updateData[field] = field === "deadline" ? new Date(overrideValue) : overrideValue;'),
+      "deadline promotion must write a Date; other fields write the string value",
+    );
+  });
+
+  it("fails closed: no evidence found means the scalar is never touched", () => {
+    // The promotion lives INSIDE the Object.keys(enrichment).length > 0 guard
+    // and behind evidenceFound — an unevidenced USER_EDITED value never
+    // reaches the tender scalar and the field stays blocked.
+    const guardIdx = src.indexOf("Object.keys(enrichment).length > 0");
+    const promoIdx = src.indexOf('fieldState === "USER_EDITED" && overrideValue && evidenceFound');
+    assert.ok(guardIdx > -1 && promoIdx > guardIdx, "promotion must be inside the enrichment-found guard");
+  });
+});
