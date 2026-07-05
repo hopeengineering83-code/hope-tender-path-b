@@ -488,6 +488,10 @@ export async function getTenderReleaseSnapshot(
     // Same canonical active-file grounding rule as the gates so the release
     // snapshot's metadata states match generation/export exactly.
     activeTenderFileIds: new Set(activeFiles.map((f) => f.id)),
+    // Full active-file rows enable the STRONGEST shared grounding check
+    // (quote containment + page <= totalPages) — the same evidence rules the
+    // gate-aligned strict metadata check below applies via the validator.
+    activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages })),
   });
 
   // GATE-ALIGNED STRICT METADATA CHECK — mirrors generation-readiness-gate.ts:716-732.

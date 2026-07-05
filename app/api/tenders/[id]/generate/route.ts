@@ -631,6 +631,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Enforce active-file grounding: a fileId pointing to a
         // deleted/superseded TenderFile must NOT count as GROUNDED.
         activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
+        // Full active-file rows enable the STRONGEST shared grounding check
+        // (quote containment + page <= totalPages) — same rule the BuildPlan
+        // validator applies, so this pre-check and the validator agree.
+        activeFiles: (tender.files ?? [])
+          .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+          .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
       });
       const policyCtx = { submissionMethod: tender.submissionMethod };
       const missingCritical: string[] = canonicalState.fields

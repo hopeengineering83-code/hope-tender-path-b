@@ -511,6 +511,10 @@ export async function getFinalSubmissionReadiness(
           extractedPages: true,
           ocrPages: true,
           failedPages: true,
+          // Required for the full grounding check (quote containment) in the
+          // canonical field-state resolver — same rule the generation gate
+          // and release snapshot apply.
+          extractedText: true,
         },
       },
     },
@@ -774,6 +778,11 @@ export async function getFinalSubmissionReadiness(
         .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
         .map((f: any) => f.id),
     ),
+    // Full active-file rows enable the STRONGEST shared grounding check
+    // (quote containment + page <= totalPages) — same rule as the gate.
+    activeFiles: (tender.files ?? [])
+      .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+      .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
   });
   if (canonicalExportState.hasExportBlocker) {
     const blockingFields = canonicalExportState.fields

@@ -89,6 +89,7 @@ function verdicts(patch: StatePatch = {}) {
     hasExtractedRequirements: true,
     submissionMethodContext: (tender.submissionMethod as string | null) ?? undefined,
     activeTenderFileIds: new Set(files.map((f) => f.id)),
+    activeFiles: files,
   });
   // The panel verdict restricted to the fields the BuildPlan validator
   // enforces: does any of them carry a hard blocker?
@@ -113,19 +114,16 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
     assert.equal(v.panelBlocked, true, "panels must not show green for a field the gate blocks");
   });
 
-  it("quote NOT contained in the file text: gate BLOCKED (resolver does not check containment — known divergence)", () => {
+  it("quote NOT contained in the file text: BLOCKED in BOTH", () => {
     const v = verdicts({ tender: { titleSourceQuote: "A quote that appears nowhere in the file at all" } });
     assert.equal(v.gateBlocked, true, "gate must block a foreign quote");
-    // Main's resolver does NOT do quote containment — only the BuildPlan validator does.
-    // This is the last known panel/gate divergence (documented in snapshot-gate-agreement.test.ts).
-    // The panel may show the field as grounded, but the gate will block it.
+    assert.equal(v.panelBlocked, true, "panels must not ground a quote the gate rejects as not contained");
   });
 
-  it("source page beyond the file's totalPages: gate BLOCKED (resolver does not check page bounds — known divergence)", () => {
+  it("source page beyond the file's totalPages: BLOCKED in BOTH", () => {
     const v = verdicts({ tender: { titleSourcePage: 99 } });
     assert.equal(v.gateBlocked, true, "gate must block a page beyond totalPages");
-    // Main's resolver does NOT check page <= totalPages — only the BuildPlan validator does.
-    // This is the last known panel/gate divergence.
+    assert.equal(v.panelBlocked, true, "panels must not ground a page the gate rejects");
   });
 
   it("quote below the meaningful threshold (6-9 chars): BLOCKED in BOTH (this was green-but-blocked before)", () => {
@@ -154,9 +152,7 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
     // previously treated submissionEmails as never-critical (green).
     const v = verdicts({ tender: { submissionEmailSourceFileId: null, submissionEmailSourcePage: null, submissionEmailSourceQuote: null } });
     assert.equal(v.gateBlocked, true, "gate must block an ungrounded email endpoint on an email tender");
-    // Main's resolver does NOT do quote containment on the email evidence —
-    // the gate catches it via the BuildPlan validator.
-    // The panel may show the field differently; the gate is authoritative.
+    assert.equal(v.panelBlocked, true, "panels must block the same ungrounded email endpoint");
   });
 
   it("portal tender with ONE grounded endpoint: GREEN in BOTH (one-of-two rule)", () => {
@@ -170,7 +166,7 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
     assert.equal(v.panelBlocked, false, "panels must not block a portal tender with one grounded endpoint");
   });
 
-  it("portal tender with NO grounded endpoint: gate BLOCKED (resolver may not catch it — known divergence)", () => {
+  it("portal tender with NO grounded endpoint: BLOCKED in BOTH", () => {
     const v = verdicts({
       tender: {
         submissionMethod: "online portal submission",
@@ -182,8 +178,7 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
       },
     });
     assert.equal(v.gateBlocked, true, "gate must block a portal tender with no grounded endpoint");
-    // The gate is authoritative — the panel may show a different verdict
-    // because the resolver doesn't do quote containment.
+    assert.equal(v.panelBlocked, true, "panels must block a portal tender with no grounded endpoint");
   });
 
   it("reference VALUE without evidence: BLOCKED in BOTH (value-driven evidence rule)", () => {
@@ -230,19 +225,17 @@ describe("metadata alignment — ONE submission-method classification everywhere
 });
 
 describe("metadata alignment — overrides are honored by every consumer (no raw-only checks)", () => {
-  it("a USER_EDITED submissionMethod override switches the applicable endpoint in the gate", () => {
+  it("a USER_EDITED submissionMethod override switches the applicable endpoint in BOTH paths", () => {
     // Raw method = email (grounded email endpoint). Override switches to
-    // physical — now the gate must demand a grounded address instead.
+    // physical — now BOTH paths must demand a grounded address instead.
     const v = verdicts({ overrides: [{ field: "submissionMethod", fieldState: "USER_EDITED", overrideValue: "sealed envelope delivery" }] });
     assert.equal(v.gateBlocked, true, "gate must demand a grounded address once the effective method is physical");
     assert.ok(
       v.gateBlockers.some((b) => /submissionAddress/i.test(b)),
       `gate blocker must be about the missing address: ${JSON.stringify(v.gateBlockers)}`,
     );
-    // The resolver also uses the effective method (round 6 value-driven fix),
-    // so the panel should also block on the missing address.
     const addressField = v.resolved.fields.find((f) => f.fieldKey === "submissionAddress")!;
-    assert.ok(addressField, "submissionAddress field must exist in resolver output");
+    assert.notEqual(addressField.blockerReason, null, "panels must block the missing address under the effective method too");
   });
 
   it("the export gate reads effective (override-aware) values for deadline/method/emails", async () => {

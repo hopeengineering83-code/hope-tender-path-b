@@ -615,6 +615,11 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       // ACTIVE tender file (page + quote + valid file). Stale/deleted-file
       // evidence cannot unblock generation.
       activeTenderFileIds: activeFileIds,
+      // Full active-file rows enable the STRONGEST shared grounding check
+      // (quote containment + page <= totalPages) — the same evidence rules
+      // validateCriticalMetadataEvidenceForBuildPlan applies below, so this
+      // resolver verdict and the validator verdict cannot diverge.
+      activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: (f as any).totalPages ?? null })),
     });
 
     // H — Build/Submission plan prerequisite for GENERATION.

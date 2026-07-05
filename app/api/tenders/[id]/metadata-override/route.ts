@@ -56,7 +56,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       submissionAddressSourcePage: true, submissionAddressSourceQuote: true, submissionAddressSourceFileId: true,
       submissionEmailSourcePage: true, submissionEmailSourceFileId: true, submissionEmailSourceQuote: true, contactDetailsSourceJson: true,
       requirements: { select: { id: true }, take: 1 },
-      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } },
+      // extractedText + totalPages let the resolver apply the FULL grounding
+      // rule (quote containment + page bounds) — same as the gates.
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, totalPages: true } },
     },
   });
   if (!tender) return err("Tender not found", 404, "TENDER_NOT_FOUND");
@@ -143,6 +145,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       // Same canonical active-file grounding rule as the gates, so the dashboard
       // panel chips can never disagree with generation/export.
       activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f) => f.id)),
+      // Full active-file rows enable the STRONGEST shared grounding check
+      // (quote containment + page <= totalPages) — same rule as the gates.
+      activeFiles: (tender.files ?? [])
+        .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+        .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
     });
     for (const f of resolved.fields) {
       fieldStates[f.fieldKey] = {
