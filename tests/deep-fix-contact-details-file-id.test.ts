@@ -29,114 +29,13 @@ import { readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-// ─── 1. metadata-truth.ts source-inspection ──────────────────────────────────
-
-describe("metadata-truth.ts — fileId + title/deadline evidence plumbed through", () => {
-  const src = read("lib/engine/analysis/metadata-truth.ts");
-
-  it("FieldEvidence type includes fileId", () => {
-    assert.ok(
-      src.includes("type FieldEvidence = { page: number | null; quote: string | null; fileId: string | null };"),
-      "FieldEvidence must include fileId: string | null",
-    );
-  });
-
-  it("parseContactEvidence reads fileId from each entry", () => {
-    assert.ok(
-      src.includes("fileId: typeof v.fileId === \"string\" && v.fileId.length > 0 ? v.fileId : null,"),
-      "parseContactEvidence must read fileId from each entry",
-    );
-  });
-
-  it("imports isGroundedEvidenceWithFileCheck from evidence-grounding", () => {
-    assert.ok(
-      src.includes("isGroundedEvidenceWithFileCheck"),
-      "metadata-truth must import isGroundedEvidenceWithFileCheck",
-    );
-  });
-
-  it("hasGroundingEvidence uses file-check when activeTenderFileIds is provided", () => {
-    assert.ok(
-      src.includes("isGroundedEvidenceWithFileCheck(ev.page, ev.quote, ev.fileId, activeTenderFileIds)"),
-      "hasGroundingEvidence must call isGroundedEvidenceWithFileCheck when activeTenderFileIds is provided",
-    );
-  });
-
-  it("SELECT includes titleSource*, deadlineSource*, submissionEmailSourceQuote, and all *SourceFileId columns", () => {
-    // The SELECT must include the source columns that previously were missing.
-    for (const col of [
-      "titleSourcePage",
-      "titleSourceQuote",
-      "titleSourceFileId",
-      "deadlineSourcePage",
-      "deadlineSourceQuote",
-      "deadlineSourceFileId",
-      "clientNameSourceFileId",
-      "submissionMethodSourceFileId",
-      "submissionAddressSourceFileId",
-      "submissionEmailSourceQuote",
-      "submissionEmailSourceFileId",
-    ]) {
-      assert.ok(src.includes(`${col}: true`), `SELECT must include ${col}: true`);
-    }
-  });
-
-  it("SELECT includes active files for activeTenderFileIds enforcement", () => {
-    assert.ok(
-      src.includes('files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, totalPages: true } }'),
-      "SELECT must include active files (with extractedText + totalPages for the full grounding rule) so activeTenderFileIds can be built",
-    );
-  });
-
-  it("evidenceByField includes title, deadline, and reference (from contactDetails)", () => {
-    // The evidenceByField map must now have entries for title, deadline, and
-    // reference — previously they were omitted and could never be GROUNDED.
-    assert.ok(
-      src.includes("title: { page: tender.titleSourcePage"),
-      "evidenceByField must include title with dedicated source columns",
-    );
-    assert.ok(
-      src.includes("deadline: { page: tender.deadlineSourcePage"),
-      "evidenceByField must include deadline with dedicated source columns",
-    );
-    assert.ok(
-      src.includes("reference: refEvidence"),
-      "evidenceByField must include reference from contactDetails (procurementReferenceNumber)",
-    );
-  });
-
-  it("evidenceByField includes fileId for every field with a dedicated *SourceFileId column", () => {
-    // Every evidence entry for fields with dedicated columns must thread fileId.
-    // The column-name convention is {field}SourceFileId (camelCase), but the
-    // submissionEmails column is submissionEmailSourceFileId (singular Email),
-    // so we list the exact column names here.
-    const fieldToColumn: Record<string, { page: string; quote: string; fileId: string }> = {
-      clientName:          { page: "clientNameSourcePage",          quote: "clientNameSourceQuote",          fileId: "clientNameSourceFileId" },
-      title:               { page: "titleSourcePage",               quote: "titleSourceQuote",               fileId: "titleSourceFileId" },
-      deadline:            { page: "deadlineSourcePage",            quote: "deadlineSourceQuote",            fileId: "deadlineSourceFileId" },
-      submissionMethod:    { page: "submissionMethodSourcePage",    quote: "submissionMethodSourceQuote",    fileId: "submissionMethodSourceFileId" },
-      submissionAddress:   { page: "submissionAddressSourcePage",   quote: "submissionAddressSourceQuote",   fileId: "submissionAddressSourceFileId" },
-      submissionEmails:    { page: "submissionEmailSourcePage",     quote: "submissionEmailSourceQuote",     fileId: "submissionEmailSourceFileId" },
-    };
-    for (const [field, cols] of Object.entries(fieldToColumn)) {
-      assert.ok(
-        src.includes(`fileId: tender.${cols.fileId} ?? null`),
-        `evidenceByField must include fileId: tender.${cols.fileId} ?? null for ${field}`,
-      );
-    }
-  });
-
-  it("activeTenderFileIds is built from tender.files and passed to hasGroundingEvidence", () => {
-    assert.ok(
-      src.includes("const activeTenderFileIds = new Set((tender.files ?? []).map((f) => f.id));"),
-      "activeTenderFileIds must be built from tender.files",
-    );
-    assert.ok(
-      src.includes("hasGroundingEvidence(evidenceByField[key], activeTenderFileIds, activeFileRows)"),
-      "hasGroundingEvidence must be called with activeTenderFileIds AND the full active-file rows (containment + page-bound grounding)",
-    );
-  });
-});
+// ─── 1. (removed) metadata-truth.ts source-inspection ────────────────────────
+// The duplicate Metadata Truth resolver (lib/engine/analysis/metadata-truth.ts)
+// was deleted: it had ZERO runtime callers — the Metadata Truth panel reads the
+// workflow-center snapshot, which uses resolveCanonicalFieldState. Its fileId /
+// title / deadline evidence behavior lives in the canonical resolver and is
+// pinned by tests/canonical-field-grounding.test.ts and
+// tests/metadata-contradiction-alignment.test.ts.
 
 // ─── 2. generate route source-inspection ─────────────────────────────────────
 

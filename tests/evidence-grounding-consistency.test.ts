@@ -1,12 +1,12 @@
 // Grounding consistency — the Metadata Truth panel and the Client & Submission
 // panel/gates must apply the SAME grounding rule. Previously each resolver had
-// its own threshold (canonical: page>0 & quote>5; metadata-truth: page finite &
+// its own threshold (canonical: page>0 & quote>5; the old metadata-truth: page finite &
 // quote>0), so the same field could read "grounded" in one panel and
 // "review evidence" in the other. Both now call lib/engine/evidence-grounding.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { isGroundedEvidence, isGroundedEvidenceInActiveFiles, MIN_GROUNDING_QUOTE_LENGTH } from "../lib/engine/evidence-grounding";
 
 describe("evidence-grounding — shared predicate", () => {
@@ -59,13 +59,15 @@ describe("evidence-grounding — full active-file check (containment + page boun
   });
 });
 
-describe("evidence-grounding — both resolvers import the shared predicate", () => {
-  it("canonical-field-state and metadata-truth both use evidence-grounding", () => {
+describe("evidence-grounding — ONE metadata resolver, importing the shared predicate", () => {
+  it("canonical-field-state uses evidence-grounding and the duplicate resolver is gone", () => {
     const canonical = readFileSync("lib/engine/canonical-field-state.ts", "utf8");
-    const truth = readFileSync("lib/engine/analysis/metadata-truth.ts", "utf8");
     assert.ok(canonical.includes('from "./evidence-grounding"'), "canonical resolver must import the shared predicate");
-    assert.ok(truth.includes('from "../evidence-grounding"'), "metadata-truth must import the shared predicate");
-    // Neither may re-declare a divergent inline threshold.
-    assert.ok(!/quote.*trim\(\).length\s*>\s*0/.test(truth), "metadata-truth must not use a quote>0 grounding threshold");
+    // The Metadata Truth panel's duplicate resolver (analysis/metadata-truth.ts)
+    // had ZERO runtime callers — the panel reads the workflow-center snapshot,
+    // which uses resolveCanonicalFieldState. A second resolver is a standing
+    // drift risk (the original source of the two-thresholds contradiction),
+    // so it was deleted. This pin keeps it deleted.
+    assert.ok(!existsSync("lib/engine/analysis/metadata-truth.ts"), "the orphaned duplicate metadata resolver must not come back");
   });
 });
