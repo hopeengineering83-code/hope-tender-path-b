@@ -59,11 +59,12 @@ async function repairBootstrapAdminIfNeeded(email: string, password: string) {
   );
 }
 
-function clientIp(req: Request): string {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]?.trim() || "unknown";
-  return req.headers.get("x-real-ip") || "unknown";
-}
+// Use the shared getClientIp helper from lib/request-ip.ts — gates on
+// VERCEL/VERCEL_ENV/TRUST_PROXY so non-Vercel deployments don't blindly
+// trust client-supplied X-Forwarded-For headers (was unconditionally
+// trusting XFF — an attacker could rotate the header to bypass per-IP
+// login rate limiting on non-Vercel deployments).
+import { getClientIp } from "../../../../lib/request-ip";
 
 export async function POST(req: Request) {
   try {
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
     // stuffing (one IP, many emails) gets per-IP throttled while
     // bruteforce of a single account (one email, many IPs) also gets
     // hit. AUTH_RATE_LIMIT defaults to 10 attempts/min/key.
-    const rlKey = `login:${clientIp(req)}:${email}`;
+    const rlKey = `login:${getClientIp(req)}:${email}`;
     const rl = rateLimit(rlKey, AUTH_RATE_LIMIT);
     if (!rl.allowed) {
       const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));

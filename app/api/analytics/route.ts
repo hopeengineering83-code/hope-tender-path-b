@@ -9,6 +9,9 @@ export async function GET(_req: Request) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
+  // Paginated + filtered — was unbounded (loaded ALL tenders + ALL compliance
+  // gaps). Now: take 100 most recent (analytics doesn't need historical
+  // tenders from years ago), filter complianceGaps to unresolved-only.
   const tenders = await prisma.tender.findMany({
     where: { userId },
     select: {
@@ -21,9 +24,10 @@ export async function GET(_req: Request) {
       readinessScore: true,
       createdAt: true,
       deadline: true,
-      complianceGaps: { select: { severity: true, isResolved: true } },
+      complianceGaps: { select: { severity: true, isResolved: true }, where: { isResolved: false } },
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
+    take: 100,
   });
 
   // Outcome summary

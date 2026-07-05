@@ -318,26 +318,39 @@ export async function getTenderReleaseSnapshot(
   });
   if (!tender) return null;
 
-  // Extraction overrides require a separate query (hasActiveExtractionOverride).
+  // Extraction overrides require a separate query. Batch the lookup for all
+  // weak files into ONE query instead of N per-file count queries (was N+1).
   const activeFiles = (tender.files as _FileRow[]).filter((f) => f.deletionStatus === "ACTIVE");
 
-  const extractionFiles: SnapshotExtractionFile[] = await Promise.all(
-    activeFiles.map(async (f) => {
-      const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
-      const score = Math.min(f.extractionScore ?? quality.score, quality.score);
-      const corrupted = quality.corrupted;
-      const weak = !corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD;
-      // Lazy override check: only query DB when the file is actually weak.
-      let hasOverride = false;
-      if (weak) {
-        const overrideCount = await prisma.extractionQualityOverride.count({
-          where: { tenderId, tenderFileId: f.id, status: "ACTIVE" },
-        });
-        hasOverride = overrideCount > 0;
-      }
-      return { fileId: f.id, fileName: f.originalFileName, corrupted, weak, hasOverride, score };
-    }),
-  );
+  // Pre-compute quality for all files to identify weak ones.
+  const fileQualities = activeFiles.map((f) => {
+    const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
+    const score = Math.min(f.extractionScore ?? quality.score, quality.score);
+    const corrupted = quality.corrupted;
+    const weak = !corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD;
+    return { f, quality, score, corrupted, weak };
+  });
+
+  // Batch query: get ALL active overrides for weak files in one shot.
+  const weakFileIds = fileQualities.filter((fq) => fq.weak).map((fq) => fq.f.id);
+  const overrideFileIds = weakFileIds.length > 0
+    ? new Set(
+        (await prisma.extractionQualityOverride.findMany({
+          where: { tenderId, tenderFileId: { in: weakFileIds }, status: "ACTIVE" },
+          select: { tenderFileId: true },
+          distinct: ["tenderFileId"],
+        })).map((o) => o.tenderFileId),
+      )
+    : new Set<string>();
+
+  const extractionFiles: SnapshotExtractionFile[] = fileQualities.map(({ f, score, corrupted, weak }) => ({
+    fileId: f.id,
+    fileName: f.originalFileName,
+    corrupted,
+    weak,
+    hasOverride: weak ? overrideFileIds.has(f.id) : false,
+    score,
+  }));
 
   // Build extraction state.
   let extractionBlocker: string | null = null;

@@ -36,24 +36,36 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
 
   logger.info("[worker] draining analysis job queue...");
 
-  // Find jobs ready to process
-  const queuedJobs = await prisma.aiJob.findMany({
-    where: {
-      jobType: "AI_ANALYZE",
-      status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
-      startedAt: {
-        // Don't process jobs that are currently running (started < 2 min ago)
-        lt: new Date(Date.now() - 120_000),
-      },
-    },
-    orderBy: [
-      { status: "asc" }, // QUEUED first, then PARTIAL_SUCCESS, then RUNNING (likely timed out)
-      { createdAt: "asc" }, // Oldest first (FIFO)
-    ],
-    take: maxConcurrentJobs,
-  });
+  // ATOMIC JOB CLAIMING — prevents duplicate execution when two concurrent
+  // workers (e.g., Vercel Cron + external worker) read the same jobs.
+  // Previously: findMany (read) then update (write) — a TOCTOU race where
+  // both workers could claim the same job. Now: use UPDATE ... WHERE ...
+  // RETURNING (atomic claim via a conditional update).
+  const claimedJobs = await prisma.$queryRaw<Array<{
+    id: string; userId: string | null; input: string | null; retries: number;
+  }>>`
+    UPDATE "AiJob"
+    SET status = 'RUNNING', "startedAt" = NOW()
+    WHERE id IN (
+      SELECT id FROM "AiJob"
+      WHERE "jobType" = 'AI_ANALYZE'
+        AND status IN ('QUEUED', 'RUNNING', 'PARTIAL_SUCCESS')
+        AND ("startedAt" IS NULL OR "startedAt" < ${new Date(Date.now() - 120_000)})
+      ORDER BY status ASC, "createdAt" ASC
+      LIMIT ${maxConcurrentJobs}
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id, "userId", input, retries
+  `;
 
-  logger.info(`[worker] found ${queuedJobs.length} jobs to process`);
+  const queuedJobs = claimedJobs.map((j) => ({
+    id: j.id,
+    userId: j.userId,
+    input: j.input,
+    retries: j.retries,
+  }));
+
+  logger.info(`[worker] claimed ${queuedJobs.length} jobs atomically`);
 
   let processed = 0;
   let succeeded = 0;
@@ -64,11 +76,8 @@ export async function drainAnalysisJobQueue(options: JobWorkerOptions = {}) {
       processed++;
       logger.info(`[worker] processing job ${job.id} (${processed}/${queuedJobs.length})`);
 
-      // Mark job as RUNNING
-      await prisma.aiJob.update({
-        where: { id: job.id },
-        data: { status: "RUNNING", startedAt: new Date() },
-      });
+      // Job is already marked RUNNING by the atomic claim above — no need
+      // for a separate update (was a TOCTOU: findMany → update).
 
       // Parse job input to get tenderId, userId
       const input = job.input ? JSON.parse(job.input) : {};
@@ -190,8 +199,12 @@ function isTransientError(message: string): boolean {
     return true;
   }
 
-  // Default: transient (try again) to avoid losing work
-  return true;
+  // Default: NON-transient (do NOT retry). Previously defaulted to true,
+  // which caused a retry storm when a misconfigured provider returned an
+  // unusual error (e.g., 422 with a weird message) — 3 retries per job
+  // across all queued jobs multiplied AI cost. Now: only retry known
+  // transient errors; unknown errors fail immediately (safer + cheaper).
+  return false;
 }
 
 /**

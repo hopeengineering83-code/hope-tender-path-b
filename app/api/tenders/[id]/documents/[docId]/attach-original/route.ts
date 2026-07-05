@@ -51,7 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   await prismaReady;
   const doc = await prisma.generatedDocument.findFirst({
     where: { id: docId, tender: { id: tenderId, userId: actor.id } },
-    select: { id: true, name: true, exactFileName: true, documentType: true, format: true, reviewStatus: true, validationStatus: true },
+    select: { id: true, name: true, exactFileName: true, documentType: true, format: true, reviewStatus: true, validationStatus: true, storagePath: true, fileContent: true },
   });
   if (!doc) return NextResponse.json({ success: false, ok: false, code: "DOCUMENT_NOT_FOUND", error: "Generated document not found" }, { status: 404 });
 
@@ -87,6 +87,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     tenderId,
   });
   const priorStatus = doc.reviewStatus;
+  // Capture the prior storagePath so we can clean up the OLD blob after the
+  // transaction commits. Without this, each "attach original" call leaks the
+  // previous blob (was silently abandoned — cost leak + PII retention).
+  const priorStoragePath = doc.storagePath;
+  const priorFileContent = doc.fileContent;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -119,6 +124,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
       });
     });
+
+    // Best-effort cleanup of the OLD blob after the transaction commits.
+    if (priorStoragePath || priorFileContent) {
+      getStorageAdapter().deleteFile({
+        storagePath: priorStoragePath,
+        fileContent: priorFileContent,
+        fileName: doc.exactFileName ?? doc.name ?? "previous-file",
+      }).catch(() => {
+        // Non-fatal — the new file is already stored and the DB row is updated.
+      });
+    }
   } catch (error) {
     await getStorageAdapter().deleteFile({
       storagePath: stored.storagePath,

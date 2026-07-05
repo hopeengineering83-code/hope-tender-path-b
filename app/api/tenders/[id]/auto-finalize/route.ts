@@ -394,8 +394,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ? `Auto-finalized for print/submission. ${gateNotes}`
       : `Auto-finalized but needs review. ${[hygieneNotes, gateNotes].filter(Boolean).join(" | ")}`;
 
-    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
-    if (ready && priorStatus !== "READY_FOR_EXPORT") await prisma.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
+    // Wrap update + audit in a transaction — if the DocumentReview create
+    // fails, the GeneratedDocument should NOT be marked READY_FOR_EXPORT
+    // without an audit trail (was non-atomic — broken "every approval is
+    // audited" invariant).
+    await prisma.$transaction(async (tx) => {
+      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
+      if (ready && priorStatus !== "READY_FOR_EXPORT") await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
+    });
     processed += 1;
   }
 
