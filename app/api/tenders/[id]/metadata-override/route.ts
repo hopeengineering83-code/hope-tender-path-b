@@ -425,13 +425,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   //   - Existing evidence is never overwritten with null — enrichment only
   //     returns columns for fields where the value was found.
   //
-  // Known limitation: for USER_EDITED where overrideValue differs from the
-  // raw tender scalar, enrichment writes evidence pointing to the override
-  // value, but the resolver's overrideMatchesGroundedSourceCheck still
-  // requires normalizedEdited === normalizedRaw. The field stays
-  // MANUAL_OVERRIDE_CONFIRMATION_REQUIRED in that case. Closing that gap
-  // requires also writing overrideValue into the tender scalar — a larger
-  // invariant change deferred to a follow-up.
+  // USER_EDITED promotion: when enrichment PROVES the override value is
+  // contained in an active tender file's extracted text (it returned the
+  // source-evidence columns for this field), the override value is promoted
+  // into the tender scalar in the SAME update. This is a verified manual
+  // extraction — identical to what re-extract-metadata writes when its
+  // extractor locates the value — so the resolver's
+  // overrideMatchesGroundedSourceCheck (normalizedEdited === normalizedRaw)
+  // and the BuildPlan validator both see the grounded value. When enrichment
+  // finds nothing, the scalar is NOT touched and the field stays blocked
+  // (fail closed) until the value can be evidenced.
   if (fieldState === "USER_CONFIRMED" || fieldState === "USER_EDITED") {
     try {
       const ENRICHMENT_FIELD_MAP: Record<string, "clientName" | "title" | "reference" | "deadline" | "submissionMethod" | "submissionAddress" | "submissionEmails" | "submissionEmailSubject"> = {
@@ -483,7 +486,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // a no-op prisma.tender.update and prevents overwriting existing
           // evidence with undefined.
           if (Object.keys(enrichment).length > 0) {
-            await prisma.tender.update({ where: { id }, data: enrichment });
+            const updateData: Record<string, unknown> = { ...enrichment };
+            // Promote a USER_EDITED value into the tender scalar ONLY when
+            // enrichment returned this field's evidence — i.e. the value was
+            // verified CONTAINED in an active file's extracted text. reference
+            // evidence lands in contactDetailsSourceJson via referenceSource*
+            // columns; all other fields use their dedicated column prefix.
+            const evidenceKeyByField: Record<string, string> = {
+              clientName: "clientNameSourceFileId",
+              title: "titleSourceFileId",
+              reference: "referenceSourceFileId",
+              deadline: "deadlineSourceFileId",
+              submissionMethod: "submissionMethodSourceFileId",
+              submissionAddress: "submissionAddressSourceFileId",
+              submissionEmails: "submissionEmailSourceFileId",
+              submissionEmailSubject: "submissionEmailSubjectSourceFileId",
+            };
+            const evidenceFound = Boolean((enrichment as Record<string, unknown>)[evidenceKeyByField[field] ?? ""]);
+            if (fieldState === "USER_EDITED" && overrideValue && evidenceFound) {
+              updateData[field] = field === "deadline" ? new Date(overrideValue) : overrideValue;
+            }
+            await prisma.tender.update({ where: { id }, data: updateData });
           }
         }
       }

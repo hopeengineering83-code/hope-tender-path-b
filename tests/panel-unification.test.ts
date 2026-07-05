@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 
 /**
@@ -273,4 +274,22 @@ test("Snapshot: both panels receive identical metadata.hasGenerationBlocker flag
   assert.equal(field.status, "INVALID", "Both panels use same status values");
   assert.equal(field.blockerReason, "Missing critical field: Submission deadline.", "Both panels show same blocker reason");
   // No panel should synthesize data; all comes from snapshot
+});
+
+test("workflow-center stage 5 (Confirm Metadata) blocks on metadata.gateValid, not just the valid-field ratio", () => {
+  // The >80%-valid ratio alone could show READY with blocked critical fields
+  // (e.g. 22/26 valid = 84% with 4 blocked criticals). The stage must consult
+  // the gate-aligned metadata.gateValid first — no green-but-blocked stages.
+  const src = readFileSync("app/api/tenders/[id]/workflow-center/route.ts", "utf8");
+  assert.ok(src.includes("!snapshot.metadata.gateValid"), "stage 5 must gate on metadata.gateValid");
+  assert.ok(src.includes("snapshot.metadata.gateBlocker"), "stage 5 must surface the gate blocker");
+});
+
+test("workflow-center stage 6 (Verified Submission Plan) uses gate-aligned buildPlan.gateValid, not the count-based valid", () => {
+  // buildPlan.valid is count-based (>=1 non-SUPERSEDED GeneratedDocument) and
+  // explicitly does NOT agree with the generation gate.
+  const src = readFileSync("app/api/tenders/[id]/workflow-center/route.ts", "utf8");
+  assert.ok(src.includes('snapshot.buildPlan.gateValid ? "READY" : "BLOCKED"'), "stage 6 status must come from gateValid");
+  assert.ok(!src.includes('snapshot.buildPlan.valid ? "READY"'), "stage 6 must not derive status from count-based valid");
+  assert.ok(src.includes("snapshot.buildPlan.gateBlocker"), "stage 6 must surface the gate blocker");
 });
