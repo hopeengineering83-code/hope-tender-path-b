@@ -21,8 +21,13 @@ describe("DB transfer query shape — dashboard metadata views", () => {
   });
 
   it("tender GET/PUT API responses do not select extractedText or generated fileContent for dashboard payloads", () => {
-    assert.ok(!/extractedText:\s*true/.test(tenderApi));
-    assert.ok(!/fileContent:\s*true/.test(tenderApi));
+    // The DELETE handler legitimately selects fileContent — it must read the
+    // rows before the transaction deletes them so it can clean up blob
+    // storage afterwards. That select never reaches a dashboard payload, so
+    // the negative pins apply to the GET/PUT (dashboard) portion only.
+    const dashboardPortion = tenderApi.split("export async function DELETE")[0];
+    assert.ok(!/extractedText:\s*true/.test(dashboardPortion));
+    assert.ok(!/fileContent:\s*true/.test(dashboardPortion));
     assert.match(tenderApi, /generatedDocumentDashboardSelect/);
     assert.match(tenderApi, /extractedTextLength/);
   });

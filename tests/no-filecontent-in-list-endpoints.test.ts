@@ -33,9 +33,13 @@ describe("Large fields excluded from list/dashboard endpoints", () => {
   it("tender detail route does not select fileContent from generatedDocuments", () => {
     const src = readRoute("app/api/tenders/[id]/route.ts");
     assert.ok(src.length > 0, "tender detail route must exist");
-    // generatedDocumentDashboardSelect should not include fileContent
+    // generatedDocumentDashboardSelect should not include fileContent.
+    // The DELETE handler's blob-cleanup select (reads fileContent before the
+    // rows are deleted so blobs can be removed) is a legitimate non-dashboard
+    // use — pin the GET/PUT portion only.
+    const dashboardPortion = src.split("export async function DELETE")[0];
     assert.ok(
-      !/fileContent\s*:\s*true/.test(src),
+      !/fileContent\s*:\s*true/.test(dashboardPortion),
       "tender detail route must not select fileContent from generatedDocuments",
     );
   });
