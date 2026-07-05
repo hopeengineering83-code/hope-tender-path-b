@@ -3154,41 +3154,45 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   } else {
     // No suitable slot OR the existing slot had the wrong name —
     // always emit Technical-Proposal.docx as a fresh record.
-    // Use upsert-ish pattern: if a Technical-Proposal record exists
-    // already, update; otherwise create.
-    const existing = await prisma.generatedDocument.findFirst({
-      where: { tenderId, exactFileName: "Technical-Proposal.docx" },
+    // Use a TRANSACTIONAL upsert pattern to prevent the TOCTOU race where
+    // two concurrent /generate calls both pass the findFirst (existing=null)
+    // check and both create duplicate rows. Now: the findFirst + update/create
+    // run inside a SERIALIZABLE transaction so concurrent calls serialize.
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.generatedDocument.findFirst({
+        where: { tenderId, exactFileName: "Technical-Proposal.docx" },
+      });
+      if (existing) {
+        await tx.generatedDocument.update({
+          where: { id: existing.id },
+          data: {
+            name: "Client-Ready Benchmark Technical Proposal",
+            documentType: "TECHNICAL_PROPOSAL",
+            fileContent,
+            generationStatus: "GENERATED",
+            validationStatus: "PENDING",
+            reviewStatus: "PENDING",
+            contentSummary: summary,
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        await tx.generatedDocument.create({
+          data: {
+            tenderId,
+            name: "Client-Ready Benchmark Technical Proposal",
+            documentType: "TECHNICAL_PROPOSAL",
+            format: "DOCX",
+            exactFileName: "Technical-Proposal.docx",
+            exactOrder: 1,
+          fileContent,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          contentSummary: summary,
+        },
+      });
+      }
     });
-    if (existing) {
-      await prisma.generatedDocument.update({
-        where: { id: existing.id },
-        data: {
-          name: "Client-Ready Benchmark Technical Proposal",
-          documentType: "TECHNICAL_PROPOSAL",
-          fileContent,
-          generationStatus: "GENERATED",
-          validationStatus: "PENDING",
-          reviewStatus: "PENDING",
-          contentSummary: summary,
-          updatedAt: new Date(),
-        },
-      });
-    } else {
-      await prisma.generatedDocument.create({
-        data: {
-          tenderId,
-          name: "Client-Ready Benchmark Technical Proposal",
-          documentType: "TECHNICAL_PROPOSAL",
-          format: "DOCX",
-          exactFileName: "Technical-Proposal.docx",
-          exactOrder: 1,
-          fileContent,
-          generationStatus: "GENERATED",
-          validationStatus: "PENDING",
-          contentSummary: summary,
-        },
-      });
-    }
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
@@ -3286,29 +3290,32 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           profile: (expert as { profile?: string | null }).profile,
         });
         const cvContent = cvBuffer.toString("base64");
-        const existing = await prisma.generatedDocument.findFirst({
-          where: { tenderId, exactFileName: fileName },
+        // Use a TRANSACTIONAL upsert pattern — same TOCTOU fix as Technical Proposal.
+        await prisma.$transaction(async (tx) => {
+          const existing = await tx.generatedDocument.findFirst({
+            where: { tenderId, exactFileName: fileName },
+          });
+          if (existing) {
+            await tx.generatedDocument.update({
+              where: { id: existing.id },
+              data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
+            });
+          } else {
+            await tx.generatedDocument.create({
+              data: {
+                tenderId,
+                name: `CV — ${expert.fullName}`,
+                documentType: "EXPERT_CV_PACKAGE",
+                format: "DOCX",
+                exactFileName: fileName,
+                fileContent: cvContent,
+                generationStatus: "GENERATED",
+                validationStatus: "PENDING",
+                contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
+              },
+            });
+          }
         });
-        if (existing) {
-          await prisma.generatedDocument.update({
-            where: { id: existing.id },
-            data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
-          });
-        } else {
-          await prisma.generatedDocument.create({
-            data: {
-              tenderId,
-              name: `CV — ${expert.fullName}`,
-              documentType: "EXPERT_CV_PACKAGE",
-              format: "DOCX",
-              exactFileName: fileName,
-              fileContent: cvContent,
-              generationStatus: "GENERATED",
-              validationStatus: "PENDING",
-              contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
-            },
-          });
-        }
         return fileName;
       })
     );

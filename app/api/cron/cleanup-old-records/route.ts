@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
+import { getStorageAdapter } from "../../../../lib/storage";
+import { logger } from "../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,13 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    // Clean up orphaned FallbackApprovalRecord rows — these reference AiJob
+    // rows that were just deleted above. Without this, stale approvals could
+    // authorize an old hash that happens to recur.
+    const deletedFallbackApprovals = await prisma.fallbackApprovalRecord.deleteMany({
+      where: { createdAt: { lt: thirtyDaysAgo } },
+    }).catch(() => ({ count: 0 }));
+
     const deletedCopilotMessages = await prisma.tenderCopilotMessage.deleteMany({
       where: { createdAt: { lt: ninetyDaysAgo } },
     });
@@ -32,17 +41,41 @@ export async function GET(req: NextRequest) {
     // Files soft-deleted via ui-triggered deletion or api purge requests are
     // retained for 30 days to allow recovery if user action was accidental.
     // After 30 days, the files are permanently deleted to free storage.
+    // Read storagePaths BEFORE deleting so we can clean up blob storage too
+    // (was DB-only — orphaned blobs in Vercel Blob storage = cost leak + PII).
+    const filesToDelete = await prisma.tenderFile.findMany({
+      where: { deletedAt: { not: null, lt: thirtyDaysAgo } },
+      select: { id: true, storagePath: true, fileContent: true, originalFileName: true },
+    });
     const deletedTenderFiles = await prisma.tenderFile.deleteMany({
       where: {
         deletedAt: { not: null, lt: thirtyDaysAgo },
       },
     });
 
+    // Best-effort blob cleanup for soft-deleted files.
+    if (filesToDelete.length > 0) {
+      const storage = getStorageAdapter();
+      for (const file of filesToDelete) {
+        if (file.storagePath || file.fileContent) {
+          storage.deleteFile({
+            storagePath: file.storagePath,
+            fileContent: file.fileContent,
+            fileName: file.originalFileName,
+          }).catch((err) => {
+            logger.warn(`[cleanup-old-records] blob cleanup failed for ${file.originalFileName}`, { detail: err instanceof Error ? err.message : String(err) });
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
       deleted: {
         aiJobs: deletedAiJobs.count,
+        fallbackApprovals: deletedFallbackApprovals.count,
         copilotMessages: deletedCopilotMessages.count,
         tenderFiles: deletedTenderFiles.count,
+        blobsCleaned: filesToDelete.length,
       },
     });
   } catch (error) {

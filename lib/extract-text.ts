@@ -185,7 +185,14 @@ async function extractPdfWithPdf2Json(buffer: Buffer): Promise<{ text: string; p
       resolve({ text: normalizeExtractedText(pageTexts.join("\n\n")), pages: pages.length });
     });
     parser.parseBuffer(buffer);
-  });
+  }).finally(() => {
+    // Clean up listeners and destroy the parser to prevent memory leaks.
+    // Without this, repeated extraction calls accumulate listeners on parser
+    // instances (V8 won't GC until listeners are removed). Long-running worker
+    // processes bleed memory.
+    parser.removeAllListeners();
+    if (typeof parser.destroy === "function") parser.destroy();
+  }) as Promise<{ text: string; pages: number }>;
 }
 
 async function extractPdfWithPdfJs(buffer: Buffer): Promise<{ text: string; pages: number }> {
