@@ -391,7 +391,7 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
       // Without these in the select, the hash treats reference as ungrounded
       // even when the columns are populated, diverging from the validator.
       referenceSourceFileId: true, referenceSourcePage: true, referenceSourceQuote: true,
-      files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true } },
+      files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true } },
       requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },
   });

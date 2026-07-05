@@ -83,8 +83,8 @@ describe("metadata-truth.ts — fileId + title/deadline evidence plumbed through
 
   it("SELECT includes active files for activeTenderFileIds enforcement", () => {
     assert.ok(
-      src.includes('files: { where: { deletionStatus: "ACTIVE" }, select: { id: true } }'),
-      "SELECT must include active files so activeTenderFileIds can be built",
+      src.includes('files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, totalPages: true } }'),
+      "SELECT must include active files (with extractedText + totalPages for the full grounding rule) so activeTenderFileIds can be built",
     );
   });
 
@@ -132,8 +132,8 @@ describe("metadata-truth.ts — fileId + title/deadline evidence plumbed through
       "activeTenderFileIds must be built from tender.files",
     );
     assert.ok(
-      src.includes("hasGroundingEvidence(evidenceByField[key], activeTenderFileIds)"),
-      "hasGroundingEvidence must be called with activeTenderFileIds",
+      src.includes("hasGroundingEvidence(evidenceByField[key], activeTenderFileIds, activeFileRows)"),
+      "hasGroundingEvidence must be called with activeTenderFileIds AND the full active-file rows (containment + page-bound grounding)",
     );
   });
 });

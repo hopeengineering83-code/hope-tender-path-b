@@ -64,6 +64,13 @@ describe("registry — conditionally-critical fields", () => {
     assert.equal(isCriticalField("submissionAddress", { submissionMethod: "online portal" }), false);
   });
 
+  it("makes submissionEmails critical only for email methods (the validator hard-requires a grounded email endpoint)", () => {
+    assert.equal(isConditionallyCriticalField("submissionEmails", { submissionMethod: "Email submission" }), true);
+    assert.equal(isConditionallyCriticalField("submissionEmails", { submissionMethod: "EMAIL_SUBMISSION" }), true);
+    assert.equal(isConditionallyCriticalField("submissionEmails", { submissionMethod: "Sealed envelope" }), false);
+    assert.equal(isConditionallyCriticalField("submissionEmails", { submissionMethod: "online portal" }), false);
+  });
+
   it("makes submissionEmailSubject critical only for email methods with explicit requirement", () => {
     // Email subject is critical ONLY when the tender explicitly requires it,
     // NOT merely because the submission method contains "email".

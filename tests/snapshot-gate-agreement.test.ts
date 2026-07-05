@@ -284,6 +284,11 @@ describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
         referenceSourceFileId: "file-1",
         referenceSourcePage: 1,
         referenceSourceQuote: "The reference number is REF-2026-001 for this tender.",
+        // Ground the email endpoint — submissionEmails is critical on an
+        // email-method tender (the BuildPlan validator hard-requires it).
+        submissionEmailSourceFileId: "file-1",
+        submissionEmailSourcePage: 1,
+        submissionEmailSourceQuote: "Submit bids by email to test@example.com before the deadline.",
       },
       overrides: [],
       activeTenderFileIds: new Set(["file-1"]),
