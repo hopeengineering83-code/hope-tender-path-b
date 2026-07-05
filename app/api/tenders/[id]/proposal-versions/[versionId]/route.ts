@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
+import { requireTenderAccess } from "../../../../../../lib/tender-ownership";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   await prismaReady;
   const { id, versionId } = await params;
 
-  const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
+  // Two-tier ownership: owner-scoped by default; ONLY an ADMIN may fall back
+  // to the global lookup — same rule as the POST/DELETE siblings below and
+  // the list route, so every proposal-version route agrees on access.
+  const actor = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  const tender = await requireTenderAccess(id, userId, actor?.role ?? "");
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // PR XX-A — typed access via Prisma model.
