@@ -9,7 +9,9 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import type { MetadataFactStatus } from "../lib/engine/analysis/metadata-truth";
+// MetadataFactStatus is the canonical shared vocabulary, re-exported by the
+// single resolver (the duplicate analysis/metadata-truth resolver was deleted).
+import type { MetadataFactStatus } from "../lib/engine/canonical-field-state";
 import type { CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
 import { resolveCanonicalFieldState, type CanonicalResolverInput } from "../lib/engine/canonical-field-state";
 

@@ -9,7 +9,7 @@
 //
 //   Before this registry, THREE modules each hard-coded their own — and
 //   conflicting — critical-field list:
-//     • lib/engine/analysis/metadata-truth.ts   (treated `reference` as critical)
+//     • the old analysis/metadata-truth.ts (deleted) treated `reference` as critical
 //     • lib/engine/tender-metadata-completeness.ts (treated `reference` as non-critical)
 //     • lib/engine/metadata-override.ts          (omitted `reference`, added `evaluationCriteria`)
 //   plus an inline hard-coded gate in app/api/tenders/[id]/generate/route.ts.
