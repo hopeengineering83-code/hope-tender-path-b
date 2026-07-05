@@ -72,6 +72,30 @@ export async function POST(
   });
   if (!tender) return NextResponse.json({ error: "Tender not found or not accessible." }, { status: 404 });
 
+  // Soft-gate: only the READY_FOR_EXPORT transition is constrained by the
+  // central generation/export gate. Other review states (APPROVED, REJECTED,
+  // NEEDS_REVISION, etc.) are legitimate during broken-analysis recovery and
+  // must remain available. READY_FOR_EXPORT semantically claims "safe to
+  // deliver"; allowing it while the gate is failing would create a misleading
+  // DB state (UI shows ready, /export still returns 409). The actual
+  // deliverable paths (/export, /download) re-enforce the gate fail-closed,
+  // so this is defense-in-depth, not a leak fix.
+  if (reviewStatus === "READY_FOR_EXPORT") {
+    const { assertTenderReadyForGenerationAndExport } = await import("../../../../../../lib/engine/generation-readiness-gate");
+    const centralGate = await assertTenderReadyForGenerationAndExport({
+      prisma,
+      tenderId,
+      userId: actor.id,
+      purpose: "export",
+    });
+    if (!centralGate.ok) {
+      return NextResponse.json({
+        error: `Cannot mark documents READY_FOR_EXPORT: ${centralGate.blockerDetail}`,
+        code: centralGate.blockerCode,
+      }, { status: 409 });
+    }
+  }
+
   const docs = await prisma.generatedDocument.findMany({
     where: {
       tenderId,

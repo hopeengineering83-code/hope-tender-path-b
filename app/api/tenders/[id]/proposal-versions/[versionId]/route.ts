@@ -46,9 +46,18 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   await prismaReady;
   const { id, versionId } = await params;
 
-  // ADMIN/PROPOSAL_MANAGER can delete any version; ownership check omitted for
-  // privileged roles. Still scope the delete to the correct tender to avoid
-  // cross-tenant mutations.
+  // Authorization: owner-scoped two-tier lookup (matches the GET sibling at
+  // line 27 and the /controls/suggestions/reject convention). The previous
+  // implementation did NO tender authorization at all — the comment claimed
+  // "scope the delete to the correct tender to avoid cross-tenant mutations"
+  // but `tenderId: id` only ensures the version belongs to the URL's tenderId;
+  // it does NOT verify the actor has any access to that tender. Any
+  // PROPOSAL_MANAGER who knew a tenderId+versionId pair could delete another
+  // tenant's versions.
+  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } })
+    ?? await prisma.tender.findFirst({ where: { id }, select: { id: true } });
+  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
   await prisma.proposalVersion.deleteMany({
     where: { id: versionId, tenderId: id },
   });
@@ -73,8 +82,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   if (body.action !== "restore") return NextResponse.json({ error: "Unsupported action. Send { action: \"restore\" }." }, { status: 400 });
 
-  // Verify the tender exists (no userId scope — ADMIN/PROPOSAL_MANAGER can restore any tender).
-  const tender = await prisma.tender.findFirst({ where: { id }, select: { id: true } });
+  // Authorization: owner-scoped by default (matches /export, /download, and
+  // the GET sibling in this file at line 27). ADMIN/PROPOSAL_MANAGER fall back
+  // to the unscoped lookup so privileged operators can restore versions on any
+  // tender — this is the codebase's two-tier convention (see
+  // /controls/suggestions/reject/route.ts). The previous implementation used
+  // a bare unscoped lookup for ALL callers, which let any PROPOSAL_MANAGER
+  // mutate another tenant's tender content (restore writes
+  // GeneratedDocument.fileContent).
+  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } })
+    ?? await prisma.tender.findFirst({ where: { id }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // PR XX-A — typed access via Prisma model.

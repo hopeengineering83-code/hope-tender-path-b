@@ -132,6 +132,24 @@ describe("legacy-tender-reconciliation — module shape and detector logic", () 
     );
   });
 
+  it("does NOT swallow tx.tenderRequirement.update errors (data-integrity fix)", () => {
+    // The previous implementation had `.catch(() => {})` on the
+    // tx.tenderRequirement.update call, which silently swallowed update
+    // failures inside the transaction. The audit record would still be
+    // written claiming success, and the human-readable report would say
+    // "Reconciliation applied successfully." — a data-integrity bug.
+    // The fix removes the .catch so any update failure aborts the transaction
+    // (atomicity contract preserved).
+    assert.ok(
+      !src.includes("tx.tenderRequirement.update({\n                where: { id: reqId },\n                data: { sourceTenderFileId: null, sourcePageNumber: null },\n              }).catch(() => {})"),
+      "must NOT swallow tx.tenderRequirement.update errors with .catch(() => {})",
+    );
+    assert.ok(
+      src.includes("data: { sourceTenderFileId: null, sourcePageNumber: null },\n              });"),
+      "tx.tenderRequirement.update must NOT have a trailing .catch(() => {})",
+    );
+  });
+
   it("returns a ReconciliationReport with findings, summary, and humanReadable", () => {
     assert.ok(src.includes("return {"), "must return an object");
     assert.ok(src.includes("tenderId,"), "must return tenderId");

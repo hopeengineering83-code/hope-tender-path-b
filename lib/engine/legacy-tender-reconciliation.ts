@@ -228,7 +228,7 @@ export async function reconcileTender(
               await tx.tenderRequirement.update({
                 where: { id: reqId },
                 data: { sourceTenderFileId: null, sourcePageNumber: null },
-              }).catch(() => {});
+              });
             }
           }
         }
