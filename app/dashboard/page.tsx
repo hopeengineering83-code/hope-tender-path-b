@@ -14,10 +14,24 @@ export default async function DashboardPage() {
   const [tenders, recentActivity] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
+      take: 25, // Pagination — was unbounded (loaded ALL tenders + ALL gaps + ALL docs)
       include: {
-        _count: { select: { requirements: true } },
-        complianceGaps: { select: { id: true, severity: true, isResolved: true } },
-        generatedDocuments: { select: { id: true, validationStatus: true } },
+        _count: {
+          select: {
+            requirements: true,
+            complianceGaps: { where: { isResolved: false } },
+          },
+        },
+        // Only fetch critical unresolved gaps for the count — was loading ALL gaps
+        complianceGaps: {
+          select: { severity: true, isResolved: true },
+          where: { isResolved: false, severity: "CRITICAL" },
+        },
+        // Only fetch doc count + status summary, not full rows
+        generatedDocuments: {
+          select: { id: true, validationStatus: true },
+          where: { generationStatus: { not: "SUPERSEDED" } },
+        },
       },
       orderBy: { updatedAt: "desc" },
     }),
@@ -67,7 +81,7 @@ export default async function DashboardPage() {
     0
   );
 
-  const criticalGaps = tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length, 0);
+  const criticalGaps = tenders.reduce((sum, t) => sum + (t.complianceGaps?.length ?? 0), 0);
 
   return (
     <div className="space-y-8">
@@ -188,7 +202,7 @@ export default async function DashboardPage() {
               <tbody className="divide-y">
                 {tenders.slice(0, 8).map((tender) => {
                   const total = tender._count.requirements;
-                  const critical = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
+                  const critical = tender.complianceGaps?.length ?? 0;
                   const readiness = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
 

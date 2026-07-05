@@ -32,11 +32,15 @@ export async function GET(req: NextRequest) {
   let sent = 0;
   for (const tender of urgentTenders) {
     const daysLeft = Math.ceil((new Date(tender.deadline!).getTime() - Date.now()) / 86_400_000);
-    const userName = tender.user.name ?? "there";
-    const tenderTitle = tender.title ?? "Untitled Tender";
+    // HTML-escape user-controlled values (tender title, user name) to prevent
+    // stored XSS in email clients. These values are set via POST /api/tenders
+    // and only length-validated — they can contain arbitrary HTML/script tags.
+    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+    const userName = esc(tender.user.name ?? "there");
+    const tenderTitle = esc(tender.title ?? "Untitled Tender");
     await sendEmail({
       to: tender.user.email,
-      subject: `⏰ Deadline alert: "${tenderTitle}" is due in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
+      subject: `⏰ Deadline alert: "${tender.title ?? "Untitled Tender"}" is due in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
       html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
           <h2 style="color:#1e293b">Submission deadline approaching</h2>

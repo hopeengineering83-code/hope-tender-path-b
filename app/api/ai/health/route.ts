@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
 import {
   restoreProviderHealthBeforeResponse,
   getAllProviderHealth,
@@ -23,6 +24,13 @@ export const maxDuration = 10;
 const AI_FALLBACK_CHAIN = CANONICAL_AI_FALLBACK_CHAIN_DISPLAY;
 
 export async function GET() {
+  // Auth required — this route exposes AI provider configuration details
+  // (configured providers, model names, fallback chain, cooldown status).
+  // Without auth, this is reconnaissance gold for an attacker.
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
   const restore = await restoreProviderHealthBeforeResponse();
   const health = getAllProviderHealth();
 

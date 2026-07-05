@@ -75,7 +75,32 @@ export async function DELETE(
       fileContent: file.fileContent,
       fileName: file.originalFileName,
     });
-    await prisma.tenderFile.delete({ where: { id: fileId } });
+    // Nullify all source-evidence references to this file BEFORE deleting it,
+    // so requirements and tender metadata fields don't dangle. Without this,
+    // the canonical resolver may still report EXTRACTED_AND_GROUNDED against
+    // a fileId that no longer exists until the next AI Analyze run.
+    await prisma.$transaction(async (tx) => {
+      // Nullify requirement source references
+      await tx.tenderRequirement.updateMany({
+        where: { tenderId, sourceTenderFileId: fileId },
+        data: { sourceTenderFileId: null, sourcePageNumber: null, sourceExactQuote: null },
+      });
+      // Nullify tender source-evidence columns that reference this file
+      // (title, clientName, deadline, reference, submissionMethod, etc.)
+      const sourceColumns = [
+        "titleSourceFileId", "clientNameSourceFileId", "deadlineSourceFileId",
+        "referenceSourceFileId", "submissionMethodSourceFileId",
+        "submissionAddressSourceFileId", "submissionEmailSourceFileId",
+        "submissionEmailSubjectSourceFileId",
+      ];
+      for (const col of sourceColumns) {
+        await (tx as any).tender.updateMany({
+          where: { id: tenderId, [col]: fileId } as any,
+          data: { [col]: null } as any,
+        });
+      }
+      await tx.tenderFile.delete({ where: { id: fileId } });
+    });
   } catch {
     return NextResponse.json({ error: "File could not be deleted safely" }, { status: 502 });
   }

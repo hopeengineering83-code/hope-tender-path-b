@@ -46,12 +46,15 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Company knowledge mutations require ADMIN or PROPOSAL_MANAGER — REVIEWER
+  // and VIEWER are read-only roles (per lib/security/rbac.ts COMPANY_KNOWLEDGE_MGMT).
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });

@@ -61,7 +61,7 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["pdf-parse", "mammoth", "bcryptjs", "@e965/xlsx", "@anthropic-ai/sdk"],
+  serverExternalPackages: ["pdf-parse", "pdf2json", "pdfjs-dist", "mammoth", "bcryptjs", "@e965/xlsx", "@anthropic-ai/sdk", "@google/generative-ai", "openai", "undici", "docx", "pdf-lib", "jszip"],
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
   },

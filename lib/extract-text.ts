@@ -369,16 +369,22 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   const results: Array<{ source: string; text: string; pages: number }> = [];
   await Promise.allSettled(
     extractors.map(async (ext) => {
+      let timer: NodeJS.Timeout | undefined;
       try {
         const result = await Promise.race([
           ext.fn(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`${ext.source} timed out after ${extractorTimeout}ms`)), extractorTimeout),
-          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${ext.source} timed out after ${extractorTimeout}ms`)), extractorTimeout);
+          }),
         ]);
         results.push({ source: ext.source, ...result });
       } catch (error) {
         logger.warn(`[extract-text] ${ext.source} failed:`, { detail: error instanceof Error ? error.message : String(error) });
+      } finally {
+        // Clear the timeout timer to prevent memory leaks — when ext.fn()
+        // wins the race, the setTimeout handle keeps running for up to 10s,
+        // holding memory and delaying Vercel function completion.
+        if (timer) clearTimeout(timer);
       }
     }),
   );

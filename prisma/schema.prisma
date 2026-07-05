@@ -486,6 +486,7 @@ model TenderFile {
   updatedAt        DateTime @updatedAt
 
   @@index([tenderId])
+  @@index([tenderId, deletionStatus]) // Compound — 20+ queries filter by both
 }
 
 model TenderRequirement {
@@ -521,6 +522,7 @@ model TenderRequirement {
   updatedAt            DateTime           @updatedAt
 
   @@index([tenderId])
+  @@index([tenderId, priority]) // Compound — snapshot/gate filter by MANDATORY
   @@index([sourceTenderFileId])
 }
 
