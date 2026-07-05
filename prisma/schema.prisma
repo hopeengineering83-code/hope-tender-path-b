@@ -482,11 +482,13 @@ model TenderFile {
   // Shape: [{ page, charCount, status, hasSubmissionInstructions, ... }]
   pageStatusJson   String?
   ocrModel         String?  // OCR model used if OCR was run, e.g. "claude-3-5-sonnet"
+  contentHash      String?  // MD5 hash of file content — used for dedup at upload time
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([tenderId])
   @@index([tenderId, deletionStatus]) // Compound — 20+ queries filter by both
+  @@unique([tenderId, contentHash]) // Prevents duplicate uploads of same content
 }
 
 model TenderRequirement {
@@ -631,6 +633,7 @@ model GeneratedDocument {
   // Audit DB-002 (2026-06-20): every tender-detail panel loads docs by tenderId.
   // Was a sequential scan before this index.
   @@index([tenderId])
+  @@unique([tenderId, exactFileName]) // Prevents duplicate docs from concurrent /generate
 }
 
 // Per-document review action audit trail (PR #247).
@@ -768,6 +771,7 @@ model ProposalVersion {
 
   @@index([tenderId])
   @@index([tenderId, version])
+  @@unique([tenderId, version]) // Prevents duplicate version numbers from concurrent /generate
 }
 
 // ─── MatchScoreBreakdown (G3 fix) ────────────────────────────────────────────

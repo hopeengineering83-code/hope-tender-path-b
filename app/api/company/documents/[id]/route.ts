@@ -193,8 +193,18 @@ export async function DELETE(
     const draftProjectsRemoved = await tx.project.deleteMany({
       where: { companyId: company.id, sourceDocumentId: id, trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] } },
     });
+    // Count REVIEWED records that will lose their provenance when the source
+    // document is deleted. The schema's onDelete: SetNull will null their
+    // sourceDocumentId, making them "phantom" reviewed records with no
+    // provenance. We surface this count in the response so the user knows.
+    const reviewedExpertsOrphaned = await tx.expert.count({
+      where: { companyId: company.id, sourceDocumentId: id, trustLevel: "REVIEWED" },
+    });
+    const reviewedProjectsOrphaned = await tx.project.count({
+      where: { companyId: company.id, sourceDocumentId: id, trustLevel: "REVIEWED" },
+    });
     await tx.companyDocument.delete({ where: { id } });
-    return { draftExpertsRemoved, draftProjectsRemoved };
+    return { draftExpertsRemoved, draftProjectsRemoved, reviewedExpertsOrphaned, reviewedProjectsOrphaned };
   });
 
   await logAction({

@@ -261,6 +261,10 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       const fileRecords: Array<{ id: string; originalFileName: string; totalPages: number | null }> = [];
       for (const upload of storedUploads) {
         const metrics = deriveFileExtractionMetrics(upload.extractedText);
+        // Compute contentHash for dedup — prevents duplicate uploads of the
+        // same file content. Uses crypto.createHash on the raw file content
+        // (or extractedText as fallback for inline-stored files).
+        const contentHash = crypto.createHash("md5").update(upload.fileContent ?? upload.extractedText ?? "").digest("hex");
         fileRecords.push(await tx.tenderFile.create({
           data: {
             tenderId,
@@ -272,6 +276,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             fileContent: upload.fileContent,
             classification: "Tender Document",
             extractedText: upload.extractedText || null,
+            contentHash,
             totalPages: metrics.totalPages,
             extractedPages: metrics.extractedPages,
             ocrPages: metrics.ocrPages,

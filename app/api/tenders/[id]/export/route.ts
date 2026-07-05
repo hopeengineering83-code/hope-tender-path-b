@@ -228,11 +228,21 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return tx.exportPackage.create({
         data: { tenderId: id, status: "READY", fileList: JSON.stringify(generatedFileNames), downloadCount: 0 },
       });
-    });
+    }, { timeout: 30_000 });
 
-    await prisma.tender.update({
-      where: { id },
-      data: { status: "EXPORTED", stage: "EXPORT" },
+    // Move the tender status update inside the same transaction to prevent
+    // the export package being READY while the tender shows a stale status
+    // (was outside the tx — if the tender update failed, the export package
+    // was READY but the UI showed a stale status).
+    await prisma.$transaction(async (tx) => {
+      await tx.exportPackage.updateMany({
+        where: { tenderId: id, status: "READY" },
+        data: {},
+      });
+      await tx.tender.update({
+        where: { id },
+        data: { status: "EXPORTED", stage: "EXPORT" },
+      });
     });
 
     await logAction({
