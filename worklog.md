@@ -1493,3 +1493,109 @@ Stage Summary:
 - main now has the best of PR #942 without any of its regressions.
 - NOT merged — all PRs remain open. Recommend closing #938, #939, #940, #942
   as superseded.
+
+---
+Task ID: deep-gap-closure-round-5
+Agent: main (Super Z / GLM)
+Task: Continue fixing all gaps without merging — audit round 6 covering G4 export-readiness, value-driven evidence-mandatory fields, and swallowed-catch hardening.
+
+Work Log:
+- Launched 3 parallel deep-audit subagents covering: (1) G4 export-readiness
+  effective-value fix plan, (2) resolver value-driven evidence-mandatory
+  fields, (3) remaining swallowed-catch patterns.
+- Audits surfaced 3 actionable gaps. All 3 fixed.
+
+GAPS FIXED:
+
+1. G4 — export-readiness.ts effective-value checks + shared policy classifiers:
+   The export gate used raw tender columns (tender.submissionMethod,
+   tender.submissionEmails, tender.submissionAddress, tender.deadline,
+   tender.clientName) while USER_EDITED/USER_CONFIRMED overrides existed.
+   A USER_EDITED override changing submission method from email to physical
+   would switch the canonical hash's endpoint but NOT the export gate's —
+   a raw/effective divergence. The gate also used ad-hoc regexes
+   (/email/i, /sealed|hand|courier/i) instead of the shared policy
+   classifiers (isEmailSubmissionMethod, isPhysicalSubmissionMethod).
+   FIX: Added effectiveValue() + effectiveDeadline() helpers (mirror
+   build-plan.ts). Extended the overrides query to fetch overrideValue.
+   Wrapped every raw-column read with effectiveValue(). Replaced ad-hoc
+   regexes with isEmailSubmissionMethod / isPhysicalSubmissionMethod.
+   Updated detectSubmissionPackageMode, CLIENT_NAME_REQUIRED,
+   METADATA_PLACEHOLDER, SUBMISSION_METHOD/EMAIL/ADDRESS gates,
+   DEADLINE_MISSING/PASSED, and CLIENT_DETAILS_SOURCE_MISSING to all use
+   effective values. No caller signature changes needed (overrides already
+   queried internally).
+
+2. Value-driven evidence-mandatory fields in resolver (LAST snapshot/gate divergence):
+   The resolver did NOT block reference/submissionEmailSubject when they
+   had a VALUE but no source evidence (they're non-critical). The BuildPlan
+   validator DID block them. This was the LAST remaining snapshot/gate
+   divergence (documented in tests/snapshot-gate-agreement.test.ts as the
+   sole remaining sentinel). A user could see an all-green panel while the
+   Generate/Export/Final-ZIP buttons all fail.
+   FIX: Added valueDrivenEvidenceMandatory flag to the resolver — true for
+   reference (always when value exists) and submissionEmailSubject (when
+   value exists AND method is email/portal). Set a blockerReason in the 3
+   ungrounded branches (no-override, USER_CONFIRMED, USER_EDITED). Added
+   valueDrivenUngroundedBlock to the gate eligibility logic so
+   generationEligible/exportEligible/zipEligible and
+   hasGenerationBlocker/hasExportBlocker/hasZipBlocker all flip. Mirrors
+   the validator's `if (effReference?.trim())` and `if (!effSubject?.trim())`
+   guards exactly — absent values are NOT blocked (safe).
+
+3. Swallowed-catch observability hardening (5 locations):
+   All 5 flagged .catch(() => {}) patterns were assessed as SAFE (either
+   intentional fail-open or fail-closed). No bugs. But 3 were worth
+   hardening for observability so operators can distinguish DB flakiness
+   from genuine data gaps:
+   - proposal-evidence-readiness.ts:84 — pricingWorkbook.findUnique
+     fail-closed to null → misleading "pricing not ready" signal. Added
+     console.warn + separate warning entry.
+   - ai-proposal/route.ts (3 calls) — saveChunkOutput + aiJob.update
+     fire-and-forget. Added logger.warn so DB flakiness is observable.
+   - generate/route.ts:1067 — tender.update stage=GENERATION cosmetic.
+     Added log.warn.
+   - build-plan.ts:303 — company.findUnique fail-closed → false
+     ANALYSIS_HASH_MISMATCH. Added console.warn.
+   Deferred (safe, redundant): ai-analyze/route.ts:1855
+     markProviderAnalysisOK — internal logger.warn already covers it.
+
+ALSO UPDATED (tests):
+- tests/export-readiness-submission-gates.test.ts: rewrote 14 source-
+  inspection assertions to match the new effective-value + classifier
+  patterns (was asserting old ad-hoc regexes).
+- tests/canonical-field-state-grounding.test.ts: split the "EXTRACTED_UNVERIFIED
+  should NOT block non-critical" test into two — one for country (genuinely
+  non-critical, no block) and one for reference (value-driven, now blocks).
+- tests/canonical-field-grounding.test.ts: grounded the reference field in
+  makeBaseTender (reference is now value-driven evidence-mandatory).
+- tests/release-snapshot-vocabulary.test.ts: grounded reference in makeTender;
+  updated the "does NOT block non-critical with USER_EDITED" test to assert
+  the new BLOCKS behavior for value-driven reference.
+- tests/snapshot-gate-agreement.test.ts: grounded reference in the Tier B
+  decision-function test.
+- tests/evidence-grounding-consistency.test.ts: updated threshold assertions
+  5→10 and quote-length expectations to match the G1 fix from round 5.
+
+Verification:
+- npx tsc --noEmit: PASS
+- npm run lint: PASS
+- 5354 non-DB tests PASS (501 most-affected + 3684 regression + 1169 other)
+- 7 DB-integration tests NOT run (PostgreSQL unavailable — /tmp cleaned).
+  Code changes validated by tsc + lint + 5354 non-DB tests.
+
+Stage Summary:
+- 3 genuine gaps closed (G4 export-readiness effective values, value-driven
+  evidence-mandatory fields, swallowed-catch observability).
+- The LAST snapshot/gate divergence (value-driven evidence-mandatory) is now
+  CLOSED. The snapshot/gate agreement is now complete except for the
+  metadata second-layer check (validateCriticalMetadataEvidenceForBuildPlan
+  in the snapshot — requires the snapshot to call the validator, which is a
+  larger refactor that could change UI behavior; documented with a sentinel).
+- The export gate now respects USER_EDITED/USER_CONFIRMED overrides on
+  clientName, submissionMethod, submissionEmails, submissionAddress, deadline.
+- The resolver now blocks reference/submissionEmailSubject when they have a
+  value but no source evidence — mirroring the BuildPlan validator.
+- 6 test files updated to reflect the new behavior.
+- 5354/5354 non-DB tests pass (0 code failures).
+- NOT merged, NOT deployed — awaiting explicit user authorization.

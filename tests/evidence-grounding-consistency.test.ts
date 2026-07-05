@@ -17,16 +17,17 @@ describe("evidence-grounding — shared predicate", () => {
     assert.equal(isGroundedEvidence(2, "A valid supporting quote"), true);
   });
 
-  it("requires a non-trivial quote (> 5 non-space chars)", () => {
+  it("requires a non-trivial quote (>= 10 non-space chars — matches gates' MIN_MEANINGFUL_QUOTE_CHARS)", () => {
     assert.equal(isGroundedEvidence(2, "ABC"), false, "3-char quote is not evidence");
-    assert.equal(isGroundedEvidence(2, "12345"), false, "5-char quote is at the boundary, not grounded");
-    assert.equal(isGroundedEvidence(2, "123456"), true);
+    assert.equal(isGroundedEvidence(2, "123456789"), false, "9-char quote is below the 10-char threshold, not grounded");
+    assert.equal(isGroundedEvidence(2, "1234567890"), true, "10-char quote meets the threshold (>=)");
+    assert.equal(isGroundedEvidence(2, "A meaningful quote"), true);
     assert.equal(isGroundedEvidence(2, "     "), false, "whitespace-only quote is not evidence");
     assert.equal(isGroundedEvidence(2, null), false);
   });
 
   it("exposes the threshold constant used by both resolvers", () => {
-    assert.equal(MIN_GROUNDING_QUOTE_LENGTH, 5);
+    assert.equal(MIN_GROUNDING_QUOTE_LENGTH, 10, "threshold raised 5→10 to match gates' MIN_MEANINGFUL_QUOTE_CHARS");
   });
 });
 

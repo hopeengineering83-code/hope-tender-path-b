@@ -374,6 +374,20 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds) && !override) || overrideMatchesGroundedSourceCheck();
 
+    // Value-driven evidence-mandatory fields: the BuildPlan validator
+    // (validateCriticalMetadataEvidenceForBuildPlan, build-plan.ts) enforces
+    // full source evidence whenever these fields carry a VALUE, regardless of
+    // criticality. The resolver must mirror this or the panel shows green
+    // while the gate blocks. reference is always value-driven when present;
+    // submissionEmailSubject is value-driven only when the method is email/portal
+    // (matching the validator's branches).
+    const valueDrivenEvidenceMandatory = !!effectiveStr?.trim() && (
+      fieldKey === "reference" ||
+      (fieldKey === "submissionEmailSubject" &&
+        (isEmailSubmissionMethod(policyCtx.submissionMethod) ||
+         isPortalSubmissionMethod(policyCtx.submissionMethod)))
+    );
+
     // Determine status
     let status: CanonicalFieldStatus;
     let blockerReason: string | null = null;
@@ -423,6 +437,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         status = isGroundedSource ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
         if (isCritical && status === "NOT_FOUND_CONFIRMED") {
           blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Link to an active tender source to unblock generation.`;
+        } else if (valueDrivenEvidenceMandatory && status === "NOT_FOUND_CONFIRMED") {
+          blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Value-driven evidence-mandatory fields remain blocked until source-grounded.`;
         } else if (isCritical && isGroundedSource && normalizedConfirmed !== normalizedRaw) {
           blockerReason = `Field "${label}" was manually confirmed with a value that does not match the active tender-source evidence. The confirmed value must exactly match the extracted source value.`;
         }
@@ -434,6 +450,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
         if (isCritical) {
           blockerReason = `Field "${label}" has a candidate value that does not match active tender-source evidence. Critical fields remain blocked until the value exactly matches the grounded source evidence.`;
+        } else if (valueDrivenEvidenceMandatory) {
+          blockerReason = `Field "${label}" has a candidate value that does not match active tender-source evidence. Value-driven evidence-mandatory fields remain blocked until the value exactly matches the grounded source evidence.`;
         }
       }
     } else if (isGrounded) {
@@ -443,6 +461,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         // Rule 3 / Rule 8: Critical fields remain blocked until source-grounded.
         blockerReason = `Field "${label}" has a value but is not yet source-grounded (missing page, quote, or active file). Critical fields remain blocked until source-grounded.`;
+      } else if (valueDrivenEvidenceMandatory) {
+        blockerReason = `Field "${label}" has a value but is not yet source-grounded (missing page, quote, or active file). Value-driven evidence-mandatory fields remain blocked until source-grounded.`;
       } else {
         evidenceReviewNeeded = true;
         warningReason = `Field "${label}" has a value but is not yet linked to a source page + quote. Confirm the evidence for full traceability.`;
@@ -465,13 +485,19 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed;
     const effectiveGrounded = isGrounded && !contaminated;
 
+    // Value-driven evidence-mandatory fields that have a value but no grounded
+    // evidence must hard-block all gates (mirrors the BuildPlan validator).
+    const valueDrivenUngroundedBlock =
+      valueDrivenEvidenceMandatory && !isGrounded && blockerReason !== null;
+
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;
-    const generationEligible = !isBlocked || (!isCritical && status !== "BLOCKED");
-    const exportEligible = !isBlocked || (!isCritical && status !== "BLOCKED");
-    const zipEligible = !isBlocked;
+    const isHardBlock = (isCritical && isBlocked) || valueDrivenUngroundedBlock;
+    const generationEligible = !isHardBlock && (!isBlocked || (!isCritical && status !== "BLOCKED"));
+    const exportEligible = !isHardBlock && (!isBlocked || (!isCritical && status !== "BLOCKED"));
+    const zipEligible = !isHardBlock && !isBlocked;
 
-    if (isCritical && isBlocked) {
+    if (isHardBlock) {
       hasGenerationBlocker = true;
       hasExportBlocker = true;
       hasZipBlocker = true;

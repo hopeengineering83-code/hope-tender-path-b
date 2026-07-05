@@ -87,6 +87,12 @@ function makeTender(overrides: Partial<CanonicalResolverInput["tender"]> = {}): 
     deadlineSourcePage: 1,
     deadlineSourceQuote: "Deadline: Oct 1 2026",
     deadlineSourceFileId: "file1",
+    // GROUND the reference field — it's value-driven evidence-mandatory
+    // (when reference has a value, full source evidence is required, mirroring
+    // the BuildPlan validator).
+    referenceSourcePage: 1,
+    referenceSourceQuote: "Tender reference MOT/RFP/2026/001",
+    referenceSourceFileId: "file1",
     contactDetailsSourceJson: null,
     ...overrides,
   };
@@ -120,7 +126,10 @@ describe("resolver — USER_EDITED on critical field", () => {
     assert.equal(f.isValid, false);
   });
 
-  it("does NOT block non-critical field with USER_EDITED", () => {
+  it("BLOCKS non-critical value-driven field with USER_EDITED (value-driven evidence-mandatory)", () => {
+    // reference is value-driven evidence-mandatory: when a USER_EDITED override
+    // gives it a value, full source evidence is required. The resolver must
+    // block so the panel doesn't show green while the BuildPlan validator blocks.
     const r = resolveCanonicalFieldState({
       tender: makeTender({ reference: null, referenceSourceFileId: null, referenceSourcePage: null, referenceSourceQuote: null }),
       overrides: [{
@@ -136,8 +145,8 @@ describe("resolver — USER_EDITED on critical field", () => {
     });
     const f = r.fields.find((x) => x.fieldKey === "reference")!;
     assert.equal(f.status, "MANUAL_OVERRIDE");
-    assert.equal(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, false);
+    assert.ok(f.blockerReason, "USER_EDITED reference with no evidence must have a blocker reason");
+    assert.equal(r.hasGenerationBlocker, true, "Value-driven evidence-mandatory field with USER_EDITED but no evidence must block");
   });
 });
 

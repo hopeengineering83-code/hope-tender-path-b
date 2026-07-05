@@ -16,6 +16,7 @@ import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
 import { detectAnalysisSourceWithApproval } from "./analysis-source";
+import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
 
 export type ExportReadyDocument = {
   id: string;
@@ -300,18 +301,36 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (!tender) return { blockers: [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")], advisoryWarnings };
 
   const exportOverrides = await prisma.tenderMetadataOverride
-    .findMany({ where: { tenderId } })
-    .catch(() => [] as Array<{ field: string; fieldState: string }>);
+    .findMany({ where: { tenderId }, select: { field: true, fieldState: true, overrideValue: true } })
+    .catch(() => [] as Array<{ field: string; fieldState: string; overrideValue: string | null }>);
   const exportOverrideByField = new Map(exportOverrides.map(o => [o.field, o]));
   const isOverridden = (field: string) => {
     const o = exportOverrideByField.get(field);
     return o !== undefined && ["USER_CONFIRMED", "USER_EDITED", "NOT_APPLICABLE", "IGNORED_WITH_REASON"].includes(o.fieldState);
   };
+  // Resolve the EFFECTIVE value (override ?? raw) for a field. Mirrors
+  // build-plan.ts validateCriticalMetadataEvidenceForBuildPlan's effectiveValue()
+  // so the export gate never disagrees with the canonical hash on which value
+  // is in force. NOT_APPLICABLE / IGNORED_WITH_REASON do NOT replace the value
+  // (only USER_EDITED / USER_CONFIRMED do).
+  function effectiveValue(field: string, raw: string | null | undefined): string | null {
+    const o = exportOverrideByField.get(field);
+    if (o && (o.fieldState === "USER_EDITED" || o.fieldState === "USER_CONFIRMED")) {
+      return o.overrideValue ?? null;
+    }
+    return raw ?? null;
+  }
+  function effectiveDeadline(raw: Date | string | null | undefined): Date | null {
+    const eff = effectiveValue("deadline", raw instanceof Date ? raw.toISOString() : raw ? String(raw) : null);
+    if (!eff) return null;
+    const d = new Date(eff);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
 
   const packageMode = detectSubmissionPackageMode({
-    submissionMethod: tender.submissionMethod,
-    submissionAddress: tender.submissionAddress,
-    submissionEmails: tender.submissionEmails,
+    submissionMethod: effectiveValue("submissionMethod", tender.submissionMethod),
+    submissionAddress: effectiveValue("submissionAddress", tender.submissionAddress),
+    submissionEmails: effectiveValue("submissionEmails", tender.submissionEmails),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     analysisSummary: tender.analysisSummary,
@@ -331,7 +350,8 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
-  const effectiveExportClientName = tender.clientName || tender.procuringEntityName;
+  // Use EFFECTIVE values (override ?? raw) so a USER_EDITED clientName override is respected.
+  const effectiveExportClientName = effectiveValue("clientName", tender.clientName) || effectiveValue("procuringEntityName", tender.procuringEntityName);
   if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
 
   // ── Extraction quality blocker ────────────────────────────────────────────
@@ -405,9 +425,9 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // ── Metadata placeholder hygiene blocker ─────────────────────────────────
   // Block when critical tender metadata fields still contain placeholder strings.
   const criticalMetadataFields: Array<[string, string | null | undefined]> = [
-    ["Client name", tender.clientName],
-    ["Procuring entity", tender.procuringEntityName],
-    ["Submission method", tender.submissionMethod],
+    ["Client name", effectiveValue("clientName", tender.clientName)],
+    ["Procuring entity", effectiveValue("procuringEntityName", tender.procuringEntityName)],
+    ["Submission method", effectiveValue("submissionMethod", tender.submissionMethod)],
   ];
   for (const [label, value] of criticalMetadataFields) {
     if (value && containsMetadataPlaceholder(value)) {
@@ -487,7 +507,13 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
   // ── Submission method + endpoint completeness blockers ──────────────────
-  if (!tender.submissionMethod) {
+  // Use EFFECTIVE values (override ?? raw) and shared policy classifiers so
+  // the export gate never disagrees with the canonical hash or the BuildPlan
+  // validator on which method is in force or whether it's email/physical/portal.
+  const effMethod = effectiveValue("submissionMethod", tender.submissionMethod);
+  const effEmails = effectiveValue("submissionEmails", tender.submissionEmails);
+  const effAddress = effectiveValue("submissionAddress", tender.submissionAddress);
+  if (!effMethod) {
     blockers.push(tenderBlocker(
       "SUBMISSION_METHOD_MISSING",
       "Submission method has not been extracted or confirmed — the package may be submitted incorrectly.",
@@ -495,10 +521,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "HIGH",
     ));
   } else {
-    const method = tender.submissionMethod.toUpperCase();
-    const needsEmail = /email/i.test(method) || method === "EMAIL";
-    const needsAddress = /sealed|hand|courier/i.test(method) || /SEALED_ENVELOPE|HAND_DELIVERY|COURIER/.test(method);
-    if (needsEmail && !tender.submissionEmails) {
+    if (isEmailSubmissionMethod(effMethod) && !effEmails) {
       blockers.push(tenderBlocker(
         "SUBMISSION_EMAIL_MISSING",
         "Submission method is EMAIL but no submission email address has been extracted. The package cannot be delivered.",
@@ -506,11 +529,11 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
         "HIGH",
       ));
     }
-    if (needsAddress && !tender.submissionAddress) {
+    if (isPhysicalSubmissionMethod(effMethod) && !effAddress) {
       advisoryWarnings.push({
         category: "SUBMISSION_ADDRESS_MISSING",
         severity: "MEDIUM" as const,
-        title: `Submission method is ${tender.submissionMethod} but no submission address was extracted.`,
+        title: `Submission method is ${effMethod} but no submission address was extracted.`,
         recommendedAction: "Add the physical submission address in Tender Detail to ensure correct package delivery.",
       });
     }
@@ -518,8 +541,10 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
   // ── Deadline freshness advisory ───────────────────────────────────────────
   // Block when deadline is not set — per CLAUDE.md deadline is a critical field
-  // that must be present before export.
-  if (!tender.deadline) {
+  // that must be present before export. Use EFFECTIVE value (override ?? raw)
+  // so a USER_EDITED deadline override is respected.
+  const effDeadline = effectiveDeadline(tender.deadline);
+  if (!effDeadline) {
     blockers.push(tenderBlocker(
       "DEADLINE_MISSING",
       "Submission deadline has not been extracted or confirmed — the cover letter and package label cannot carry the correct date.",
@@ -533,12 +558,11 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // allow export/submission in case a deadline extension was granted or the
   // evaluator accepts late submissions. This is a HIGH-severity advisory, not
   // a hard blocker.
-  if (tender.deadline) {
+  if (effDeadline) {
     const now = new Date();
-    const deadlineDate = tender.deadline instanceof Date ? tender.deadline : new Date(tender.deadline);
-    if (!Number.isNaN(deadlineDate.getTime()) && deadlineDate < now) {
-      const daysAgo = Math.round((now.getTime() - deadlineDate.getTime()) / (1000 * 60 * 60 * 24));
-      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
+    if (effDeadline < now) {
+      const daysAgo = Math.round((now.getTime() - effDeadline.getTime()) / (1000 * 60 * 60 * 24));
+      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${effDeadline.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
     }
   }
 
@@ -546,7 +570,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // Per CLAUDE.md: "Source page and source quote/snippet for every extracted
   // client field." If client was extracted but source is missing, warn for export.
   const clientSourceMissing: string[] = [];
-  if (tender.clientName && !isOverridden("clientName")) {
+  if (effectiveValue("clientName", tender.clientName) && !isOverridden("clientName")) {
     const clientSourcePage = (tender as { clientNameSourcePage?: number | null }).clientNameSourcePage;
     const clientSourceQuote = (tender as { clientNameSourceQuote?: string | null }).clientNameSourceQuote;
     if (!clientSourcePage || !clientSourceQuote) {

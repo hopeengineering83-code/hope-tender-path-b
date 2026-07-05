@@ -5,10 +5,12 @@
 //   SUBMISSION_ADDRESS_MISSING — physical method + no submissionAddress → MEDIUM advisory
 //   DEADLINE_PASSED — deadline < now → HIGH advisory
 //
+// Updated for the G4 fix: the gate now uses EFFECTIVE values (override ?? raw)
+// and shared policy classifiers (isEmailSubmissionMethod / isPhysicalSubmissionMethod)
+// instead of ad-hoc regexes on raw tender columns.
+//
 // Because checkTenderLevelExportBlockers requires a live DB, these tests
-// verify the gate logic through source-code pattern checks and pure helper
-// functions extracted from the same module, following the same pattern used
-// in tests/recovery-command-center-actions.test.ts.
+// verify the gate logic through source-code pattern checks.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -27,31 +29,27 @@ describe("export gate — SUBMISSION_EMAIL_MISSING blocker", () => {
     );
   });
 
-  it("the email-missing gate checks submissionMethod contains 'email' (case-insensitive)", () => {
+  it("email detection uses the shared isEmailSubmissionMethod classifier (not ad-hoc regex)", () => {
     assert.ok(
-      SRC.includes("/email/i.test(method)"),
-      "email detection must use case-insensitive regex",
+      SRC.includes("isEmailSubmissionMethod(effMethod)"),
+      "email detection must use isEmailSubmissionMethod on the effective method (G4 fix)",
+    );
+    assert.ok(
+      !SRC.includes("/email/i.test(method)"),
+      "old ad-hoc /email/i regex must be removed (G4 fix)",
     );
   });
 
-  it("the email-missing gate also checks for method === 'EMAIL'", () => {
+  it("email-missing gate fires when effective submissionEmails is falsy", () => {
     assert.ok(
-      SRC.includes('method === "EMAIL"'),
-      "email detection must also handle exact EMAIL enum value",
-    );
-  });
-
-  it("email-missing gate fires when submissionEmails is falsy", () => {
-    assert.ok(
-      SRC.includes("needsEmail && !tender.submissionEmails"),
-      "email-missing gate must check !tender.submissionEmails",
+      SRC.includes("isEmailSubmissionMethod(effMethod) && !effEmails"),
+      "email-missing gate must check !effEmails (effective value, not raw)",
     );
   });
 
   it("email-missing blocker uses HIGH severity", () => {
     const emailMissingIdx = SRC.indexOf('"SUBMISSION_EMAIL_MISSING"');
     assert.ok(emailMissingIdx !== -1, "SUBMISSION_EMAIL_MISSING must exist");
-    // The HIGH severity string must appear near the blocker call (within 300 chars)
     const snippet = SRC.slice(emailMissingIdx, emailMissingIdx + 350);
     assert.ok(snippet.includes('"HIGH"'), "SUBMISSION_EMAIL_MISSING must be a HIGH severity blocker");
   });
@@ -67,31 +65,31 @@ describe("export gate — SUBMISSION_ADDRESS_MISSING advisory", () => {
     );
   });
 
-  it("address-missing gate checks for sealed/hand/courier submission methods", () => {
+  it("address detection uses the shared isPhysicalSubmissionMethod classifier (not ad-hoc regex)", () => {
     assert.ok(
-      SRC.includes("/sealed|hand|courier/i.test(method)"),
-      "address detection must cover sealed/hand/courier methods",
+      SRC.includes("isPhysicalSubmissionMethod(effMethod)"),
+      "address detection must use isPhysicalSubmissionMethod on the effective method (G4 fix)",
+    );
+    assert.ok(
+      !SRC.includes("/sealed|hand|courier/i.test(method)"),
+      "old ad-hoc /sealed|hand|courier/i regex must be removed (G4 fix)",
+    );
+    assert.ok(
+      !SRC.includes("SEALED_ENVELOPE|HAND_DELIVERY|COURIER"),
+      "old ad-hoc enum regex must be removed (G2 underscore-aware classifier covers it)",
     );
   });
 
-  it("address-missing gate also checks SEALED_ENVELOPE / HAND_DELIVERY / COURIER enum values", () => {
+  it("address-missing advisory fires when effective submissionAddress is falsy", () => {
     assert.ok(
-      SRC.includes("SEALED_ENVELOPE|HAND_DELIVERY|COURIER"),
-      "address detection must cover enum values for physical submission",
-    );
-  });
-
-  it("address-missing advisory fires when submissionAddress is falsy", () => {
-    assert.ok(
-      SRC.includes("needsAddress && !tender.submissionAddress"),
-      "address-missing advisory must check !tender.submissionAddress",
+      SRC.includes("isPhysicalSubmissionMethod(effMethod) && !effAddress"),
+      "address-missing advisory must check !effAddress (effective value, not raw)",
     );
   });
 
   it("address-missing is an advisoryWarning (MEDIUM), not a hard blocker", () => {
     const addressIdx = SRC.indexOf('"SUBMISSION_ADDRESS_MISSING"');
     assert.ok(addressIdx !== -1, "SUBMISSION_ADDRESS_MISSING must exist");
-    // Should appear inside advisoryWarnings.push(), not blockers.push()
     const before = SRC.slice(Math.max(0, addressIdx - 200), addressIdx);
     assert.ok(
       before.includes("advisoryWarnings.push"),
@@ -112,17 +110,10 @@ describe("export gate — DEADLINE_PASSED advisory", () => {
     );
   });
 
-  it("deadline gate compares deadline date against current time", () => {
+  it("deadline gate uses effective deadline (override-aware)", () => {
     assert.ok(
-      SRC.includes("deadlineDate < now"),
-      "deadline gate must compare deadlineDate < now",
-    );
-  });
-
-  it("deadline gate guards against NaN dates", () => {
-    assert.ok(
-      SRC.includes("Number.isNaN(deadlineDate.getTime())"),
-      "deadline gate must guard against NaN with Number.isNaN",
+      SRC.includes("effDeadline < now"),
+      "deadline gate must compare the effective deadline < now (G4 fix)",
     );
   });
 
@@ -153,27 +144,54 @@ describe("export gate — DEADLINE_PASSED advisory", () => {
   });
 });
 
-// ── 4. Logic isolation — email vs address method detection ───────────────────
+// ── 4. Effective-value wiring ─────────────────────────────────────────────────
 
-describe("export gate — email vs physical method detection logic", () => {
-  it("needsEmail and needsAddress are derived from the same tender.submissionMethod", () => {
-    const methodIdx = SRC.indexOf("const needsEmail");
-    assert.ok(methodIdx !== -1, "needsEmail variable must be declared");
-    const needsAddressIdx = SRC.indexOf("const needsAddress");
-    assert.ok(needsAddressIdx !== -1, "needsAddress variable must be declared");
-    // Both should appear in close proximity (within 600 chars of each other)
+describe("export gate — effective-value wiring (G4 fix)", () => {
+  it("declares effMethod, effEmails, effAddress from effectiveValue()", () => {
     assert.ok(
-      Math.abs(methodIdx - needsAddressIdx) < 600,
-      "needsEmail and needsAddress must be declared near each other",
+      SRC.includes("const effMethod = effectiveValue(\"submissionMethod\", tender.submissionMethod)"),
+      "must declare effMethod via effectiveValue (G4 fix)",
+    );
+    assert.ok(
+      SRC.includes("const effEmails = effectiveValue(\"submissionEmails\", tender.submissionEmails)"),
+      "must declare effEmails via effectiveValue (G4 fix)",
+    );
+    assert.ok(
+      SRC.includes("const effAddress = effectiveValue(\"submissionAddress\", tender.submissionAddress)"),
+      "must declare effAddress via effectiveValue (G4 fix)",
+    );
+  });
+
+  it("declares effDeadline from effectiveDeadline()", () => {
+    assert.ok(
+      SRC.includes("const effDeadline = effectiveDeadline(tender.deadline)"),
+      "must declare effDeadline via effectiveDeadline (G4 fix)",
+    );
+  });
+
+  it("defines effectiveValue helper that reads overrideValue for USER_EDITED/USER_CONFIRMED", () => {
+    assert.ok(
+      SRC.includes("function effectiveValue(field: string, raw: string | null | undefined): string | null"),
+      "must define effectiveValue helper (G4 fix)",
+    );
+    assert.ok(
+      SRC.includes('o.fieldState === "USER_EDITED" || o.fieldState === "USER_CONFIRMED"'),
+      "effectiveValue must return overrideValue for USER_EDITED/USER_CONFIRMED (G4 fix)",
+    );
+  });
+
+  it("imports the shared policy classifiers", () => {
+    assert.ok(
+      SRC.includes("import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from \"./submission-method-policy\""),
+      "must import isEmailSubmissionMethod + isPhysicalSubmissionMethod (G4 fix)",
     );
   });
 
   it("email and address checks are guarded by submission method being present", () => {
-    // The submissionMethod check is } else { so these only fire when method is set
     const submissionMissingIdx = SRC.indexOf('"SUBMISSION_METHOD_MISSING"');
     assert.ok(submissionMissingIdx !== -1, "SUBMISSION_METHOD_MISSING blocker must exist");
     const elseIdx = SRC.indexOf("} else {", submissionMissingIdx);
-    const emailIdx = SRC.indexOf("needsEmail", elseIdx);
+    const emailIdx = SRC.indexOf("isEmailSubmissionMethod(effMethod)", elseIdx);
     assert.ok(emailIdx > elseIdx, "email/address checks must be inside the else branch (only when method is set)");
   });
 });
@@ -188,12 +206,11 @@ describe("export gate — DEADLINE_MISSING blocker", () => {
     );
   });
 
-  it("DEADLINE_MISSING blocker fires when deadline is null (before the deadline-passed check)", () => {
+  it("DEADLINE_MISSING blocker fires when effective deadline is null (before the deadline-passed check)", () => {
     const deadlineMissingIdx = SRC.indexOf('"DEADLINE_MISSING"');
     const deadlinePassedIdx = SRC.indexOf('"DEADLINE_PASSED"');
     assert.ok(deadlineMissingIdx !== -1, "DEADLINE_MISSING must be present");
     assert.ok(deadlinePassedIdx !== -1, "DEADLINE_PASSED must be present");
-    // DEADLINE_MISSING check (!tender.deadline) must come before DEADLINE_PASSED (deadline < now)
     assert.ok(
       deadlineMissingIdx < deadlinePassedIdx,
       "DEADLINE_MISSING blocker must appear before DEADLINE_PASSED advisory in source",

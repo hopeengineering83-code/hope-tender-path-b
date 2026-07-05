@@ -32,6 +32,12 @@ function makeBaseTender(overrides: Partial<CanonicalResolverInput["tender"]> = {
     deadlineSourcePage: 1,
     deadlineSourceQuote: "Deadline: 2026",
     deadlineSourceFileId: "file1",
+    // GROUND the reference field — it's value-driven evidence-mandatory
+    // (when reference has a value, full source evidence is required, mirroring
+    // the BuildPlan validator).
+    referenceSourcePage: 1,
+    referenceSourceQuote: "The reference number is REF-001",
+    referenceSourceFileId: "file1",
     contactDetailsSourceJson: null,
     ...overrides,
   };

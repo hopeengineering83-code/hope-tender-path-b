@@ -266,6 +266,10 @@ describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
         submissionMethodSourceFileId: "file-1",
         submissionMethodSourcePage: 1,
         submissionMethodSourceQuote: "Submit by Email submission to the address below.",
+        // Ground the reference — it's value-driven evidence-mandatory.
+        referenceSourceFileId: "file-1",
+        referenceSourcePage: 1,
+        referenceSourceQuote: "The reference number is REF-2026-001 for this tender.",
       },
       overrides: [],
       activeTenderFileIds: new Set(["file-1"]),
