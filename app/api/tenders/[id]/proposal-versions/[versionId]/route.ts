@@ -1,9 +1,3 @@
-// Single-version routes:
-//
-// GET  /api/tenders/[id]/proposal-versions/[versionId]
-// POST /api/tenders/[id]/proposal-versions/[versionId] (action: "restore")
-// DELETE /api/tenders/[id]/proposal-versions/[versionId]
-
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse, getCurrentUser } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
@@ -40,8 +34,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   await prismaReady;
   const { id, versionId } = await params;
 
-  // Authorization: strict two-tier owner-scoped lookup.
-  // PROPOSAL_MANAGER must NEVER access another user's tender.
   const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
@@ -65,7 +57,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   if (body.action !== "restore") return NextResponse.json({ error: "Unsupported action. Send { action: \"restore\" }." }, { status: 400 });
 
-  // Authorization: strict two-tier owner-scoped lookup.
   const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 

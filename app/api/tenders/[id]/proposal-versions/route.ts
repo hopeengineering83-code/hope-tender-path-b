@@ -1,11 +1,3 @@
-// GET /api/tenders/[id]/proposal-versions
-//
-// Returns the list of saved proposal versions for a tender (newest first).
-// Each entry includes version number, scores, mode, summary, and createdAt.
-// The full markdown and fileContent are intentionally excluded from the list
-// response to keep it small — fetch them via the single-version route when
-// the user selects a version to preview or restore.
-
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
