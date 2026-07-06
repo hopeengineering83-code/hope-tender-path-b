@@ -194,7 +194,7 @@ export async function autoFillTenderMetadata(
   }
   if (shouldFillScalar("submissionEmails", tender.submissionEmails)) {
     const r = extractSubmissionEmails(filesInput);
-    if (r.found) trySecondPassScalar("submissionEmails", tender.submissionEmails, r.value);
+    if (r.found) trySecondPassScalar("submissionEmails", tender.submissionEmails, r.value.join(", "));
   }
   if (shouldFillScalar("submissionMethod", tender.submissionMethod)) {
     const r = extractSubmissionMethod(filesInput);
