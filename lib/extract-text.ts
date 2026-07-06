@@ -351,14 +351,14 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
 
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const XLSX = require("xlsx") as typeof import("xlsx");
+  const XLSX = require("xlsx");
   const workbook = XLSX.read(buffer, { type: "buffer", cellText: true });
   const parts: string[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
     const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
-    const cleaned = csv.split("\n").filter((row) => row.replace(/,/g, "").trim().length > 0).join("\n").trim();
+    const cleaned = csv.split("\n").filter((row: string) => row.replace(/,/g, "").trim().length > 0).join("\n").trim();
     if (cleaned) parts.push(`[Sheet: ${sheetName}]\n${cleaned}`);
   }
   if (parts.length === 0) return `[Empty spreadsheet: ${fileName}]`;
