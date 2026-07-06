@@ -156,9 +156,15 @@ describe("build-plan validator — authority model draft vs final", () => {
     assert.equal(result.ok, false, "Final should fail with boilerplate reason");
   });
 
-  it("DRAFT mode: missing critical field without override FAILS", () => {
+  it("DRAFT mode: missing critical field without override PASSES (authority model — draft work proceeds)", () => {
     // No value, no override — the field is genuinely missing.
-    // Draft work should be blocked (this is a real gap, not a manual entry).
+    // Under the authority model (merged with PR #956's draft-phase leniency),
+    // DRAFT work proceeds even when critical metadata is missing. The mission
+    // spec says: "Missing tender title, client name, submission method,
+    // deadline, endpoint, or required documents must not block DRAFT work
+    // when the actual tender requirements are sufficiently extracted."
+    // FINAL export still requires these fields (with source grounding OR
+    // sufficient audit).
     const result = validateCriticalMetadataEvidenceForBuildPlan(
       makeTender({
         clientName: null,
@@ -170,7 +176,7 @@ describe("build-plan validator — authority model draft vs final", () => {
       [],
       "draft",
     );
-    assert.equal(result.ok, false, "Draft should fail with missing critical field and no override");
+    assert.equal(result.ok, true, "Draft should pass with missing critical field (authority model — draft proceeds)");
   });
 
   it("DRAFT mode: placeholder value FAILS (even with override)", () => {
