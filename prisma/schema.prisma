@@ -431,6 +431,9 @@ model Tender {
   submissionPlanState   SubmissionPlanState?
   aiUsageRecords        AiUsageRecord[]
   buildPlan             BuildPlan?
+  // Universal tender facts ledger (additive — new in feat/universal-tender-facts-ledger)
+  factsLedger           TenderFactsLedger[]
+  submissionEmailRecords TenderSubmissionEmail[]
 
   // Audit DB-002 (2026-06-20): the single most-queried column in the app
   // (every "list my tenders" dashboard query filters on userId). Was a
@@ -1303,4 +1306,121 @@ model BuildPlan {
   updatedAt            DateTime @updatedAt
 
   @@index([contentHash])
+}
+
+// ─── TenderFactsLedger ─────────────────────────────────────────────────────
+// Universal tender facts ledger — replaces the fixed 26-field metadata
+// checklist with a dynamic, extensible fact store. Each fact has:
+// - a semantic key (e.g. "clientName", "deadline", "custom:sector_code");
+// - a human display label;
+// - a category (tender identity, submission, financial, etc.);
+// - a value type (TEXT, DATE, EMAIL_LIST, MONEY, etc.);
+// - an authority state (SOURCE_GROUNDED_CONFIRMED, HUMAN_CONFIRMED_OPERATIONAL, etc.);
+// - source evidence (file, page, quote, content hash);
+// - audit history (created by, confirmed by, timestamps);
+// - review state.
+//
+// Legacy Tender scalar columns remain as backward-compatible projections
+// derived from the effective facts. All new workflow consumers use
+// resolveEffectiveTenderContext() which merges ledger facts + overrides.
+model TenderFactsLedger {
+  id                String   @id @default(uuid())
+  tenderId          String
+  tender            Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+
+  // Semantic key — unique per tender. Built-in keys: "clientName", "title",
+  // "deadline", "submissionMethod", etc. Custom keys: "custom:sector_code".
+  semanticKey       String
+
+  // Human display label (e.g. "Client Name", "Submission Deadline").
+  displayLabel      String
+
+  // Category — one of: tender-identity, procuring-entity, submission,
+  // financial, eligibility, technical, personnel, experience, evaluation,
+  // document-requirement, annex, contract, site-location, pre-bid,
+  // procurement-process, legal-compliance, custom.
+  category          String
+
+  // Value type — one of: TEXT, LONG_TEXT, DATE, DATETIME, EMAIL_LIST, URL,
+  // ADDRESS, MONEY, NUMBER, BOOLEAN, ENUM, LIST, JSON, DOCUMENT_RULE,
+  // CONDITIONAL_NOTE.
+  valueType         String
+
+  // Normalized value — the canonical form (e.g. ISO date, uppercase enum).
+  normalizedValue   String?
+
+  // Raw source value — as extracted from the tender text.
+  rawSourceValue    String?
+
+  // Structured value JSON — for complex types (EMAIL_LIST, MONEY, JSON).
+  structuredValueJson String?
+
+  // Authority state — one of: SOURCE_GROUNDED_CONFIRMED,
+  // SOURCE_GROUNDED_UNUSUAL_FORMAT, HUMAN_CONFIRMED_OPERATIONAL,
+  // CANDIDATE_NEEDS_REVIEW, NOT_STATED_IN_SOURCE,
+  // CONDITIONAL_OR_UNSCHEDULED, REJECTED_EXTRACTION.
+  authorityState    String
+
+  // Confidence — 0.0 to 1.0 (extraction confidence or 1.0 for human-confirmed).
+  confidence        Float    @default(0)
+
+  // Source status — "active" (evidence from active file) or "stale" (file deleted).
+  sourceStatus      String   @default("active")
+
+  // Relevance — "mandatory", "critical", "advisory", "informational".
+  relevance         String   @default("informational")
+
+  // Applicability — "applies", "not_applicable", "conditional".
+  applicability     String   @default("applies")
+
+  // Source evidence — file, page, quote, content hash.
+  sourceFileId      String?
+  sourcePage        Int?
+  sourceQuote       String?
+  sourceContentHash String?
+
+  // Review state — "pending", "reviewed", "approved", "rejected".
+  reviewState       String   @default("pending")
+
+  // Manually entered — true when a human entered this fact.
+  manuallyEntered   Boolean  @default(false)
+
+  // Audit — reason and confirmation basis for human-confirmed facts.
+  reason            String?
+  confirmationBasis String?
+
+  // Creation/update info.
+  createdBy         String
+  confirmedBy       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  confirmedAt       DateTime?
+
+  // Superseded — when a newer fact replaces this one.
+  supersededById    String?
+
+  @@unique([tenderId, semanticKey])
+  @@index([tenderId])
+  @@index([tenderId, category])
+  @@index([tenderId, authorityState])
+}
+
+// ─── TenderSubmissionEmail ─────────────────────────────────────────────────
+// Per-email source provenance — replaces the pipe-joined submissionEmails
+// string with structured per-email records. Each email has its own source
+// file, page, and quote evidence.
+model TenderSubmissionEmail {
+  id            String   @id @default(uuid())
+  tenderId      String
+  tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  email         String
+  sourceFileId  String?
+  sourcePage    Int?
+  sourceQuote   String?
+  order         Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenderId, email])
+  @@index([tenderId])
 }
