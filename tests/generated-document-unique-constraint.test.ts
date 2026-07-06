@@ -345,4 +345,47 @@ describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (s
       "generate-elite CV create must catch P2002 and converge",
     );
   });
+
+  it("generate-elite target findFirst (by documentType) filters to ACTIVE rows", () => {
+    // Gap A fix: the `target` findFirst at the top of the Technical-Proposal
+    // block must also filter on generationStatus: { not: "SUPERSEDED" }.
+    // Without this, a SUPERSEDED row with documentType TECHNICAL_PROPOSAL
+    // could be resurrected back to GENERATED — corrupting audit history.
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    // Find the target findFirst block — search for the documentType + generationStatus
+    // within the same where clause.
+    const targetIdx = src.indexOf('const target = await prisma.generatedDocument.findFirst');
+    assert.ok(targetIdx > -1, "must find the target findFirst");
+    const targetBlock = src.slice(targetIdx, targetIdx + 800);
+    assert.ok(
+      targetBlock.includes('documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] }'),
+      "target findFirst must filter by documentType",
+    );
+    assert.ok(
+      targetBlock.includes('generationStatus: { not: "SUPERSEDED" }'),
+      "target findFirst must filter on generationStatus: { not: 'SUPERSEDED' }",
+    );
+  });
+
+  it("generate-elite Technical-Proposal P2002 convergence surfaces winner-deleted (no silent skip)", () => {
+    // Gap B fix: when the winner is deleted between the failed create and the
+    // convergence lookup, the code must NOT silently skip. It must throw or
+    // log an error so the user has visibility.
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.ok(
+      src.includes("P2002 convergence failed for Technical-Proposal"),
+      "Technical-Proposal P2002 convergence must surface winner-deleted failure",
+    );
+  });
+
+  it("generate-elite per-expert CV P2002 convergence surfaces winner-deleted (no silent skip)", () => {
+    // Gap C fix: when the winner is deleted, the CV P2002 convergence must
+    // throw so Promise.allSettled records it as "rejected" and cvFailed is
+    // incremented — no false "generated N CVs" count.
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.ok(
+      src.includes("P2002 convergence failed for CV"),
+      "CV P2002 convergence must surface winner-deleted failure",
+    );
+  });
 });
