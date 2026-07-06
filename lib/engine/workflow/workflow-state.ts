@@ -142,7 +142,10 @@ export async function getCanonicalTenderWorkflowState(
 
   const extractionStatus = (tender as any).analysisExtractionStatus ?? "";
   const extractionBlocked = /EXTRACTION_CORRUPTED|OCR_REQUIRED|PARTIAL_EXTRACTION/.test(extractionStatus);
-  const analysisUnsafe = (tender as any).analysisSeverity === "UNSAFE" || (tender as any).analysisSeverity === "POOR";
+  // analysisSeverity field does not exist in the Prisma schema — this check
+  // was always false. Removed to avoid confusion. If severity tracking is
+  // needed in the future, add a real column to the Tender model.
+  const analysisUnsafe = false;
 
   const mandatoryRequirements = tender.requirements.filter(r => /mandatory|critical/i.test(r.priority ?? ""));
   const untracedMandatory = mandatoryRequirements.filter(r => !traced(r as any));

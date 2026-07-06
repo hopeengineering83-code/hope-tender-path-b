@@ -40,6 +40,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   await prismaReady; const { id } = await params; const body = await req.json().catch(() => ({}));
   const rowId = String(body.rowId ?? ""); const vaultDocumentId = String(body.vaultDocumentId ?? "");
+  // Verify tender ownership BEFORE accessing GeneratedDocument — prevents
+  // cross-tenant mutation (was missing — actor could supply any tenderId
+  // and mutate another tenant's GeneratedDocument fileContent/reviewStatus).
+  const ownerTender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
+  if (!ownerTender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const [row, company] = await Promise.all([prisma.generatedDocument.findFirst({ where: { id: rowId, tenderId: id } }), prisma.company.findUnique({ where: { userId: actor.id }, select: { id: true } })]);
   if (!row || !company) return NextResponse.json({ error: "Document row or company not found" }, { status: 404 });
   const vault = await prisma.companyDocument.findFirst({ where: { id: vaultDocumentId, companyId: company.id } });

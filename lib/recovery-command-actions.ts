@@ -263,6 +263,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     anchorId: "tender-files",
     message: "Open the Tender Files panel to re-upload a clearer scan or trigger OCR on the current file.",
   },
+  // File-level repair extraction — re-reads from storage, re-runs extraction+OCR
+  REPAIR_EXTRACTION: {
+    label: "Repair Extraction",
+    kind: "scroll",
+    anchorId: "extraction-quality",
+    message: "Open the Extraction Quality panel to re-extract a specific file from storage.",
+  },
   // Metadata repair / re-extraction ─────────────────────────────────────────
   REPAIR_METADATA: {
     label: "Repair Metadata",

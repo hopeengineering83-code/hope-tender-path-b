@@ -65,9 +65,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const rawNote = typeof (body as { note?: unknown }).note === "string" ? (body as { note: string }).note.trim() : "";
   const note = rawNote.slice(0, 300);
 
-  // Scope to owner / ADMIN-PM as the controls GET does.
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true, title: true } })
-    ?? await prisma.tender.findFirst({ where: { id: tenderId }, select: { id: true, title: true } });
+  // Authorization: owner-scoped by default. Only ADMIN can fall back to the
+  // unscoped lookup (mirrors proposal-versions/[versionId]/route.ts pattern).
+  // PROPOSAL_MANAGER is restricted to their own tenders.
+  const ownerTender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true, title: true } });
+  let tender = ownerTender;
+  if (!tender && actor.role === "ADMIN") {
+    tender = await prisma.tender.findFirst({ where: { id: tenderId }, select: { id: true, title: true } });
+  }
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   await logAction({
