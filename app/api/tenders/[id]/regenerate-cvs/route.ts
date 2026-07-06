@@ -98,7 +98,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       });
       const cvContent = cvBuffer.toString("base64");
 
-      const existing = await prisma.generatedDocument.findFirst({ where: { tenderId, exactFileName: fileName } });
+      // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+      // preserved history back to GENERATED — and collide with the partial
+      // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED when
+      // an active row with the same name exists.
+      const existing = await prisma.generatedDocument.findFirst({
+        where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
+        orderBy: { updatedAt: "desc" },
+      });
       if (existing) {
         await prisma.generatedDocument.update({
           where: { id: existing.id },

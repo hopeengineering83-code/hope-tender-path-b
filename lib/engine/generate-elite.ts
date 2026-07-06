@@ -3159,8 +3159,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     // check and both create duplicate rows. Now: the findFirst + update/create
     // run inside a SERIALIZABLE transaction so concurrent calls serialize.
     await prisma.$transaction(async (tx) => {
+      // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+      // preserved history back to GENERATED — and collide with the partial
+      // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED when
+      // an active row with the same name exists.
       const existing = await tx.generatedDocument.findFirst({
-        where: { tenderId, exactFileName: "Technical-Proposal.docx" },
+        where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+        orderBy: { updatedAt: "desc" },
       });
       if (existing) {
         await tx.generatedDocument.update({
@@ -3192,7 +3197,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         },
       });
       }
-    });
+    }, { isolationLevel: "Serializable" });
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
@@ -3292,8 +3297,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         const cvContent = cvBuffer.toString("base64");
         // Use a TRANSACTIONAL upsert pattern — same TOCTOU fix as Technical Proposal.
         await prisma.$transaction(async (tx) => {
+          // ACTIVE rows only — same rule as the Technical Proposal upsert above.
           const existing = await tx.generatedDocument.findFirst({
-            where: { tenderId, exactFileName: fileName },
+            where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
+            orderBy: { updatedAt: "desc" },
           });
           if (existing) {
             await tx.generatedDocument.update({
@@ -3315,7 +3322,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               },
             });
           }
-        });
+        }, { isolationLevel: "Serializable" });
         return fileName;
       })
     );

@@ -181,3 +181,39 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
     assert.equal(activeAfter, activeBefore, "active docs must be unchanged after rollback (supersede was rolled back)");
   });
 });
+
+// ─── Source pins: every document creator respects the partial unique index ───
+// The index (tenderId, exactFileName) WHERE non-SUPERSEDED means a creator
+// that matches or updates SUPERSEDED rows can resurrect preserved history or
+// collide with the active row. These pins keep every named-file creator on
+// the ACTIVE-only + graceful-conflict pattern.
+
+import { readFileSync } from "node:fs";
+
+describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (source pins)", () => {
+  it("generate-elite upserts match ACTIVE rows only and actually serialize", () => {
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    const activeFilters = src.match(/exactFileName: (?:"Technical-Proposal\.docx"|fileName), generationStatus: \{ not: "SUPERSEDED" \}/g) ?? [];
+    assert.equal(activeFilters.length, 2, "both elite upsert lookups must exclude SUPERSEDED rows");
+    // The TOCTOU comment claimed serialization but no isolation level was set —
+    // default READ COMMITTED does not serialize findFirst+create.
+    const serializable = src.match(/\{ isolationLevel: "Serializable" \}/g) ?? [];
+    assert.ok(serializable.length >= 2, "both elite upsert transactions must run Serializable");
+  });
+
+  it("regenerate-cvs matches ACTIVE rows only (never mutates SUPERSEDED history)", () => {
+    const src = readFileSync("app/api/tenders/[id]/regenerate-cvs/route.ts", "utf8");
+    assert.ok(
+      /exactFileName: fileName, generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "regenerate-cvs lookup must exclude SUPERSEDED rows",
+    );
+  });
+
+  it("generate-missing-plan-files: ACTIVE-only fallback lookup + P2002 convergence instead of a 500", () => {
+    const src = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    const activeFilters = src.match(/generationStatus: \{ not: "SUPERSEDED" \}/g) ?? [];
+    assert.ok(activeFilters.length >= 3, "all lookups (primary, fallback, P2002 winner) must exclude SUPERSEDED rows");
+    assert.ok(src.includes('(createErr as { code?: string })?.code === "P2002"'), "create race must be caught");
+    assert.ok(src.includes("Converge") || src.includes("converge"), "P2002 must converge to updating the winner, not fail the route");
+  });
+});

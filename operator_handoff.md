@@ -71,6 +71,21 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-05T21:15:00Z — Claude Code
+
+- **Branch:** `claude/short-honest-feedback-gaps-vyh8dv` (new PR; restarted on `main@987d8d08` after PR #950 was integrated)
+- **Scope:** Close the follow-on gap left by main's atomic-supersede + partial-unique-index work (`987d8d08`/migration `20260705000000`). The engine's supersede+create is now atomic and a partial unique index enforces uniqueness only among non-SUPERSEDED docs — but four OTHER GeneratedDocument creators still did check-then-create/update against ALL rows (including SUPERSEDED), so they could resurrect preserved history or collide with the active row under the new index.
+- **Fixes:**
+  1. `lib/engine/generate-elite.ts` — both transactional upserts (Technical-Proposal.docx, per-expert CVs) now match ACTIVE rows only (`generationStatus: { not: "SUPERSEDED" }` + `orderBy updatedAt desc`) AND actually set `isolationLevel: "Serializable"` (the TOCTOU comment claimed serialization but no isolation level was set — default READ COMMITTED does not serialize findFirst+create).
+  2. `app/api/tenders/[id]/regenerate-cvs/route.ts` — the CV lookup now excludes SUPERSEDED rows (was mutating historical rows back to GENERATED).
+  3. `app/api/tenders/[id]/generate-missing-plan-files/route.ts` — fallback lookup excludes SUPERSEDED; the create now catches P2002 (partial-index conflict from a concurrent creator) and converges by updating the winner instead of 500-ing partway through the loop.
+- **Not changed:** `ai-proposal` + `ai-job-handlers` create rows with NO `exactFileName`, so the partial index does not apply — verified, left alone. `lib/engine/generate.ts` updates by id from a non-SUPERSEDED filter — safe. `run-tender-engine.ts` already fixed atomically by main.
+- **Files changed:** the three above + `tests/generated-document-unique-constraint.test.ts` (3 new source pins), `operator_handoff.md`.
+- **Tests run:** `npx tsc --noEmit` PASS; `npm run lint` PASS; `RUN_DB_INTEGRATION=true` full suite on fresh PostgreSQL 16 (schema via `prisma migrate deploy`) **5478/5478 PASS**; `npm run build` exit 0.
+- **Known risks:** none new — all changes make creators STRICTER (ACTIVE-only) and add graceful conflict handling. No schema/migration change.
+- **Next action:** Hope reviews the PR; do not merge or deploy without approval.
+- **Merge status:** `unsafe` — all local checks pass; awaiting CI and Hope's review.
+
 ### 2026-07-05T16:30:00Z — Claude Code
 
 - **Branch:** `claude/short-honest-feedback-gaps-vyh8dv` (PR #942 was closed; this is the same branch restarted on `main@8321caf2` carrying only the residual deltas)

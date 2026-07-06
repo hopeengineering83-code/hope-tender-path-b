@@ -437,7 +437,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName: file.exactFileName, documentType, requirements: tender.requirements });
-    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
+    // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+    // preserved history back to GENERATED — and collide with the partial
+    // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED.
+    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({
+      where: { tenderId: id, exactFileName: file.exactFileName, generationStatus: { not: "SUPERSEDED" } },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
+    });
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
@@ -455,8 +462,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await prisma.generatedDocument.update({ where: { id: existing.id }, data });
       updated.push(file.exactFileName);
     } else {
-      await prisma.generatedDocument.create({ data: { tenderId: id, ...data } });
-      created.push(file.exactFileName);
+      try {
+        await prisma.generatedDocument.create({ data: { tenderId: id, ...data } });
+        created.push(file.exactFileName);
+      } catch (createErr) {
+        // P2002 = the partial unique index caught a concurrent creator making
+        // the same active file between our check and this create. Converge
+        // idempotently: update the row the winner created instead of failing
+        // the whole route partway through.
+        if ((createErr as { code?: string })?.code === "P2002") {
+          const winner = await prisma.generatedDocument.findFirst({
+            where: { tenderId: id, exactFileName: file.exactFileName, generationStatus: { not: "SUPERSEDED" } },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true },
+          });
+          if (winner) {
+            await prisma.generatedDocument.update({ where: { id: winner.id }, data });
+            updated.push(file.exactFileName);
+          }
+        } else {
+          throw createErr;
+        }
+      }
     }
   }
 
