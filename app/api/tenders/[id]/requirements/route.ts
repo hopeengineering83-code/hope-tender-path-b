@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { z } from "zod";
@@ -44,14 +44,14 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let actor;
   try {
-    const actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-    if (!actor) return forbiddenResponse();
-  } catch {
-    return forbiddenResponse();
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  const { id: tenderId } = params;
+  const { id: tenderId } = await params;
 
   // Verify tender ownership and tenant isolation
   const tender = await prisma.tender.findFirst({
@@ -81,19 +81,16 @@ export async function POST(
   const data = parseResult.data;
 
   // Create the manual requirement
-  const requirement = await prisma.requirement.create({
+  const requirement = await prisma.tenderRequirement.create({
     data: {
       tenderId,
       title: data.title,
       description: data.description,
       requirementType: data.requirementType,
       priority: data.priority,
-      sourceOrigin: data.sourceOrigin,
       sourceExactQuote: `[MANUAL] ${data.reason}`,
-      sourceContentHash: `manual-${actor.id}-${Date.now()}`,
-      extractionConfidence: 1.0, // Human-entered = full confidence in the entry itself
-      extractionMethod: "MANUAL",
-      status: "NEEDS_REVIEW",
+      sourceExtractionMethod: "MANUAL",
+      sourceConfidence: 1.0, // Human-entered = full confidence in the entry itself
       linkedProposalSection: data.linkedProposalSection ?? null,
       linkedCompanyEvidenceId: data.linkedCompanyEvidenceId ?? null,
       exactFileName: data.exactFileName ?? null,
@@ -101,16 +98,13 @@ export async function POST(
       pageLimit: data.pageLimit ?? null,
       sectionReference: data.sectionReference ?? null,
       sourceSectionHeading: "Manual Entry",
-      // Audit trail
-      createdById: actor.id,
-      createdAt: new Date(),
     },
   });
 
   await logAction({
     userId: actor.id,
-    action: "MANUAL_REQUIREMENT_CREATED",
-    entityType: "Requirement",
+    action: "TENDER_UPDATE",
+    entityType: "TenderRequirement",
     entityId: requirement.id,
     description: `Manual requirement "${data.title}" added to tender "${tender.title ?? "[Untitled]"}"`,
     metadata: {
@@ -139,14 +133,14 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let actor;
   try {
-    const actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER", "VIEWER");
-    if (!actor) return forbiddenResponse();
-  } catch {
-    return forbiddenResponse();
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER", "VIEWER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  const { id: tenderId } = params;
+  const { id: tenderId } = await params;
 
   // Verify tender access (tenant isolation)
   const tender = await prisma.tender.findFirst({
@@ -158,16 +152,16 @@ export async function GET(
     return NextResponse.json({ error: "Tender not found or access denied" }, { status: 404 });
   }
 
-  const requirements = await prisma.requirement.findMany({
+  const requirements = await prisma.tenderRequirement.findMany({
     where: { tenderId },
     orderBy: { createdAt: "desc" },
   });
 
   return NextResponse.json({
-    requirements: requirements.map((r) => ({
+    requirements: requirements.map((r: { id: string; extractionMethod?: string | null; sourceExtractionMethod?: string | null; sourceExactQuote?: string | null; [key: string]: unknown }) => ({
       ...r,
-      isManual: r.extractionMethod === "MANUAL" || r.sourceExactQuote?.startsWith("[MANUAL]") || false,
-      sourceOrigin: r.extractionMethod === "MANUAL" ? "HUMAN_ENTERED" : "SOURCE_GROUNDED",
+      isManual: r.sourceExtractionMethod === "MANUAL" || r.sourceExactQuote?.startsWith("[MANUAL]") || false,
+      sourceOrigin: r.sourceExtractionMethod === "MANUAL" ? "HUMAN_ENTERED" : "SOURCE_GROUNDED",
     })),
   });
 }

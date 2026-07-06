@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse } from "../../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { z } from "zod";
@@ -34,14 +34,14 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string; requirementId: string }> }
 ) {
+  let actor;
   try {
-    const actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-    if (!actor) return forbiddenResponse();
-  } catch {
-    return forbiddenResponse();
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  const { id: tenderId, requirementId } = params;
+  const { id: tenderId, requirementId } = await params;
 
   // Verify tender ownership (tenant isolation)
   const tender = await prisma.tender.findFirst({
@@ -54,7 +54,7 @@ export async function PATCH(
   }
 
   // Verify requirement belongs to this tender
-  const existing = await prisma.requirement.findFirst({
+  const existing = await prisma.tenderRequirement.findFirst({
     where: { id: requirementId, tenderId },
   });
 
@@ -63,7 +63,7 @@ export async function PATCH(
   }
 
   // Only allow editing manual requirements
-  if (existing.extractionMethod !== "MANUAL") {
+  if (existing.sourceExtractionMethod !== "MANUAL") {
     return NextResponse.json(
       { error: "Only manually-entered requirements can be edited. Source-grounded requirements must be corrected via re-analysis." },
       { status: 403 }
@@ -103,15 +103,15 @@ export async function PATCH(
     updateData.sourceExactQuote = `[MANUAL] ${data.reason}`;
   }
 
-  const updated = await prisma.requirement.update({
+  const updated = await prisma.tenderRequirement.update({
     where: { id: requirementId },
     data: updateData,
   });
 
   await logAction({
     userId: actor.id,
-    action: "MANUAL_REQUIREMENT_UPDATED",
-    entityType: "Requirement",
+    action: "TENDER_UPDATE",
+    entityType: "TenderRequirement",
     entityId: requirementId,
     description: `Manual requirement "${updated.title}" updated in tender "${tender.title ?? "[Untitled]"}"`,
     metadata: {
