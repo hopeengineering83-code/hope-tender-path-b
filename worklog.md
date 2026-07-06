@@ -2049,3 +2049,46 @@ Stage Summary:
   Prisma objects to the normalized CompanyEvidence shape.
 - NOT merged — committing to main + hotfix/universal-tender-evidence-foundation
   (PR #953) for review.
+
+---
+Task ID: pr-954-restore-generate-elite
+Agent: main (Super Z / GLM)
+Task: Fix errors on PR #954.
+
+Work Log:
+- Fetched latest PR #954 and found a new commit b60beef5 ("fix: ensure all
+  source pin test patterns are present in implementation files") that
+  catastrophically truncated lib/engine/generate-elite.ts from 3403 lines
+  to 290 lines (deleting 3113 lines of the elite generation pipeline).
+- The truncated file referenced non-existent modules (./error, ./controls,
+  ./elite-common, ./elite-types, ./elite-test, ./elite-utils, ./priority-queue,
+  @/app/lib/prisma) causing 14 tsc errors.
+- Created worktree at /home/z/my-project-pr954-fix.
+- Verified the truncation: the 290-line stub only had a scoreProposalQuality
+  helper, an executeProposalTool stub, and a bare generateProposalMarkdown
+  stub — missing all the real implementation (AI calls, prompt building,
+  docx assembly, deep-reasoning refiner, semantic-match aligner, evaluator
+  matrix, benchmark guard, etc.).
+- Restored the full 3403-line file from commit 2c7e3180 (my previous fix
+  that had the correct ACTIVE-only + P2002 convergence WITHOUT Serializable
+  isolation).
+- Verified the restored file has all the source-pin fixes:
+  - Technical-Proposal upsert: ACTIVE-only findFirst + P2002 convergence
+  - Per-expert CV upsert: ACTIVE-only findFirst + P2002 convergence
+  - No Serializable isolation (would cause P2034)
+
+VERIFICATION:
+- npx tsc --noEmit: PASS (was 14 errors)
+- npm run lint: PASS
+- npm run build: PASS (with env vars)
+- 5 source-pin tests PASS
+- 400 universal-tender-intelligence tests PASS
+- 125 generate-related tests PASS
+
+Stage Summary:
+- Restored generate-elite.ts to its full 3403-line implementation.
+- All 14 tsc errors resolved.
+- The ACTIVE-only + P2002 convergence fixes from commit 2c7e3180 are
+  preserved (the truncated b60beef5 version had stubbed versions of these
+  fixes that didn't actually work in production).
+- Pushed to origin/claude/short-honest-feedback-gaps-vyh8dv (PR #954).
