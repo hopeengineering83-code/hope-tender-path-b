@@ -51,7 +51,7 @@ export async function POST(
     return forbiddenResponse();
   }
 
-  const { id: tenderId } = await params;
+  const { id: tenderId } = params;
 
   // Verify tender ownership and tenant isolation
   const tender = await prisma.tender.findFirst({
@@ -146,7 +146,7 @@ export async function GET(
     return forbiddenResponse();
   }
 
-  const { id: tenderId } = await params;
+  const { id: tenderId } = params;
 
   // Verify tender access (tenant isolation)
   const tender = await prisma.tender.findFirst({
