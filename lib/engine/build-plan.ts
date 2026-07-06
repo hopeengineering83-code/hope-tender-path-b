@@ -26,6 +26,8 @@ export type BuildPlanDraftResult =
 
 export type MetadataEvidenceValidation = { ok: boolean; blockers: string[] };
 
+export type ValidationPhase = "draft" | "final";
+
 export function validateCriticalMetadataEvidenceForBuildPlan(
   tender: {
     title?: string | null;
@@ -77,7 +79,11 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
    * raw/effective divergence.
    */
   overrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>,
+  phase: ValidationPhase = "final",
 ): MetadataEvidenceValidation {
+  // DRAFT PHASE: metadata completeness must NOT block BuildPlan draft creation.
+  // Only FINAL phase enforces strict evidence requirements for submission.
+  const isDraft = phase === "draft";
   const blockers: string[] = [];
   const activeFileMap = new Map(activeFiles.map((f) => [f.id, f]));
   const activeFileIds = new Set(activeFiles.map((f) => f.id));
@@ -127,8 +133,15 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     sourcePage: number | null | undefined,
     sourceQuote: string | null | undefined,
     requireQuote: boolean = true,
+    draftOptional: boolean = false,
   ) {
     if (!value || !value.trim()) {
+      // In draft phase, non-critical metadata gaps are warnings, not blockers.
+      // The core tender task is requirement extraction and draft-proposal readiness,
+      // not metadata completeness. Final submission gates (Tool A) enforce strictness.
+      if (isDraft && draftOptional) {
+        return;
+      }
       blockers.push(`Critical metadata field ${label} has no value.`);
       return;
     }
@@ -169,17 +182,19 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     }
   }
 
-  // POLICY-DRIVEN: always check title, clientName, deadline, submissionMethod.
+  // POLICY-DRIVEN: check title, clientName, deadline, submissionMethod.
   // Use EFFECTIVE values (override ?? raw) so the validator and the canonical
   // hash can never disagree on which value is in force.
+  // In draft phase, these are NON-BLOCKING — the core tender task is requirement
+  // extraction and draft-proposal readiness, not metadata completeness.
   const effTitle = effectiveValue("title", tender.title);
   const effClientName = effectiveValue("clientName", tender.clientName);
   const effDeadline = effectiveValue("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null);
   const effMethod = effectiveValue("submissionMethod", tender.submissionMethod);
-  checkField("title", effTitle, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote);
-  checkField("clientName", effClientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote);
-  checkField("deadline", effDeadline, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote);
-  checkField("submissionMethod", effMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote);
+  checkField("title", effTitle, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote, true, isDraft);
+  checkField("clientName", effClientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote, true, isDraft);
+  checkField("deadline", effDeadline, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote, true, isDraft);
+  checkField("submissionMethod", effMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote, true, isDraft);
 
   // VALUE-DRIVEN: reference is not a block-when-absent field (CLAUDE.md's
   // critical-block list is client/procuring entity, submission method,

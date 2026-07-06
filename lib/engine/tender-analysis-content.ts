@@ -155,7 +155,7 @@ export function buildTenderAnalysisContent(
     : "";
 
   return [
-    `TENDER: ${tender.title}`,
+    `TENDER: ${tender.title ?? "[Untitled Tender]"}`,
     tender.description ? `DESCRIPTION: ${tender.description.slice(0, 2_000)}` : null,
     tender.intakeSummary ? `INTAKE NOTES: ${tender.intakeSummary.slice(0, 2_000)}` : null,
     fileTexts || null,

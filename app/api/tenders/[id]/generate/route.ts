@@ -652,7 +652,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
         !tender.submissionEmails
       ) {
-        missingCritical.push("Submission email address is missing for email-based submission.");
+        // Generation is DRAFT work — missing submission email is a warning,
+        // not a blocker. The user can still generate draft proposal material.
+        // Final submission gates enforce strict endpoint requirements.
       }
       if (missingCritical.length > 0) {
         return NextResponse.json({
