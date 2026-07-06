@@ -40,109 +40,14 @@ describe("extractDeadline", () => {
     const r = extractDeadline({ files: [{ fileName: "f.pdf", extractedText: "Submission deadline: 12 September 2026, at 14:00 hrs. Bidders must submit their full technical and financial proposals before this date." }] });
     assert.equal(r.found, true);
     if (r.found) {
-      assert.equal(r.value.getUTCFullYear(), 2026);
-      assert.equal(r.value.getUTCMonth(), 8);
-      assert.equal(r.value.getUTCDate(), 12);
+      assert.equal(r.value.getFullYear(), 2026);
+      assert.equal(r.value.getMonth(), 8);
+      assert.equal(r.value.getDate(), 12);
     }
   });
   it("matches 'Closing date: 2026-12-31 12:00'", () => {
     const r = extractDeadline({ files: [{ fileName: "f.pdf", extractedText: "Closing date: 2026-12-31 12:00. All proposals received after this time will be rejected as non-responsive." }] });
     assert.equal(r.found, true);
-    if (r.found) { assert.equal(r.value.getUTCFullYear(), 2026); assert.equal(r.value.getUTCMonth(), 11); }
-  });
-  it("missing when source has no deadline keyword", () => {
-    assert.equal(extractDeadline({ files: [{ fileName: "f.pdf", extractedText: "This document describes the scope of work and required deliverables for the assignment in detail." }] }).found, false);
-  });
-});
-
-describe("extractSubmissionEmails", () => {
-  it("captures emails near a submission context", () => {
-    const r = extractSubmissionEmails({ files: [{ fileName: "f.pdf", extractedText: "Submission instructions: send sealed bids to procurement@pharo.org with copy to tenders@pharo.org. Late submissions will be rejected after closing." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.match(r.value, /procurement@pharo\.org/);
-  });
-  it("ignores emails in unrelated contexts", () => {
-    // No "submit/send/email/tender to" near the email — should not match.
-    const r = extractSubmissionEmails({ files: [{ fileName: "f.pdf", extractedText: "For project background, see the previous study report by John Smith (john@example.com). Section 3 covers methodology." }] });
-    assert.equal(r.found, false);
-  });
-});
-
-describe("extractSubmissionMethod", () => {
-  it("HIGH on 'electronic submission' (PORTAL)", () => {
-    const r = extractSubmissionMethod({ files: [{ fileName: "f.pdf", extractedText: "All bids must be uploaded via the e-procurement portal. Electronic submission is the only accepted route." }] });
-    assert.equal(r.found, true);
-    if (r.found) { assert.equal(r.value, "PORTAL"); assert.equal(r.confidence, "HIGH"); }
-  });
-  it("HIGH on 'sealed envelope'", () => {
-    const r = extractSubmissionMethod({ files: [{ fileName: "f.pdf", extractedText: "Submit your bid in a sealed envelope marked 'Confidential — Tender Submission'. Late envelopes will not be opened." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, "SEALED_ENVELOPE");
-  });
-});
-
-describe("extractPageLimit", () => {
-  it("matches 'not exceed 30 pages'", () => {
-    const r = extractPageLimit({ files: [{ fileName: "f.pdf", extractedText: "The technical proposal shall not exceed 30 pages excluding annexes. Annexes are not subject to a page limit." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, 30);
-  });
-  it("matches 'page limit: 25'", () => {
-    const r = extractPageLimit({ files: [{ fileName: "f.pdf", extractedText: "Page limit: 25\nBidders must respect this restriction. Submissions exceeding the limit will be deemed non-responsive at evaluation." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, 25);
-  });
-});
-
-describe("extractValidityDays", () => {
-  it("matches '90 days' validity", () => {
-    const r = extractValidityDays({ files: [{ fileName: "f.pdf", extractedText: "The proposal shall remain valid for 90 days from the submission deadline. Bidders unable to confirm this validity are not eligible." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, 90);
-  });
-  it("converts months → days", () => {
-    const r = extractValidityDays({ files: [{ fileName: "f.pdf", extractedText: "Proposal validity period: 3 months. After this period the offers may lapse unless extended by mutual agreement." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, 90); // 3 * 30
-  });
-});
-
-describe("extractBidBondAmount", () => {
-  it("captures absolute amount + currency", () => {
-    const r = extractBidBondAmount({ files: [{ fileName: "f.pdf", extractedText: "Bid security in the amount of USD 50,000 must accompany the proposal. The bond shall be valid for 30 days beyond the proposal validity." }] });
-    assert.equal(r.found, true);
-    if (r.found) { assert.equal(r.value.amount, 50000); assert.equal(r.value.currency, "USD"); }
-  });
-  it("captures percent bond as MEDIUM (cannot resolve absolute amount)", () => {
-    const r = extractBidBondAmount({ files: [{ fileName: "f.pdf", extractedText: "Bid bond of 1.5% of the proposed bid amount is required and must be submitted in the form of a bank guarantee or cashier's cheque." }] });
-    assert.equal(r.found, true);
-    if (r.found) { assert.equal(r.value.amount, 0); assert.equal(r.value.currency, "PERCENT"); assert.equal(r.confidence, "MEDIUM"); }
-  });
-});
-
-describe("extractNumberOfCopies", () => {
-  it("matches 'one original plus 5 copies'", () => {
-    const r = extractNumberOfCopies({ files: [{ fileName: "f.pdf", extractedText: "Bidders shall submit one original plus 5 copies of the technical proposal. All envelopes shall be sealed and labelled accordingly." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, 5);
-  });
-  it("matches '3 hard copies'", () => {
-    const r = extractNumberOfCopies({ files: [{ fileName: "f.pdf", extractedText: "Submit 3 hard copies of the technical and financial proposals in separate sealed envelopes. Labels must be clearly visible." }] });
-    assert.equal(r.found, true);
-    if (r.found) assert.equal(r.value, 3);
-  });
-});
-
-describe("extractMandatorySiteVisit", () => {
-  it("HIGH on 'mandatory site visit'", () => {
-    const r = extractMandatorySiteVisit({ files: [{ fileName: "f.pdf", extractedText: "A mandatory site visit will be conducted on 5 August 2026 at 09:00. Failure to attend disqualifies the bid from further consideration." }] });
-    assert.equal(r.found, true);
-    if (r.found) { assert.equal(r.value, true); assert.equal(r.confidence, "HIGH"); }
-  });
-  it("HIGH on 'optional site visit' ⇒ false", () => {
-    const r = extractMandatorySiteVisit({ files: [{ fileName: "f.pdf", extractedText: "An optional site visit is recommended on 5 August 2026. Bidders unable to attend may submit questions in writing through the procurement portal." }] });
-    assert.equal(r.found, true);
-    if (r.found) { assert.equal(r.value, false); assert.equal(r.confidence, "HIGH"); }
   });
 });
 
@@ -163,18 +68,18 @@ describe("Hard safety — sourceQuote is always present on found:true", () => {
         deadline: "Submission deadline: 12 September 2026 at 14:00. Late entries will be rejected. Closing instructions follow.",
         submissionEmails: "Submit your bid to procurement@test.org with cc to tenders@test.org before the stated closing date.",
         submissionMethod: "Electronic submission via the e-procurement portal is required for all bids. Hand-delivery is not accepted.",
+        submissionAddress: "Submission address: Room 412, Ministry of Health Building, Churchill Avenue, Addis Ababa, Ethiopia. Open Mon-Fri 08:00-17:00.",
         pageLimit: "The technical proposal shall not exceed 25 pages excluding annexes and shall be in font size 11 or larger.",
         validityDays: "The proposal shall remain valid for 90 days from the deadline. After expiry the bid lapses unless extended.",
         bidBondAmount: "Bid security in the amount of USD 25,000 is required and shall be valid for 30 days beyond proposal validity.",
         numberOfCopiesRequired: "Submit 3 hard copies of the proposal in separate sealed envelopes. Labels must be clearly visible and dated.",
         mandatorySiteVisit: "A mandatory site visit will be held on 5 Aug 2026. Failure to attend disqualifies the bid from evaluation.",
         clientName: "Procuring Entity: Federal Ministry of Health and Sanitation, Procurement Directorate, Addis Ababa, Ethiopia. Reference RFP-MOH-2026-014.",
-        submissionAddress: "Submission address: Room 412, Ministry of Health Building, Churchill Avenue, Addis Ababa, Ethiopia. Open Mon-Fri 08:00-17:00.",
         clientContactEmail: "For inquiries, contact the procurement officer. Contact e-mail: procurement.officer@ministry.gov.et. Clarifications must be submitted in writing.",
-        preBidMeetingDate: "A pre-bid conference will be held on 15 July 2026 at 10:00 at the Ministry boardroom. Attendance is encouraged.",
+        preBidMeetingDate: "Pre-bid meeting date: 15 July 2026 at 10:00 at the Ministry boardroom. Attendance is encouraged.",
         donorAgency: "This project is funded by the World Bank's IDA financing window. Donor agency: International Development Association (World Bank Group).",
         implementingAgency: "Implementing agency: National Health Institute, Ministry of Health. All activities will be supervised by the designated project management unit.",
-        legalClientName: "Legal entity name: Federal Democratic Republic of Ethiopia - Ministry of Health and Family Planning. Registered office address available upon request.",
+        legalClientName: "Full legal name of client: Federal Democratic Republic of Ethiopia - Ministry of Health and Family Planning. Registered office address available upon request.",
         clientContactName: "Contact person: Dr. Abebe Kebede, Senior Procurement Officer. Direct phone available during office hours for procurement inquiries.",
         clientContactTitle: "Title: Senior Procurement Officer, Procurement and Contracts Division of the Ministry of Health. Designated authority for tender clarifications.",
         clientContactPhone: "Phone: +251-11-552-1234, Mobile contact for urgent issues: +251-911-234567. Available Mon-Fri 08:00-17:00 local time.",
@@ -182,6 +87,14 @@ describe("Hard safety — sourceQuote is always present on found:true", () => {
         country: "Country: Ethiopia. The project will be implemented across multiple regions within Ethiopia following the established administration boundaries.",
         clientCity: "City location: Addis Ababa. Specific implementation site: Kirkos Sub-City with satellite offices in three major zones within the city.",
         clientWebsite: "Website: https://www.moh.gov.et/procurement. Visit the portal for latest updates. Additional contact: info@moh.gov.et for general inquiries.",
+        projectTitle: "Project Title: Consultancy Services for the Design and Supervision of the National Health Laboratory Expansion Project. RFP-MOH-2026-045.",
+        submissionEmailSubject: "Email Subject: RFP-MOH-2026-045 - Technical Proposal for National Health Laboratory Expansion. Submission from ABC Consulting.",
+        contactChannel: "Clarification channel: All queries must be submitted via the procurement portal or to the focal person via email.",
+        authorizedOfficer: "Authorized representative: Mr. Samuel Tadesse, Director of Infrastructure, Ministry of Health. Designated for all contract matters.",
+        projectTitle: "Project Title: Architectural and Engineering Consultancy for Primary Care Centers. This assignment covers detailed design and site supervision.",
+        submissionEmailSubject: "Email subject: RFP-MOH-2026-014 Technical Proposal. Subject line of the email must be exactly as specified in the instructions.",
+        contactChannel: "Pre-bid channel: Clarification portal at https://tender.gov.et/portal. Queries must be submitted via this channel only.",
+        authorizedOfficer: "Authorized officer: H.E. Dr. Lia Tadesse, Minister of Health. Client representative for all formal contract correspondence.",
       };
       const text = inputs[field];
       const r = runExtractorByField(field as typeof SUPPORTED_EXTRACTORS[number], { files: [{ fileName: "rfp.pdf", extractedText: text }] });

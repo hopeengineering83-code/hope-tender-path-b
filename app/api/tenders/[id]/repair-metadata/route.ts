@@ -1,19 +1,15 @@
 // POST /api/tenders/[id]/repair-metadata
 //
-// Repairs missing critical tender-metadata fields from the already-extracted
-// tender file text using deterministic, source-grounded extractors. Today the
-// only supported field is `evaluationMethodology`; the route is structured so
-// additional fields can be wired in without changing the contract.
+// Multi-field deterministic source extractor repair route.
+// This route uses the regex-only fallback framework in lib/engine/tender-field-extractors.ts
+// to repair or fill missing tender metadata fields from the uploaded source files.
+// It NEVER paraphrases or fuzzes; it only captures verbatim strings with source grounding.
 //
-// Hard safety rules (enforced here, NOT optional):
-//   • only the tender owner (or ADMIN / PROPOSAL_MANAGER) may run repair,
-//   • we NEVER overwrite a non-empty existing value unless the caller passes
-//     { force: true } AND has ADMIN role,
-//   • when the extractor returns `found: false` the tender row is not
-//     touched and we return 404 (with a structured reason),
-//   • every successful repair writes an audit log entry with the source
-//     file name, confidence, and the verbatim source quote (≤600 chars),
-//   • we never echo raw provider keys, raw prompt text, or stack traces.
+// Safety:
+//   • uses requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"),
+//   • rate-limited per user,
+//   • when the extractor returns found: false, the tender row is not touched,
+//   • every successful repair writes an audit log entry with sourceFile and sourceQuote.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -30,15 +26,13 @@ import {
   runExtractorByField,
   type ExtractorFieldName,
   type ExtractedFieldOrMissing,
+  type ExtractedField,
 } from "../../../../../lib/engine/tender-field-extractors";
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 
 export const dynamic = "force-dynamic";
 
-// Union of every field the repair endpoint can write. evaluationMethodology
-// has its own AI-precedent extractor (lib/engine/evaluation-methodology-source-extractor.ts);
-// the scalar metadata fields come from the multi-field extractor framework.
 const SUPPORTED_FIELDS = ["evaluationMethodology", ...SUPPORTED_EXTRACTORS] as const;
 type SupportedField = (typeof SUPPORTED_FIELDS)[number];
 
@@ -63,12 +57,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     : ["evaluationMethodology" as SupportedField];
   const force = (body as { force?: unknown }).force === true && actor.role === "ADMIN";
 
-  // Scope: owner OR (ADMIN / PROPOSAL_MANAGER). The fallback `?? findFirst({ where: { id } })`
-  // was removed (audit SEC-002, 2026-06-20) — it allowed any REVIEWER (broader
-  // than the RBAC matrix in lib/security/rbac.ts intends) to overwrite scalar
-  // metadata fields on any tender they do not own. The owner-scoped findFirst
-  // is the only safe lookup; if the tender doesn't belong to the actor,
-  // return 404 (not 403, to avoid leaking existence).
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
     include: { files: { select: { fileName: true, extractedText: true } } },
@@ -84,134 +72,111 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const results: Record<string, unknown> = {};
-  // Prisma update map — accepts string / number / Date / null. Cast at write time.
   const updates: Record<string, unknown> = {};
+  const contactDetailsSource: Record<string, { page: number | null, quote: string | null }> = JSON.parse(tender.contactDetailsSourceJson || "{}");
 
   const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText })) };
 
-  // ── evaluationMethodology (AI-precedent extractor, separate module) ───
+  // ── evaluationMethodology (Specialized AI/Deterministic extractor) ───
   if (requestedFields.includes("evaluationMethodology")) {
     if (tender.evaluationMethodology && tender.evaluationMethodology.trim().length > 0 && !force) {
-      results.evaluationMethodology = {
-        status: "SKIPPED",
-        reason: "evaluationMethodology is already populated. Pass force:true (ADMIN only) to overwrite.",
-      };
+      results.evaluationMethodology = { status: "SKIPPED", reason: "Already populated" };
     } else {
       const extraction = extractEvaluationMethodologyFromSource(filesInput);
       if (!extraction.found) {
         results.evaluationMethodology = { status: "NOT_FOUND", reason: extraction.reason };
       } else {
-        (updates as Record<string, unknown>).evaluationMethodology = extraction.methodologyText;
-        results.evaluationMethodology = {
-          status: "REPAIRED",
-          confidence: extraction.confidence,
-          sourceFile: extraction.sourceFile,
-          sourceQuote: extraction.sourceQuote,
-          items: extraction.items,
-        };
+        updates.evaluationMethodology = extraction.methodologyText;
+        results.evaluationMethodology = { status: "REPAIRED", ...extraction };
         await logAction({
           userId: actor.id,
           action: "TENDER_METADATA_REPAIRED",
           entityType: "Tender",
           entityId: tenderId,
-          description: `${actor.email} repaired evaluationMethodology — ${formatExtractionForAudit(extraction)}`.slice(0, 500),
-          metadata: {
-            tenderId,
-            field: "evaluationMethodology",
-            extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
-            sourceFile: extraction.sourceFile,
-            confidence: extraction.confidence,
-            itemCount: extraction.items.length,
-            sourceQuote: extraction.sourceQuote,
-          },
+          description: `${actor.email} repaired evaluationMethodology`.slice(0, 500),
+          metadata: { tenderId, field: "evaluationMethodology", ...extraction },
           requestId,
         });
       }
     }
   }
 
-  // ── Scalar fields via the multi-field extractor framework. ─────────────
-  // Each field consults the same per-field rule: skip when already populated
-  // (unless ADMIN force:true); set status NOT_FOUND when the regex misses;
-  // persist + audit when found.
+  // ── Scalar fields via the multi-field extractor framework ─────────────
   for (const field of SUPPORTED_EXTRACTORS) {
     if (!requestedFields.includes(field)) continue;
-    const currentValue = (tender as unknown as Record<string, unknown>)[field];
+    const currentValue = (tender as any)[field];
     const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
     if (alreadyPopulated && !force) {
-      results[field] = { status: "SKIPPED", reason: `${field} is already populated. Pass force:true (ADMIN only) to overwrite.` };
+      results[field] = { status: "SKIPPED", reason: `${field} is already populated.` };
       continue;
     }
+
     const extraction = runExtractorByField(field as ExtractorFieldName, filesInput) as ExtractedFieldOrMissing<unknown>;
     if (!extraction.found) {
       results[field] = { status: "NOT_FOUND", reason: extraction.reason };
       continue;
     }
-    // bidBondAmount produces { amount, currency } — split into two DB columns.
+
+    const fieldData = extraction as ExtractedField<any>;
+
     if (field === "bidBondAmount") {
-      const v = extraction.value as { amount: number; currency: string | null };
+      const v = fieldData.value as { amount: number; currency: string | null };
       if (v.amount > 0 && v.currency !== "PERCENT") {
-        (updates as Record<string, unknown>).bidBondAmount = v.amount;
-        if (v.currency) (updates as Record<string, unknown>).bidBondCurrency = v.currency;
+        updates.bidBondAmount = v.amount;
+        if (v.currency) updates.bidBondCurrency = v.currency;
       }
-      // PERCENT-only matches are reported but not persisted — needs the budget
-      // to compute the absolute amount, which we will not invent.
     } else if (field === "deadline" || field === "preBidMeetingDate") {
-      const dt = extraction.value as Date;
-      (updates as Record<string, unknown>)[field] = dt;
+      updates[field] = fieldData.value;
+    } else if (field === "submissionEmails") {
+      updates.submissionEmails = (fieldData.value as string[]).join("|");
+      updates.submissionEmailSourcePage = fieldData.sourcePage;
     } else {
-      const rawValue = extraction.value as string;
-      // Reject placeholder values ("TBC", "N/A", "Bid-Team to confirm", etc.)
-      // to prevent metadata contamination from being stored as real values.
-      if (containsMetadataPlaceholder(rawValue)) {
-        results[field] = {
-          status: "REJECTED",
-          reason: "Extracted value contains a placeholder pattern and was not stored to prevent metadata contamination.",
-          value: rawValue,
-        };
+      const rawValue = fieldData.value;
+      if (typeof rawValue === "string" && containsMetadataPlaceholder(rawValue)) {
+        results[field] = { status: "REJECTED", reason: "Placeholder detected", value: rawValue };
         continue;
       }
-      (updates as Record<string, unknown>)[field] = rawValue;
-      // When we repair clientName, also sync procuringEntityName if it's empty
-      // and re-evaluate metadataContaminated with the new clean value.
+      updates[field] = rawValue;
+
+      // Handle field-specific mappings and source tracking
       if (field === "clientName") {
-        const current = (tender as unknown as Record<string, unknown>).procuringEntityName;
-        if (!current) {
-          (updates as Record<string, unknown>).procuringEntityName = rawValue;
-        }
-        // Clear the contamination flag when the repaired value passes the check.
-        if (!detectMetadataContamination(rawValue).contaminated) {
-          (updates as Record<string, unknown>).metadataContaminated = false;
-        }
+        if (!tender.procuringEntityName) updates.procuringEntityName = rawValue;
+        updates.clientNameSourcePage = fieldData.sourcePage;
+        updates.clientNameSourceQuote = fieldData.sourceQuote;
+        if (!detectMetadataContamination(rawValue as string).contaminated) updates.metadataContaminated = false;
+      } else if (field === "submissionMethod") {
+        updates.submissionMethodSourcePage = fieldData.sourcePage;
+        updates.submissionMethodSourceQuote = fieldData.sourceQuote;
+      } else if (field === "submissionAddress") {
+        updates.submissionAddressSourcePage = fieldData.sourcePage;
+        updates.submissionAddressSourceQuote = fieldData.sourceQuote;
+      } else if (["clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "clientAddress", "country", "clientCity", "clientWebsite", "authorizedOfficer", "contactChannel"].includes(field)) {
+        contactDetailsSource[field] = { page: fieldData.sourcePage, quote: fieldData.sourceQuote };
+      } else if (field === "projectTitle") {
+        if (!tender.title || tender.title.startsWith("[REVIEW NEEDED]")) updates.title = rawValue;
+      } else if (field === "submissionEmailSubject") {
+        updates.submissionEmailSubject = rawValue;
       }
     }
-    results[field] = {
-      status: "REPAIRED",
-      confidence: extraction.confidence,
-      sourceFile: extraction.sourceFile,
-      sourceQuote: extraction.sourceQuote,
-      value: extraction.value,
-    };
+
+    results[field] = { status: "REPAIRED", ...fieldData };
     await logAction({
       userId: actor.id,
       action: "TENDER_METADATA_REPAIRED",
       entityType: "Tender",
       entityId: tenderId,
-      description: `${actor.email} repaired ${field} from ${extraction.sourceFile ?? "tender source"} (${extraction.confidence})`.slice(0, 500),
-      metadata: {
-        tenderId,
-        field,
-        extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
-        sourceFile: extraction.sourceFile,
-        confidence: extraction.confidence,
-        sourceQuote: extraction.sourceQuote,
-      },
+      description: `${actor.email} repaired ${field}`.slice(0, 500),
+      metadata: { tenderId, field, ...fieldData },
       requestId,
     });
   }
 
+  if (Object.keys(contactDetailsSource).length > 0) {
+    updates.contactDetailsSourceJson = JSON.stringify(contactDetailsSource);
+  }
+
   if (Object.keys(updates).length > 0) {
-    await prisma.tender.update({ where: { id: tenderId }, data: updates as Record<string, unknown> });
+    await prisma.tender.update({ where: { id: tenderId }, data: updates });
   }
 
   return NextResponse.json({

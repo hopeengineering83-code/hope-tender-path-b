@@ -94,3 +94,22 @@ Never claim a fix is complete unless the stated tests passed.
 - **Known risk:** Vercel may independently detect a branch commit; inspect Vercel before assuming no preview exists
 - **Next action:** none; task complete
 - **Merge status:** merged into main
+
+## Session Log: 2026-07-06T17:58:09Z
+- **Tool:** Jules
+- **Files Changed:**
+  - lib/engine/tender-field-extractors.ts (Expanded to 27 fields with strict grounding)
+  - lib/extraction-quality.ts (Implemented perfect page definition and coverage metrics)
+  - lib/engine/generation-readiness-gate.ts (Hardened to block on weak extraction/grounding)
+  - lib/engine/export-readiness.ts (Hardened hygiene checks for AI traces/leakage)
+  - components/extraction-quality-panel.tsx (UI for 20+ metrics and recovery actions)
+  - app/api/tenders/[id]/repair-metadata/route.ts (Persistence for expanded metadata)
+  - app/dashboard/tenders/[id]/page.tsx (Recovery Center action registry fixes)
+- **Tests Run:**
+  - tests/tender-field-extractors.test.ts (143 pass)
+  - tests/export-readiness.test.ts (19 pass)
+  - tests/extraction-quality-gate.test.ts (15 pass)
+  - tests/recovery-command-center-actions.test.ts (77 pass)
+- **Risks:** The regex-based extractors are deterministic but may miss non-standard formatting. Release gates are now significantly stricter, which may block some "borderline" tenders until manually overridden or repaired.
+- **Next Action:** Monitor user feedback on the stricter release gates; expand regex patterns if common variations are missed.
+- **Merge Status:** PR Created (claude/extraction-and-gates-hardening). DO NOT MERGE YET.
