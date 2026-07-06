@@ -3154,13 +3154,30 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   } else {
     // No suitable slot OR the existing slot had the wrong name —
     // always emit Technical-Proposal.docx as a fresh record.
-    // Use a TRANSACTIONAL upsert pattern to prevent the TOCTOU race where
-    // two concurrent /generate calls both pass the findFirst (existing=null)
-    // check and both create duplicate rows. Now: the findFirst + update/create
-    // run inside a SERIALIZABLE transaction so concurrent calls serialize.
+    //
+    // ACTIVE-only findFirst + P2002 convergence (NO Serializable isolation):
+    //
+    // The previous comment claimed the $transaction serialized concurrent
+    // /generate calls, but no isolationLevel was set — default READ COMMITTED
+    // does NOT serialize findFirst+create, so two concurrent calls could both
+    // miss the row and both try to create. Under the partial unique index
+    // (migration 20260705000000), the second create now raises P2002.
+    //
+    // We deliberately do NOT use Serializable isolation here because every
+    // GeneratedDocument write fires refresh_submission_plan_state_trigger,
+    // which upserts the single per-tender SubmissionPlanState row. Under
+    // Serializable, concurrent writes to that one row raise 40001/P2034
+    // serialization failures (verified by DB experiment: 6 concurrent same-
+    // tender writes → 4×P2034). The default-isolation transaction + P2002
+    // convergence below is the safe pattern (re-verified 8/8 ok).
+    //
+    // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+    // preserved history back to GENERATED — and collide with the partial
+    // unique index when an active row with the same name already exists.
     await prisma.$transaction(async (tx) => {
       const existing = await tx.generatedDocument.findFirst({
-        where: { tenderId, exactFileName: "Technical-Proposal.docx" },
+        where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+        orderBy: { updatedAt: "desc" },
       });
       if (existing) {
         await tx.generatedDocument.update({
@@ -3177,20 +3194,51 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           },
         });
       } else {
-        await tx.generatedDocument.create({
-          data: {
-            tenderId,
-            name: "Client-Ready Benchmark Technical Proposal",
-            documentType: "TECHNICAL_PROPOSAL",
-            format: "DOCX",
-            exactFileName: "Technical-Proposal.docx",
-            exactOrder: 1,
-          fileContent,
-          generationStatus: "GENERATED",
-          validationStatus: "PENDING",
-          contentSummary: summary,
-        },
-      });
+        try {
+          await tx.generatedDocument.create({
+            data: {
+              tenderId,
+              name: "Client-Ready Benchmark Technical Proposal",
+              documentType: "TECHNICAL_PROPOSAL",
+              format: "DOCX",
+              exactFileName: "Technical-Proposal.docx",
+              exactOrder: 1,
+              fileContent,
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              contentSummary: summary,
+            },
+          });
+        } catch (createErr) {
+          // P2002 = the partial unique index caught a concurrent creator
+          // making the same active file between our findFirst and this create.
+          // Converge idempotently: update the row the winner created instead
+          // of failing the whole generation.
+          if ((createErr as { code?: string })?.code === "P2002") {
+            const winner = await tx.generatedDocument.findFirst({
+              where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+              orderBy: { updatedAt: "desc" },
+              select: { id: true },
+            });
+            if (winner) {
+              await tx.generatedDocument.update({
+                where: { id: winner.id },
+                data: {
+                  name: "Client-Ready Benchmark Technical Proposal",
+                  documentType: "TECHNICAL_PROPOSAL",
+                  fileContent,
+                  generationStatus: "GENERATED",
+                  validationStatus: "PENDING",
+                  reviewStatus: "PENDING",
+                  contentSummary: summary,
+                  updatedAt: new Date(),
+                },
+              });
+            }
+          } else {
+            throw createErr;
+          }
+        }
       }
     });
   }
@@ -3290,10 +3338,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           profile: (expert as { profile?: string | null }).profile,
         });
         const cvContent = cvBuffer.toString("base64");
-        // Use a TRANSACTIONAL upsert pattern — same TOCTOU fix as Technical Proposal.
+        // Use a TRANSACTIONAL upsert pattern — same TOCTOU + ACTIVE-only + P2002
+        // convergence fix as Technical Proposal (see comment above). Default
+        // isolation (NOT Serializable — see P2034 explanation above).
+        //
+        // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+        // preserved history back to GENERATED — and collide with the partial
+        // unique index when an active row with the same name already exists.
         await prisma.$transaction(async (tx) => {
           const existing = await tx.generatedDocument.findFirst({
-            where: { tenderId, exactFileName: fileName },
+            where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
+            orderBy: { updatedAt: "desc" },
           });
           if (existing) {
             await tx.generatedDocument.update({
@@ -3301,19 +3356,40 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
             });
           } else {
-            await tx.generatedDocument.create({
-              data: {
-                tenderId,
-                name: `CV — ${expert.fullName}`,
-                documentType: "EXPERT_CV_PACKAGE",
-                format: "DOCX",
-                exactFileName: fileName,
-                fileContent: cvContent,
-                generationStatus: "GENERATED",
-                validationStatus: "PENDING",
-                contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
-              },
-            });
+            try {
+              await tx.generatedDocument.create({
+                data: {
+                  tenderId,
+                  name: `CV — ${expert.fullName}`,
+                  documentType: "EXPERT_CV_PACKAGE",
+                  format: "DOCX",
+                  exactFileName: fileName,
+                  fileContent: cvContent,
+                  generationStatus: "GENERATED",
+                  validationStatus: "PENDING",
+                  contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
+                },
+              });
+            } catch (createErr) {
+              // P2002 = the partial unique index caught a concurrent creator
+              // making the same CV file between our findFirst and this create.
+              // Converge idempotently: update the row the winner created.
+              if ((createErr as { code?: string })?.code === "P2002") {
+                const winner = await tx.generatedDocument.findFirst({
+                  where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
+                  orderBy: { updatedAt: "desc" },
+                  select: { id: true },
+                });
+                if (winner) {
+                  await tx.generatedDocument.update({
+                    where: { id: winner.id },
+                    data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
+                  });
+                }
+              } else {
+                throw createErr;
+              }
+            }
           }
         });
         return fileName;

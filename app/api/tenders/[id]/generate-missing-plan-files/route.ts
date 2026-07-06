@@ -479,6 +479,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           if (winner) {
             await prisma.generatedDocument.update({ where: { id: winner.id }, data });
             updated.push(file.exactFileName);
+          } else {
+            // Winner was deleted between the failed create and this lookup.
+            // Push to skipped so the user has visibility (no silent drop).
+            // The loop continues rather than 500-ing the whole route.
+            skipped.push(`${file.exactFileName} (P2002 convergence failed: winner deleted)`);
           }
         } else {
           throw createErr;

@@ -277,11 +277,72 @@ describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (s
     );
   });
 
+  it("regenerate-cvs catches P2002 on create and converges to updating the winner", () => {
+    const src = readFileSync("app/api/tenders/[id]/regenerate-cvs/route.ts", "utf8");
+    assert.ok(
+      src.includes('(createErr as { code?: string })?.code === "P2002"'),
+      "regenerate-cvs create must catch P2002",
+    );
+    assert.ok(
+      src.includes("P2002 convergence") || src.includes("converge"),
+      "regenerate-cvs must converge to updating the winner on P2002",
+    );
+    // Must NOT silently skip when the winner is deleted — must push to errors
+    // so the user has visibility.
+    assert.ok(
+      src.includes("P2002 convergence failed: the concurrent winner was deleted"),
+      "regenerate-cvs must surface winner-deleted as an error (no silent skip)",
+    );
+  });
+
   it("generate-missing-plan-files: ACTIVE-only fallback lookup + P2002 convergence instead of a 500", () => {
     const src = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
     const activeFilters = src.match(/generationStatus: \{ not: "SUPERSEDED" \}/g) ?? [];
     assert.ok(activeFilters.length >= 3, "all lookups (primary, fallback, P2002 winner) must exclude SUPERSEDED rows");
     assert.ok(src.includes('(createErr as { code?: string })?.code === "P2002"'), "create race must be caught");
     assert.ok(src.includes("Converge") || src.includes("converge"), "P2002 must converge to updating the winner, not fail the route");
+    // Must NOT silently skip when the winner is deleted — must push to skipped
+    // so the user has visibility.
+    assert.ok(
+      src.includes("P2002 convergence failed: winner deleted"),
+      "generate-missing-plan-files must surface winner-deleted in skipped (no silent drop)",
+    );
+  });
+
+  it("generate-elite Technical-Proposal upsert: ACTIVE-only lookup + P2002 convergence (no Serializable)", () => {
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    // The Technical-Proposal.docx upsert must filter to ACTIVE rows.
+    assert.ok(
+      /exactFileName: "Technical-Proposal\.docx", generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "generate-elite Technical-Proposal findFirst must exclude SUPERSEDED rows",
+    );
+    // Must catch P2002 on create and converge.
+    assert.ok(
+      src.includes('(createErr as { code?: string })?.code === "P2002"'),
+      "generate-elite Technical-Proposal create must catch P2002",
+    );
+    // Must NOT use Serializable isolation (causes P2034 on concurrent CV writes
+    // via the SubmissionPlanState trigger).
+    assert.ok(
+      !/isolationLevel:\s*["']Serializable["']/.test(src),
+      "generate-elite must NOT use Serializable isolation (causes P2034 on concurrent CV writes)",
+    );
+  });
+
+  it("generate-elite per-expert CV upsert: ACTIVE-only lookup + P2002 convergence", () => {
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    // The CV upsert must filter to ACTIVE rows.
+    assert.ok(
+      /exactFileName: fileName, generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "generate-elite CV findFirst must exclude SUPERSEDED rows",
+    );
+    // The CV upsert must catch P2002 (the CV create runs in Promise.all over
+    // experts, so concurrent same-name collisions are possible if the user
+    // clicks /generate twice in quick succession).
+    const cvCreateBlock = src.match(/exactFileName: fileName,[\s\S]*?catch \(createErr\)[\s\S]*?code === "P2002"/);
+    assert.ok(
+      cvCreateBlock,
+      "generate-elite CV create must catch P2002 and converge",
+    );
   });
 });

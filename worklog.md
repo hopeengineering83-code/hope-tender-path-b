@@ -2049,3 +2049,76 @@ Stage Summary:
   Prisma objects to the normalized CompanyEvidence shape.
 - NOT merged — committing to main + hotfix/universal-tender-evidence-foundation
   (PR #953) for review.
+
+---
+Task ID: pr-954-gap-fix
+Agent: main (Super Z / GLM)
+Task: Check PR #954 and fix any gaps. PR #954 ("fix(generation): make all GeneratedDocument creators respect the partial unique index") targets the partial unique index on GeneratedDocument(tenderId, exactFileName) WHERE non-SUPERSEDED.
+
+Work Log:
+- Fetched PR #954 branch (claude/short-honest-feedback-gaps-vyh8dv) and inspected the 4 commits.
+- Found PR #954 was based on 987d8d08; main has advanced to f582c1c5 (3 commits ahead).
+- Created worktree at /home/z/my-project-pr954 and rebased PR #954 onto current main — no conflicts.
+- Audited the rebased changes and found 4 gaps:
+
+GAPS FIXED:
+
+A. generate-elite.ts was reverted in commit a9b0e073 — restore the fix
+   WITHOUT Serializable isolation:
+   - The original PR added ACTIVE-only + Serializable to generate-elite.ts.
+   - CI failed with P2034 (serialization failures from concurrent CV writes
+     hitting the SubmissionPlanState trigger row).
+   - The fix was to revert generate-elite.ts entirely — but that left the
+     TOCTOU + SUPERSEDED-resurrection bug unfixed.
+   - This commit applies the correct fix: ACTIVE-only + default isolation
+     (READ COMMITTED) + P2002 convergence (same pattern as
+     generate-missing-plan-files).
+   - Both the Technical-Proposal.docx upsert AND the per-expert CV upsert
+     now filter findFirst to generationStatus: { not: 'SUPERSEDED' } +
+     orderBy updatedAt desc, AND catch P2002 on create to converge by
+     updating the winning row.
+
+B. regenerate-cvs route had no P2002 convergence on create:
+   - Two concurrent /regenerate-cvs calls for the same expert could both
+     miss the existing row (TOCTOU) and one would fail with P2002.
+   - Now catches P2002, looks up the winner, and updates it. If the winner
+     was deleted between the failed create and the lookup, the error is
+     pushed to errors[] (no silent skip).
+
+C. generate-missing-plan-files P2002 convergence silently skipped when
+   the winner was deleted:
+   - The PR description acknowledged this as 'extremely narrow window'.
+   - Now pushes to skipped[] with a note, so the user has visibility.
+
+D. Test pins updated to cover the new fixes (5 source-pin tests, was 2):
+   - regenerate-cvs P2002 convergence + winner-deleted error surfacing.
+   - generate-elite Technical-Proposal ACTIVE-only + P2002 + no-Serializable.
+   - generate-elite per-expert CV ACTIVE-only + P2002.
+   - generate-missing-plan-files winner-deleted skipped surfacing.
+
+ROOT CAUSE OF PR #954's INCOMPLETE STATE:
+The original PR tried to fix generate-elite's TOCTOU with Serializable
+isolation, but that caused P2034 on concurrent CV writes (the
+refresh_submission_plan_state_trigger upserts a single per-tender
+SubmissionPlanState row, which serializes badly). The fix was to revert
+generate-elite.ts entirely, leaving the bug unfixed. The correct fix is
+ACTIVE-only filter + default isolation + P2002 convergence — which is
+exactly the pattern the PR already used in generate-missing-plan-files.
+
+VERIFICATION:
+- npx tsc --noEmit: PASS
+- npm run lint: PASS
+- 5 source-pin tests PASS (was 2)
+- 400 universal-tender-intelligence tests PASS (no regressions)
+- 94 generate-related tests PASS (no regressions)
+- 31 generate-elite-referencing tests PASS (no regressions)
+- DB-integration tests NOT run (PostgreSQL unavailable).
+
+Stage Summary:
+- PR #954 rebased onto current main (no conflicts).
+- 4 gaps closed (generate-elite ACTIVE+P2002, regenerate-cvs P2002,
+  no silent skip, test pins).
+- The PR now actually fulfills its title: "make ALL GeneratedDocument
+  creators respect the partial unique index" — including generate-elite.ts
+  (which was previously reverted).
+- NOT merged — pushed to temp-pr954-rebase branch for review.
