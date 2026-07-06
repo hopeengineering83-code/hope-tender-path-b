@@ -85,6 +85,8 @@ test("snapshot type has required fields", () => {
     generationBlockers: [],
     exportBlockers: [],
     finalZipBlockers: [],
+    pageLedgers: [],
+    tenderClassification: { tenderType: "unknown", tenderTypeEvidence: null, procurementStructure: "unknown", procurementStructureEvidence: null, companyServices: ["unknown"], companyServiceEvidence: null, confidence: 0, classificationSource: "unknown" },
   };
 
   assert(example.snapshotRevision.length > 0, "snapshotRevision must be set");

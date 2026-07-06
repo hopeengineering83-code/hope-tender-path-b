@@ -11,6 +11,7 @@ import { applyMainEngineBestAvailableSelection } from "./main-engine-selection-p
 import { applyAIRematchToMainEngine } from "./main-engine-ai-rematch";
 import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
+import { classifyTenderRequirement } from "./requirement-categories";
 
 export type EngineRunOptions = {
   safe?: boolean;
@@ -317,7 +318,13 @@ export async function runTenderEngine(
     }
 
     const createdRequirements = analysis.requirements.map((requirement) => ({ id: randomUUID(), requirement }));
-    const requirementRows = createdRequirements.map(({ id, requirement }) => ({
+    const requirementRows = createdRequirements.map(({ id, requirement }) => {
+      // Classify the requirement into a category + mandatory level using the
+      // universal requirement-categories module.
+      const reqClassification = classifyTenderRequirement(
+        `${requirement.title ?? ""} ${requirement.description ?? ""}`,
+      );
+      return {
       id,
       tenderId,
       title: requirement.title,
@@ -335,7 +342,14 @@ export async function runTenderEngine(
       sourceSectionHeading: requirement.sourceSectionHeading ?? null,
       sourceExactQuote: requirement.sourceExactQuote ?? null,
       sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
-    }));
+      // Universal requirement categorization — stored in sectionReference
+      // (reuses existing column; no migration needed). Preserves original
+      // sectionReference text if present.
+      ...(reqClassification.category !== "unknown"
+        ? { sectionReference: `[${reqClassification.category}:${reqClassification.mandatory}]${requirement.sectionReference ? " " + requirement.sectionReference : ""}` }
+        : {}),
+      };
+    });
 
     progress("engine.compliance", "Building compliance matrix + gap analysis");
     const compliance = buildCompliance(createdRequirements, knowledge, matching);

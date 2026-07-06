@@ -25,6 +25,28 @@ export async function GET(
       return NextResponse.json({ error: "Tender not found" }, { status: 404 });
     }
 
+    // ─── Page Ledger summary for extraction stage ──────────────────────────
+    // Surface page coverage (e.g. "4/7 pages (57%) — Missing: 5, 6, 7") so
+    // the user knows exactly what's incomplete before running AI Analyze.
+    const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pl, i) => {
+      const fileName = snapshot.extraction.files[i]?.fileName ?? `File ${i + 1}`;
+      return { fileName, ...pl };
+    });
+    const hasUnsafePages = (snapshot.pageLedgers ?? []).some(pl => !pl.isSafeForAnalysis);
+
+    // ─── Tender Classification summary ─────────────────────────────────────
+    const classification = snapshot.tenderClassification;
+    const classificationSummary = classification
+      ? {
+          tenderType: classification.tenderType,
+          procurementStructure: classification.procurementStructure,
+          companyServices: classification.companyServices,
+          confidence: classification.confidence,
+          tenderTypeEvidence: classification.tenderTypeEvidence,
+          procurementStructureEvidence: classification.procurementStructureEvidence,
+        }
+      : null;
+
     // Each stage maps its actionLabel to a recovery-command action name so the
     // server can classify it as mutation or read-only. The client receives
     // actionKind: "mutation" | "readonly" and uses it to HIDE mutation controls
@@ -42,12 +64,17 @@ export async function GET(
       {
         stage: 2,
         label: "Extraction Quality",
-        status: workflow.extractionState === "READY" ? "READY" : "BLOCKED",
-        explanation: "Verify text density and page coverage.",
-        blocker: workflow.extractionState !== "READY" ? "Extraction inconsistent or weak." : undefined,
-        actionLabel: "Run OCR / Re-extract",
-        actionName: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
-        actionKind: isMutationAction("RUN_OCR_OR_UPLOAD_CLEARER_SCAN") ? "mutation" as const : "readonly" as const,
+        status: hasUnsafePages ? "BLOCKED" : workflow.extractionState === "READY" ? "READY" : "BLOCKED",
+        explanation: hasUnsafePages
+          ? pageLedgerSummary.map(pl => `${pl.fileName}: ${pl.summary}`).join(" | ")
+          : "Verify text density and page coverage.",
+        blocker: hasUnsafePages
+          ? pageLedgerSummary.filter(pl => !pl.isSafeForAnalysis).map(pl => pl.summary).join(" | ")
+          : workflow.extractionState !== "READY" ? "Extraction inconsistent or weak." : undefined,
+        actionLabel: "Repair Extraction",
+        actionName: "REPAIR_EXTRACTION",
+        actionKind: isMutationAction("REPAIR_EXTRACTION") ? "mutation" as const : "readonly" as const,
+        pageLedgers: pageLedgerSummary,
       },
       {
         stage: 3,
@@ -137,7 +164,9 @@ export async function GET(
       ok: true,
       snapshot,
       workflow,
-      stages
+      stages,
+      classification: classificationSummary,
+      pageLedgers: pageLedgerSummary,
     });
   } catch (error) {
     logger.error("[workflow-center]", { detail: error });

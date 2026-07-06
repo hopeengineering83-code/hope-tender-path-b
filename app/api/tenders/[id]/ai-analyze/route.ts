@@ -464,6 +464,7 @@ async function handleStreamingAnalyze(
                   classification: true, extractedText: true, createdAt: true,
                   totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
                   extractionScore: true, extractionMethod: true, deletionStatus: true,
+                  pageStatusJson: true,
                 },
               },
             },
@@ -517,6 +518,33 @@ async function handleStreamingAnalyze(
           emit({ phase: "error", message: "AI analysis blocked: one or more tender files have poor extraction quality.", code: "EXTRACTION_NOT_READY" });
           controller.close();
           return;
+        }
+
+        // ─── Page Ledger preflight — block AI when pages are missing ──────
+        // A 7-page PDF with only 4 processed pages must NOT silently proceed
+        // with AI analysis on incomplete data.
+        if (!force) {
+          const { buildPageLedger } = await import("../../../../../lib/engine/page-ledger");
+          const { isAIAnalysisBlocked } = await import("../../../../../lib/engine/draft-final-gate-separation");
+          for (const file of tenderRecord.files) {
+            const ledger = buildPageLedger(
+              (file as any).totalPages ?? null,
+              (file as any).pageStatusJson ?? null,
+              (file as any).extractionScore ?? null,
+            );
+            const aiBlock = isAIAnalysisBlocked({
+              hasUnknownPageCount: ledger.hasUnknownPageCount,
+              hasMissingPages: ledger.hasMissingPages,
+              hasFailedPages: ledger.hasFailedPages,
+              isCorrupted: false, // Already checked above
+              extractionScore: (file as any).extractionScore ?? null,
+            });
+            if (aiBlock.blocked) {
+              emit({ phase: "error", message: `AI analysis blocked: ${aiBlock.reason} (${file.originalFileName || file.fileName})`, code: "EXTRACTION_PAGE_LEDGER_BLOCKED" });
+              controller.close();
+              return;
+            }
+          }
         }
 
         const textSamples = tenderRecord.files

@@ -4,6 +4,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { summarizeExtractionCoverage, isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { buildPageLedger, type PageLedger } from "../../../../../lib/engine/page-ledger";
 import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export async function GET(
           select: {
             id: true, fileName: true, originalFileName: true, mimeType: true,
             totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-            extractionScore: true, extractionMethod: true,
+            extractionScore: true, extractionMethod: true, pageStatusJson: true,
           },
         },
       },
@@ -67,6 +68,8 @@ export async function GET(
           ? Math.round(extractedCharacterCount / file.totalPages)
           : qualityFromSample.averageCharsPerPage,
       };
+      // Build the page ledger — surfaces missing pages, coverage %, safety status
+      const pageLedger = buildPageLedger(file.totalPages, file.pageStatusJson, Math.min(file.extractionScore ?? quality.score, quality.score));
       return {
         id: file.id,
         fileName,
@@ -80,6 +83,7 @@ export async function GET(
         extractedCharacterCount,
         ocrUsed: (file.ocrPages ?? 0) > 0 || quality.hasOcrPlaceholder,
         quality,
+        pageLedger,
       };
     });
     const coverage = summarizeExtractionCoverage(files.map((file) => ({

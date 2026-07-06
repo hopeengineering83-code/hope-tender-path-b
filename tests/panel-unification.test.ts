@@ -61,6 +61,8 @@ const mockSnapshot = (overrides: Partial<TenderReleaseSnapshot> = {}): TenderRel
   generationBlockers: ["Deadline is required"],
   exportBlockers: [],
   finalZipBlockers: [],
+  pageLedgers: [],
+  tenderClassification: { tenderType: "unknown", tenderTypeEvidence: null, procurementStructure: "unknown", procurementStructureEvidence: null, companyServices: ["unknown"], companyServiceEvidence: null, confidence: 0, classificationSource: "unknown" },
   ...overrides,
 });
 

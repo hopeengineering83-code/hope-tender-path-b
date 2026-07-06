@@ -25,6 +25,8 @@ import { resolveCanonicalFieldState, type CanonicalFieldStateResult } from "./ca
 import { resolveTenderAnalysisState, type AnalysisState } from "./analysis-state-resolver";
 import { assessExtractionQuality } from "../extraction-quality";
 import { isGroundedEvidence } from "./evidence-grounding";
+import { buildPageLedger, type PageLedger } from "./page-ledger";
+import { classifyTender, type TenderClassification } from "./tender-classification";
 import { createHash } from "node:crypto";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
@@ -37,6 +39,8 @@ type _FileRow = {
   deletionStatus: string | null;
   // totalPages is required to mirror the gate's sourcePage <= totalPages check.
   totalPages: number | null;
+  // pageStatusJson + extractionScore are required for the page ledger.
+  pageStatusJson?: string | null;
 };
 type _OverrideRow = {
   field: string;
@@ -184,6 +188,12 @@ export type TenderReleaseSnapshot = {
   generationBlockers: string[];
   exportBlockers: string[];
   finalZipBlockers: string[];
+
+  // ─── Universal Tender Intelligence ──────────────────────────────────────
+  /** Per-file page ledger (totalPages denominator, missing pages visible). */
+  pageLedgers: PageLedger[];
+  /** Universal tender classification (type, procurement, services). */
+  tenderClassification: TenderClassification;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -277,6 +287,8 @@ export async function getTenderReleaseSnapshot(
           // totalPages is required to mirror the gate's sourcePage <= totalPages
           // check in the requirements grounding filter.
           totalPages: true,
+          // pageStatusJson is required for the page ledger (missing pages, coverage).
+          pageStatusJson: true,
         },
       },
       metadataOverrides: {
@@ -368,6 +380,24 @@ export async function getTenderReleaseSnapshot(
     overallOk: extractionBlocker === null,
     blocker: extractionBlocker,
   };
+
+  // ─── Page Ledger — authoritative page coverage from totalPages ──────────
+  // A 7-page PDF with 4 processed pages shows 4/7 (57%), NOT 4/4 (100%).
+  // Missing pages are surfaced. AI analysis is blocked when pages are missing.
+  const pageLedgers: PageLedger[] = activeFiles.map((f) =>
+    buildPageLedger(f.totalPages ?? null, (f as _FileRow).pageStatusJson ?? null, f.extractionScore ?? null),
+  );
+  const hasUnsafePageLedger = pageLedgers.some((pl) => !pl.isSafeForAnalysis);
+  if (hasUnsafePageLedger && !extractionBlocker) {
+    const unsafeSummary = pageLedgers.find((pl) => !pl.isSafeForAnalysis)?.summary;
+    extractionBlocker = unsafeSummary ?? "Extraction page coverage is incomplete.";
+    extraction.overallOk = false;
+    extraction.blocker = extractionBlocker;
+  }
+
+  // ─── Tender Classification — universal type + procurement + services ────
+  const combinedText = activeFiles.map((f) => f.extractedText ?? "").join("\n\n").slice(0, 50_000);
+  const tenderClassification = classifyTender(combinedText);
 
   // Analysis state — canonical state machine.
   const analysisDetail = await resolveTenderAnalysisState(prisma, tenderId, userId);
@@ -761,5 +791,9 @@ export async function getTenderReleaseSnapshot(
     generationBlockers,
     exportBlockers,
     finalZipBlockers,
+    // Page ledger — per-file page coverage (totalPages denominator, missing pages visible)
+    pageLedgers,
+    // Tender classification — universal type, procurement structure, company services
+    tenderClassification,
   };
 }
