@@ -200,7 +200,11 @@ export function isValidReferenceNumber(value: string | null | undefined): boolea
   const text = (value ?? "").trim();
   if (text.length < 3) return false;
   if (NON_REFERENCE_WORDS.test(text)) return false;
-  if (!/\d/.test(text)) return false;
+  // REMOVED: Digit requirement eliminated per mission spec.
+  // Letter-only references like "RFP/CONSULTANCY", "PHARO-RFP", "AA/PROC/ARCH"
+  // are valid when meaningful and source-grounded or manually confirmed.
+  // Only actual garbage, labels, placeholders, isolated stop words, and broken
+  // OCR fragments are rejected.
   // Reject if it's mostly noise (no alphanumeric run of ≥2 chars).
   if (!/[A-Z0-9]{2,}/i.test(text)) return false;
   return true;
