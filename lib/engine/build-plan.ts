@@ -77,13 +77,36 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
    * changes the submission method from email to physical would switch the
    * hash's applicable endpoint but NOT the validator's, creating a
    * raw/effective divergence.
+   *
+   * Authority model: the override may carry `reason`, `confirmationBasis`,
+   * `authorityClass`, and `confirmedAt` columns. When `mode === "draft"`,
+   * USER_EDITED/USER_CONFIRMED overrides are accepted WITHOUT source
+   * grounding (the manual value is sufficient). When `mode === "final"`,
+   * they are accepted when `auditSufficientForFinal(reason, confirmationBasis)`
+   * is true.
    */
-  overrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>,
-  phase: ValidationPhase = "final",
+  overrides?: Array<{
+    field: string;
+    fieldState: string;
+    overrideValue: string | null;
+    reason?: string | null;
+    confirmationBasis?: string | null;
+    authorityClass?: string | null;
+    confirmedAt?: Date | null;
+  }>,
+  /**
+   * Authority model mode:
+   *   - "draft" (default): USER_EDITED/USER_CONFIRMED on critical fields
+   *     is accepted without source grounding. Draft work proceeds.
+   *   - "final": USER_EDITED/USER_CONFIRMED on critical fields requires
+   *     either source grounding OR sufficient audit (reason + confirmationBasis).
+   */
+  mode?: "draft" | "final",
 ): MetadataEvidenceValidation {
   // DRAFT PHASE: metadata completeness must NOT block BuildPlan draft creation.
   // Only FINAL phase enforces strict evidence requirements for submission.
-  const isDraft = phase === "draft";
+  const isDraft = (mode ?? "draft") === "draft";
+  const validationMode = mode ?? "draft";
   const blockers: string[] = [];
   const activeFileMap = new Map(activeFiles.map((f) => [f.id, f]));
   const activeFileIds = new Set(activeFiles.map((f) => f.id));
@@ -99,6 +122,32 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       return ov.overrideValue ?? null;
     }
     return raw ?? null;
+  }
+
+  // Authority model: audit-aware short-circuit.
+  // When a field has a USER_EDITED/USER_CONFIRMED override:
+  //   - DRAFT mode: accept the manual value WITHOUT source grounding.
+  //   - FINAL mode: accept when audit is sufficient (reason >= 10 chars +
+  //     valid confirmationBasis, and reason is not a boilerplate string).
+  //     Mirrors the canonical resolver's auditSufficientForFinal helper.
+  function isManualOverrideAccepted(field: string): boolean {
+    const ov = overrideMap.get(field);
+    if (!ov) return false;
+    if (ov.fieldState !== "USER_EDITED" && ov.fieldState !== "USER_CONFIRMED") return false;
+    if (validationMode === "draft") return true;
+    // Final mode: require sufficient audit
+    const reason = (ov.reason ?? "").trim();
+    const basis = (ov.confirmationBasis ?? "").trim();
+    if (reason.length < 10 || basis.length === 0) return false;
+    // Reject boilerplate reasons (the UI used to hardcode these)
+    const boilerplate = new Set([
+      "manual value entered by user.",
+      "confirmed from client & submission details panel.",
+      "marked not applicable by user.",
+      "user confirmed this detail was not found in the tender.",
+    ]);
+    if (boilerplate.has(reason.toLowerCase())) return false;
+    return true;
   }
 
   // Evidence for reference / submissionEmailSubject may live in the dedicated
@@ -133,6 +182,7 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     sourcePage: number | null | undefined,
     sourceQuote: string | null | undefined,
     requireQuote: boolean = true,
+    fieldKey?: string,
     draftOptional: boolean = false,
   ) {
     if (!value || !value.trim()) {
@@ -151,7 +201,13 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       blockers.push(`Critical metadata field ${label} has a placeholder value ("${value.trim().slice(0, 40)}") — replace with the actual value.`);
       return;
     }
-    if (!sourceFileId || !activeFileIds.has(sourceFileId)) {
+    // Authority model: when a USER_EDITED/USER_CONFIRMED override is accepted
+    // (draft mode always; final mode when audit is sufficient), skip the
+    // source-grounding checks. The manual value is the authority.
+    if (fieldKey && isManualOverrideAccepted(fieldKey)) {
+      return;
+    }
+    if (!sourceFileId || !activeFileIds.has(sourceFileId as string)) {
       blockers.push(`Critical metadata field ${label} has no active TenderFile source evidence.`);
       return;
     }
@@ -191,10 +247,10 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
   const effClientName = effectiveValue("clientName", tender.clientName);
   const effDeadline = effectiveValue("deadline", tender.deadline ? new Date(tender.deadline).toISOString() : null);
   const effMethod = effectiveValue("submissionMethod", tender.submissionMethod);
-  checkField("title", effTitle, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote, true, isDraft);
-  checkField("clientName", effClientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote, true, isDraft);
-  checkField("deadline", effDeadline, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote, true, isDraft);
-  checkField("submissionMethod", effMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote, true, isDraft);
+  checkField("title", effTitle, tender.titleSourceFileId, tender.titleSourcePage, tender.titleSourceQuote, true, "title", isDraft);
+  checkField("clientName", effClientName, tender.clientNameSourceFileId, tender.clientNameSourcePage, tender.clientNameSourceQuote, true, "clientName", isDraft);
+  checkField("deadline", effDeadline, tender.deadlineSourceFileId, tender.deadlineSourcePage, tender.deadlineSourceQuote, true, "deadline", isDraft);
+  checkField("submissionMethod", effMethod, tender.submissionMethodSourceFileId, tender.submissionMethodSourcePage, tender.submissionMethodSourceQuote, true, "submissionMethod", isDraft);
 
   // VALUE-DRIVEN: reference is not a block-when-absent field (CLAUDE.md's
   // critical-block list is client/procuring entity, submission method,
@@ -209,7 +265,7 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       { fileId: tender.referenceSourceFileId, page: tender.referenceSourcePage, quote: tender.referenceSourceQuote },
       "procurementReferenceNumber",
     );
-    checkField("reference", effReference, refEvidence.fileId, refEvidence.page, refEvidence.quote);
+    checkField("reference", effReference, refEvidence.fileId, refEvidence.page, refEvidence.quote, true, "reference");
   }
 
   // SUBMISSION-METHOD-DRIVEN: use the EFFECTIVE method (override-aware) to
@@ -229,13 +285,13 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       { fileId: tender.submissionEmailSubjectSourceFileId, page: tender.submissionEmailSubjectSourcePage, quote: tender.submissionEmailSubjectSourceQuote },
       "submissionEmailSubject",
     );
-    checkField("submissionEmailSubject", effSubject, subjEvidence.fileId, subjEvidence.page, subjEvidence.quote);
+    checkField("submissionEmailSubject", effSubject, subjEvidence.fileId, subjEvidence.page, subjEvidence.quote, true, "submissionEmailSubject");
   };
   if (isEmailSubmissionMethod(method)) {
-    checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+    checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote, true, "submissionEmails");
     checkEmailSubjectIfPresent();
   } else if (isPhysicalSubmissionMethod(method)) {
-    checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+    checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote, true, "submissionAddress");
   } else if (isPortalSubmissionMethod(method)) {
     // Portal: require one fully grounded declared endpoint
     const hasEmail = effEmails && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage;
@@ -243,10 +299,10 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     if (!hasEmail && !hasAddress) {
       blockers.push("Portal submission requires at least one fully grounded endpoint (email or address with source file + page).");
     } else if (hasEmail) {
-      checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote);
+      checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote, true, "submissionEmails");
       checkEmailSubjectIfPresent();
     } else {
-      checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote);
+      checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote, true, "submissionAddress");
     }
   } else {
     // Unknown/empty/malformed submission method: BLOCK — do not fall back.
@@ -282,7 +338,7 @@ export async function assertTenderReadyToDraftBuildPlan(
       requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
       // Load metadata overrides so validateCriticalMetadataEvidenceForBuildPlan
       // can validate EFFECTIVE values (override ?? raw), mirroring the canonical hash.
-      metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
+      metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } },
     },
   });
   if (!tender) return { ok: false, code: "TENDER_NOT_FOUND", message: "Tender not found or not owned by actor.", status: 404 };
@@ -414,7 +470,7 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
   // Load metadata overrides to resolve effective values for canonical hash
   const metadataOverrides = await prisma.tenderMetadataOverride.findMany({
     where: { tenderId },
-    select: { field: true, fieldState: true, overrideValue: true },
+    select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true },
   }).catch(() => []);
   // ATTACH overrides to the tender object so buildCanonicalBuildPlanHashInput
   // can read them via tender.metadataOverrides. Without this, overrides have
@@ -511,7 +567,7 @@ export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string
 
 export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {
   const blockers: string[] = [];
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: true, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } } } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: true, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } } } });
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
   const activeFiles = new Map(tender.files.filter((f: any) => f.deletionStatus === "ACTIVE").map((f: any) => [f.id, f]));
   const reqs = new Map(tender.requirements.map((r: any) => [r.id, r]));
@@ -595,7 +651,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   // metadata evidence is no longer valid (e.g., source file was deleted).
   const fullTender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: { where: { deletionStatus: "ACTIVE" } }, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } } },
+    include: { files: { where: { deletionStatus: "ACTIVE" } }, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } } },
   });
   if (fullTender) {
     const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);

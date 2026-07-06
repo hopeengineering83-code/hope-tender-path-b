@@ -497,6 +497,10 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             reason: true,
             overriddenBy: true,
             createdAt: true,
+            // Authority model columns
+            confirmationBasis: true,
+            authorityClass: true,
+            confirmedAt: true,
           },
         },
       },
@@ -607,6 +611,9 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         reason: o.reason,
         overriddenBy: o.overriddenBy,
         createdAt: o.createdAt,
+        confirmationBasis: o.confirmationBasis,
+        authorityClass: o.authorityClass,
+        confirmedAt: o.confirmedAt,
       })),
       hasExtractedRequirements: requirements.length > 0,
       submissionMethodContext: tender.submissionMethod ?? undefined,
@@ -757,7 +764,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             },
           });
           if (!fullTender) return false;
-          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? [], "final");
           return metaValidation.ok;
         } catch { return false; }
       })()) : true),

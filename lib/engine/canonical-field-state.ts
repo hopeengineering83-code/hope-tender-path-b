@@ -706,11 +706,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       for (const f of fieldsToBlock) {
         if (f.blockerReason === null) blockedCount++;
         f.blockerReason = f.blockerReason ?? portalBlockReason;
-        f.generationEligible = false;
+        // Authority model: portal endpoint without grounding blocks FINAL
+        // export only (not draft). Draft work proceeds so the user can
+        // manually enter the endpoint.
         f.exportEligible = false;
         f.zipEligible = false;
       }
-      hasGenerationBlocker = true;
       hasExportBlocker = true;
       hasZipBlocker = true;
     }

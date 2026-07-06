@@ -299,6 +299,10 @@ export async function getTenderReleaseSnapshot(
           reason: true,
           overriddenBy: true,
           createdAt: true,
+          // Authority model columns (additive — populated by the metadata-override route)
+          confirmationBasis: true,
+          authorityClass: true,
+          confirmedAt: true,
         },
       },
       requirements: {
@@ -512,6 +516,9 @@ export async function getTenderReleaseSnapshot(
       reason: o.reason,
       overriddenBy: o.overriddenBy,
       createdAt: o.createdAt,
+      confirmationBasis: o.confirmationBasis,
+      authorityClass: o.authorityClass,
+      confirmedAt: o.confirmedAt,
     })),
     hasExtractedRequirements: tender.requirements.length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,
@@ -543,7 +550,12 @@ export async function getTenderReleaseSnapshot(
           field: o.field,
           fieldState: o.fieldState,
           overrideValue: o.overrideValue,
+          reason: o.reason,
+          confirmationBasis: o.confirmationBasis,
+          authorityClass: o.authorityClass,
+          confirmedAt: o.confirmedAt,
         })),
+        "draft", // Authority model: snapshot gateValid = draft readiness
       );
       if (!metaValidation.ok) {
         metadataGateValid = false;
@@ -740,6 +752,11 @@ export async function getTenderReleaseSnapshot(
 
   const exportBlockers: string[] = [
     ...generationBlockers,
+    // Authority model: export requires hasExportBlocker to be false (manual
+    // values on critical fields must have sufficient audit).
+    ...(metadata.hasExportBlocker && !metadata.hasGenerationBlocker
+      ? ["One or more critical metadata fields have human-confirmed values with insufficient audit for final export."]
+      : []),
     // Export requires evidence coverage ≥ 50% on mandatory requirements when any exist.
     ...(mandatory.length > 0 && evidence.coveragePercent < 50
       ? [`Evidence coverage is ${evidence.coveragePercent}% (need ≥ 50% for export).`]

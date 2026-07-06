@@ -435,7 +435,7 @@ export async function getFinalSubmissionReadiness(
       referenceSourceFileId: true,
       contactDetailsSourceJson: true,
       metadataOverrides: {
-        select: { field: true, fieldState: true, overrideValue: true, reason: true, overriddenBy: true, createdAt: true },
+        select: { field: true, fieldState: true, overrideValue: true, reason: true, overriddenBy: true, createdAt: true, confirmationBasis: true, authorityClass: true, confirmedAt: true },
       },
       budget: true,
       currency: true,
@@ -768,6 +768,9 @@ export async function getFinalSubmissionReadiness(
       reason: o.reason ?? null,
       overriddenBy: o.overriddenBy ?? null,
       createdAt: o.createdAt ?? null,
+      confirmationBasis: o.confirmationBasis ?? null,
+      authorityClass: o.authorityClass ?? null,
+      confirmedAt: o.confirmedAt ?? null,
     })),
     hasExtractedRequirements: tender.requirements.length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,
