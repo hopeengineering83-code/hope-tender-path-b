@@ -41,7 +41,7 @@ export async function PATCH(
     return forbiddenResponse();
   }
 
-  const { id: tenderId, requirementId } = await params;
+  const { id: tenderId, requirementId } = params;
 
   // Verify tender ownership (tenant isolation)
   const tender = await prisma.tender.findFirst({
