@@ -191,14 +191,16 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
 import { readFileSync } from "node:fs";
 
 describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (source pins)", () => {
-  it("generate-elite upserts match ACTIVE rows only and actually serialize", () => {
+  it("generate-elite upserts match ACTIVE rows only and never use Serializable isolation", () => {
     const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
     const activeFilters = src.match(/exactFileName: (?:"Technical-Proposal\.docx"|fileName), generationStatus: \{ not: "SUPERSEDED" \}/g) ?? [];
     assert.equal(activeFilters.length, 2, "both elite upsert lookups must exclude SUPERSEDED rows");
-    // The TOCTOU comment claimed serialization but no isolation level was set —
-    // default READ COMMITTED does not serialize findFirst+create.
-    const serializable = src.match(/\{ isolationLevel: "Serializable" \}/g) ?? [];
-    assert.ok(serializable.length >= 2, "both elite upsert transactions must run Serializable");
+    // Serializable must NOT be used: CV upserts run concurrently (Promise.all)
+    // and every write fires refresh_submission_plan_state_trigger on the SINGLE
+    // per-tender SubmissionPlanState row — Serializable turns that benign
+    // lock-wait into a 40001/P2034 serialization failure. Default isolation
+    // (a plain $transaction) serializes the writes safely.
+    assert.ok(!src.includes('isolationLevel: "Serializable"'), "elite upserts must not use Serializable isolation");
   });
 
   it("regenerate-cvs matches ACTIVE rows only (never mutates SUPERSEDED history)", () => {

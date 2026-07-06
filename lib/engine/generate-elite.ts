@@ -3158,11 +3158,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     // two concurrent /generate calls both pass the findFirst (existing=null)
     // check and both create duplicate rows. Now: the findFirst + update/create
     // run inside a SERIALIZABLE transaction so concurrent calls serialize.
+    // Transactional upsert at the DEFAULT isolation level. ACTIVE rows only:
+    // matching a SUPERSEDED historical row would mutate preserved history back
+    // to GENERATED — and collide with the partial unique index on
+    // (tenderId, exactFileName) WHERE non-SUPERSEDED when an active row with
+    // the same name exists. NOTE: do NOT use isolationLevel "Serializable"
+    // here — every GeneratedDocument write fires refresh_submission_plan_state_trigger,
+    // which upserts the SINGLE per-tender SubmissionPlanState row; under
+    // Serializable the concurrent CV writes (Promise.all below) all conflict
+    // on that row and throw 40001/P2034. Default isolation serializes them
+    // safely.
     await prisma.$transaction(async (tx) => {
-      // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
-      // preserved history back to GENERATED — and collide with the partial
-      // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED when
-      // an active row with the same name exists.
       const existing = await tx.generatedDocument.findFirst({
         where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
         orderBy: { updatedAt: "desc" },
@@ -3190,14 +3196,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             format: "DOCX",
             exactFileName: "Technical-Proposal.docx",
             exactOrder: 1,
-          fileContent,
-          generationStatus: "GENERATED",
-          validationStatus: "PENDING",
-          contentSummary: summary,
-        },
-      });
+            fileContent,
+            generationStatus: "GENERATED",
+            validationStatus: "PENDING",
+            contentSummary: summary,
+          },
+        });
       }
-    }, { isolationLevel: "Serializable" });
+    });
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
@@ -3295,9 +3301,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           profile: (expert as { profile?: string | null }).profile,
         });
         const cvContent = cvBuffer.toString("base64");
-        // Use a TRANSACTIONAL upsert pattern — same TOCTOU fix as Technical Proposal.
+        // Transactional upsert at the DEFAULT isolation level (same rule as
+        // the Technical Proposal upsert above). ACTIVE rows only so a
+        // SUPERSEDED history row is never resurrected. Do NOT use
+        // isolationLevel "Serializable": these CV upserts run concurrently
+        // (Promise.all over experts) and every write fires
+        // refresh_submission_plan_state_trigger, which upserts the SINGLE
+        // per-tender SubmissionPlanState row — under Serializable the
+        // concurrent writes to that one row throw 40001/P2034; default
+        // isolation serializes them safely.
         await prisma.$transaction(async (tx) => {
-          // ACTIVE rows only — same rule as the Technical Proposal upsert above.
           const existing = await tx.generatedDocument.findFirst({
             where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
             orderBy: { updatedAt: "desc" },
@@ -3322,7 +3335,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               },
             });
           }
-        }, { isolationLevel: "Serializable" });
+        });
         return fileName;
       })
     );
