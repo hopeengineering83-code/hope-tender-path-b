@@ -46,7 +46,7 @@ const PROPOSAL_SECTION_NOISE_PATTERN = /\b(references?\b|photos?\b|drawings?\b|t
  * "bid[-_\s]?team\s+to\s+confirm" was the most common production
  * regression (the screenshots showed it in 11/16 metadata fields and
  * leaking straight into generated proposals). */
-const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|not\s+specified|not\s+provided|pending|blank|placeholder|fill[-_\s]?in)$/i;
+const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|not\s+specified|not\s+provided|not|only|n\/a|pending|blank|placeholder|fill[-_\s]?in)$/i;
 
 /** Generic-anywhere placeholder pattern. Returns true if the value
  * contains a "Bid-Team to confirm" / "TBC" / "TBD" / "placeholder" string
@@ -74,7 +74,7 @@ export function containsMetadataPlaceholder(value: string | null | undefined): b
  *   deadline field  → "Date", "Submission Date", "Deadline"
  *   client field    → "Client Name", "Procuring Entity", "Client"
  */
-const GENERIC_FIELD_LABEL_PATTERN = /^(number|ref(?:erence)?\.?\s*(?:no\.?|num(?:ber)?)?|tender\s+(?:no\.?|number|ref(?:erence)?)|client\s+(?:name|details?)?|procuring\s+entity|title|subject|description|date|deadline|submission\s+(?:date|deadline)|name|address|email|phone|contact(?:\s+(?:person|name|details?))?|method|currency|website|location|city|country|type|status|value|amount|budget|remarks?|comments?|notes?|details?)$/i;
+const GENERIC_FIELD_LABEL_PATTERN = /^(number|ref(?:erence)?\.?\s*(?:no\.?|num(?:ber)?)?|tender\s+(?:no\.?|number|ref(?:erence)?)|client\s+(?:name|details?)?|procuring\s+entity|title|subject|description|date|deadline|submission\s+(?:date|deadline)|name|address|phone|contact(?:\s+(?:person|name|details?))?|method|currency|website|location|city|country|type|status|value|amount|budget|remarks?|comments?|notes?|details?)$/i;
 
 /**
  * Returns true when a field value is just a generic heading or column label,
@@ -126,7 +126,7 @@ export function formatDateUnambiguous(value: string | Date | null | undefined): 
 }
 
 /** Words that are NOT valid reference numbers when captured alone. */
-const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there)$/i;
+const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there|see\s+above|see\s+below|reference\s+number|tender\s+reference)$/i;
 
 /** Single-word tokens that are not real first-name + last-name combinations. */
 const CONTACT_NOISE_FRAGMENT = /^(s\s+|the\s+|a\s+|an\s+|contact|person|name|email|tel|phone|address|attn|attention|focal|point|of)/i;
@@ -192,15 +192,19 @@ export function clientNameDisplayMessage(value: string | null | undefined): { te
 
 /**
  * Valid reference numbers must:
- *   1. Contain at least one digit (e.g. RFP-2026-001, 2026-024, AAWSA/CONS/03)
- *   2. NOT be a common stop-word ("only", "see above", etc.)
- *   3. Be at least 3 chars
+ *   1. NOT be a common stop-word ("only", "see above", etc.)
+ *   2. Be at least 3 chars
+ *   3. Contain at least one alphanumeric run of ≥2 chars
+ *
+ * NOTE: A digit is NOT required. Real tender references like "RFP/CONSULTANCY",
+ * "PHARO-RFP", "AA/PROC/ARCH", "PR-FRD", "Tender-A", "ABC/PROC/QC" are valid
+ * even without digits. Only actual garbage, labels, placeholders, isolated stop
+ * words, and broken OCR fragments should be rejected.
  */
 export function isValidReferenceNumber(value: string | null | undefined): boolean {
   const text = (value ?? "").trim();
   if (text.length < 3) return false;
   if (NON_REFERENCE_WORDS.test(text)) return false;
-  if (!/\d/.test(text)) return false;
   // Reject if it's mostly noise (no alphanumeric run of ≥2 chars).
   if (!/[A-Z0-9]{2,}/i.test(text)) return false;
   return true;

@@ -92,9 +92,15 @@ describe("metadata-validators — reference number", () => {
     assert.equal(isValidReferenceNumber("the"), false);
   });
 
-  it("rejects values without any digit", () => {
-    assert.equal(isValidReferenceNumber("RFP"), false);
-    assert.equal(isValidReferenceNumber("PROCUREMENT"), false);
+  it("accepts letter-only references (digit requirement removed per mission spec)", () => {
+    // The mission explicitly says: "Remove the rule requiring every valid
+    // reference number to contain a digit." Letter-only references like
+    // "RFP/CONSULTANCY", "PHARO-RFP", "AA/PROC/ARCH" are valid.
+    assert.equal(isValidReferenceNumber("RFP"), true);
+    assert.equal(isValidReferenceNumber("PROCUREMENT"), true);
+    assert.equal(isValidReferenceNumber("RFP/CONSULTANCY"), true);
+    assert.equal(isValidReferenceNumber("PHARO-RFP"), true);
+    assert.equal(isValidReferenceNumber("AA/PROC/ARCH"), true);
   });
 
   it("accepts real tender reference numbers", () => {

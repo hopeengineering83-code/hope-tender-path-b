@@ -320,7 +320,7 @@ function inferCategory(text: string): string {
   return "General";
 }
 
-function parseDateValue(raw: string | null): Date | null {
+export function parseDateValue(raw: string | null): Date | null {
   if (!raw) return null;
   const cleaned = raw.replace(/(at|before|no later than|local time|hrs?|hours?).*$/i, "").trim();
   const date = new Date(cleaned);

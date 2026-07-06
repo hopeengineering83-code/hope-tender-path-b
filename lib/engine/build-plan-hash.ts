@@ -88,7 +88,15 @@ export type BuildPlanHashInput = {
   // raw metadata fields (submissionMethod, submissionAddress, deadline,
   // title, etc.) are NEVER read directly from the tender.
   metadataEvidence?: BuildPlanHashMetadataEvidence[];
-  metadataOverrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>;
+  metadataOverrides?: Array<{
+    field: string;
+    fieldState: string;
+    overrideValue: string | null;
+    reason?: string | null;
+    confirmationBasis?: string | null;
+    authorityClass?: string | null;
+    confirmedAt?: Date | null;
+  }>;
 };
 
 const UNIT = ""; // field separator unlikely to appear in tender text
@@ -184,7 +192,7 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
       const kb = `${b.field}|${b.fieldState}|${b.overrideValue ?? ""}`;
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     })
-    .map((o) => `ov:${o.field}|${o.fieldState}|${o.overrideValue ?? ""}`)
+    .map((o) => `ov:${o.field}|${o.fieldState}|${o.overrideValue ?? ""}|${o.reason ?? ""}|${o.confirmationBasis ?? ""}|${o.authorityClass ?? ""}`)
     .join("\n");
 
   // Canonical hash — metadata is represented ONLY by the resolved effective
@@ -323,6 +331,9 @@ export function buildCanonicalBuildPlanHashInput(
       reason: o.reason ?? null,
       overriddenBy: o.overriddenBy ?? null,
       createdAt: o.createdAt ?? new Date(0),
+      confirmationBasis: o.confirmationBasis ?? null,
+      authorityClass: o.authorityClass ?? null,
+      confirmedAt: o.confirmedAt ?? null,
     })),
     hasExtractedRequirements: (tender.requirements ?? []).length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,

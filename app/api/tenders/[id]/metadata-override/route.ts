@@ -310,17 +310,38 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
     // Deadline-specific validation
+    // Accept: ISO (YYYY-MM-DD), ISO datetime, long-form ("25 August 2026"),
+    // DMY slash/dot/dash ("25/08/2026", "25.08.2026", "25-08-2026"),
+    // and long-form with time ("25 August 2026, 5:00 PM EAT").
+    // Ambiguous dates (05/06/2026) are accepted but flagged as AMBIGUOUS_DATE
+    // by the canonical resolver.
     if (field === "deadline") {
       const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(overrideValue);
       const isoDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(overrideValue);
-      if (!isoDate && !isoDateTime) {
-        return err(
-          "Deadline override must be YYYY-MM-DD or a complete ISO datetime with timezone.",
-          400,
-          "INVALID_DEADLINE_FORMAT",
-        );
+      const longForm = /^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}(.*)$/i.test(overrideValue);
+      const dmySlash = /^\d{1,2}[/.-]\d{1,2}[/.-]\d{4}$/.test(overrideValue);
+      const dmyDash = /^\d{1,2}-\d{1,2}-\d{4}$/.test(overrideValue);
+      if (!isoDate && !isoDateTime && !longForm && !dmySlash && !dmyDash) {
+        // Try native Date parsing as a last resort
+        const nativeParsed = new Date(overrideValue);
+        if (isNaN(nativeParsed.getTime())) {
+          return err(
+            "Deadline must be a valid date. Accepted formats: YYYY-MM-DD, 25 August 2026, 25/08/2026, 25.08.2026, or ISO datetime.",
+            400,
+            "INVALID_DEADLINE_FORMAT",
+          );
+        }
       }
-      const parsed = new Date(overrideValue);
+      // Validate the date is parseable. For long-form, use the extraction
+      // parser. For ISO, use native. For DMY, use the extraction parser.
+      let parsed: Date;
+      if (isoDate || isoDateTime) {
+        parsed = new Date(overrideValue);
+      } else {
+        // Use the same parseDateValue helper the extraction pipeline uses
+        const { parseDateValue } = await import("../../../../../lib/engine/tender-metadata");
+        parsed = parseDateValue(overrideValue) ?? new Date(overrideValue);
+      }
       if (isNaN(parsed.getTime())) {
         return err("Deadline override is not a valid date.", 400, "INVALID_DEADLINE");
       }
