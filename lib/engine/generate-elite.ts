@@ -3122,6 +3122,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     where: {
       tenderId,
       documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
+      // Authority model: ACTIVE rows only. Matching a SUPERSEDED historical
+      // row would mutate preserved history back to GENERATED — and collide
+      // with the partial unique index on (tenderId, exactFileName) WHERE
+      // non-SUPERSEDED when an active row with the same name exists.
+      generationStatus: { not: "SUPERSEDED" },
     },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
   });
@@ -3130,37 +3135,76 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // accidental METHODOLOGY-classified support slots.
   const isMainProposalSlotName = (name: string | null | undefined) =>
     typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal)\b/i.test(name);
-  const reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
+  let reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
 
   if (reuseTarget && target) {
-    await prisma.generatedDocument.update({
-      where: { id: target.id },
-      data: {
-        name: "Client-Ready Benchmark Technical Proposal",
-        documentType: "TECHNICAL_PROPOSAL",
-        // Keep target.exactFileName because it's a genuine
-        // proposal-named slot the tender required.
-        exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
-        fileContent,
-        generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        // Reset authority review whenever content is replaced — the previous
-        // AUTHORITY_READY status must not carry over to new content.
-        reviewStatus: "PENDING",
-        contentSummary: summary,
-        updatedAt: new Date(),
-      },
-    });
+    let updateSucceeded = false;
+    try {
+      await prisma.generatedDocument.update({
+        where: { id: target.id },
+        data: {
+          name: "Client-Ready Benchmark Technical Proposal",
+          documentType: "TECHNICAL_PROPOSAL",
+          // Keep target.exactFileName because it's a genuine
+          // proposal-named slot the tender required.
+          exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
+          fileContent,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          // Reset authority review whenever content is replaced — the previous
+          // AUTHORITY_READY status must not carry over to new content.
+          reviewStatus: "PENDING",
+          contentSummary: summary,
+          updatedAt: new Date(),
+        },
+      });
+      updateSucceeded = true;
+    } catch (updateErr) {
+      // P2002 = the partial unique index caught a concurrent creator making
+      // the same active file between our findFirst and this update. Converge
+      // idempotently: fall through to the else branch which handles the
+      // $transaction + P2002 convergence pattern.
+      if ((updateErr as { code?: string })?.code !== "P2002") {
+        throw updateErr;
+      }
+      // P2002 — fall through to the $transaction below
+    }
+    if (updateSucceeded) {
+      // Skip the else branch — the update succeeded
+    } else {
+      // P2002 occurred — fall through to the $transaction
+      reuseTarget = null;
+    }
+  }
+  if (reuseTarget && target) {
+    // Already updated above — skip the else branch
   } else {
     // No suitable slot OR the existing slot had the wrong name —
     // always emit Technical-Proposal.docx as a fresh record.
-    // Use a TRANSACTIONAL upsert pattern to prevent the TOCTOU race where
-    // two concurrent /generate calls both pass the findFirst (existing=null)
-    // check and both create duplicate rows. Now: the findFirst + update/create
-    // run inside a SERIALIZABLE transaction so concurrent calls serialize.
+    //
+    // ACTIVE-only findFirst + P2002 convergence (NO Serializable isolation):
+    //
+    // The previous comment claimed the $transaction serialized concurrent
+    // /generate calls, but no isolationLevel was set — default READ COMMITTED
+    // does NOT serialize findFirst+create, so two concurrent calls could both
+    // miss the row and both try to create. Under the partial unique index
+    // (migration 20260705000000), the second create now raises P2002.
+    //
+    // We deliberately do NOT use Serializable isolation here because every
+    // GeneratedDocument write fires refresh_submission_plan_state_trigger,
+    // which upserts the single per-tender SubmissionPlanState row. Under
+    // Serializable, concurrent writes to that one row raise 40001/P2034
+    // serialization failures (verified by DB experiment: 6 concurrent same-
+    // tender writes → 4×P2034). The default-isolation transaction + P2002
+    // convergence below is the safe pattern (re-verified 8/8 ok).
+    //
+    // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+    // preserved history back to GENERATED — and collide with the partial
+    // unique index when an active row with the same name already exists.
     await prisma.$transaction(async (tx) => {
       const existing = await tx.generatedDocument.findFirst({
-        where: { tenderId, exactFileName: "Technical-Proposal.docx" },
+        where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+        orderBy: { updatedAt: "desc" },
       });
       if (existing) {
         await tx.generatedDocument.update({
@@ -3177,20 +3221,56 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           },
         });
       } else {
-        await tx.generatedDocument.create({
-          data: {
-            tenderId,
-            name: "Client-Ready Benchmark Technical Proposal",
-            documentType: "TECHNICAL_PROPOSAL",
-            format: "DOCX",
-            exactFileName: "Technical-Proposal.docx",
-            exactOrder: 1,
-          fileContent,
-          generationStatus: "GENERATED",
-          validationStatus: "PENDING",
-          contentSummary: summary,
-        },
-      });
+        try {
+          await tx.generatedDocument.create({
+            data: {
+              tenderId,
+              name: "Client-Ready Benchmark Technical Proposal",
+              documentType: "TECHNICAL_PROPOSAL",
+              format: "DOCX",
+              exactFileName: "Technical-Proposal.docx",
+              exactOrder: 1,
+              fileContent,
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              contentSummary: summary,
+            },
+          });
+        } catch (createErr) {
+          // P2002 = the partial unique index caught a concurrent creator
+          // making the same active file between our findFirst and this create.
+          // Converge idempotently: update the row the winner created instead
+          // of failing the whole generation.
+          if ((createErr as { code?: string })?.code === "P2002") {
+            const winner = await tx.generatedDocument.findFirst({
+              where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+              orderBy: { updatedAt: "desc" },
+              select: { id: true },
+            });
+            if (winner) {
+              await tx.generatedDocument.update({
+                where: { id: winner.id },
+                data: {
+                  name: "Client-Ready Benchmark Technical Proposal",
+                  documentType: "TECHNICAL_PROPOSAL",
+                  fileContent,
+                  generationStatus: "GENERATED",
+                  validationStatus: "PENDING",
+                  reviewStatus: "PENDING",
+                  contentSummary: summary,
+                  updatedAt: new Date(),
+                },
+              });
+            } else {
+              // Winner was deleted between the failed create and this lookup.
+              // Surface the failure so the user has visibility (no silent skip).
+              logger.error("[generate-elite] P2002 convergence failed for Technical-Proposal.docx: the concurrent winner was deleted before this row could be updated.");
+              throw new Error("P2002 convergence failed: the concurrent winner was deleted before the Technical-Proposal could be updated.");
+            }
+          } else {
+            throw createErr;
+          }
+        }
       }
     });
   }
@@ -3290,10 +3370,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           profile: (expert as { profile?: string | null }).profile,
         });
         const cvContent = cvBuffer.toString("base64");
-        // Use a TRANSACTIONAL upsert pattern — same TOCTOU fix as Technical Proposal.
+        // Use a TRANSACTIONAL upsert pattern — same TOCTOU + ACTIVE-only + P2002
+        // convergence fix as Technical Proposal (see comment above). Default
+        // isolation (NOT Serializable — see P2034 explanation above).
+        //
+        // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
+        // preserved history back to GENERATED — and collide with the partial
+        // unique index when an active row with the same name already exists.
         await prisma.$transaction(async (tx) => {
           const existing = await tx.generatedDocument.findFirst({
-            where: { tenderId, exactFileName: fileName },
+            where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
+            orderBy: { updatedAt: "desc" },
           });
           if (existing) {
             await tx.generatedDocument.update({
@@ -3301,19 +3388,45 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
             });
           } else {
-            await tx.generatedDocument.create({
-              data: {
-                tenderId,
-                name: `CV — ${expert.fullName}`,
-                documentType: "EXPERT_CV_PACKAGE",
-                format: "DOCX",
-                exactFileName: fileName,
-                fileContent: cvContent,
-                generationStatus: "GENERATED",
-                validationStatus: "PENDING",
-                contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
-              },
-            });
+            try {
+              await tx.generatedDocument.create({
+                data: {
+                  tenderId,
+                  name: `CV — ${expert.fullName}`,
+                  documentType: "EXPERT_CV_PACKAGE",
+                  format: "DOCX",
+                  exactFileName: fileName,
+                  fileContent: cvContent,
+                  generationStatus: "GENERATED",
+                  validationStatus: "PENDING",
+                  contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
+                },
+              });
+            } catch (createErr) {
+              // P2002 = the partial unique index caught a concurrent creator
+              // making the same CV file between our findFirst and this create.
+              // Converge idempotently: update the row the winner created.
+              if ((createErr as { code?: string })?.code === "P2002") {
+                const winner = await tx.generatedDocument.findFirst({
+                  where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
+                  orderBy: { updatedAt: "desc" },
+                  select: { id: true },
+                });
+                if (winner) {
+                  await tx.generatedDocument.update({
+                    where: { id: winner.id },
+                    data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
+                  });
+                } else {
+                  // Winner was deleted between the failed create and this lookup.
+                  // Throw so Promise.allSettled records it as "rejected" and
+                  // cvFailed is incremented — no silent skip with a false count.
+                  throw new Error(`P2002 convergence failed for CV ${fileName}: the concurrent winner was deleted before this row could be updated.`);
+                }
+              } else {
+                throw createErr;
+              }
+            }
           }
         });
         return fileName;

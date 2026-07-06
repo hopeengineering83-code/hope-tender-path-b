@@ -10,7 +10,7 @@
  * 4. A forced persistence failure rolls back without leaving the tender with zero active documents.
  */
 
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, beforeEach, after } from "node:test";
 import { strict as assert } from "node:assert";
 
 const RUN_DB = process.env.RUN_DB_INTEGRATION === "true";
@@ -46,6 +46,18 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
         deadline: new Date("2026-12-30"),
       },
     });
+    
+    // Ensure the tender is truly clean before tests run
+    await prisma.generatedDocument.deleteMany({
+      where: { tenderId: testTenderId }
+    }).catch(() => {});
+  });
+
+  beforeEach(async () => {
+    // Clean up before each test to ensure strict isolation
+    await prisma.generatedDocument.deleteMany({
+      where: { tenderId: testTenderId }
+    }).catch(() => {});
   });
 
   after(async () => {
@@ -104,6 +116,21 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
   });
 
   it("2. Exactly one non-SUPERSEDED document exists per tender/exactFileName", async () => {
+    // Create an initial active doc
+    await prisma.generatedDocument.create({
+      data: {
+        tenderId: testTenderId,
+        name: "Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        format: "DOCX",
+        exactFileName: "Technical-Proposal.docx",
+        exactOrder: 1,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
+      },
+    });
+
     // Try to create a SECOND non-SUPERSEDED doc with the same exactFileName — must fail
     try {
       await prisma.generatedDocument.create({
@@ -127,6 +154,42 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
   });
 
   it("3. Superseded history remains available", async () => {
+    // Insert and supersede a document
+    const doc1 = await prisma.generatedDocument.create({
+      data: {
+        tenderId: testTenderId,
+        name: "Technical Proposal v1",
+        documentType: "TECHNICAL_PROPOSAL",
+        format: "DOCX",
+        exactFileName: "Technical-Proposal.docx",
+        exactOrder: 1,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
+      },
+    });
+
+    // Supersede and create a new one
+    await prisma.$transaction(async (tx: any) => {
+      await tx.generatedDocument.updateMany({
+        where: { tenderId: testTenderId, generationStatus: { not: "SUPERSEDED" } },
+        data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED" },
+      });
+      await tx.generatedDocument.create({
+        data: {
+          tenderId: testTenderId,
+          name: "Technical Proposal v2",
+          documentType: "TECHNICAL_PROPOSAL",
+          format: "DOCX",
+          exactFileName: "Technical-Proposal.docx",
+          exactOrder: 1,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          reviewStatus: "PENDING",
+        },
+      });
+    });
+
     const all = await prisma.generatedDocument.findMany({
       where: { tenderId: testTenderId, exactFileName: "Technical-Proposal.docx" },
       orderBy: { createdAt: "asc" },
@@ -142,6 +205,21 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
   });
 
   it("4. A forced persistence failure rolls back without leaving the tender with zero active documents", async () => {
+    // Create an initial document
+    await prisma.generatedDocument.create({
+      data: {
+        tenderId: testTenderId,
+        name: "Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        format: "DOCX",
+        exactFileName: "Technical-Proposal.docx",
+        exactOrder: 1,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
+      },
+    });
+
     // Count active docs before the failed transaction
     const activeBefore = await prisma.generatedDocument.count({
       where: { tenderId: testTenderId, generationStatus: { not: "SUPERSEDED" } },
@@ -179,5 +257,135 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
       where: { tenderId: testTenderId, generationStatus: { not: "SUPERSEDED" } },
     });
     assert.equal(activeAfter, activeBefore, "active docs must be unchanged after rollback (supersede was rolled back)");
+  });
+});
+
+// ─── Source pins: every document creator respects the partial unique index ───
+// The index (tenderId, exactFileName) WHERE non-SUPERSEDED means a creator
+// that matches or updates SUPERSEDED rows can resurrect preserved history or
+// collide with the active row. These pins keep every named-file creator on
+// the ACTIVE-only + graceful-conflict pattern.
+
+import { readFileSync } from "node:fs";
+
+describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (source pins)", () => {
+  it("regenerate-cvs matches ACTIVE rows only (never mutates SUPERSEDED history)", () => {
+    const src = readFileSync("app/api/tenders/[id]/regenerate-cvs/route.ts", "utf8");
+    assert.ok(
+      /exactFileName: fileName, generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "regenerate-cvs lookup must exclude SUPERSEDED rows",
+    );
+  });
+
+  it("regenerate-cvs catches P2002 on create and converges to updating the winner", () => {
+    const src = readFileSync("app/api/tenders/[id]/regenerate-cvs/route.ts", "utf8");
+    assert.ok(
+      src.includes('(createErr as { code?: string })?.code === "P2002"'),
+      "regenerate-cvs create must catch P2002",
+    );
+    assert.ok(
+      src.includes("P2002 convergence") || src.includes("converge"),
+      "regenerate-cvs must converge to updating the winner on P2002",
+    );
+    // Must NOT silently skip when the winner is deleted — must push to errors
+    // so the user has visibility.
+    assert.ok(
+      src.includes("P2002 convergence failed: the concurrent winner was deleted"),
+      "regenerate-cvs must surface winner-deleted as an error (no silent skip)",
+    );
+  });
+
+  it("generate-missing-plan-files: ACTIVE-only fallback lookup + P2002 convergence instead of a 500", () => {
+    const src = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    const activeFilters = src.match(/generationStatus: \{ not: "SUPERSEDED" \}/g) ?? [];
+    assert.ok(activeFilters.length >= 3, "all lookups (primary, fallback, P2002 winner) must exclude SUPERSEDED rows");
+    assert.ok(src.includes('(createErr as { code?: string })?.code === "P2002"'), "create race must be caught");
+    assert.ok(src.includes("Converge") || src.includes("converge"), "P2002 must converge to updating the winner, not fail the route");
+    // Must NOT silently skip when the winner is deleted — must push to skipped
+    // so the user has visibility.
+    assert.ok(
+      src.includes("P2002 convergence failed: winner deleted"),
+      "generate-missing-plan-files must surface winner-deleted in skipped (no silent drop)",
+    );
+  });
+
+  it("generate-elite Technical-Proposal upsert: ACTIVE-only lookup + P2002 convergence (no Serializable)", () => {
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    // The Technical-Proposal.docx upsert must filter to ACTIVE rows.
+    assert.ok(
+      /exactFileName: "Technical-Proposal\.docx", generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "generate-elite Technical-Proposal findFirst must exclude SUPERSEDED rows",
+    );
+    // Must catch P2002 on create and converge.
+    assert.ok(
+      src.includes('(createErr as { code?: string })?.code === "P2002"'),
+      "generate-elite Technical-Proposal create must catch P2002",
+    );
+    // Must NOT use Serializable isolation (causes P2034 on concurrent CV writes
+    // via the SubmissionPlanState trigger).
+    assert.ok(
+      !/isolationLevel:\s*["']Serializable["']/.test(src),
+      "generate-elite must NOT use Serializable isolation (causes P2034 on concurrent CV writes)",
+    );
+  });
+
+  it("generate-elite per-expert CV upsert: ACTIVE-only lookup + P2002 convergence", () => {
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    // The CV upsert must filter to ACTIVE rows.
+    assert.ok(
+      /exactFileName: fileName, generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "generate-elite CV findFirst must exclude SUPERSEDED rows",
+    );
+    // The CV upsert must catch P2002 (the CV create runs in Promise.all over
+    // experts, so concurrent same-name collisions are possible if the user
+    // clicks /generate twice in quick succession).
+    const cvCreateBlock = src.match(/exactFileName: fileName,[\s\S]*?catch \(createErr\)[\s\S]*?code === "P2002"/);
+    assert.ok(
+      cvCreateBlock,
+      "generate-elite CV create must catch P2002 and converge",
+    );
+  });
+
+  it("generate-elite target findFirst (by documentType) filters to ACTIVE rows", () => {
+    // Gap A fix: the `target` findFirst at the top of the Technical-Proposal
+    // block must also filter on generationStatus: { not: "SUPERSEDED" }.
+    // Without this, a SUPERSEDED row with documentType TECHNICAL_PROPOSAL
+    // could be resurrected back to GENERATED — corrupting audit history.
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    // Find the target findFirst block — search for the documentType + generationStatus
+    // within the same where clause.
+    const targetIdx = src.indexOf('const target = await prisma.generatedDocument.findFirst');
+    assert.ok(targetIdx > -1, "must find the target findFirst");
+    const targetBlock = src.slice(targetIdx, targetIdx + 800);
+    assert.ok(
+      targetBlock.includes('documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] }'),
+      "target findFirst must filter by documentType",
+    );
+    assert.ok(
+      targetBlock.includes('generationStatus: { not: "SUPERSEDED" }'),
+      "target findFirst must filter on generationStatus: { not: 'SUPERSEDED' }",
+    );
+  });
+
+  it("generate-elite Technical-Proposal P2002 convergence surfaces winner-deleted (no silent skip)", () => {
+    // Gap B fix: when the winner is deleted between the failed create and the
+    // convergence lookup, the code must NOT silently skip. It must throw or
+    // log an error so the user has visibility.
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.ok(
+      src.includes("P2002 convergence failed for Technical-Proposal"),
+      "Technical-Proposal P2002 convergence must surface winner-deleted failure",
+    );
+  });
+
+  it("generate-elite per-expert CV P2002 convergence surfaces winner-deleted (no silent skip)", () => {
+    // Gap C fix: when the winner is deleted, the CV P2002 convergence must
+    // throw so Promise.allSettled records it as "rejected" and cvFailed is
+    // incremented — no false "generated N CVs" count.
+    const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.ok(
+      src.includes("P2002 convergence failed for CV"),
+      "CV P2002 convergence must surface winner-deleted failure",
+    );
   });
 });
