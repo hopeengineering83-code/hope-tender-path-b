@@ -10,7 +10,7 @@
  * 4. A forced persistence failure rolls back without leaving the tender with zero active documents.
  */
 
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, beforeEach, after } from "node:test";
 import { strict as assert } from "node:assert";
 
 const RUN_DB = process.env.RUN_DB_INTEGRATION === "true";
@@ -46,6 +46,18 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
         deadline: new Date("2026-12-30"),
       },
     });
+    
+    // Ensure the tender is truly clean before tests run
+    await prisma.generatedDocument.deleteMany({
+      where: { tenderId: testTenderId }
+    }).catch(() => {});
+  });
+
+  beforeEach(async () => {
+    // Clean up before each test to ensure strict isolation
+    await prisma.generatedDocument.deleteMany({
+      where: { tenderId: testTenderId }
+    }).catch(() => {});
   });
 
   after(async () => {
@@ -104,6 +116,21 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
   });
 
   it("2. Exactly one non-SUPERSEDED document exists per tender/exactFileName", async () => {
+    // Create an initial active doc
+    await prisma.generatedDocument.create({
+      data: {
+        tenderId: testTenderId,
+        name: "Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        format: "DOCX",
+        exactFileName: "Technical-Proposal.docx",
+        exactOrder: 1,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
+      },
+    });
+
     // Try to create a SECOND non-SUPERSEDED doc with the same exactFileName — must fail
     try {
       await prisma.generatedDocument.create({
@@ -127,6 +154,42 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
   });
 
   it("3. Superseded history remains available", async () => {
+    // Insert and supersede a document
+    const doc1 = await prisma.generatedDocument.create({
+      data: {
+        tenderId: testTenderId,
+        name: "Technical Proposal v1",
+        documentType: "TECHNICAL_PROPOSAL",
+        format: "DOCX",
+        exactFileName: "Technical-Proposal.docx",
+        exactOrder: 1,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
+      },
+    });
+
+    // Supersede and create a new one
+    await prisma.$transaction(async (tx: any) => {
+      await tx.generatedDocument.updateMany({
+        where: { tenderId: testTenderId, generationStatus: { not: "SUPERSEDED" } },
+        data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED" },
+      });
+      await tx.generatedDocument.create({
+        data: {
+          tenderId: testTenderId,
+          name: "Technical Proposal v2",
+          documentType: "TECHNICAL_PROPOSAL",
+          format: "DOCX",
+          exactFileName: "Technical-Proposal.docx",
+          exactOrder: 1,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          reviewStatus: "PENDING",
+        },
+      });
+    });
+
     const all = await prisma.generatedDocument.findMany({
       where: { tenderId: testTenderId, exactFileName: "Technical-Proposal.docx" },
       orderBy: { createdAt: "asc" },
@@ -142,6 +205,21 @@ dbDescribe("GeneratedDocument partial unique constraint — DB regression tests"
   });
 
   it("4. A forced persistence failure rolls back without leaving the tender with zero active documents", async () => {
+    // Create an initial document
+    await prisma.generatedDocument.create({
+      data: {
+        tenderId: testTenderId,
+        name: "Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        format: "DOCX",
+        exactFileName: "Technical-Proposal.docx",
+        exactOrder: 1,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
+      },
+    });
+
     // Count active docs before the failed transaction
     const activeBefore = await prisma.generatedDocument.count({
       where: { tenderId: testTenderId, generationStatus: { not: "SUPERSEDED" } },
