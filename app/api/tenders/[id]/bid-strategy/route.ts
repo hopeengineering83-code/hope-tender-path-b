@@ -195,9 +195,13 @@ export async function GET(
     unsafeBlockers.push("Large/multi-page tender has zero mandatory requirements extracted.");
   }
   if (tender.requirements.length > 0 && sourceRefCount === 0) unsafeBlockers.push("Extracted requirements have no source traceability.");
-  if (totalPages > 5 && !tender.deadline) unsafeBlockers.push("Deadline is missing from extracted/manual metadata.");
-  if (totalPages > 5 && !tender.submissionMethod) unsafeBlockers.push("Submission method is missing from extracted/manual metadata.");
-  if (totalPages > 5 && !tender.evaluationMethodology) unsafeBlockers.push("Evaluation criteria/methodology are missing from analysis.");
+  // Metadata gaps are warnings, not blockers, for bid strategy.
+  // The core tender task is requirement extraction and draft-proposal readiness.
+  // Final submission gates (Tool A) enforce strict metadata completeness.
+  const metadataWarnings: string[] = [];
+  if (totalPages > 5 && !tender.deadline) metadataWarnings.push("Deadline is missing from extracted/manual metadata.");
+  if (totalPages > 5 && !tender.submissionMethod) metadataWarnings.push("Submission method is missing from extracted/manual metadata.");
+  if (totalPages > 5 && !tender.evaluationMethodology) metadataWarnings.push("Evaluation criteria/methodology are missing from analysis.");
   if (totalPages > 5 && !requiredDocsKnown) unsafeBlockers.push("Required documents/forms are not known from explicit or derived plan inputs.");
 
   if (unsafeBlockers.length > 0) {
