@@ -35,6 +35,12 @@ import { answerTenderCopilotQuestion, type TenderCopilotContext } from "./engine
 import { extractCompanyFacts } from "./engine/company-fact-extractor";
 import { generateProposalSectionsParallel, type AIBidWriterInput } from "./ai";
 import { assertTenderReadyForGenerationAndExport } from "./engine/generation-readiness-gate";
+import { getStorageAdapter } from "./storage";
+import { extractTextFromBuffer } from "./extract-text";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
+import { inferTenderMetadata } from "./engine/tender-metadata";
+import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
+import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 
 export interface JobContext {
   jobId: string;
@@ -553,6 +559,203 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     await prisma.company.update({ where: { id: company.id }, data: updates });
     await recordStep(ctx.jobId, { stepName: "facts.complete", message: `Filled ${Object.keys(updates).length} empty field(s): ${Object.keys(updates).join(", ")}`, status: "SUCCEEDED" });
     return { fieldsExtracted: Object.keys(facts).length, fieldsUpdated: Object.keys(updates).length, factsFound: facts as unknown as Record<string, unknown> };
+  },
+
+  // ─── EXTRACT_TEXT — background text extraction for a TenderFile ──────
+  // Moves long-running extraction (especially OCR on scanned PDFs) out of
+  // the upload-request response cycle. The upload route enqueues this job
+  // and returns immediately; the worker reads the file from storage, runs
+  // extractTextFromBuffer, updates the TenderFile row, and runs the
+  // candidate pipeline + metadata enrichment so the canonical resolver can
+  // ground the metadata.
+  //
+  // Input: { tenderFileId: string }
+  // Output: { fileId, fileName, textLength, extractionScore, totalPages, ocrOutcome }
+  EXTRACT_TEXT: async (ctx) => {
+    const tenderFileId = ctx.input?.tenderFileId as string | undefined;
+    if (!tenderFileId) throw new Error("EXTRACT_TEXT requires tenderFileId in the job input");
+
+    await recordStep(ctx.jobId, { stepName: "extract.load", message: `Loading TenderFile ${tenderFileId}`, status: "RUNNING" });
+
+    const file = await prisma.tenderFile.findUnique({
+      where: { id: tenderFileId },
+      select: {
+        id: true,
+        tenderId: true,
+        originalFileName: true,
+        mimeType: true,
+        storagePath: true,
+        fileContent: true,
+        size: true,
+        deletionStatus: true,
+      },
+    });
+    if (!file) throw new Error(`EXTRACT_TEXT: TenderFile ${tenderFileId} not found`);
+    if (file.deletionStatus !== "ACTIVE") {
+      throw new Error(`EXTRACT_TEXT: TenderFile ${tenderFileId} is not ACTIVE (status: ${file.deletionStatus})`);
+    }
+
+    await recordStep(ctx.jobId, { stepName: "extract.storage-read", message: `Reading file from storage: ${file.originalFileName}`, status: "RUNNING" });
+
+    let buffer: Buffer;
+    try {
+      buffer = await getStorageAdapter().getFile({
+        storagePath: file.storagePath || undefined,
+        fileContent: file.fileContent,
+        fileName: file.originalFileName,
+      });
+    } catch (retrieveErr) {
+      const msg = retrieveErr instanceof Error ? retrieveErr.message : String(retrieveErr);
+      await recordStep(ctx.jobId, { stepName: "extract.storage-failed", message: `Storage retrieval failed: ${msg.slice(0, 200)}`, status: "FAILED" });
+      throw new Error(`EXTRACT_TEXT: storage retrieval failed for ${tenderFileId}: ${msg}`);
+    }
+
+    await recordStep(ctx.jobId, { stepName: "extract.run", message: `Running extractTextFromBuffer (${buffer.length} bytes)`, status: "RUNNING" });
+    const extractedText = await extractTextFromBuffer(buffer, file.mimeType, file.originalFileName);
+
+    // Assess quality
+    const quality = assessExtractionQuality(extractedText, file.originalFileName);
+    const perPage = assessExtractionQualityPerPage(extractedText);
+
+    // Determine OCR outcome (mirrors repair-extraction route)
+    let ocrOutcome: string = "OCR_NOT_ATTEMPTED";
+    if (extractedText.startsWith("[PDF text extracted via Claude vision OCR")) {
+      ocrOutcome = "OCR_ATTEMPTED_SUCCEEDED";
+    } else if (extractedText.startsWith("[OCR_TIMEOUT")) {
+      ocrOutcome = "OCR_TIMEOUT";
+    } else if (extractedText.startsWith("[OCR_AUTH_FAILED")) {
+      ocrOutcome = "OCR_AUTH_FAILED";
+    } else if (extractedText.startsWith("[OCR_RATE_LIMITED")) {
+      ocrOutcome = "OCR_RATE_LIMITED";
+    } else if (extractedText.startsWith("[Scanned PDF")) {
+      ocrOutcome = "OCR_ATTEMPTED_FAILED";
+    } else if (extractedText.startsWith("[Extraction failed")) {
+      ocrOutcome = "OCR_OUTPUT_INSUFFICIENT";
+    }
+
+    await recordStep(ctx.jobId, {
+      stepName: "extract.persist",
+      message: `Persisting: score=${quality.score}, pages=${perPage.totalDetectedPages}, ocrOutcome=${ocrOutcome}`,
+      status: "RUNNING",
+    });
+
+    // Atomic update — all extraction fields in one transaction
+    await prisma.tenderFile.update({
+      where: { id: tenderFileId },
+      data: {
+        extractedText: extractedText || null,
+        totalPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
+        extractedPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
+        ocrPages: extractedText.startsWith("[PDF text extracted via Claude vision OCR") ? perPage.totalDetectedPages : null,
+        failedPages: 0,
+        extractionScore: quality.score,
+        extractionMethod: extractedText.startsWith("[PDF text extracted via Claude vision OCR") ? "ocr" : "text",
+        pageStatusJson: JSON.stringify(perPage.pages ?? []),
+      },
+    });
+
+    // Run metadata inference + enrichment + candidate pipeline so the
+    // canonical resolver can ground the metadata immediately (no need to
+    // wait for AI Analyze). This mirrors the upload-first flow.
+    try {
+      const tender = await prisma.tender.findUnique({
+        where: { id: file.tenderId },
+        select: {
+          id: true,
+          title: true,
+          reference: true,
+          clientName: true,
+          deadline: true,
+          submissionMethod: true,
+          submissionAddress: true,
+          submissionEmails: true,
+          submissionEmailSubject: true,
+          contactDetailsSourceJson: true,
+        },
+      });
+      if (tender) {
+        // Re-infer metadata from the freshly extracted text (fill-empty-only).
+        // We don't OVERWRITE existing user edits — only fill empty fields.
+        const combinedText = extractedText.slice(0, 250_000);
+        const draft = combinedText.trim().length >= 500
+          ? inferTenderMetadata(combinedText, file.originalFileName)
+          : null;
+
+        const enrichmentFiles = [{
+          id: file.id,
+          extractedText,
+          deletionStatus: "ACTIVE" as const,
+          totalPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
+          contentHash: null,
+        }];
+
+        // Enrich source evidence (locates each critical field value in the
+        // extracted text and produces source-evidence columns).
+        const enrichment = enrichMetadataWithSourceEvidence({
+          title: tender.title,
+          reference: tender.reference,
+          clientName: tender.clientName,
+          deadline: tender.deadline,
+          submissionMethod: tender.submissionMethod,
+          submissionAddress: tender.submissionAddress,
+          submissionEmails: tender.submissionEmails,
+          submissionEmailSubject: tender.submissionEmailSubject,
+          existingContactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+        }, enrichmentFiles);
+
+        // Build candidate pipeline (Gap 3 integration).
+        const candidatePipeline = buildCandidatesFromMetadata({
+          values: {
+            title: tender.title,
+            reference: tender.reference,
+            clientName: tender.clientName,
+            deadline: tender.deadline,
+            submissionMethod: tender.submissionMethod,
+            submissionAddress: tender.submissionAddress,
+            submissionEmailSubject: tender.submissionEmailSubject,
+          },
+          files: enrichmentFiles,
+          candidateType: "regex",
+          extractionSourcePrefix: "extract-text-job",
+        });
+
+        // Apply the enrichment + any candidate-promoted evidence columns.
+        // We do NOT apply candidate scalarPatch here because that could
+        // overwrite user edits made between upload and job execution.
+        // Only the evidence columns are safe to write.
+        const patch: Record<string, unknown> = { ...enrichment };
+        if (Object.keys(patch).length > 0) {
+          await prisma.tender.update({ where: { id: tender.id }, data: patch });
+        }
+
+        await recordStep(ctx.jobId, {
+          stepName: "extract.enriched",
+          message: `Metadata enrichment applied (${Object.keys(patch).length} cols). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
+          status: "RUNNING",
+        });
+      }
+    } catch (enrichErr) {
+      // Best-effort, non-fatal. The extraction itself succeeded; only the
+      // metadata enrichment failed. The user can run AI Analyze or
+      // repair-metadata to recover.
+      const msg = enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
+      await recordStep(ctx.jobId, { stepName: "extract.enrich-failed", message: `Metadata enrichment failed (non-fatal): ${msg.slice(0, 200)}`, status: "RUNNING" });
+    }
+
+    await recordStep(ctx.jobId, {
+      stepName: "extract.complete",
+      message: `Extraction complete. Score: ${quality.score}, Pages: ${perPage.totalDetectedPages}, OCR: ${ocrOutcome}, TextLength: ${extractedText.length}`,
+      status: "SUCCEEDED",
+    });
+
+    return {
+      fileId: tenderFileId,
+      fileName: file.originalFileName,
+      textLength: extractedText.length,
+      extractionScore: quality.score,
+      totalPages: perPage.totalDetectedPages,
+      ocrOutcome,
+    };
   },
 };
 

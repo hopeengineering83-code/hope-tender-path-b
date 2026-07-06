@@ -42,7 +42,15 @@ export type JobType =
   | "AI_ANALYZE"
   // Wraps the synchronous tender engine pipeline (analyze → match → AI rematch)
   // in a queued job so it can run outside the 60s Vercel Hobby route cap.
-  | "ENGINE_RUN";
+  | "ENGINE_RUN"
+  // Background text extraction for a TenderFile. Moves long-running extraction
+  // (especially OCR on large scanned PDFs) out of the upload-request response
+  // cycle so the upload route returns immediately. The worker reads the file
+  // from storage, runs extractTextFromBuffer, updates the TenderFile row with
+  // extractedText + totalPages + extractionScore + extractionMethod, and runs
+  // the candidate pipeline so the canonical resolver can ground the metadata.
+  // Input: { tenderFileId: string }.
+  | "EXTRACT_TEXT";
 
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED";
 

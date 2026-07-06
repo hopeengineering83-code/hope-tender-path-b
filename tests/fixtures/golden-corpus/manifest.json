@@ -1,0 +1,345 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://hope-tender-path/golden-corpus.manifest.json",
+  "title": "Golden Tender Corpus \u2014 20 Sanitized Fixtures",
+  "description": "Privacy-safe, fully-synthetic tender documents covering 20 distinct scenarios. Each fixture has known reference, client, deadline, submission method, and expected extraction outcomes. Used by tests/golden-corpus-acceptance.test.ts to validate the universal tender intelligence modules (tender-classification, page-ledger, evidence-candidate, requirement-categories, draft-final-gate-separation) and the metadata extraction pipeline.",
+  "version": "1.0.0",
+  "fixtureCount": 20,
+  "fixtures": [
+    {
+      "id": "01-rfp-consulting-email",
+      "name": "RFP \u2014 Consulting Services \u2014 Email Submission",
+      "file": "tests/fixtures/golden-corpus/01-rfp-consulting-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "email",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "MOU/RFP/2026/0001",
+        "clientName": "Ministry of Urban Development",
+        "deadline": "2026-11-30",
+        "submissionMethod": "email",
+        "submissionEmails": [
+          "bids@moud.gov.et"
+        ],
+        "submissionEmailSubject": "MOU/RFP/2026/0001"
+      }
+    },
+    {
+      "id": "02-rfq-goods-physical",
+      "name": "RFQ \u2014 Office Equipment Supply \u2014 Physical Submission",
+      "file": "tests/fixtures/golden-corpus/02-rfq-goods-physical.md",
+      "tenderType": "RFQ",
+      "procurementStructure": "physical",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "physical",
+      "expected": {
+        "reference": "MOF/RFQ/2026/0002",
+        "clientName": "Ministry of Finance",
+        "deadline": "2026-10-15",
+        "submissionMethod": "physical"
+      }
+    },
+    {
+      "id": "03-eoi-consulting-email",
+      "name": "EOI \u2014 Consulting Services \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/03-eoi-consulting-email.md",
+      "tenderType": "EOI",
+      "procurementStructure": "email",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "AU/EOI/2026/0003",
+        "clientName": "African Union",
+        "deadline": "2026-12-20",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "04-reoi-consulting-portal",
+      "name": "REOI \u2014 Consulting Services \u2014 Portal",
+      "file": "tests/fixtures/golden-corpus/04-reoi-consulting-portal.md",
+      "tenderType": "REOI",
+      "procurementStructure": "portal",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "portal",
+      "expected": {
+        "reference": "NEA/REOI/2026/0004",
+        "clientName": "National Environmental Authority",
+        "deadline": "2027-01-10",
+        "submissionMethod": "portal"
+      }
+    },
+    {
+      "id": "05-itb-works-physical",
+      "name": "ITB \u2014 Civil Works \u2014 Sealed Envelope Physical",
+      "file": "tests/fixtures/golden-corpus/05-itb-works-physical.md",
+      "tenderType": "ITB",
+      "procurementStructure": "physical",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "physical",
+      "expected": {
+        "reference": "ERA/ITB/2026/0005",
+        "clientName": "Ethiopian Roads Authority",
+        "deadline": "2026-09-25",
+        "submissionMethod": "physical"
+      }
+    },
+    {
+      "id": "06-rft-works-portal",
+      "name": "RFT \u2014 Construction Works \u2014 Portal",
+      "file": "tests/fixtures/golden-corpus/06-rft-works-portal.md",
+      "tenderType": "RFT",
+      "procurementStructure": "portal",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "portal",
+      "expected": {
+        "reference": "MOW/RFT/2026/0006",
+        "clientName": "Ministry of Water and Energy",
+        "deadline": "2026-12-05",
+        "submissionMethod": "portal"
+      }
+    },
+    {
+      "id": "07-prequal-multidiscipline-email",
+      "name": "Prequalification \u2014 Multidisciplinary Engineering \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/07-prequal-multidiscipline-email.md",
+      "tenderType": "prequalification",
+      "procurementStructure": "email",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "MOC/PQ/2026/0007",
+        "clientName": "Ministry of Construction",
+        "deadline": "2026-11-15",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "08-framework-engineering-portal",
+      "name": "Framework Agreement \u2014 Engineering Services \u2014 Portal",
+      "file": "tests/fixtures/golden-corpus/08-framework-engineering-portal.md",
+      "tenderType": "framework",
+      "procurementStructure": "portal",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "portal",
+      "expected": {
+        "reference": "NUDA/FA/2026/0008",
+        "clientName": "National Urban Development Agency",
+        "deadline": "2027-02-28",
+        "submissionMethod": "portal"
+      }
+    },
+    {
+      "id": "09-mixed-technical-financial-email",
+      "name": "Mixed Technical + Financial \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/09-mixed-technical-financial-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "technical-financial",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "MOH/RFP/2026/0009",
+        "clientName": "Ministry of Health",
+        "deadline": "2026-10-30",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "10-two-envelope-bridge-physical",
+      "name": "Two-Envelope \u2014 Bridge Construction \u2014 Physical",
+      "file": "tests/fixtures/golden-corpus/10-two-envelope-bridge-physical.md",
+      "tenderType": "ITB",
+      "procurementStructure": "separate-envelopes",
+      "envelopeMode": "TWO_ENVELOPE",
+      "submissionMethod": "physical",
+      "expected": {
+        "reference": "RBA/ITB/2026/0010",
+        "clientName": "Regional Bridge Authority",
+        "deadline": "2026-11-20",
+        "submissionMethod": "physical"
+      }
+    },
+    {
+      "id": "11-single-envelope-building-email",
+      "name": "Single-Envelope \u2014 Building Design \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/11-single-envelope-building-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "single-envelope",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "DCO/RFP/2026/0011",
+        "clientName": "Development Cooperation Office",
+        "deadline": "2026-12-10",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "12-wb-water-sanitation-portal",
+      "name": "World Bank Funded \u2014 Water Sanitation \u2014 Portal",
+      "file": "tests/fixtures/golden-corpus/12-wb-water-sanitation-portal.md",
+      "tenderType": "RFP",
+      "procurementStructure": "portal",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "portal",
+      "expected": {
+        "reference": "WB-WSH/RFP/2026/0012",
+        "clientName": "World Bank",
+        "deadline": "2027-01-20",
+        "submissionMethod": "portal"
+      }
+    },
+    {
+      "id": "13-undp-consulting-email",
+      "name": "UNDP Funded \u2014 Consulting Services \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/13-undp-consulting-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "email",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "UNDP/ETH/RFP/2026/0013",
+        "clientName": "UNDP Ethiopia",
+        "deadline": "2026-12-28",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "14-afdb-roads-portal",
+      "name": "African Development Bank \u2014 Road Design \u2014 Portal",
+      "file": "tests/fixtures/golden-corpus/14-afdb-roads-portal.md",
+      "tenderType": "RFP",
+      "procurementStructure": "portal",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "portal",
+      "expected": {
+        "reference": "AfDB/ROADS/RFP/2026/0014",
+        "clientName": "African Development Bank",
+        "deadline": "2027-02-15",
+        "submissionMethod": "portal"
+      }
+    },
+    {
+      "id": "15-moh-equipment-physical",
+      "name": "Federal Ministry of Health \u2014 Medical Equipment Supply \u2014 Physical",
+      "file": "tests/fixtures/golden-corpus/15-moh-equipment-physical.md",
+      "tenderType": "goods",
+      "procurementStructure": "physical",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "physical",
+      "expected": {
+        "reference": "FMOH/GOODS/2026/0015",
+        "clientName": "Federal Ministry of Health",
+        "deadline": "2026-11-30",
+        "submissionMethod": "physical"
+      }
+    },
+    {
+      "id": "16-aca-urban-planning-email",
+      "name": "Addis City Authority \u2014 Urban Planning \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/16-aca-urban-planning-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "email",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "ACA/RFP/2026/0016",
+        "clientName": "Addis City Authority",
+        "deadline": "2026-10-15",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "17-scanned-agriculture-physical",
+      "name": "Scanned / Weak OCR \u2014 Agriculture Supply \u2014 Physical",
+      "file": "tests/fixtures/golden-corpus/17-scanned-agriculture-physical.md",
+      "tenderType": "goods",
+      "procurementStructure": "physical",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "physical",
+      "expected": {
+        "reference": "MOA/GOODS/2026/0017",
+        "clientName": "Ministry of Agriculture",
+        "deadline": "2026-12-01",
+        "submissionMethod": "physical"
+      }
+    },
+    {
+      "id": "18-multi-file-infrastructure-email",
+      "name": "Multi-File Tender \u2014 Infrastructure Development \u2014 Email",
+      "file": "tests/fixtures/golden-corpus/18-multi-file-infrastructure-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "email",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "WBG/INFRA/RFP/2026/0018",
+        "clientName": "World Bank Group",
+        "deadline": "2027-02-28",
+        "submissionMethod": "email"
+      }
+    },
+    {
+      "id": "19-strict-filename-order-defense",
+      "name": "Strict Filename + Order \u2014 Defense Equipment \u2014 Sealed Envelope",
+      "file": "tests/fixtures/golden-corpus/19-strict-filename-order-defense.md",
+      "tenderType": "ITB",
+      "procurementStructure": "physical",
+      "envelopeMode": "SINGLE_ENVELOPE",
+      "submissionMethod": "physical",
+      "expected": {
+        "reference": "MOD/ITB/2026/0019",
+        "clientName": "Ministry of Defense",
+        "deadline": "2026-12-15",
+        "submissionMethod": "physical"
+      }
+    },
+    {
+      "id": "20-international-hospital-two-envelope-email",
+      "name": "International Bid \u2014 Hospital Expansion \u2014 Two-Envelope Email",
+      "file": "tests/fixtures/golden-corpus/20-international-hospital-two-envelope-email.md",
+      "tenderType": "RFP",
+      "procurementStructure": "separate-envelopes",
+      "envelopeMode": "TWO_ENVELOPE",
+      "submissionMethod": "email",
+      "expected": {
+        "reference": "SJH/RFP/2026/0020",
+        "clientName": "St. Jude Hospital",
+        "deadline": "2027-01-31",
+        "submissionMethod": "email"
+      }
+    }
+  ],
+  "coverage": {
+    "tenderTypes": [
+      "EOI",
+      "ITB",
+      "REOI",
+      "RFP",
+      "RFQ",
+      "RFT",
+      "framework",
+      "goods",
+      "prequalification"
+    ],
+    "procurementStructures": [
+      "email",
+      "physical",
+      "portal",
+      "separate-envelopes",
+      "single-envelope",
+      "technical-financial"
+    ],
+    "envelopeModes": [
+      "SINGLE_ENVELOPE",
+      "TWO_ENVELOPE"
+    ],
+    "submissionMethods": [
+      "email",
+      "physical",
+      "portal"
+    ]
+  },
+  "privacy": "Every name, reference number, deadline, and email in this corpus is fabricated. No procuring entity or contact is real. The corpus is safe to commit to public repositories and to use in CI."
+}

@@ -7,6 +7,7 @@ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extra
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
 import { inferTenderMetadata } from "./engine/tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
+import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
@@ -303,6 +304,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     extractedText: storedUploads[i]?.extractedText ?? null,
     deletionStatus: "ACTIVE" as const,
     totalPages: fr.totalPages,
+    contentHash: null, // enrichment files don't carry the hash; candidate-pipeline handles null
   }));
   // Wrapped in try/catch (best-effort, non-fatal): if enrichment throws
   // (e.g., a file with malformed text that defeats the normalized-index
@@ -324,6 +326,52 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     }, enrichmentFiles);
     if (Object.keys(enrichment).length > 0) {
       await prisma.tender.update({ where: { id: tenderId }, data: enrichment as Record<string, unknown> });
+    }
+
+    // ─── Candidate pipeline (Gap 3 — wire candidate model into extraction) ──
+    // Build TenderFactCandidate records for every extracted value, classify
+    // them (CANDIDATE/GROUNDED/REJECTED/NEEDS_REVIEW), and log the promotion
+    // decisions. The candidate pipeline is ADDITIVE — it does NOT change what
+    // gets written to the Tender table (the existing enrichment flow above
+    // already handles that). It only logs the candidate decisions for
+    // observability and surfaces rejected/needs-review candidates for the UI.
+    //
+    // When the TenderFactCandidate DB table is added in a future migration,
+    // the candidates will be persisted there. For now, they're logged as
+    // structured warnings so operators can see which values were promoted,
+    // which were rejected, and which need manual review.
+    try {
+      const candidatePipeline = buildCandidatesFromMetadata({
+        values: {
+          title: persisted.tender.title,
+          reference: persisted.tender.reference,
+          clientName: persisted.tender.clientName,
+          deadline: persisted.tender.deadline,
+          submissionMethod: persisted.tender.submissionMethod,
+          submissionAddress: persisted.tender.submissionAddress,
+          submissionEmailSubject: persisted.tender.submissionEmailSubject,
+        },
+        files: enrichmentFiles,
+        candidateType: "regex",
+        extractionSourcePrefix: "upload-first:inferTenderMetadata",
+      });
+      if (candidatePipeline.summary.rejected > 0 || candidatePipeline.summary.needsReview > 0) {
+        logger.warn(
+          `[upload-first] candidate pipeline for tender ${tenderId}: ` +
+          `${candidatePipeline.summary.autoConfirmed} auto-confirmed, ` +
+          `${candidatePipeline.summary.grounded} grounded, ` +
+          `${candidatePipeline.summary.needsReview} needs-review, ` +
+          `${candidatePipeline.summary.rejected} rejected, ` +
+          `${candidatePipeline.summary.deferred} deferred`,
+          {
+            rejected: candidatePipeline.rejected,
+            needsReview: candidatePipeline.needsReview,
+          },
+        );
+      }
+    } catch (candidateErr) {
+      // Best-effort — candidate pipeline failure must NOT fail the upload.
+      logger.warn(`[upload-first] candidate pipeline failed for tender ${tenderId}: ${candidateErr instanceof Error ? candidateErr.message : String(candidateErr)}`);
     }
   } catch {
     // Best-effort, non-fatal. The tender and files are already persisted

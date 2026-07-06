@@ -8,6 +8,7 @@ export const SUPPORTED_JOB_TYPES = [
   "PROFILE_FACT_EXTRACTION",
   "AI_ANALYZE",
   "ENGINE_RUN",
+  "EXTRACT_TEXT",
 ] as const satisfies readonly JobType[];
 
 export type ParsedJobType =
