@@ -25,7 +25,10 @@ export function isPhysicalSubmissionMethod(method?: string | null): boolean {
  */
 export function isEmailSubmissionMethod(method?: string | null): boolean {
   if (!method) return false;
-  return /\bemail\b|\be-?mail\b/i.test(method) && !/portal|online|upload/i.test(method);
+  // \b treats "_" as a word character, so enum-style values like
+  // "EMAIL_SUBMISSION" would not match \bemail\b — use explicit non-alnum
+  // boundaries to catch both prose ("Submit by email") and enum forms.
+  return /(?:^|[^a-z0-9])e[\s_-]?mail(?:[^a-z0-9]|$)/i.test(method) && !/portal|online|upload/i.test(method);
 }
 
 /**
