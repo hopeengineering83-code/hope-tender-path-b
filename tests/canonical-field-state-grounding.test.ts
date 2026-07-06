@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import { resolveCanonicalFieldState } from "../lib/engine/canonical-field-state";
 
 describe("canonical field state grounding enforcement", () => {
-  it("EXTRACTED_UNVERIFIED status should block critical fields", () => {
+  it("EXTRACTED_UNVERIFIED status should block FINAL export for critical fields (draft proceeds)", () => {
+    // Authority model: ungrounded critical field blocks FINAL export only.
+    // Draft work proceeds so the user can analyze, extract, match, and draft.
     const tender = {
       id: "t1",
       deadline: new Date("2026-12-12"),
@@ -21,7 +23,7 @@ describe("canonical field state grounding enforcement", () => {
     const deadlineField = result.fields.find(f => f.fieldKey === "deadline");
 
     assert.strictEqual(deadlineField?.status, "EXTRACTED_UNVERIFIED");
-    assert.strictEqual(deadlineField?.generationEligible, false, "Critical field without grounding must block generation");
+    assert.strictEqual(result.hasExportBlocker, true, "Critical field without grounding must block final export");
     assert.ok(deadlineField?.blockerReason?.includes("Critical fields remain blocked until source-grounded"), "Should have correct blocker reason");
   });
 
@@ -47,10 +49,15 @@ describe("canonical field state grounding enforcement", () => {
     assert.strictEqual(countryField?.blockerReason, null);
   });
 
-  it("reference with VALUE but no evidence SHOULD block (value-driven evidence-mandatory)", () => {
-    // Mirrors the BuildPlan validator: when reference has a value, full source
-    // evidence is required. The resolver must block so the panel doesn't show
-    // green while the gate blocks.
+  it("reference with VALUE but no evidence does NOT block (operational field under authority model)", () => {
+    // Authority model: reference is an operational-warning field. It NEVER
+    // blocks draft or final work. A user can enter a reference number
+    // manually without it becoming a hard blocker.
+    //
+    // The previous "value-driven evidence-mandatory" behavior was removed
+    // because it caused the rigidity the mission explicitly calls out:
+    //   "reference number becomes a hard blocker merely because it exists
+    //    without source evidence"
     const tender = {
       id: "t1",
       reference: "RFP-123",
@@ -67,12 +74,19 @@ describe("canonical field state grounding enforcement", () => {
     });
     const refField = result.fields.find(f => f.fieldKey === "reference");
 
-    assert.strictEqual(refField?.status, "EXTRACTED_UNVERIFIED");
-    assert.strictEqual(refField?.generationEligible, false, "Value-driven evidence-mandatory field with value but no evidence must block");
-    assert.ok(refField?.blockerReason?.includes("Value-driven evidence-mandatory"), "Should have value-driven blocker reason");
+    // The reference field itself must NOT have a blocker (it's operational).
+    assert.strictEqual(refField?.blockerReason, null, "reference must NOT have a blockerReason under authority model");
+    assert.strictEqual(refField?.generationEligible, true, "reference must be generation-eligible");
+    assert.strictEqual(refField?.exportEligible, true, "reference must be export-eligible");
+    // NOTE: result.hasExportBlocker may still be true due to OTHER critical
+    // fields (clientName, title, deadline, etc.) being missing/ungrounded
+    // in this minimal tender. The authority model only guarantees that the
+    // REFERENCE field itself doesn't contribute to the block.
   });
 
-  it("NOT_FOUND_CONFIRMED should block critical fields", () => {
+  it("NOT_FOUND_CONFIRMED should block FINAL export for critical fields (draft proceeds)", () => {
+    // Authority model: USER_CONFIRMED without grounding is HUMAN_CONFIRMED_OPERATIONAL.
+    // It blocks FINAL export only (when audit insufficient). Draft proceeds.
     const tender = {
       id: "t1",
       deadline: new Date("2026-12-12"),
@@ -92,7 +106,7 @@ describe("canonical field state grounding enforcement", () => {
     const deadlineField = result.fields.find(f => f.fieldKey === "deadline");
 
     assert.strictEqual(deadlineField?.status, "NOT_FOUND_CONFIRMED");
-    assert.strictEqual(deadlineField?.generationEligible, false, "USER_CONFIRMED without grounding must block critical fields");
+    assert.strictEqual(result.hasExportBlocker, true, "USER_CONFIRMED without grounding must block final export for critical fields");
     assert.ok(deadlineField?.blockerReason?.includes("was manually confirmed but has no active tender-source evidence"), "Should have correct blocker reason");
   });
 

@@ -48,7 +48,9 @@ function findField(result: ReturnType<typeof resolveCanonicalFieldState>, fieldK
 
 describe("Contamination handling — contaminated raw value", () => {
 
-  it("flags contaminated clientName as PORTAL_CONTAMINATION (no override)", () => {
+  it("flags contaminated clientName as PORTAL_CONTAMINATION (no override) — blocks FINAL export", () => {
+    // Authority model: contamination blocks FINAL export (the value is corrupted).
+    // Draft work proceeds so the user can manually correct the value.
     const r = resolveCanonicalFieldState({
       tender: makeTender({ metadataContaminated: true }),
       overrides: [],
@@ -57,7 +59,7 @@ describe("Contamination handling — contaminated raw value", () => {
     const f = findField(r, "clientName");
     assert.equal(f.status, "PORTAL_CONTAMINATION");
     assert.ok(f.blockerReason, "Must have blocker reason");
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
   it("contaminated field is not valid and not grounded", () => {
@@ -96,7 +98,7 @@ describe("Contamination handling — contaminated override (non-matching)", () =
     assert.equal(f.status, "PORTAL_CONTAMINATION",
       "Non-matching override must not resolve contamination");
     assert.ok(f.blockerReason);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
   it("contaminated field with USER_CONFIRMED override but no evidence stays PORTAL_CONTAMINATION", () => {

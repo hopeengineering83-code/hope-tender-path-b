@@ -17,8 +17,18 @@ import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { VALID_FIELD_STATES, KNOWN_METADATA_FIELDS, type MetadataFieldState } from "../../../../../lib/engine/metadata-override";
 import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../../lib/engine/canonical-field-state";
-import { isCriticalField, canBeNotApplicable } from "../../../../../lib/engine/tender-policy-registry";
+import { isCriticalField, canBeNotApplicable, type TenderPolicyContext } from "../../../../../lib/engine/tender-policy-registry";
 import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
+import {
+  classifyTenderFactAuthority,
+  isMeaningfulReason,
+  isValidConfirmationBasis,
+  isSubmissionCriticalField,
+  isOperationalWarningField,
+  isConditionallySubmissionCritical,
+  MIN_CRITICAL_REASON_LENGTH,
+  type HumanConfirmedAudit,
+} from "../../../../../lib/engine/tender-fact-authority";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -192,6 +202,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     overrideValue?: string | null;
     reason?: string | null;
     previousValue?: string | null;
+    confirmationBasis?: string | null;
   };
   const body = await req.json().catch(() => ({})) as Body;
 
@@ -273,11 +284,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // This keeps the override API's N/A rejection in lock-step with the gates: a
   // user cannot mark `reference` N/A here while the gates treat it as N/A-able,
   // and cannot mark `submissionEmails` N/A on an email tender.
-  const policyCtx = { submissionMethod: tenderData?.submissionMethod ?? null };
+  // ─── Validate by fieldState ──────────────────────────────────────
+  // Compute the policy context + submission-criticality for the authority model.
+  // Use the EFFECTIVE submission method (override value if field is submissionMethod,
+  // else the stored tender value) so conditional-criticality is correct.
+  const effectiveSubmissionMethod = overrideValue && field === "submissionMethod"
+    ? overrideValue
+    : (tenderData?.submissionMethod ?? null);
+  const policyCtx: TenderPolicyContext = {
+    submissionMethod: effectiveSubmissionMethod,
+    requiresEmailSubjectExplicitlyStated: false,
+  };
   const isAlwaysOrConditionallyCritical = (f: string): boolean =>
     !canBeNotApplicable(f) || isCriticalField(f, policyCtx);
+  const isAlwaysCritical = isSubmissionCriticalField(field);
+  const isCondCritical = isConditionallySubmissionCritical(field, policyCtx);
+  const isCriticalForAuthority = isAlwaysCritical || isCondCritical;
 
-  // ─── Validate by fieldState ──────────────────────────────────────
   if (fieldState === "USER_EDITED") {
     if (!overrideValue || isPlaceholderOrGeneric(overrideValue)) {
       return err(
@@ -306,6 +329,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (field === "reference" && overrideValue.length < 3) {
       return err("Reference override is too short — must be a real tender reference.", 400, "INVALID_REFERENCE");
     }
+    // ─── Authority model: audit reason + confirmation basis for critical fields ──
+    // Submission-critical fields require a MEANINGFUL reason (not boilerplate)
+    // + a confirmation basis when the value is manually entered. This satisfies
+    // the mission's "audit reason and confirmation basis" requirement for
+    // HUMAN_CONFIRMED_OPERATIONAL values on final-submission fields.
+    if (isCriticalForAuthority) {
+      if (!isMeaningfulReason(reason, MIN_CRITICAL_REASON_LENGTH)) {
+        return err(
+          `Manual entry on submission-critical field "${field}" requires a meaningful audit reason (at least ${MIN_CRITICAL_REASON_LENGTH} characters, not a boilerplate string).`,
+          400,
+          "MEANINGFUL_REASON_REQUIRED",
+        );
+      }
+      const confirmationBasisRaw = typeof body.confirmationBasis === "string" ? body.confirmationBasis.trim() : null;
+      if (!confirmationBasisRaw || !isValidConfirmationBasis(confirmationBasisRaw)) {
+        return err(
+          `Manual entry on submission-critical field "${field}" requires a confirmation basis (where you learned the value). Must be one of: PROCUREMENT_NOTICE, EMAIL_INVITATION, PORTAL_LISTING, PHONE_CALL_WITH_CLIENT, CLIENT_INSTRUCTION, PRE_BID_MEETING, CLARIFICATION_DOCUMENT, PRIOR_KNOWLEDGE_OF_CLIENT, PUBLIC_REGISTRY, OTHER_DOCUMENTED_SOURCE.`,
+          400,
+          "CONFIRMATION_BASIS_REQUIRED",
+        );
+      }
+    }
   }
 
   if (fieldState === "USER_CONFIRMED") {
@@ -322,8 +367,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
     // Require a meaningful audit reason for confirmation
-    if (!reason || reason.trim().length < 5) {
-      return err("Confirmation requires a meaningful audit reason (at least 5 characters).", 400, "REASON_REQUIRED");
+    if (!isMeaningfulReason(reason, isCriticalForAuthority ? MIN_CRITICAL_REASON_LENGTH : 5)) {
+      return err(
+        `Confirmation requires a meaningful audit reason (at least ${isCriticalForAuthority ? MIN_CRITICAL_REASON_LENGTH : 5} characters, not a boilerplate string).`,
+        400,
+        "REASON_REQUIRED",
+      );
+    }
+    // ─── Authority model: confirmation basis for critical fields ──
+    if (isCriticalForAuthority) {
+      const confirmationBasisRaw = typeof body.confirmationBasis === "string" ? body.confirmationBasis.trim() : null;
+      if (!confirmationBasisRaw || !isValidConfirmationBasis(confirmationBasisRaw)) {
+        return err(
+          `Confirmation of submission-critical field "${field}" requires a confirmation basis. Must be one of: PROCUREMENT_NOTICE, EMAIL_INVITATION, PORTAL_LISTING, PHONE_CALL_WITH_CLIENT, CLIENT_INSTRUCTION, PRE_BID_MEETING, CLARIFICATION_DOCUMENT, PRIOR_KNOWLEDGE_OF_CLIENT, PUBLIC_REGISTRY, OTHER_DOCUMENTED_SOURCE.`,
+          400,
+          "CONFIRMATION_BASIS_REQUIRED",
+        );
+      }
     }
   }
 
@@ -359,6 +419,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // ─── Compute authority class + audit context ──────────────────────
+  // The authority class is computed at write time using the same pure
+  // classifier the resolver uses. For USER_EDITED/USER_CONFIRMED on
+  // submission-critical fields, the audit (reason + confirmationBasis)
+  // was already validated above. For other fieldStates the authority
+  // is computed without audit.
+  const confirmationBasisRaw = typeof body.confirmationBasis === "string" ? body.confirmationBasis.trim() : null;
+  const confirmationBasis = confirmationBasisRaw && isValidConfirmationBasis(confirmationBasisRaw) ? confirmationBasisRaw : null;
+  const confirmedAt = (fieldState === "USER_EDITED" || fieldState === "USER_CONFIRMED") ? new Date() : null;
+
+  // Classify the authority (without source-grounding info — that's computed
+  // by the canonical resolver at read time. Here we compute the WRITE-TIME
+  // authority, which is HUMAN_CONFIRMED_OPERATIONAL for USER_EDITED/USER_CONFIRMED
+  // without grounding, or NOT_STATED_IN_SOURCE for NOT_APPLICABLE/IGNORED_WITH_REASON).
+  let authorityClass: string | null = null;
+  if (fieldState === "USER_EDITED" || fieldState === "USER_CONFIRMED") {
+    authorityClass = "HUMAN_CONFIRMED_OPERATIONAL";
+  } else if (fieldState === "NOT_APPLICABLE" || fieldState === "IGNORED_WITH_REASON") {
+    authorityClass = "NOT_STATED_IN_SOURCE";
+  }
+
+  const audit: HumanConfirmedAudit | null = authorityClass === "HUMAN_CONFIRMED_OPERATIONAL" && reason && confirmationBasis
+    ? { reason, confirmationBasis: confirmationBasis as HumanConfirmedAudit["confirmationBasis"], confirmedBy: actor.id, confirmedAt: confirmedAt ?? new Date() }
+    : null;
+
   // Upsert: update if exists, create if not.
   // Guarded against P2021/P2010 in case the migration hasn't been applied yet.
   let upserted;
@@ -373,6 +458,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         previousValue: realPriorValue,
         overriddenBy: actor.id,
         updatedAt: new Date(),
+        // Authority model columns (additive — null on pre-migration DBs is fine)
+        authorityClass,
+        confirmationBasis,
+        confirmedAt,
       },
       create: {
         tenderId: id,
@@ -382,6 +471,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         reason,
         previousValue: realPriorValue,
         overriddenBy: actor.id,
+        authorityClass,
+        confirmationBasis,
+        confirmedAt,
       },
     });
   } catch (upsertErr) {
@@ -404,37 +496,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     metadata: { field, fieldState, overrideValue, reason, overrideId: upserted.id },
   });
 
-  // ─── Post-override source-evidence enrichment ─────────────────────────────
-  // Close the "USER_CONFIRMED with no prior evidence" gap: if the effective
-  // value (overrideValue ?? existing tender scalar) is locatable in an active
-  // tender file's extracted text, persist the source-evidence columns
-  // (fileId + page + quote) so the canonical resolver can mark the field as
-  // EXTRACTED_AND_GROUNDED instead of NOT_FOUND_CONFIRMED.
+  // ─── Post-override source-evidence enrichment (INFORMATIONAL ONLY) ────────
+  // The enrichment locates the effective value in an active tender file's
+  // extracted text and persists the source-evidence columns (fileId + page +
+  // quote) so the UI can DISPLAY where the value was found.
   //
-  // This mirrors the post-extraction enrichment done by re-extract-metadata,
-  // tender-upload-first, and ai-analyze. It is BEST-EFFORT and NON-FATAL:
-  //   - Only runs for USER_CONFIRMED and USER_EDITED states (the only states
-  //     where source grounding can unblock the field).
-  //   - Only fields supported by enrichMetadataWithSourceEvidence are enriched
-  //     (clientName, title, reference, deadline, submissionMethod,
-  //     submissionAddress, submissionEmails, submissionEmailSubject). Extended
-  //     panel fields are skipped — the enrichment module does not handle them.
-  //   - Wrapped in try/catch: any failure (missing table, malformed text, etc.)
-  //     is swallowed. The override itself already succeeded; enrichment must
-  //     never block the response.
-  //   - Existing evidence is never overwritten with null — enrichment only
-  //     returns columns for fields where the value was found.
+  // IMPORTANT — authority model (mission rules D + E):
+  //   - A manual value must NEVER automatically become source-grounded merely
+  //     because it was entered (rule D). The override's authorityClass stays
+  //     HUMAN_CONFIRMED_OPERATIONAL even when enrichment finds the value in
+  //     the source. The canonical resolver will re-classify at read time.
+  //   - A manual value must NEVER be discarded simply because the extractor
+  //     cannot find it in the tender text (rule E). Enrichment failure does
+  //     NOT clear the override.
+  //   - The override value is NOT promoted into the tender scalar. The tender
+  //     scalar is the EXTRACTOR's territory; the override is the USER's
+  //     territory. They are kept separate so the audit trail is clear.
   //
-  // USER_EDITED promotion: when enrichment PROVES the override value is
-  // contained in an active tender file's extracted text (it returned the
-  // source-evidence columns for this field), the override value is promoted
-  // into the tender scalar in the SAME update. This is a verified manual
-  // extraction — identical to what re-extract-metadata writes when its
-  // extractor locates the value — so the resolver's
-  // overrideMatchesGroundedSourceCheck (normalizedEdited === normalizedRaw)
-  // and the BuildPlan validator both see the grounded value. When enrichment
-  // finds nothing, the scalar is NOT touched and the field stays blocked
-  // (fail closed) until the value can be evidenced.
+  // The enrichment still runs (best-effort, non-fatal) so that source-
+  // evidence columns are populated for the UI's "View source page & quote"
+  // affordance. When enrichment finds the value, the canonical resolver at
+  // read time will see the evidence and may classify the field as
+  // SOURCE_GROUNDED (if the override value matches the evidence) — but the
+  // override row itself retains its HUMAN_CONFIRMED_OPERATIONAL authority
+  // and audit context.
   if (fieldState === "USER_CONFIRMED" || fieldState === "USER_EDITED") {
     try {
       const ENRICHMENT_FIELD_MAP: Record<string, "clientName" | "title" | "reference" | "deadline" | "submissionMethod" | "submissionAddress" | "submissionEmails" | "submissionEmailSubject"> = {
@@ -482,41 +567,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               deletionStatus: f.deletionStatus ?? "ACTIVE",
             })),
           );
-          // Only update when enrichment found at least one field. This avoids
-          // a no-op prisma.tender.update and prevents overwriting existing
-          // evidence with undefined.
+          // Only update the source-evidence columns (NOT the tender scalar,
+          // NOT the override). This is purely informational — the UI uses
+          // these columns to show "Page N: 'quote'" when the user clicks
+          // "View source page & quote".
           if (Object.keys(enrichment).length > 0) {
-            const updateData: Record<string, unknown> = { ...enrichment };
-            // Promote a USER_EDITED value into the tender scalar ONLY when
-            // enrichment returned this field's evidence — i.e. the value was
-            // verified CONTAINED in an active file's extracted text. reference
-            // evidence lands in contactDetailsSourceJson via referenceSource*
-            // columns; all other fields use their dedicated column prefix.
-            const evidenceKeyByField: Record<string, string> = {
-              clientName: "clientNameSourceFileId",
-              title: "titleSourceFileId",
-              reference: "referenceSourceFileId",
-              deadline: "deadlineSourceFileId",
-              submissionMethod: "submissionMethodSourceFileId",
-              submissionAddress: "submissionAddressSourceFileId",
-              submissionEmails: "submissionEmailSourceFileId",
-              submissionEmailSubject: "submissionEmailSubjectSourceFileId",
-            };
-            const evidenceFound = Boolean((enrichment as Record<string, unknown>)[evidenceKeyByField[field] ?? ""]);
-            if (fieldState === "USER_EDITED" && overrideValue && evidenceFound) {
-              updateData[field] = field === "deadline" ? new Date(overrideValue) : overrideValue;
-            }
-            await prisma.tender.update({ where: { id }, data: updateData });
+            await prisma.tender.update({ where: { id }, data: enrichment as Record<string, unknown> });
           }
         }
       }
     } catch {
       // Best-effort, non-fatal. The override itself already succeeded.
-      // The field stays in its pre-enrichment state (NOT_FOUND_CONFIRMED or
-      // MANUAL_OVERRIDE_CONFIRMATION_REQUIRED) until repair-metadata or AI
-      // Analyze is run.
+      // The override's authorityClass is already persisted; enrichment
+      // failure does NOT clear it. The field stays HUMAN_CONFIRMED_OPERATIONAL.
     }
   }
 
-  return NextResponse.json({ ok: true, override: upserted });
+  return NextResponse.json({ ok: true, override: upserted, authorityClass, audit });
 }

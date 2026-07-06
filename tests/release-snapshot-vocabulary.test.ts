@@ -101,7 +101,9 @@ function makeTender(overrides: Partial<CanonicalResolverInput["tender"]> = {}): 
 }
 
 describe("resolver — USER_EDITED on critical field", () => {
-  it("blocks generation when clientName has USER_EDITED override (no source evidence)", () => {
+  it("does NOT block draft when clientName has USER_EDITED override (blocks FINAL export only)", () => {
+    // Authority model: USER_EDITED on a critical field is HUMAN_CONFIRMED_OPERATIONAL.
+    // It NEVER blocks draft work. It blocks FINAL export only (when audit insufficient).
     const r = resolveCanonicalFieldState({
       tender: makeTender({
         clientName: null,
@@ -123,15 +125,16 @@ describe("resolver — USER_EDITED on critical field", () => {
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
     assert.equal(f.status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED");
-    assert.notEqual(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, true);
-    assert.equal(f.isValid, false);
+    assert.equal(r.hasGenerationBlocker, false, "Draft must NOT be blocked by USER_EDITED");
+    assert.equal(r.hasExportBlocker, true, "Final export IS blocked (audit insufficient)");
   });
 
-  it("BLOCKS non-critical value-driven field with USER_EDITED (value-driven evidence-mandatory)", () => {
-    // reference is value-driven evidence-mandatory: when a USER_EDITED override
-    // gives it a value, full source evidence is required. The resolver must
-    // block so the panel doesn't show green while the BuildPlan validator blocks.
+  it("does NOT block reference with USER_EDITED (operational field under authority model)", () => {
+    // Authority model: reference is an operational-warning field. It NEVER
+    // blocks draft or final work, even with a USER_EDITED override and no
+    // source evidence. The previous "value-driven evidence-mandatory"
+    // behavior was removed because it caused the rigidity the mission
+    // explicitly calls out.
     const r = resolveCanonicalFieldState({
       tender: makeTender({ reference: null, referenceSourceFileId: null, referenceSourcePage: null, referenceSourceQuote: null }),
       overrides: [{
@@ -147,15 +150,17 @@ describe("resolver — USER_EDITED on critical field", () => {
     });
     const f = r.fields.find((x) => x.fieldKey === "reference")!;
     assert.equal(f.status, "MANUAL_OVERRIDE");
-    assert.ok(f.blockerReason, "USER_EDITED reference with no evidence must have a blocker reason");
-    assert.equal(r.hasGenerationBlocker, true, "Value-driven evidence-mandatory field with USER_EDITED but no evidence must block");
+    assert.equal(f.blockerReason, null, "reference must NOT have a blockerReason under authority model");
+    assert.equal(f.generationEligible, true, "reference must be generation-eligible");
   });
 });
 
 // ─── Resolver: USER_CONFIRMED without source evidence blocks critical fields ──
 
 describe("resolver — USER_CONFIRMED without source evidence", () => {
-  it("blocks when clientName is USER_CONFIRMED but has no source page+quote", () => {
+  it("blocks FINAL export when clientName is USER_CONFIRMED but has no source page+quote (draft proceeds)", () => {
+    // Authority model: USER_CONFIRMED without grounding is HUMAN_CONFIRMED_OPERATIONAL.
+    // It blocks FINAL export only. Draft proceeds.
     const r = resolveCanonicalFieldState({
       tender: makeTender({
         clientName: "Ministry of Transport",
@@ -176,11 +181,11 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
     assert.equal(f.status, "NOT_FOUND_CONFIRMED");
-    assert.notEqual(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
   it("does NOT block USER_CONFIRMED when source evidence matches confirmed value", () => {
+    // Test 1: mismatch → blocks FINAL (not draft)
     const r = resolveCanonicalFieldState({
       tender: makeTender({
         clientName: "Ministry of Transport",
@@ -201,10 +206,8 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
       activeTenderFileIds: new Set(["file1"]),
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
-    // It's MANUAL_CONFIRMED but blocked because it doesn't match the source
     assert.equal(f.status, "MANUAL_CONFIRMED");
-    assert.notEqual(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
 
     const r2 = resolveCanonicalFieldState({
       tender: makeTender({
@@ -235,7 +238,9 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
 // ─── NOT_APPLICABLE and NOT_STATED cannot unblock critical fields ─────────────
 
 describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical fields", () => {
-  it("NOT_APPLICABLE on clientName (always-critical) sets BLOCKED", () => {
+  it("NOT_APPLICABLE on clientName (always-critical) sets BLOCKED — blocks FINAL export only", () => {
+    // Authority model: NOT_APPLICABLE on a critical field blocks FINAL export only.
+    // Draft work proceeds (the user confirmed the tender doesn't state it).
     const r = resolveCanonicalFieldState({
       tender: makeTender({ clientName: null, procuringEntityName: null, clientNameSourceFileId: null, clientNameSourcePage: null, clientNameSourceQuote: null }),
       overrides: [{
@@ -251,11 +256,11 @@ describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical field
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
     assert.equal(f.status, "BLOCKED");
-    assert.notEqual(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
-  it("NOT_STATED on deadline (IGNORED_WITH_REASON) blocks generation", () => {
+  it("NOT_STATED on deadline (IGNORED_WITH_REASON) blocks FINAL export only — draft proceeds", () => {
+    // Authority model: IGNORED_WITH_REASON on a critical field blocks FINAL export only.
     const r = resolveCanonicalFieldState({
       tender: makeTender({ deadline: null, deadlineSourceFileId: null, deadlineSourcePage: null, deadlineSourceQuote: null }),
       overrides: [{
@@ -271,7 +276,6 @@ describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical field
     });
     const f = r.fields.find((x) => x.fieldKey === "deadline")!;
     assert.equal(f.status, "NOT_STATED");
-    assert.notEqual(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 });

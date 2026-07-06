@@ -36,10 +36,40 @@ function isAmbiguousDate(value: string): boolean {
 // Maps a server-permitted action token to the override fieldState the
 // metadata-override API expects. The DISPLAY status is never computed here —
 // it always comes from the canonical snapshot. These actions only WRITE intent.
+//
+// Authority model: the reason is now a PLACEHOLDER — the actual reason must
+// be typed by the user in the AuditReasonModal. The server rejects boilerplate
+// reasons for critical fields (isMeaningfulReason). These placeholders are only
+// used when the user leaves the reason blank (which the server will reject for
+// critical fields, showing a meaningful error).
 const ACTION_FIELD_STATE: Record<string, { fieldState: string; reason: string }> = {
-  confirm:        { fieldState: "USER_CONFIRMED",      reason: "Confirmed from Client & Submission Details panel." },
-  not_applicable: { fieldState: "NOT_APPLICABLE",      reason: "Marked not applicable by user." },
-  not_stated:     { fieldState: "IGNORED_WITH_REASON", reason: "User confirmed this detail was not found in the tender." },
+  confirm:        { fieldState: "USER_CONFIRMED",      reason: "" },
+  not_applicable: { fieldState: "NOT_APPLICABLE",      reason: "" },
+  not_stated:     { fieldState: "IGNORED_WITH_REASON", reason: "" },
+};
+
+// The confirmation bases the user can select in the AuditReasonModal.
+// Must match CONFIRMATION_BASES in lib/engine/tender-fact-authority.ts.
+const CONFIRMATION_BASIS_OPTIONS = [
+  { value: "PROCUREMENT_NOTICE", label: "Procurement notice" },
+  { value: "EMAIL_INVITATION", label: "Email invitation" },
+  { value: "PORTAL_LISTING", label: "Portal listing" },
+  { value: "PHONE_CALL_WITH_CLIENT", label: "Phone call with client" },
+  { value: "CLIENT_INSTRUCTION", label: "Client instruction" },
+  { value: "PRE_BID_MEETING", label: "Pre-bid meeting" },
+  { value: "CLARIFICATION_DOCUMENT", label: "Clarification document" },
+  { value: "PRIOR_KNOWLEDGE_OF_CLIENT", label: "Prior knowledge of client" },
+  { value: "PUBLIC_REGISTRY", label: "Public registry" },
+  { value: "OTHER_DOCUMENTED_SOURCE", label: "Other documented source" },
+];
+
+// Authority labels — must match authorityLabel() in lib/engine/tender-fact-authority.ts.
+const AUTHORITY_LABELS: Record<string, string> = {
+  SOURCE_GROUNDED: "Source-grounded confirmed",
+  HUMAN_CONFIRMED_OPERATIONAL: "Human-confirmed operational value",
+  NOT_STATED_IN_SOURCE: "Not stated in source",
+  UNKNOWN: "Not detected",
+  REJECTED_CANDIDATE: "Candidate needs review",
 };
 
 function FieldActionMenu({
@@ -158,6 +188,10 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  // Authority model: audit modal state (reason + confirmationBasis for critical fields)
+  const [pendingAction, setPendingAction] = useState<{ field: CanonicalFieldState; action: string; fieldState: string; overrideValue: string | null } | null>(null);
+  const [auditReason, setAuditReason] = useState("");
+  const [auditBasis, setAuditBasis] = useState("");
 
   async function load() {
     setLoading(true);
@@ -215,18 +249,41 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
       reason = mapped.reason;
     }
 
-    setSaving(field.fieldKey);
+    // ─── Authority model: critical fields require audit reason + confirmation basis ──
+    // For submission-critical fields (clientName, title, deadline, submissionMethod,
+    // submissionEmails, submissionAddress), the server requires a MEANINGFUL reason
+    // (not boilerplate) + a confirmationBasis. We open a modal to collect these.
+    //
+    // For non-critical fields, we use the boilerplate reason and skip the modal.
+    const isCriticalField = ["clientName", "title", "deadline", "submissionMethod", "submissionEmails", "submissionAddress"].includes(field.fieldKey);
+    if (isCriticalField && (fieldState === "USER_EDITED" || fieldState === "USER_CONFIRMED")) {
+      // Open the audit modal instead of saving immediately. The modal will
+      // collect the reason + confirmationBasis and then call doSave.
+      setPendingAction({ field, action, fieldState, overrideValue });
+      return;
+    }
+
+    await doSave(field.fieldKey, fieldState, overrideValue, reason, null);
+  }
+
+  async function doSave(fieldName: string, fieldState: string, overrideValue: string | null, reason: string, confirmationBasis: string | null) {
+    setSaving(fieldName);
     setError("");
     try {
+      const body: Record<string, unknown> = { field: fieldName, fieldState, overrideValue, reason };
+      if (confirmationBasis) body.confirmationBasis = confirmationBasis;
       const res = await fetch(`/api/tenders/${tenderId}/metadata-override`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ field: field.fieldKey, fieldState, overrideValue, reason }),
+        body: JSON.stringify(body),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "Failed to save");
       setEditing(null);
       setEditValue("");
+      setPendingAction(null);
+      setAuditReason("");
+      setAuditBasis("");
       await load();
       router.refresh();
     } catch (err) {
@@ -401,6 +458,92 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
           );
         })}
       </div>
+
+      {/* ─── Authority model: audit modal for critical-field manual entries ─── */}
+      {pendingAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">
+              Confirm manual entry
+            </h3>
+            <p className="text-sm text-slate-600 mb-4">
+              You are manually entering a value for <strong>{pendingAction.field.label}</strong>,
+              which is required for final submission. Please provide a meaningful reason and
+              the source of this information so the audit trail is clear.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Value
+                </label>
+                <input
+                  type="text"
+                  value={pendingAction.overrideValue ?? ""}
+                  readOnly
+                  className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-700"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Reason (required, min 10 characters)
+                </label>
+                <textarea
+                  value={auditReason}
+                  onChange={(e) => setAuditReason(e.target.value)}
+                  placeholder="e.g. Client confirmed the deadline during the pre-bid meeting on 2026-07-05."
+                  rows={3}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Confirmation basis (required)
+                </label>
+                <select
+                  value={auditBasis}
+                  onChange={(e) => setAuditBasis(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none"
+                >
+                  <option value="">Select a source…</option>
+                  {CONFIRMATION_BASIS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAction(null);
+                  setAuditReason("");
+                  setAuditBasis("");
+                }}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={auditReason.trim().length < 10 || !auditBasis || saving !== null}
+                onClick={() => {
+                  if (!pendingAction) return;
+                  void doSave(
+                    pendingAction.field.fieldKey,
+                    pendingAction.fieldState,
+                    pendingAction.overrideValue,
+                    auditReason.trim(),
+                    auditBasis,
+                  );
+                }}
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Confirm & save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

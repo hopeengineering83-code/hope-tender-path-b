@@ -108,52 +108,53 @@ describe("metadata-override route — post-override enrichment wired in", () => 
   });
 });
 
-describe("metadata-override route — USER_EDITED value promotion (verified manual extraction)", () => {
+describe("metadata-override route — USER_EDITED value NOT promoted (authority model rule D)", () => {
   const src = read("app/api/tenders/[id]/metadata-override/route.ts");
 
-  it("promotes the override value into the tender scalar ONLY when this field's evidence was found", () => {
-    // The promotion closes the documented follow-up: a USER_EDITED value that
-    // enrichment PROVED is contained in an active file's text becomes the raw
-    // scalar (same write re-extract-metadata performs), so the resolver's
-    // exact-match rule and the BuildPlan validator both see it grounded.
+  it("does NOT promote USER_EDITED value into the tender scalar (mission rule D)", () => {
+    // Authority model rule D: "A manual value must never automatically become
+    // source-grounded merely because it was entered."
+    //
+    // The OLD behavior promoted a USER_EDITED value into the tender scalar
+    // when enrichment found it in the source. This conflated the user's
+    // manual entry with the extractor's territory and broke the audit trail.
+    // The NEW behavior keeps the override separate from the tender scalar.
+    // The enrichment still runs (informational — populates source-evidence
+    // columns for the UI), but does NOT write the override value into the
+    // tender scalar.
     assert.ok(
-      src.includes('fieldState === "USER_EDITED" && overrideValue && evidenceFound'),
-      "promotion must be gated on USER_EDITED + a value + evidenceFound",
+      !src.includes('fieldState === "USER_EDITED" && overrideValue && evidenceFound'),
+      "must NOT gate promotion on USER_EDITED + evidenceFound (rule D)",
     );
     assert.ok(
-      src.includes("const evidenceFound = Boolean((enrichment as Record<string, unknown>)[evidenceKeyByField[field] ?? \"\"]);"),
-      "evidenceFound must be derived from the enrichment result for THIS field, not any field",
+      !src.includes('updateData[field] = field === "deadline" ? new Date(overrideValue) : overrideValue'),
+      "must NOT promote USER_EDITED value into tender scalar (rule D)",
     );
-  });
-
-  it("maps every enrichment-supported field to its SourceFileId evidence key", () => {
-    for (const pair of [
-      'clientName: "clientNameSourceFileId"',
-      'title: "titleSourceFileId"',
-      'reference: "referenceSourceFileId"',
-      'deadline: "deadlineSourceFileId"',
-      'submissionMethod: "submissionMethodSourceFileId"',
-      'submissionAddress: "submissionAddressSourceFileId"',
-      'submissionEmails: "submissionEmailSourceFileId"',
-      'submissionEmailSubject: "submissionEmailSubjectSourceFileId"',
-    ]) {
-      assert.ok(src.includes(pair), `evidenceKeyByField must contain ${pair}`);
-    }
-  });
-
-  it("converts a promoted deadline to a Date and leaves other fields as strings", () => {
     assert.ok(
-      src.includes('updateData[field] = field === "deadline" ? new Date(overrideValue) : overrideValue;'),
-      "deadline promotion must write a Date; other fields write the string value",
+      src.includes("NOT promoted into the tender scalar"),
+      "must document that USER_EDITED is not promoted (rule D)",
     );
   });
 
-  it("fails closed: no evidence found means the scalar is never touched", () => {
-    // The promotion lives INSIDE the Object.keys(enrichment).length > 0 guard
-    // and behind evidenceFound — an unevidenced USER_EDITED value never
-    // reaches the tender scalar and the field stays blocked.
-    const guardIdx = src.indexOf("Object.keys(enrichment).length > 0");
-    const promoIdx = src.indexOf('fieldState === "USER_EDITED" && overrideValue && evidenceFound');
-    assert.ok(guardIdx > -1 && promoIdx > guardIdx, "promotion must be inside the enrichment-found guard");
+  it("enrichment still runs (informational — populates source-evidence columns for UI)", () => {
+    // The enrichment still populates the source-evidence columns so the UI
+    // can display "Page N: 'quote'" when the user clicks "View source".
+    assert.ok(
+      src.includes("enrichMetadataWithSourceEvidence"),
+      "must still call enrichMetadataWithSourceEvidence (informational)",
+    );
+    assert.ok(
+      src.includes("INFORMATIONAL ONLY"),
+      "must document that enrichment is informational only",
+    );
+  });
+
+  it("enrichment failure does NOT clear the override (mission rule E)", () => {
+    // Authority model rule E: "A manual value must never be discarded simply
+    // because the extractor cannot find it in the tender text."
+    assert.ok(
+      src.includes("does NOT clear it") || src.includes("failure does NOT clear"),
+      "must document that enrichment failure does not clear the override",
+    );
   });
 });

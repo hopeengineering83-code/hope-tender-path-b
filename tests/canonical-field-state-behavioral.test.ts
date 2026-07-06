@@ -57,12 +57,14 @@ function cleanTender(overrides: any = {}): any {
 }
 
 describe("canonical resolver — contamination", () => {
-  it("flags contaminated clientName as PORTAL_CONTAMINATION and blocks", () => {
+  it("flags contaminated clientName as PORTAL_CONTAMINATION and blocks FINAL export (draft proceeds)", () => {
+    // Authority model: contamination blocks FINAL export (the value is corrupted).
+    // Draft work still proceeds — the user can manually correct the value.
     const r = resolve(cleanTender({ metadataContaminated: true }));
     const f = field(r, "clientName");
     assert.equal(f.status, "PORTAL_CONTAMINATION");
     assert.notEqual(f.blockerReason, null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
     assert.equal(canonicalToClientChip(f), "CONTAMINATED");
     assert.equal(f.isValid, false);
     assert.equal(f.isGrounded, false);
@@ -77,7 +79,9 @@ describe("canonical resolver — contamination", () => {
 });
 
 describe("canonical resolver — behavioral gate decisions", () => {
-  it("blocks a clean tender if critical fields are ungrounded (new policy)", () => {
+  it("blocks FINAL export if critical fields are ungrounded (draft proceeds under authority model)", () => {
+    // Authority model: ungrounded critical fields block FINAL export only.
+    // Draft work proceeds so the user can analyze, extract, match, and draft.
     const r = resolve(cleanTender({
         titleSourcePage: null,
         titleSourceQuote: null,
@@ -86,45 +90,52 @@ describe("canonical resolver — behavioral gate decisions", () => {
         deadlineSourceQuote: null,
         deadlineSourceFileId: null,
     }));
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
     assert.notEqual(field(r, "title").blockerReason, null);
     assert.notEqual(field(r, "deadline").blockerReason, null);
-    assert.equal(field(r, "title").generationEligible, false);
   });
 
-  it("blocks when a critical field (clientName) is missing with no override", () => {
+  it("blocks FINAL export when a critical field (clientName) is missing with no override — draft proceeds", () => {
+    // Authority model: missing critical field blocks FINAL export only.
     const r = resolve(cleanTender({ clientName: null, procuringEntityName: null, clientNameSourcePage: null, clientNameSourceQuote: null, clientNameSourceFileId: null }));
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
     assert.notEqual(field(r, "clientName").blockerReason, null);
   });
 
-  it("blocks when a critical field contains a placeholder", () => {
+  it("blocks FINAL export when a critical field contains a placeholder — draft proceeds", () => {
+    // Authority model: placeholder critical field blocks FINAL export only.
     const r = resolve(cleanTender({ clientName: "Bid-Team to confirm" }));
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
     assert.ok(field(r, "clientName").blockerReason !== null);
   });
 
-  it("blocks the deadline when marked NOT_APPLICABLE (never-N/A field)", () => {
+  it("blocks FINAL export when deadline is marked NOT_APPLICABLE (never-N/A field) — draft proceeds", () => {
+    // Authority model: NOT_APPLICABLE on a never-N/A field blocks FINAL export only.
+    // Draft work proceeds (the tender can still be analyzed, requirements extracted, etc.).
     const r = resolve(cleanTender(), {
       overrides: [{ field: "deadline", fieldState: "NOT_APPLICABLE", overrideValue: null, reason: "x", overriddenBy: "u", createdAt: new Date() }],
     });
     assert.ok(field(r, "deadline").blockerReason !== null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
-  it("blocks an always-critical field marked NOT_APPLICABLE", () => {
+  it("blocks FINAL export when an always-critical field is marked NOT_APPLICABLE — draft proceeds", () => {
+    // Authority model: NOT_APPLICABLE on a critical field blocks FINAL export only.
     const r = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
       overrides: [{ field: "clientName", fieldState: "NOT_APPLICABLE", overrideValue: null, reason: "x", overriddenBy: "u", createdAt: new Date() }],
     });
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
-  it("USER_EDITED on a critical field is a candidate — blocks generation", () => {
+  it("USER_EDITED on a critical field is a candidate — does NOT block draft, blocks final export only", () => {
+    // Authority model: a manual value on a critical field is HUMAN_CONFIRMED_OPERATIONAL.
+    // It NEVER blocks draft work (analysis, extraction, matching, BuildPlan, draft proposal).
+    // It blocks FINAL export only when the audit (reason + confirmationBasis) is insufficient.
     const r = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
       overrides: [{ field: "clientName", fieldState: "USER_EDITED", overrideValue: "Nairobi City County", reason: "entered", overriddenBy: "u", createdAt: new Date() }],
     });
-    assert.equal(field(r, "clientName").status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED");
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasGenerationBlocker, false); // Draft is NOT blocked
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked (audit insufficient)
   });
 
   it("blocks requiredDocuments when there are no extracted requirements", () => {
@@ -133,10 +144,12 @@ describe("canonical resolver — behavioral gate decisions", () => {
     assert.equal(r.hasGenerationBlocker, true);
   });
 
-  it("blocks when clientName is empty even if procuringEntityName is set if ungrounded", () => {
+  it("blocks FINAL export when clientName is empty even if procuringEntityName is set if ungrounded (draft proceeds)", () => {
+    // Authority model: a missing critical field blocks FINAL export only.
+    // Draft work (analysis, extraction, matching, BuildPlan, draft proposal) proceeds.
     const r = resolve(cleanTender({ clientName: null, clientNameSourcePage: null, clientNameSourceQuote: null, clientNameSourceFileId: null }));
-    assert.equal(field(r, "clientName").status, "EXTRACTED_UNVERIFIED");
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasGenerationBlocker, false); // Draft is NOT blocked
+    assert.equal(r.hasExportBlocker, true); // Final IS blocked
   });
 
   it("does NOT block on a missing NON-critical field (reference)", () => {

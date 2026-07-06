@@ -83,7 +83,9 @@ describe("USER_CONFIRMED grounding — exact match required", () => {
     assert.equal(result.hasGenerationBlocker, false);
   });
 
-  it("USER_CONFIRMED with non-matching value → MANUAL_CONFIRMED (blocked for critical)", () => {
+  it("USER_CONFIRMED with non-matching value → MANUAL_CONFIRMED (blocks FINAL export only, draft proceeds)", () => {
+    // Authority model: USER_CONFIRMED with non-matching grounding is HUMAN_CONFIRMED_OPERATIONAL.
+    // It blocks FINAL export only. Draft proceeds.
     const input = makeBaseInput({
       overrides: [{
         field: "clientName",
@@ -97,10 +99,12 @@ describe("USER_CONFIRMED grounding — exact match required", () => {
     const result = resolveCanonicalFieldState(input);
     const field = findField(result, "clientName");
     assert.equal(field.status, "MANUAL_CONFIRMED");
-    assert.equal(result.hasGenerationBlocker, true);
+    assert.equal(result.hasExportBlocker, true); // Final IS blocked
   });
 
-  it("USER_CONFIRMED without source evidence → NOT_FOUND_CONFIRMED (blocked for critical)", () => {
+  it("USER_CONFIRMED without source evidence → NOT_FOUND_CONFIRMED (blocks FINAL export only, draft proceeds)", () => {
+    // Authority model: USER_CONFIRMED without grounding is HUMAN_CONFIRMED_OPERATIONAL.
+    // It blocks FINAL export only (when audit insufficient). Draft proceeds.
     const input = makeBaseInput({
       tender: makeBaseTender({ clientNameSourcePage: null, clientNameSourceQuote: null, clientNameSourceFileId: null }),
       overrides: [{
@@ -115,7 +119,7 @@ describe("USER_CONFIRMED grounding — exact match required", () => {
     const result = resolveCanonicalFieldState(input);
     const field = findField(result, "clientName");
     assert.equal(field.status, "NOT_FOUND_CONFIRMED");
-    assert.equal(result.hasGenerationBlocker, true);
+    assert.equal(result.hasExportBlocker, true); // Final IS blocked
   });
 });
 
@@ -136,7 +140,9 @@ describe("USER_EDITED grounding — exact match required", () => {
     assert.equal(field.status, "EXTRACTED_AND_GROUNDED");
   });
 
-  it("USER_EDITED with non-matching value → MANUAL_OVERRIDE_CONFIRMATION_REQUIRED (blocked for critical)", () => {
+  it("USER_EDITED with non-matching value → MANUAL_OVERRIDE_CONFIRMATION_REQUIRED (blocks FINAL export only, draft proceeds)", () => {
+    // Authority model: USER_EDITED without matching grounding is HUMAN_CONFIRMED_OPERATIONAL.
+    // It blocks FINAL export only (when audit insufficient). Draft proceeds.
     const input = makeBaseInput({
       overrides: [{
         field: "clientName",
@@ -150,7 +156,7 @@ describe("USER_EDITED grounding — exact match required", () => {
     const result = resolveCanonicalFieldState(input);
     const field = findField(result, "clientName");
     assert.equal(field.status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED");
-    assert.equal(result.hasGenerationBlocker, true);
+    assert.equal(result.hasExportBlocker, true); // Final IS blocked
   });
 });
 

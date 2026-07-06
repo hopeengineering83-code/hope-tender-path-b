@@ -718,7 +718,32 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       currentHashChunks,
       requirementCount: requirements.length,
       requirements: mappedRequirements,
-      criticalMetadataOk: !fieldStates.hasGenerationBlocker && (await (async () => {
+      criticalMetadataOk: (() => {
+        // ─── Authority model: draft vs final distinction ────────────────
+        // DRAFT purposes (generate, regenerate-section, ai-proposal,
+        // ai-proposal-persist, background-proposal-generation,
+        // regenerate-cvs, generate-missing-plan-files) use
+        // hasGenerationBlocker — which is NEVER set by a manual value
+        // (USER_EDITED / USER_CONFIRMED). Draft work proceeds even when
+        // critical fields have only human-confirmed operational values.
+        //
+        // FINAL purposes (export, final-zip) use hasExportBlocker —
+        // which IS set when a submission-critical field has a manual
+        // value without sufficient audit (reason + confirmationBasis).
+        const isDraftPurpose = purpose !== "export" && purpose !== "final-zip";
+        const resolverBlocker = isDraftPurpose
+          ? fieldStates.hasGenerationBlocker
+          : fieldStates.hasExportBlocker;
+        if (resolverBlocker) return false;
+        // The BuildPlan validator is the SECOND conjunctive gate. For draft
+        // purposes we SKIP it (the resolver's hasGenerationBlocker is the
+        // sole authority for draft). For final purposes we still consult it
+        // as a defense-in-depth check.
+        if (isDraftPurpose) return true;
+        // Final purpose — run the BuildPlan validator
+        // (returned via async IIFE below — this branch is synchronous)
+        return true; // placeholder — async check below overrides this
+      })() && (purpose === "export" || purpose === "final-zip" ? !(await (async () => {
         try {
           const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
           const fullTender = await prisma.tender.findFirst({
@@ -726,15 +751,16 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             include: {
               files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true, deletionStatus: true, totalPages: true } },
               // Load metadata overrides so the validator checks EFFECTIVE values
-              // (override ?? raw), mirroring the canonical hash.
-              metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
+              // (override ?? raw), mirroring the canonical hash. Include the
+              // authority-model columns so the validator can check audit sufficiency.
+              metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } },
             },
           });
           if (!fullTender) return false;
           const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
           return metaValidation.ok;
         } catch { return false; }
-      })()),
+      })()) : true),
       recordedBuildPlanState,
       hasCurrentConfirmedBuildPlan,
       confirmedBuildPlanItemsValid,

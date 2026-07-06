@@ -181,15 +181,20 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
     assert.equal(v.panelBlocked, true, "panels must block a portal tender with no grounded endpoint");
   });
 
-  it("reference VALUE without evidence: BLOCKED in BOTH (value-driven evidence rule)", () => {
-    // The validator does not require a reference to exist, but when a value
-    // exists it must be evidence-backed. The panels previously treated
-    // reference as never-blocking — green while the gate rejected it.
+  it("reference VALUE without evidence: NOT blocked in EITHER (authority model — operational field)", () => {
+    // Authority model: reference is an operational-warning field. It NEVER
+    // blocks draft or final work. The previous "value-driven evidence-
+    // mandatory" rule was removed because it caused the rigidity the mission
+    // explicitly calls out: "reference number becomes a hard blocker merely
+    // because it exists without source evidence."
+    //
+    // The gate no longer blocks on reference, and the panel no longer blocks
+    // on reference. They agree (both NOT blocked).
     const v = verdicts({ tender: { referenceSourceFileId: null, referenceSourcePage: null, referenceSourceQuote: null } });
-    assert.equal(v.gateBlocked, true, "gate must block an ungrounded reference value");
     const refField = v.resolved.fields.find((f) => f.fieldKey === "reference")!;
-    assert.notEqual(refField.blockerReason, null, "panel must block the same ungrounded reference value");
-    assert.equal(v.resolved.hasGenerationBlocker, true, "the tender-level panel verdict must reflect it");
+    assert.equal(refField.blockerReason, null, "panel must NOT block reference under authority model");
+    assert.equal(refField.generationEligible, true, "reference must be generation-eligible");
+    assert.equal(refField.exportEligible, true, "reference must be export-eligible");
   });
 
   it("placeholder override value on a critical field: BLOCKED in BOTH", () => {

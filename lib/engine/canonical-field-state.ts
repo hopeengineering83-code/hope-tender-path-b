@@ -32,6 +32,43 @@ import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithF
 // the global containsMetadataPlaceholder, because sanitize-stored-metadata nulls
 // fields on it and mid-text matches would risk dropping legitimate values.)
 import { looksLikeMetadataPlaceholder } from "./tender-metadata-completeness";
+// Authority model — manual tender facts flexibility
+import {
+  isSubmissionCriticalField,
+  isConditionallySubmissionCritical,
+  isMeaningfulReason,
+  isValidConfirmationBasis,
+  MIN_CRITICAL_REASON_LENGTH,
+} from "./tender-fact-authority";
+import type { TenderPolicyContext } from "./tender-policy-registry";
+
+/**
+ * Check if a manual override's audit is sufficient for FINAL export.
+ *
+ * For submission-critical fields, the audit must include:
+ *   - A meaningful reason (≥ MIN_CRITICAL_REASON_LENGTH chars, not boilerplate)
+ *   - A valid confirmationBasis
+ *
+ * For non-critical fields, the audit is always sufficient (they don't block
+ * final export).
+ *
+ * Returns true when the override is null (no manual entry — use source grounding)
+ * or when the field is non-critical or when the audit is sufficient.
+ */
+function auditSufficientForFinal(
+  override: { fieldState?: string; reason?: string | null; confirmationBasis?: string | null } | null,
+  fieldName: string,
+  policyCtx: TenderPolicyContext,
+): boolean {
+  if (!override) return true; // No override → source grounding decides
+  if (override.fieldState !== "USER_EDITED" && override.fieldState !== "USER_CONFIRMED") return true;
+  const isCritical = isSubmissionCriticalField(fieldName) || isConditionallySubmissionCritical(fieldName, policyCtx);
+  if (!isCritical) return true; // Non-critical → audit not required for final
+  // Critical field with manual value → audit required
+  return isMeaningfulReason(override.reason, MIN_CRITICAL_REASON_LENGTH)
+    && Boolean(override.confirmationBasis)
+    && isValidConfirmationBasis(override.confirmationBasis ?? "");
+}
 
 // ─── Canonical field-state vocabulary ──────────────────────────────────────
 
@@ -185,6 +222,10 @@ export type CanonicalResolverInput = {
     reason?: string | null;
     overriddenBy?: string | null;
     createdAt?: Date | null;
+    // Authority model columns (additive — populated by the metadata-override route)
+    authorityClass?: string | null;
+    confirmationBasis?: string | null;
+    confirmedAt?: Date | null;
   }[];
   activeTenderFileIds?: Set<string>;
   /**
@@ -486,11 +527,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         status = isGroundedSource ? "MANUAL_CONFIRMED" : "NOT_FOUND_CONFIRMED";
         if (isCritical && status === "NOT_FOUND_CONFIRMED") {
           blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Link to an active tender source to unblock generation.`;
-        } else if (valueDrivenEvidenceMandatory && status === "NOT_FOUND_CONFIRMED") {
-          blockerReason = `Field "${label}" was manually confirmed but has no active tender-source evidence (page + quote + valid file). Value-driven evidence-mandatory fields remain blocked until source-grounded.`;
         } else if (isCritical && isGroundedSource && normalizedConfirmed !== normalizedRaw) {
           blockerReason = `Field "${label}" was manually confirmed with a value that does not match the active tender-source evidence. The confirmed value must exactly match the extracted source value.`;
         }
+        // NOTE: valueDrivenEvidenceMandatory no longer sets a blockerReason.
+        // Under the authority model, reference and submissionEmailSubject are
+        // operational-warning fields — they NEVER block draft or final work.
       }
     } else if (override?.fieldState === "USER_EDITED") {
       if (overrideMatchesGroundedSourceCheck()) {
@@ -499,9 +541,10 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         status = isCritical ? "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED" : "MANUAL_OVERRIDE";
         if (isCritical) {
           blockerReason = `Field "${label}" has a candidate value that does not match active tender-source evidence. Critical fields remain blocked until the value exactly matches the grounded source evidence.`;
-        } else if (valueDrivenEvidenceMandatory) {
-          blockerReason = `Field "${label}" has a candidate value that does not match active tender-source evidence. Value-driven evidence-mandatory fields remain blocked until the value exactly matches the grounded source evidence.`;
         }
+        // NOTE: valueDrivenEvidenceMandatory no longer sets a blockerReason.
+        // Under the authority model, reference and submissionEmailSubject are
+        // operational-warning fields — they NEVER block draft or final work.
       }
     } else if (isGrounded) {
       status = "EXTRACTED_AND_GROUNDED";
@@ -510,8 +553,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         // Rule 3 / Rule 8: Critical fields remain blocked until source-grounded.
         blockerReason = `Field "${label}" has a value but is not yet source-grounded (missing page, quote, or active file). Critical fields remain blocked until source-grounded.`;
-      } else if (valueDrivenEvidenceMandatory) {
-        blockerReason = `Field "${label}" has a value but is not yet source-grounded (missing page, quote, or active file). Value-driven evidence-mandatory fields remain blocked until source-grounded.`;
       } else {
         evidenceReviewNeeded = true;
         warningReason = `Field "${label}" has a value but is not yet linked to a source page + quote. Confirm the evidence for full traceability.`;
@@ -534,20 +575,62 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed;
     const effectiveGrounded = isGrounded && !contaminated;
 
-    // Value-driven evidence-mandatory fields that have a value but no grounded
-    // evidence must hard-block all gates (mirrors the BuildPlan validator).
-    const valueDrivenUngroundedBlock =
-      valueDrivenEvidenceMandatory && !isGrounded && blockerReason !== null;
+    // ─── Authority model (manual tender facts flexibility) ──────────────
+    // DRAFT work (analysis, extraction, matching, BuildPlan, draft proposal)
+    // is NEVER blocked by a manual value on a metadata field. The only
+    // exception is `requiredDocuments` (a requirement-extraction concern,
+    // handled above). A USER_EDITED or USER_CONFIRMED value — even without
+    // source evidence — allows draft work to proceed.
+    //
+    // FINAL export requires SOURCE_GROUNDED OR HUMAN_CONFIRMED_OPERATIONAL
+    // (with sufficient audit) on every submission-critical field.
+    //
+    // The `valueDrivenEvidenceMandatory` flag (reference, submissionEmailSubject)
+    // previously made these optional fields hard blockers the moment they had
+    // ANY value. Under the authority model, these are operational-warning
+    // fields — they NEVER block draft work, and only block final export when
+    // they have a value but no grounding AND no audit. This removes the
+    // "reference number becomes a hard blocker merely because it exists
+    // without source evidence" rigidity.
+    const isManualOverride = override?.fieldState === "USER_EDITED" || override?.fieldState === "USER_CONFIRMED";
+    const isManualValuePresent = isManualOverride && !!effectiveStr?.trim();
+
+    // Value-driven fields no longer hard-block draft work. They may still
+    // block FINAL export if ungrounded AND unaudited — but that's handled
+    // by the exportEligible flag below, not by valueDrivenUngroundedBlock.
+    const valueDrivenUngroundedBlock = false; // Disabled — authority model handles this
 
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;
-    const isHardBlock = (isCritical && isBlocked) || valueDrivenUngroundedBlock;
-    const generationEligible = !isHardBlock && (!isBlocked || (!isCritical && status !== "BLOCKED"));
-    const exportEligible = !isHardBlock && (!isBlocked || (!isCritical && status !== "BLOCKED"));
-    const zipEligible = !isHardBlock && !isBlocked;
+    // DRAFT: never blocked by manual values. Only blocked by:
+    //   - requiredDocuments (handled above)
+    //   - contamination (PORTAL_CONTAMINATION) — the value is corrupted
+    //   - invalid format / placeholder — the value is unusable
+    //   - BLOCKED status (NOT_APPLICABLE on critical field)
+    const draftHardBlockReasons =
+      status === "PORTAL_CONTAMINATION" ||
+      status === "INTERNAL_PLACEHOLDER" ||
+      status === "GENERIC_FIELD_LABEL" ||
+      status === "INVALID_FORMAT" ||
+      status === "BLOCKED" ||
+      (isCritical && !isManualValuePresent && isBlocked && !isGrounded);
 
+    // FINAL: blocked by draft reasons PLUS:
+    //   - critical field without value (UNKNOWN)
+    //   - critical field with manual value but insufficient audit
+    //   - NOT_STATED_IN_SOURCE on critical field
+    const exportHardBlockReasons =
+      draftHardBlockReasons ||
+      (isCritical && !effectiveStr?.trim() && !override) || // missing critical, no override
+      (isCritical && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
+
+    const generationEligible = !draftHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || isManualValuePresent);
+    const exportEligible = !exportHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || (isManualValuePresent && auditSufficientForFinal(override, fieldKey, policyCtx)));
+    const zipEligible = exportEligible; // ZIP = final export
+
+    const isHardBlock = exportHardBlockReasons;
     if (isHardBlock) {
-      hasGenerationBlocker = true;
+      hasGenerationBlocker = draftHardBlockReasons; // Draft blocker only for contamination/placeholder/etc
       hasExportBlocker = true;
       hasZipBlocker = true;
     }

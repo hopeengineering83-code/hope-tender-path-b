@@ -1129,6 +1129,21 @@ model TenderMetadataOverride {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // ─── Manual tender facts flexibility (authority model) ────────────────
+  // The authority class of this override:
+  //   SOURCE_GROUNDED | HUMAN_CONFIRMED_OPERATIONAL | NOT_STATED_IN_SOURCE
+  //   | UNKNOWN | REJECTED_CANDIDATE
+  // Computed by classifyTenderFactAuthority() at write time + re-computed
+  // on read by the canonical resolver. Stored for query efficiency + audit.
+  authorityClass   String?
+  // The external source the user cited for a HUMAN_CONFIRMED_OPERATIONAL
+  // value. Required for final export when the field is submission-critical.
+  // One of CONFIRMATION_BASES in lib/engine/tender-fact-authority.ts.
+  confirmationBasis String?
+  // When the user confirmed the value (distinct from updatedAt because
+  // the override row may be updated without re-confirming).
+  confirmedAt      DateTime?
+
   @@unique([tenderId, field])
   @@index([tenderId])
 }

@@ -183,12 +183,13 @@ describe("Snapshot ↔ Gate buildPlan + metadata alignment (Tier A)", () => {
 // ─── Tier B: Decision-function parity ───────────────────────────────────────
 
 describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
-  it("resolver says hasGenerationBlocker=true → gate returns METADATA_CRITICAL_FIELD_INVALID", () => {
-    // Construct a CanonicalResolverInput where a critical field (deadline) is
-    // INVALID (no value, no override). The resolver must set
-    // hasGenerationBlocker=true. The gate's evaluateGenerationReadiness must
-    // return blockerCode=METADATA_CRITICAL_FIELD_INVALID when
-    // criticalMetadataOk=false.
+  it("resolver says hasExportBlocker=true → gate returns METADATA_CRITICAL_FIELD_INVALID (authority model)", () => {
+    // Authority model: a missing critical field (deadline) blocks FINAL export
+    // only (hasExportBlocker=true). DRAFT work proceeds (hasGenerationBlocker=false).
+    //
+    // The gate's evaluateGenerationReadiness for purpose="export" must return
+    // blockerCode=METADATA_CRITICAL_FIELD_INVALID when criticalMetadataOk=false.
+    // For purpose="generate" (draft), the gate does NOT block on metadata.
     const resolverResult = resolveCanonicalFieldState({
       tender: {
         id: "tender-1",
@@ -212,12 +213,13 @@ describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
       activeTenderFileIds: new Set(["file-1"]),
       hasExtractedRequirements: true,
     });
-    assert.equal(resolverResult.hasGenerationBlocker, true, "resolver must flag blocker for missing deadline");
+    // Authority model: draft is NOT blocked, final IS blocked
+    assert.equal(resolverResult.hasGenerationBlocker, false, "draft must NOT be blocked by missing deadline (authority model)");
+    assert.equal(resolverResult.hasExportBlocker, true, "final export MUST be blocked by missing deadline");
 
-    // Now call the gate's pure decision function with criticalMetadataOk=false
-    // (simulating what the gate would compute from the resolver result).
-    const gateResult = evaluateGenerationReadiness({
-      purpose: "generate",
+    // For FINAL export, the gate must block when criticalMetadataOk=false
+    const gateResultExport = evaluateGenerationReadiness({
+      purpose: "export",
       tenderExistsAndOwned: true,
       activeFileCount: 1,
       extractionFiles: [{ fileId: "file-1", corrupted: false, weak: false, hasOverride: false }],
@@ -237,14 +239,14 @@ describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
         sourceFileExtractedText: "A meaningful requirement quote that is long enough.",
         sourceFileTotalPages: 5,
       }],
-      criticalMetadataOk: false, // mirrors resolverResult.hasGenerationBlocker=true
+      criticalMetadataOk: false, // mirrors resolverResult.hasExportBlocker=true
       recordedBuildPlanState: "VALID",
       hasCurrentConfirmedBuildPlan: true,
       confirmedBuildPlanItemsValid: true,
-      exportReadyDocumentCount: 0,
+      exportReadyDocumentCount: 1,
     });
-    assert.equal(gateResult.ok, false, "gate must block when criticalMetadataOk=false");
-    assert.equal(gateResult.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+    assert.equal(gateResultExport.ok, false, "export gate must block when criticalMetadataOk=false");
+    assert.equal(gateResultExport.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
   });
 
   it("resolver says hasGenerationBlocker=false → gate can still block on OTHER conditions", () => {
