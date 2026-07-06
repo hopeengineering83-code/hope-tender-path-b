@@ -32,9 +32,6 @@ export type BuildPlanHashFile = {
   extractedText?: string | null;
   // Present so callers can pass the full file list; only ACTIVE files are hashed.
   deletionStatus?: string | null;
-  // Total pages — lets the internal canonical resolver apply the full
-  // grounding rule (source page <= totalPages). Not part of the hash string.
-  totalPages?: number | null;
 };
 
 export type BuildPlanHashRequirement = {
@@ -340,12 +337,6 @@ export function buildCanonicalBuildPlanHashInput(
         .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
         .map((f: any) => f.id),
     ),
-    // Full active-file rows enable the STRONGEST shared grounding check
-    // (quote containment + page <= totalPages) so the hash's resolved
-    // metadata evidence matches the BuildPlan validator exactly.
-    activeFiles: (tender.files ?? [])
-      .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
-      .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
   });
 
   // Map the resolver output to the hash evidence format. Only include

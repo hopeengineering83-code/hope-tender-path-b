@@ -10,12 +10,12 @@
 // A 1–9 char "quote" is noise, not evidence. A page of 0 is not a real page.
 // A fileId that references a deleted/superseded TenderFile is not valid evidence.
 //
-// This module exists because two resolvers previously each defined their OWN
-// grounding rule with DIFFERENT thresholds, so the same field could read
-// "Extracted and grounded" in one panel and "review evidence" in the other.
-// The duplicate resolver (analysis/metadata-truth.ts) has since been DELETED —
-// lib/engine/canonical-field-state.ts is the single resolver and every panel
-// and gate consumes this one predicate, so panels can never contradict.
+// This module exists because two resolvers — lib/engine/canonical-field-state.ts
+// (Client & Submission panel + gates) and lib/engine/analysis/metadata-truth.ts
+// (Metadata Truth panel) — previously each defined their OWN grounding rule with
+// DIFFERENT thresholds, so the same field could read "Extracted and grounded" in
+// one panel and "review evidence" in the other. Both now call this one predicate
+// so the panels can never contradict.
 
 /** Minimum length of a supporting quote for it to count as real evidence. */
 export const MIN_GROUNDING_QUOTE_LENGTH = 10;
