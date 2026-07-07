@@ -10,7 +10,7 @@ import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
-import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
+import { hasAnyResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 
 const STEPS = [
   "Upload Tender",
@@ -139,17 +139,18 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  const latestResumableAnalysisJob = await prisma.aiJob.findFirst({
+  const recentAnalysisResumeCandidates = await prisma.aiJob.findMany({
     // FAILED jobs are only resumable when at least one durable chunk checkpoint
     // succeeded; a hard failure before checkpointing should still start fresh.
     where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
     orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }, { createdAt: "desc" }],
+    take: 5,
     select: {
       id: true,
       status: true,
       _count: { select: { analyzeChunks: { where: { status: "SUCCEEDED" } } } },
     },
-  }).catch(() => null);
+  }).catch(() => []);
 
   const hasFiles = tender.files.length > 0;
   const fileQuality = tender.files.map((f) => {
@@ -224,9 +225,12 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       pageCoveragePercent: minPageCoveragePercent,
       averageScore: avgScore,
     },
-    resumableAnalysisAvailable: hasResumableAiAnalyzeCheckpoint(latestResumableAnalysisJob
-      ? { status: latestResumableAnalysisJob.status, succeededChunkCount: latestResumableAnalysisJob._count.analyzeChunks }
-      : null),
+    resumableAnalysisAvailable: hasAnyResumableAiAnalyzeCheckpoint(
+      recentAnalysisResumeCandidates.map((job) => ({
+        status: job.status,
+        succeededChunkCount: job._count.analyzeChunks,
+      })),
+    ),
     aiAnalysis: {
       exists: aiAnalyzed,
       trusted: aiAnalyzed && tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED",

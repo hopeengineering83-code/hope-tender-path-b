@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-07 UTC — ChatGPT
 
+- **Mode:** review follow-up on AI Analyze resume candidate masking
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** fixed the resume-guidance edge case where the newest non-checkpointed FAILED AI Analyze job could hide an older resumable PARTIAL_SUCCESS or checkpointed FAILED job; the panel now evaluates recent resume candidates and resumes if any candidate has durable progress.
+- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
 - **Mode:** review follow-up on AI Analyze resume guidance
 - **Branch / PR:** `work` / PR pending update
 - **Scope:** refined the prior Next Required Action panel change so FAILED AI Analyze jobs only show Resume when they have at least one SUCCEEDED durable chunk checkpoint; added a pure helper and behavioral regression coverage for partial-success vs failed-with/without-checkpoint cases.

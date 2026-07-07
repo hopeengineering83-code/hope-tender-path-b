@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction } from "../lib/tender-next-action";
+import { hasAnyResumableAiAnalyzeCheckpoint, hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction } from "../lib/tender-next-action";
 
 const base = {
   hasFiles: true,
@@ -86,6 +86,21 @@ describe("hasResumableAiAnalyzeCheckpoint", () => {
     assert.equal(hasResumableAiAnalyzeCheckpoint({ status: "FAILED", succeededChunkCount: 0 }), false);
     assert.equal(hasResumableAiAnalyzeCheckpoint({ status: "FAILED", succeededChunkCount: null }), false);
   });
+
+  it("does not let a newest non-checkpointed FAILED job mask an older resumable job", () => {
+    assert.equal(hasAnyResumableAiAnalyzeCheckpoint([
+      { status: "FAILED", succeededChunkCount: 0 },
+      { status: "PARTIAL_SUCCESS", succeededChunkCount: 0 },
+    ]), true);
+    assert.equal(hasAnyResumableAiAnalyzeCheckpoint([
+      { status: "FAILED", succeededChunkCount: 0 },
+      { status: "FAILED", succeededChunkCount: 3 },
+    ]), true);
+    assert.equal(hasAnyResumableAiAnalyzeCheckpoint([
+      { status: "FAILED", succeededChunkCount: 0 },
+      { status: "FAILED", succeededChunkCount: null },
+    ]), false);
+  });
 });
 
 describe("visible wording contract", () => {
@@ -105,8 +120,9 @@ describe("visible wording contract", () => {
   it("next action panel treats failed checkpointed analysis jobs as resumable", () => {
     const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
     assert.match(source, /status:\s*\{\s*in:\s*\["PARTIAL_SUCCESS",\s*"FAILED"\]\s*\}/);
+    assert.match(source, /take:\s*5/);
     assert.match(source, /analyzeChunks:\s*\{\s*where:\s*\{\s*status:\s*"SUCCEEDED"\s*\}/);
-    assert.match(source, /hasResumableAiAnalyzeCheckpoint/);
+    assert.match(source, /hasAnyResumableAiAnalyzeCheckpoint/);
   });
 
   it("untrusted sector warning is visible in the analysis quality panel", () => {

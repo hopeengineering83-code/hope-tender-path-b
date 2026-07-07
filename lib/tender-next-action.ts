@@ -24,7 +24,6 @@ export type TenderNextActionDecision = {
   };
 };
 
-
 export type ResumableAiAnalyzeJobCandidate = {
   status: string | null | undefined;
   succeededChunkCount?: number | null;
@@ -34,6 +33,10 @@ export function hasResumableAiAnalyzeCheckpoint(job: ResumableAiAnalyzeJobCandid
   if (!job) return false;
   if (job.status === "PARTIAL_SUCCESS") return true;
   return job.status === "FAILED" && (job.succeededChunkCount ?? 0) > 0;
+}
+
+export function hasAnyResumableAiAnalyzeCheckpoint(jobs: Array<ResumableAiAnalyzeJobCandidate | null | undefined>): boolean {
+  return jobs.some((job) => hasResumableAiAnalyzeCheckpoint(job));
 }
 
 export type TenderNextActionInput = {
