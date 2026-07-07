@@ -633,8 +633,9 @@ export async function finalizeJob(jobId: string, userId: string) {
     // overwriting the newer run's canonical state.
     // The tenderUpdate payload is typed Prisma.TenderUpdateInput so the
     // compiler catches any field that isn't a real schema column. The
-    // prior bug wrote `analysisSource`/`envelopeMode`/`clientType`/
-    // `submissionFormat` — none of which exist in the Tender model.
+    // prior bug wrote four non-schema fields to the tender update —
+    // none of which exist in the Tender model. The type annotation
+    // prevents that class of bug from recurring.
     const tenderUpdate: Prisma.TenderUpdateInput = {
         ...canonicalTenderData,
         analysisExtractionStatus: resolvedExtractionStatus,
