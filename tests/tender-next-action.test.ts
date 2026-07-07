@@ -90,6 +90,13 @@ describe("visible wording contract", () => {
     assert.match(source, /Trusted traced requirements/);
   });
 
+  it("next action panel treats failed checkpointed analysis jobs as resumable", () => {
+    const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
+    assert.match(source, /status:\s*\{\s*in:\s*\["PARTIAL_SUCCESS",\s*"FAILED"\]\s*\}/);
+    assert.match(source, /latestResumableAnalysisJob/);
+    assert.doesNotMatch(source, /latestPartialAnalysisJob/);
+  });
+
   it("untrusted sector warning is visible in the analysis quality panel", () => {
     const source = readFileSync(resolve(process.cwd(), "components/analysis-quality-panel.tsx"), "utf8");
     assert.match(source, /Sector inferred from untrusted analysis/);

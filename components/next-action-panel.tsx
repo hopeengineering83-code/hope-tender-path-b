@@ -139,8 +139,11 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  const latestPartialAnalysisJob = await prisma.aiJob.findFirst({
-    where: { tenderId, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
+  const latestResumableAnalysisJob = await prisma.aiJob.findFirst({
+    // FAILED jobs can still be resumable when durable chunk checkpoints were saved.
+    // Keep this aligned with the AI Analyze auto-resume route so the visible
+    // next action does not incorrectly send users back to a cold restart.
+    where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
     orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }, { createdAt: "desc" }],
     select: { id: true },
   }).catch(() => null);
@@ -218,7 +221,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       pageCoveragePercent: minPageCoveragePercent,
       averageScore: avgScore,
     },
-    resumableAnalysisAvailable: Boolean(latestPartialAnalysisJob),
+    resumableAnalysisAvailable: Boolean(latestResumableAnalysisJob),
     aiAnalysis: {
       exists: aiAnalyzed,
       trusted: aiAnalyzed && tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED",

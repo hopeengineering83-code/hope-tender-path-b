@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-07 UTC — ChatGPT
 
+- **Mode:** app review and resumable AI Analyze next-action fix
+- **Branch / PR:** `work` / PR pending
+- **Scope:** reviewed local branch/worktree state, open-PR/CI availability, app build/test health, and fixed the tender Next Required Action panel so FAILED durable AI Analyze jobs with saved checkpoints are treated the same as PARTIAL_SUCCESS jobs for resume guidance instead of sending users to a cold restart.
+- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed; `npm run audit:release-integrity` passed; `npm test` failed only on integration suites that require `RUN_DB_INTEGRATION=true` (`ai-promotion-evidence-persistence`, `build-plan-db-integration`, `build-plan-route-integration`, `database-safety-integration`, `metadata-evidence-proof`, `re-extract-page-provenance-route`, `release-blockers-integration`, `unified-snapshot-integration`).
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** broad app review was limited to local static/build/test checks and source inspection; database-backed integration suites were not run because the required isolated DB env flag was absent.
+- **Next action:** run GitHub/Vercel CI and the DB integration suites in an isolated database environment.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
 - **Mode:** restored inline visibility safety follow-up
 - **Branch / PR:** `codex/restored-inline-safety-gaps` / PR pending
 - **Scope:** fixed remaining restored-inline safety gaps by keeping metadata-only `hasInlineFileContent` valid for visibility/state surfaces while preventing it from satisfying strict downloadable/export byte-content checks; restored `generatedDocumentHasContent` to mean actual `fileContent` or non-empty `storagePath` only.
