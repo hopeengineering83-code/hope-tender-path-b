@@ -143,12 +143,10 @@ function validateFieldValue(field: string, value: string): "valid" | "invalid" |
       if (isPlaceholderClientName(trimmed)) return "placeholder";
       return "valid";
     case "reference":
-      // Extraction candidates must be *real* reference numbers, which always
-      // carry a digit. This is deliberately stricter than the lenient display
-      // validator isValidReferenceNumber (which also accepts letter-only manual
-      // references like "RFP"/"PROCUREMENT"): auto-extracted noise such as
-      // "REFONLY" must never be promoted to the scalar patch.
-      if (!isValidReferenceNumber(trimmed) || !/\d/.test(trimmed)) return "invalid";
+      // Mission spec: the digit requirement was removed — letter-only references
+      // (e.g. "REFONLY", "RFP/CONSULTANCY", "PHARO-RFP") are valid. Only garbage,
+      // labels, placeholders, and stop-words are rejected, via isValidReferenceNumber.
+      if (!isValidReferenceNumber(trimmed)) return "invalid";
       return "valid";
     case "deadline":
       // Deadline should be a parseable date
