@@ -16,6 +16,8 @@ type TenderSourceFile = {
   extractedPages: number | null;
   ocrPages: number | null;
   failedPages: number | null;
+  storagePath?: string | null;
+  hasInlineFileContent?: boolean | null;
 };
 
 type UploadResult = {
@@ -227,6 +229,9 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
                   <td className="px-3 py-3">
                     <div className="font-medium text-slate-900">{file.originalFileName}</div>
                     <div className="mt-0.5 text-xs text-slate-500">Uploaded {new Date(file.createdAt).toLocaleDateString()}</div>
+                    {file.hasInlineFileContent && !(file.storagePath ?? "").trim() && (
+                      <div className="mt-1 text-xs font-medium text-emerald-700">Restored inline file available</div>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-slate-600">{file.classification?.replace(/_/g, " ") ?? "Not classified"}</td>
                   <td className="px-3 py-3">
