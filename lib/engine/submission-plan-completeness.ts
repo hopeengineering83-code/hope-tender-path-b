@@ -387,21 +387,13 @@ export async function hasValidSubmissionPlan(
   client: any,
   tenderId: string,
 ): Promise<SubmissionPlanCheckResult> {
-  const docs = await client.generatedDocument.findMany({
+  const count = await client.generatedDocument.count({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    select: { generationStatus: true, reviewStatus: true },
   });
-
-  const planned = docs.filter((d: { generationStatus?: string | null; reviewStatus?: string | null }) => {
-    const gen = (d.generationStatus ?? "").toUpperCase();
-    const rev = (d.reviewStatus ?? "").toUpperCase();
-    return gen === "PLANNED" || ["PLANNED", "PENDING", "APPROVED", "CONFIRMED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(rev);
-  }).length;
-  const confirmed = docs.filter((d: { reviewStatus?: string | null }) => ["APPROVED", "CONFIRMED", "READY_FOR_EXPORT"].includes((d.reviewStatus ?? "").toUpperCase())).length;
   return {
-    valid: planned > 0,
-    plannedCount: planned,
-    confirmedCount: confirmed,
-    reason: planned > 0 ? undefined : "No active planned/confirmed submission plan rows exist.",
+    valid: count > 0,
+    plannedCount: count,
+    confirmedCount: count,
+    reason: count > 0 ? undefined : "NO_SUBMISSION_PLAN",
   };
 }
