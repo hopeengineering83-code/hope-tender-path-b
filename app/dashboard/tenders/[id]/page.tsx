@@ -96,13 +96,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
     include: {
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true, storagePath: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
       },
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
       generatedDocuments: {
         orderBy: { exactOrder: "asc" },
-        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true, reviewedExpertCount: true, draftExpertCount: true, reviewedProjectCount: true, draftProjectCount: true },
+        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, storagePath: true, contentSummary: true, reviewedExpertCount: true, draftExpertCount: true, reviewedProjectCount: true, draftProjectCount: true },
       },
       expertMatches: {
         orderBy: { score: "desc" },
@@ -118,14 +118,15 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   if (!tender) notFound();
 
-  const fileTextMetrics = await prismaClient.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
+  const fileTextMetrics = await prismaClient.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean; fileContentLength: number }>>`
     SELECT
       id,
       COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
-      COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
+      COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder",
+      COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
     FROM "TenderFile"
     WHERE "tenderId" = ${tender.id}
-  `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>);
+  `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean; fileContentLength: number }>);
   const fileTextMetricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
   const tenderForUi = {
     ...tender,
@@ -135,6 +136,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         ...file,
         extractedTextLength: metric?.extractedTextLength ?? 0,
         isScannedPlaceholder: metric?.isScannedPlaceholder ?? false,
+        hasInlineFileContent: (metric?.fileContentLength ?? 0) > 0,
         extractionScore: file.extractionScore ?? null,
         totalPages: file.totalPages ?? null,
         extractedPages: file.extractedPages ?? null,
@@ -143,6 +145,17 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       };
     }),
   };
+
+  const generatedContentMetrics = await prismaClient.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
+    SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+    FROM "GeneratedDocument"
+    WHERE "tenderId" = ${tender.id}
+  `.catch(() => [] as Array<{ id: string; fileContentLength: number }>);
+  const generatedContentMetricById = new Map(generatedContentMetrics.map((doc) => [doc.id, doc]));
+  tenderForUi.generatedDocuments = tenderForUi.generatedDocuments.map((doc) => ({
+    ...doc,
+    hasInlineFileContent: (generatedContentMetricById.get(doc.id)?.fileContentLength ?? 0) > 0,
+  }));
 
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);

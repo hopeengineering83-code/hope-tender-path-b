@@ -43,16 +43,19 @@ export async function GET(req: Request) {
   const ids = items.map((d) => d.id);
   const textLengths =
     ids.length > 0
-      ? await prisma.$queryRaw<Array<{ id: string; len: number }>>`
-          SELECT id, COALESCE(char_length("extractedText"), 0)::int AS len
+      ? await prisma.$queryRaw<Array<{ id: string; len: number; fileContentLength: number }>>`
+          SELECT id, COALESCE(char_length("extractedText"), 0)::int AS len,
+                 COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
           FROM "CompanyDocument"
           WHERE id = ANY(${ids}::text[])
         `
       : [];
   const lengthById = Object.fromEntries(textLengths.map((r) => [r.id, r.len]));
+  const fileContentLengthById = Object.fromEntries(textLengths.map((r) => [r.id, (r as { fileContentLength?: number }).fileContentLength ?? 0]));
   const itemsWithLength = items.map((doc) => ({
     ...doc,
     extractedTextLength: lengthById[doc.id] ?? 0,
+    hasInlineFileContent: (fileContentLengthById[doc.id] ?? 0) > 0,
   }));
 
   return NextResponse.json({ items: itemsWithLength, nextCursor, hasMore });

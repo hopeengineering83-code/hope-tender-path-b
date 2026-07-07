@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-07 UTC — ChatGPT
+
+- **Mode:** restored-record visibility audit and safe query/UI fix
+- **Branch / PR:** `codex/restored-record-visibility` / PR pending
+- **Scope:** treated inline `fileContent` as a valid restored file when `storagePath` is empty for company documents, company assets, tender source files, and generated documents without altering database data, migrations, roles, AI Analyze, generation, export, BuildPlan, evidence, or metadata gates.
+- **Files changed:** `lib/restored-record-visibility.ts`, `tests/restored-record-visibility.test.ts`, `app/api/company/documents/route.ts`, `app/api/company/assets/route.ts`, `app/dashboard/company/page.tsx`, `app/dashboard/assets/page.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `components/tender-source-files-panel.tsx`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/restored-record-visibility.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; `npm test` failed in unrelated existing suites and integration-environment guards while the new restored-record suite passed; `npm run build` failed without required env vars; build passed with placeholder `DATABASE_URL`, `SESSION_SECRET`, and `GEMINI_API_KEY`.
+- **CI / deployment:** GitHub/CI inspection unavailable because `gh` is not installed in the container; no deployment or Vercel preview created.
+- **Known risk:** Full repository test baseline remains red outside this scope; no live database mutation was performed.
+- **Next action:** Review PR diff and run CI in GitHub/Vercel environment with real required secrets.
+- **Merge status:** not reviewed
+
 ### 2026-06-29 UTC — Jules
 
 - **Mode:** documentation correction
