@@ -3,7 +3,8 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
@@ -179,8 +180,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, ok: false, code: "METADATA_CONTAMINATED", error: "Tender metadata is contaminated; re-extract before generating plan files.", nextAction: "RE_EXTRACT_METADATA" }, { status: 422 });
   }
   const analysisStatus = tender.analysisExtractionStatus;
-  if (analysisStatus === "OCR_REQUIRED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_DEGRADED_EXTRACTION", error: "AI analysis was produced from corrupted/weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
+  if (analysisStatus === "OCR_REQUIRED") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", error: "AI analysis was skipped due to corrupted extraction; re-run AI Analyze before generating plan files.", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" }, { status: 422 });
+  }
+  if (analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_DEGRADED_EXTRACTION", error: "AI analysis was produced from weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
+  }
+
+  // Client/procuring entity must be present (a document set with no client is
+  // never exportable).
+  const clientDisplayName = tender.clientName || tender.procuringEntityName;
+  if (!clientDisplayName) {
+    return NextResponse.json({ success: false, ok: false, code: "MISSING_CLIENT_DETAILS", error: "Document generation requires a client or procuring entity name. Run AI Analyze or enter the client name first.", nextAction: "EDIT_TENDER_METADATA" }, { status: 422 });
   }
 
   // Central generation gate — this route is NOT a chicken-and-egg escape hatch.
@@ -201,14 +212,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  const plan = buildSubmissionPlan({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements: tender.requirements,
-  });
+  // "Missing plan files" are the files the CONFIRMED BuildPlan already specifies
+  // but which have not yet been generated — scope strictly to confirmedPlan.items,
+  // never a recomputed requirements plan (that would be an escape hatch).
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+  if (!confirmedPlan.ok) {
+    return NextResponse.json({ success: false, ok: false, code: "BUILD_PLAN_NOT_CONFIRMED", error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`, nextAction: "CONFIRM_BUILD_PLAN" }, { status: 422 });
+  }
+  const plan = { files: confirmedPlan.items };
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId: id, generationStatus: "PLANNED" },

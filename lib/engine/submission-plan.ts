@@ -680,7 +680,7 @@ export function findExtraGeneratedDocuments(plan: SubmissionPlan, generatedDocum
   });
 }
 
-export function findMissingGeneratedDocuments(plan: SubmissionPlan, generatedDocuments: GeneratedDocumentLike[]): SubmissionPlanFile[] {
+export function findMissingGeneratedDocuments(plan: Pick<SubmissionPlan, "files">, generatedDocuments: GeneratedDocumentLike[]): SubmissionPlanFile[] {
   const generated = new Set(
     generatedDocuments
       .filter((document) => !document.generationStatus || document.generationStatus === "GENERATED")
