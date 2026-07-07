@@ -1,90 +1,95 @@
 import { NextResponse } from "next/server";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
 import {
   restoreProviderHealthBeforeResponse,
-  getAllProviderHealth,
   getProviderRuntimeSnapshot,
   isProviderCooledDown,
-  isMistralConfigured,
-  isGroqConfigured,
-  isOpenRouterConfigured,
-  isGeminiConfigured,
-  isOpenAIConfigured,
-  isTogetherConfigured,
-  isDeepSeekConfigured,
-  isAnthropicConfigured,
-  getMistralProposalModel,
-  getMistralAnalysisModel,
-  getGroqModel,
-  getOpenRouterModel,
-  getTogetherProposalModel,
-  getTogetherAnalysisModel,
-  getTogetherFastModel,
-  getDeepSeekModel,
-  deepSeekOfficialEnvPresent,
-  type AiProviderName
 } from "@/lib/ai-provider-health";
+import {
+  getCanonicalProviderEntries,
+  preferredConfiguredProviderName,
+  isProviderConfigured,
+  getProviderModel,
+  CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+  type AiProviderName,
+} from "@/lib/ai-provider-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
-const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
-const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
-
-function computePreferredProvider() {
-  const mistralConfigured = isMistralConfigured();
-  const groqConfigured = isGroqConfigured();
-  const openRouterConfigured = isOpenRouterConfigured();
-  const geminiConfigured = isGeminiConfigured();
-  const openaiConfigured = isOpenAIConfigured();
-  const togetherConfigured = isTogetherConfigured();
-  const deepSeekConfigured = isDeepSeekConfigured();
-  const claudeConfigured = isAnthropicConfigured();
-
-  return mistralConfigured ? "mistral"
-    : groqConfigured ? "groq"
-    : openRouterConfigured ? "openrouter"
-    : geminiConfigured ? "gemini"
-    : openaiConfigured ? "openai"
-    : togetherConfigured ? "together"
-    : deepSeekConfigured ? "deepseek"
-    : claudeConfigured ? "claude"
-    : null;
-}
-
 export async function GET() {
-  const restore = await restoreProviderHealthBeforeResponse();
-  const health = getAllProviderHealth();
-  // Provider chain: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
-  const allProviderNames: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+  // Provider health exposes configured providers, models and runtime state —
+  // reconnaissance value. Restrict to operators (ADMIN / PROPOSAL_MANAGER).
+  try {
+    await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
 
-  const providerRuntime = Object.fromEntries(
-    allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])
+  const restore = await restoreProviderHealthBeforeResponse();
+
+  // SINGLE SOURCE OF TRUTH: every provider object, rank, model and the
+  // human-readable chain string are derived from the canonical registry so this
+  // surface can never drift from the runtime fallback order. Do NOT hardcode a
+  // separate provider list, rank, model or chain string here.
+  const entries = getCanonicalProviderEntries();
+  const allProviderNames = entries.map((entry) => entry.provider);
+
+  const runtimeByName = Object.fromEntries(
+    entries.map((entry) => [entry.provider, getProviderRuntimeSnapshot(entry.provider)]),
   ) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;
 
-  const configuredNames = allProviderNames.filter((n) => {
-    const h = health.find(hp => hp.provider === n);
-    return h?.configured;
-  });
+  const configuredEntries = entries.filter((entry) => isProviderConfigured(entry.provider));
+  const configuredNames = configuredEntries.map((e) => e.provider);
 
   const anyConfigured = configuredNames.length > 0;
-  const anyRuntimeVerified = configuredNames.some((n) => providerRuntime[n].runtimeVerified);
-  const anyHasRecentSuccess = configuredNames.some((n) => providerRuntime[n].lastSuccessAt !== null);
-  const allConfiguredCooling = anyConfigured && configuredNames.every((n) => providerRuntime[n].coolingDown);
+  const anyRuntimeVerified = configuredNames.some((n) => runtimeByName[n].runtimeVerified);
+  const anyHasRecentSuccess = configuredNames.some((n) => runtimeByName[n].lastSuccessAt !== null);
+  const allConfiguredCooling = anyConfigured && configuredNames.every((n) => runtimeByName[n].coolingDown);
+  const noAiProviderReady = !anyConfigured || allConfiguredCooling;
+
+  // The most recently successful configured provider (or null). Lets the UI show
+  // which provider actually served the last request without leaking key values.
+  const lastProviderUsed = configuredNames
+    .map((n) => ({ name: n, at: runtimeByName[n].lastSuccessAt }))
+    .filter((x) => x.at !== null)
+    .sort((a, b) => new Date(b.at as unknown as string).getTime() - new Date(a.at as unknown as string).getTime())[0]?.name ?? null;
+
+  const providers = Object.fromEntries(
+    entries.map((entry) => {
+      const name = entry.provider;
+      const runtime = runtimeByName[name];
+      const configured = isProviderConfigured(name);
+      return [
+        name,
+        {
+          configured,
+          // A provider is inactive when it is unconfigured or currently cooling
+          // down — i.e. it cannot serve the next request.
+          inactive: !configured || runtime.coolingDown,
+          model: getProviderModel(name, "proposal"),
+          analysisModel: getProviderModel(name, "extraction"),
+          runtime,
+          status: runtime.status,
+          isAi: true,
+          fallbackRank: entry.rank,
+          label: entry.displayName,
+          attempted: runtime.lastSuccessAt !== null || runtime.coolingDown,
+          skipped: !configured,
+        },
+      ];
+    }),
+  );
 
   const warnings: string[] = [];
   const blockers: string[] = [];
-  const preferredProvider = computePreferredProvider();
-  const noAiProviderReady = !anyConfigured || allConfiguredCooling;
-
   if (!anyConfigured) {
     blockers.push("No AI providers are configured.");
   }
-
   if (anyConfigured && !anyHasRecentSuccess) {
     warnings.push("runtime availability is not verified. Set API keys in Vercel environment.");
   }
-
-  const cooling = allProviderNames.filter(isProviderCooledDown);
+  const cooling = entries.map((e) => e.provider).filter(isProviderCooledDown);
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}.`);
   }
@@ -95,96 +100,27 @@ export async function GET() {
     configuredProviderCount: configuredNames.length,
     allProvidersCooling: allConfiguredCooling,
     runtimeVerified: anyRuntimeVerified,
-    preferredProvider,
+    preferredProvider: preferredConfiguredProviderName(),
+    lastProviderUsed,
     noAiProviderReady,
     noAiProviderReadyCode: noAiProviderReady ? "NO_AI_PROVIDER_READY" : null,
-    fallbackChain: AI_FALLBACK_CHAIN,
+    fallbackChain: CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+    fallbackOrder: allProviderNames,
     providers: {
-      mistral: {
-        configured: isMistralConfigured(),
-        model: getMistralProposalModel(),
-        analysisModel: getMistralAnalysisModel(),
-        runtime: providerRuntime.mistral,
-        status: providerRuntime.mistral.status,
-        isAi: true,
-        fallbackRank: 1,
-        label: "Mistral",
-      },
-      groq: {
-        configured: isGroqConfigured(),
-        model: getGroqModel(),
-        runtime: providerRuntime.groq,
-        status: providerRuntime.groq.status,
-        isAi: true,
-        fallbackRank: 2,
-        label: "Groq",
-      },
-      openrouter: {
-        configured: isOpenRouterConfigured(),
-        model: getOpenRouterModel(),
-        runtime: providerRuntime.openrouter,
-        status: providerRuntime.openrouter.status,
-        isAi: true,
-        fallbackRank: 3,
-        label: "OpenRouter",
-      },
-      gemini: {
-        configured: isGeminiConfigured(),
-        model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
-        runtime: providerRuntime.gemini,
-        status: providerRuntime.gemini.status,
-        isAi: true,
-        fallbackRank: 4,
-        label: "Gemini",
-      },
-      openai: {
-        configured: isOpenAIConfigured(),
-        model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o",
-        runtime: providerRuntime.openai,
-        status: providerRuntime.openai.status,
-        isAi: true,
-        fallbackRank: 5,
-        label: "OpenAI",
-      },
-      together: {
-        configured: isTogetherConfigured(),
-        model: getTogetherProposalModel(),
-        analysisModel: getTogetherAnalysisModel(),
-        fastModel: getTogetherFastModel(),
-        runtime: providerRuntime.together,
-        status: providerRuntime.together.status,
-        isAi: true,
-        fallbackRank: 6,
-        label: "Together",
-      },
-      deepseek: {
-        configured: isDeepSeekConfigured(),
-        envPresent: deepSeekOfficialEnvPresent(),
-        model: getDeepSeekModel(),
-        runtime: providerRuntime.deepseek,
-        status: providerRuntime.deepseek.status,
-        isAi: true,
-        fallbackRank: 7,
-        label: "DeepSeek",
-        fallbackChain: AI_FALLBACK_CHAIN,
-      },
-      claude: {
-        configured: isAnthropicConfigured(),
-        runtime: providerRuntime.anthropic,
-        status: providerRuntime.anthropic.status,
-        isAi: true,
-        fallbackRank: 8,
-        label: "Claude",
-      },
+      ...providers,
       deterministic: {
-        fallbackRank: 9,
+        fallbackRank: entries.length + 1,
         isAi: false,
         status: "UNKNOWN",
+        label: "Deterministic draft fallback",
+        inactive: false,
       },
     },
     blockers,
     warnings,
-    providerHealthRestoreWarning: !restore.ok ? "using in-memory provider health for this response: " + restore.error : undefined,
+    providerHealthRestoreWarning: !restore.ok
+      ? "using in-memory provider health for this response: " + restore.error
+      : undefined,
     nextAction: blockers.length > 0
       ? "CONFIGURE_AI_KEYS"
       : allConfiguredCooling
