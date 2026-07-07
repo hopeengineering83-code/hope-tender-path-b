@@ -126,7 +126,7 @@ export function formatDateUnambiguous(value: string | Date | null | undefined): 
 }
 
 /** Words that are NOT valid reference numbers when captured alone. */
-const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there|see\s+above|see\s+below|reference\s+number|tender\s+reference)$/i;
+const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|ref|refer|number|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there|see\s+above|see\s+below|reference\s+number|reference\s+no\.?|tender\s+reference|tender\s+no\.?|no\.?)$/i;
 
 /** Single-word tokens that are not real first-name + last-name combinations. */
 const CONTACT_NOISE_FRAGMENT = /^(s\s+|the\s+|a\s+|an\s+|contact|person|name|email|tel|phone|address|attn|attention|focal|point|of)/i;
@@ -205,6 +205,9 @@ export function isValidReferenceNumber(value: string | null | undefined): boolea
   const text = (value ?? "").trim();
   if (text.length < 3) return false;
   if (NON_REFERENCE_WORDS.test(text)) return false;
+  // Metadata placeholders ("unknown", "TBD", "N/A", "Bid-Team to confirm", …)
+  // are never a real reference number, even when letter-only refs are allowed.
+  if (containsMetadataPlaceholder(text)) return false;
   // Reject if it's mostly noise (no alphanumeric run of ≥2 chars).
   if (!/[A-Z0-9]{2,}/i.test(text)) return false;
   return true;
