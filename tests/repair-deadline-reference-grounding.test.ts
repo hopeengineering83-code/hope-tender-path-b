@@ -105,7 +105,7 @@ describe("repair-metadata route — deadline source-grounding not bypassed", () 
     assert.ok(elseBranchMatch, "must have an `else` (string fields) branch before PERSIST CANONICAL SOURCE EVIDENCE");
     const branch = elseBranchMatch[0];
     assert.ok(
-      !branch.includes("durableFileId = extraction.sourceFile"),
+      !branch.includes("durableFileId = (extraction as ExtractedField<any>).sourceFileId"),
       "else branch must NOT re-resolve durableFileId — that happens in CRITICAL_SOURCE_GROUNDED_FIELDS above",
     );
     assert.ok(

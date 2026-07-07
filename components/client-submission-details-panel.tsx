@@ -4,25 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import type { CanonicalFieldState, CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
-
-const STATUS_BADGE: Record<CanonicalFieldStatus, { label: string; classes: string }> = {
-  EXTRACTED_AND_GROUNDED:              { label: "Extracted and grounded",             classes: "bg-emerald-100 text-emerald-700" },
-  EXTRACTED_UNVERIFIED:                { label: "Extracted — review evidence",         classes: "bg-blue-100 text-blue-700" },
-  MANUAL_OVERRIDE:                     { label: "Candidate value (non-critical)",      classes: "bg-indigo-100 text-indigo-700" },
-  MANUAL_OVERRIDE_CONFIRMATION_REQUIRED: { label: "Candidate — blocked (critical)",   classes: "bg-orange-100 text-orange-700" },
-  NOT_FOUND_CONFIRMED:                 { label: "Confirmed — not in source",         classes: "bg-amber-100 text-amber-700" },
-  MANUAL_CONFIRMED:                    { label: "Confirmed — needs source",            classes: "bg-amber-100 text-amber-700" },
-  NOT_STATED:                          { label: "Not stated in tender",                classes: "bg-slate-100 text-slate-600" },
-  NOT_APPLICABLE:                      { label: "Not applicable",                      classes: "bg-slate-100 text-slate-500" },
-  AMBIGUOUS_DATE:                      { label: "Date ambiguous — confirm",            classes: "bg-orange-100 text-orange-700" },
-  GENERIC_FIELD_LABEL:                 { label: "Invalid extracted value",             classes: "bg-red-100 text-red-700" },
-  INTERNAL_PLACEHOLDER:                { label: "Placeholder detected",                classes: "bg-red-100 text-red-700" },
-  PORTAL_CONTAMINATION:                { label: "Contaminated — review",               classes: "bg-red-100 text-red-700" },
-  INVALID_FORMAT:                      { label: "Invalid format",                      classes: "bg-red-100 text-red-700" },
-  SOURCE_CONFLICT:                     { label: "Source conflict — resolve",            classes: "bg-red-100 text-red-700" },
-  INVALID:                             { label: "Not detected",                        classes: "bg-slate-100 text-slate-500" },
-  BLOCKED:                             { label: "Blocked",                             classes: "bg-red-200 text-red-800" },
-};
+import { CANONICAL_FIELD_STATUS_BADGE as STATUS_BADGE } from "./canonical-field-status-badge";
 
 // A manually entered deadline must be in an unambiguous format. Mirrors the
 // server-side date guard so the user gets immediate feedback before saving.

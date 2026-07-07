@@ -1,68 +1,60 @@
+// GET /api/ai/health
+//
+// Registry-derived AI provider health snapshot. Every provider entry, the
+// fallback-chain string, the preferred provider, and the per-provider model
+// are derived from the authoritative registry lib/ai-provider-registry.ts.
+// Do NOT hardcode a provider order or fallback-chain string here — the
+// registry is the single source of truth.
+//
+// Security: requires ADMIN or PROPOSAL_MANAGER. The previous unauthenticated
+// version exposed provider configuration (key presence, model names, runtime
+// status) to any caller — reconnaissance gold. Auth-gated now.
+
 import { NextResponse } from "next/server";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
 import {
   restoreProviderHealthBeforeResponse,
   getAllProviderHealth,
   getProviderRuntimeSnapshot,
   isProviderCooledDown,
-  isMistralConfigured,
-  isGroqConfigured,
-  isOpenRouterConfigured,
-  isGeminiConfigured,
-  isOpenAIConfigured,
-  isTogetherConfigured,
-  isDeepSeekConfigured,
-  isAnthropicConfigured,
-  getMistralProposalModel,
-  getMistralAnalysisModel,
-  getGroqModel,
-  getOpenRouterModel,
-  getTogetherProposalModel,
-  getTogetherAnalysisModel,
-  getTogetherFastModel,
-  getDeepSeekModel,
-  deepSeekOfficialEnvPresent,
-  type AiProviderName
+  type AiProviderName,
 } from "@/lib/ai-provider-health";
+import {
+  getCanonicalProviderEntries,
+  preferredConfiguredProviderName,
+  getProviderModel,
+  CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+} from "@/lib/ai-provider-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
-const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
-const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
-
-function computePreferredProvider() {
-  const mistralConfigured = isMistralConfigured();
-  const groqConfigured = isGroqConfigured();
-  const openRouterConfigured = isOpenRouterConfigured();
-  const geminiConfigured = isGeminiConfigured();
-  const openaiConfigured = isOpenAIConfigured();
-  const togetherConfigured = isTogetherConfigured();
-  const deepSeekConfigured = isDeepSeekConfigured();
-  const claudeConfigured = isAnthropicConfigured();
-
-  return mistralConfigured ? "mistral"
-    : groqConfigured ? "groq"
-    : openRouterConfigured ? "openrouter"
-    : geminiConfigured ? "gemini"
-    : openaiConfigured ? "openai"
-    : togetherConfigured ? "together"
-    : deepSeekConfigured ? "deepseek"
-    : claudeConfigured ? "claude"
-    : null;
-}
-
 export async function GET() {
+  // H1: AI health route requires ADMIN or PROPOSAL_MANAGER. Was unauthenticated.
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
+  }
+
   const restore = await restoreProviderHealthBeforeResponse();
   const health = getAllProviderHealth();
-  // Provider chain: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
-  const allProviderNames: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+
+  // Build provider entries from the canonical registry — order is
+  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+  // Together → DeepSeek → Anthropic.
+  const canonicalEntries = getCanonicalProviderEntries();
+  const allProviderNames: AiProviderName[] = canonicalEntries.map((e) => e.provider);
 
   const providerRuntime = Object.fromEntries(
-    allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])
+    allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)]),
   ) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;
 
   const configuredNames = allProviderNames.filter((n) => {
-    const h = health.find(hp => hp.provider === n);
+    const h = health.find((hp) => hp.provider === n);
     return h?.configured;
   });
 
@@ -73,13 +65,20 @@ export async function GET() {
 
   const warnings: string[] = [];
   const blockers: string[] = [];
-  const preferredProvider = computePreferredProvider();
+  const preferredProvider = preferredConfiguredProviderName();
   const noAiProviderReady = !anyConfigured || allConfiguredCooling;
+
+  // Compute lastProviderUsed from actual runtime data — the most recently
+  // successful configured provider. Lets the UI show which provider actually
+  // served the last request without leaking key values.
+  const lastProviderUsed = configuredNames
+    .map((n) => ({ name: n, at: providerRuntime[n].lastSuccessAt }))
+    .filter((x) => x.at !== null)
+    .sort((a, b) => new Date(b.at as unknown as string).getTime() - new Date(a.at as unknown as string).getTime())[0]?.name ?? null;
 
   if (!anyConfigured) {
     blockers.push("No AI providers are configured.");
   }
-
   if (anyConfigured && !anyHasRecentSuccess) {
     warnings.push("runtime availability is not verified. Set API keys in Vercel environment.");
   }
@@ -88,6 +87,32 @@ export async function GET() {
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}.`);
   }
+
+  // Per-provider cards built from the registry. fallbackRank and label come
+  // straight from the registry entry so they can never drift from the
+  // canonical order. The model is resolved through getProviderModel so
+  // Z.ai endpoint/model compatibility is honoured.
+  const providers = Object.fromEntries(
+    canonicalEntries.map((entry) => {
+      const runtime = providerRuntime[entry.provider];
+      return [
+        entry.provider,
+        {
+          configured: configuredNames.includes(entry.provider),
+          model: getProviderModel(entry.provider, "proposal"),
+          analysisModel: getProviderModel(entry.provider, "extraction"),
+          fastModel: getProviderModel(entry.provider, "fast"),
+          runtime,
+          status: runtime.status,
+          isAi: true,
+          fallbackRank: entry.rank,
+          label: entry.displayName,
+          envVar: entry.env.apiKey,
+          emergencyOnly: entry.emergencyOnly,
+        },
+      ];
+    }),
+  );
 
   return NextResponse.json({
     success: anyConfigured && !allConfiguredCooling,
@@ -98,93 +123,32 @@ export async function GET() {
     preferredProvider,
     noAiProviderReady,
     noAiProviderReadyCode: noAiProviderReady ? "NO_AI_PROVIDER_READY" : null,
-    fallbackChain: AI_FALLBACK_CHAIN,
+    fallbackChain: CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+    fallbackOrder: allProviderNames,
     providers: {
-      mistral: {
-        configured: isMistralConfigured(),
-        model: getMistralProposalModel(),
-        analysisModel: getMistralAnalysisModel(),
-        runtime: providerRuntime.mistral,
-        status: providerRuntime.mistral.status,
-        isAi: true,
-        fallbackRank: 1,
-        label: "Mistral",
-      },
-      groq: {
-        configured: isGroqConfigured(),
-        model: getGroqModel(),
-        runtime: providerRuntime.groq,
-        status: providerRuntime.groq.status,
-        isAi: true,
-        fallbackRank: 2,
-        label: "Groq",
-      },
-      openrouter: {
-        configured: isOpenRouterConfigured(),
-        model: getOpenRouterModel(),
-        runtime: providerRuntime.openrouter,
-        status: providerRuntime.openrouter.status,
-        isAi: true,
-        fallbackRank: 3,
-        label: "OpenRouter",
-      },
-      gemini: {
-        configured: isGeminiConfigured(),
-        model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
-        runtime: providerRuntime.gemini,
-        status: providerRuntime.gemini.status,
-        isAi: true,
-        fallbackRank: 4,
-        label: "Gemini",
-      },
-      openai: {
-        configured: isOpenAIConfigured(),
-        model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o",
-        runtime: providerRuntime.openai,
-        status: providerRuntime.openai.status,
-        isAi: true,
-        fallbackRank: 5,
-        label: "OpenAI",
-      },
-      together: {
-        configured: isTogetherConfigured(),
-        model: getTogetherProposalModel(),
-        analysisModel: getTogetherAnalysisModel(),
-        fastModel: getTogetherFastModel(),
-        runtime: providerRuntime.together,
-        status: providerRuntime.together.status,
-        isAi: true,
-        fallbackRank: 6,
-        label: "Together",
-      },
-      deepseek: {
-        configured: isDeepSeekConfigured(),
-        envPresent: deepSeekOfficialEnvPresent(),
-        model: getDeepSeekModel(),
-        runtime: providerRuntime.deepseek,
-        status: providerRuntime.deepseek.status,
-        isAi: true,
-        fallbackRank: 7,
-        label: "DeepSeek",
-        fallbackChain: AI_FALLBACK_CHAIN,
-      },
-      claude: {
-        configured: isAnthropicConfigured(),
-        runtime: providerRuntime.anthropic,
-        status: providerRuntime.anthropic.status,
-        isAi: true,
-        fallbackRank: 8,
-        label: "Claude",
-      },
+      ...providers,
+      // Deterministic draft fallback — final non-AI entry. NOT a healthy AI
+      // provider, never shown as green. Runs only after every configured AI
+      // provider has failed or is unavailable.
       deterministic: {
-        fallbackRank: 9,
+        fallbackRank: canonicalEntries.length + 1,
         isAi: false,
         status: "UNKNOWN",
+        label: "Deterministic draft fallback",
       },
     },
+    // Activity flags — computed from actual runtime data so the operator UI
+    // can see which providers are active, which were attempted, and which
+    // provider served the last request.
+    inactive: configuredNames.filter((n) => !providerRuntime[n].coolingDown && !providerRuntime[n].runtimeVerified),
+    skipped: allProviderNames.filter((n) => !configuredNames.includes(n)),
+    attempted: configuredNames.filter((n) => providerRuntime[n].lastSuccessAt !== null || providerRuntime[n].coolingDown),
+    lastProviderUsed,
     blockers,
     warnings,
-    providerHealthRestoreWarning: !restore.ok ? "using in-memory provider health for this response: " + restore.error : undefined,
+    providerHealthRestoreWarning: !restore.ok
+      ? "using in-memory provider health for this response: " + restore.error
+      : undefined,
     nextAction: blockers.length > 0
       ? "CONFIGURE_AI_KEYS"
       : allConfiguredCooling

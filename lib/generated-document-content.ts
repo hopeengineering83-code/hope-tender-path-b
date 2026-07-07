@@ -58,7 +58,7 @@ export function generatedDocumentHasContent(doc: {
   storagePath?: string | null;
   fileContent?: string | null;
 }): boolean {
-  return Boolean((doc.storagePath && doc.storagePath.length > 0) || (doc.fileContent && doc.fileContent.length > 0));
+  return Boolean((doc.storagePath && doc.storagePath.trim().length > 0) || (doc.fileContent && doc.fileContent.trim().length > 0));
 }
 
 export async function writeGeneratedDocumentContent(docId: string, buffer: Buffer, filename: string, mimeType: string) {

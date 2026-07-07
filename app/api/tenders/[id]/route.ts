@@ -20,14 +20,15 @@ function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }
 }
 
 async function withDashboardFileMetrics<T extends { id: string; files: any[] }>(tender: T): Promise<T> {
-  const fileTextMetrics = await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
+  const fileTextMetrics = await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean; fileContentLength: number }>>`
     SELECT
       id,
       COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
-      COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
+      COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder",
+      ("fileContent" IS NOT NULL)::int AS "fileContentLength"
     FROM "TenderFile"
     WHERE "tenderId" = ${tender.id}
-  `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>);
+  `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean; fileContentLength: number }>);
   const metricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
   return {
     ...tender,
@@ -37,13 +38,33 @@ async function withDashboardFileMetrics<T extends { id: string; files: any[] }>(
         ...file,
         extractedTextLength: metric?.extractedTextLength ?? 0,
         isScannedPlaceholder: metric?.isScannedPlaceholder ?? false,
+        hasInlineFileContent: (metric?.fileContentLength ?? 0) > 0,
       };
     }),
   };
 }
 
+async function withDashboardGeneratedDocumentMetrics<T extends { generatedDocuments: any[] }>(tender: T): Promise<T> {
+  const ids = tender.generatedDocuments.map((doc) => doc.id);
+  const generatedContentMetrics = ids.length > 0
+    ? await prisma.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
+        SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
+        FROM "GeneratedDocument"
+        WHERE id = ANY(${ids}::text[])
+      `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)
+    : [];
+  const metricById = new Map(generatedContentMetrics.map((doc) => [doc.id, doc.fileContentLength]));
+  return {
+    ...tender,
+    generatedDocuments: tender.generatedDocuments.map((doc) => ({
+      ...doc,
+      hasInlineFileContent: (metricById.get(doc.id) ?? 0) > 0,
+    })),
+  };
+}
+
 function withDashboardPayload<T extends { id: string; files: any[]; generatedDocuments: any[] }>(tender: T): Promise<T> {
-  return withDashboardFileMetrics(withDashboardGeneratedDocuments(tender));
+  return withDashboardFileMetrics(withDashboardGeneratedDocuments(tender)).then(withDashboardGeneratedDocumentMetrics);
 }
 
 const generatedDocumentOrder = [
@@ -61,6 +82,7 @@ const generatedDocumentDashboardSelect = {
   reviewNotes: true,
   exactFileName: true,
   exactOrder: true,
+  storagePath: true,
   contentSummary: true,
   reviewedExpertCount: true,
   draftExpertCount: true,
@@ -91,7 +113,7 @@ const TENDER_DASHBOARD_SELECT = {
   readinessScore: true, bidOutcome: true,
   files: {
     orderBy: { createdAt: "desc" as const },
-    select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, deletionStatus: true, createdAt: true },
+    select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, deletionStatus: true, storagePath: true, createdAt: true },
   },
   requirements: { orderBy: { createdAt: "asc" as const }, select: { id: true, title: true, description: true, requirementType: true, priority: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true, sourceTenderFileId: true, exactFileName: true, sectionReference: true, createdAt: true, updatedAt: true } },
   complianceGaps: { orderBy: { createdAt: "desc" as const }, select: { id: true, tenderId: true, title: true, description: true, severity: true, mitigationPlan: true, isResolved: true, resolvedNote: true, createdAt: true, updatedAt: true } },

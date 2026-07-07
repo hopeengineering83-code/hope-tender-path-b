@@ -98,7 +98,11 @@ describe("Grounding enforcement — activeTenderFileIds", () => {
     const field = findField(result, "clientName");
     assert.equal(field.status, "NOT_FOUND_CONFIRMED", `got ${field.status}`);
     assert.ok(field.blockerReason);
-    assert.equal(result.hasGenerationBlocker, true);
+    // Authority model: draft generation is NOT blocked by missing grounding
+    // (hasGenerationBlocker is for contamination/placeholder only). Final
+    // export IS blocked — hasExportBlocker reflects the source-grounding
+    // requirement for critical fields.
+    assert.equal(result.hasExportBlocker, true, "final export must be blocked by ungrounded USER_CONFIRMED critical field");
   });
 
   it("USER_CONFIRMED critical field with NULL evidence fileId → blocked when enforced", () => {

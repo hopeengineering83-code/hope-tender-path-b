@@ -1,3 +1,5 @@
+import { hasRestoredInlineFileContent, hasVisibleStoredFile } from "../restored-record-visibility";
+
 export type DocumentOutputState =
   | "CONTROL_RECORD_ONLY"
   | "DOCX_GENERATED"
@@ -139,10 +141,10 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if (gen === "PLANNED" || want === "markdown" || want === "control") return "CONTROL_RECORD_ONLY";
 
   const content = (doc.fileContent ?? "").trim();
-  const hasInlineContent = content.length > 0 || doc.hasInlineFileContent === true;
+  const hasInlineContent = hasRestoredInlineFileContent(doc);
   const hasStorageContent = (doc.storagePath ?? "").trim().length > 0;
 
-  if (!hasInlineContent && !hasStorageContent) return "CONTROL_RECORD_ONLY";
+  if (!hasVisibleStoredFile(doc)) return "CONTROL_RECORD_ONLY";
 
   // Metadata-only callers may intentionally omit fileContent to avoid loading
   // large DB blobs. When bytes exist but are not loaded, trust validation/review
@@ -151,7 +153,7 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   // VALIDATED. Treat both as the same successful validation state so older
   // generated documents do not stay blocked after deterministic validation
   // already passed.
-  if (content.length === 0 && (hasStorageContent || doc.hasInlineFileContent === true)) {
+  if (content.length === 0 && (hasStorageContent || hasInlineContent)) {
     if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
     if (validationPassed) return "VALIDATED";
     return want === "pdf" ? "PDF_GENERATED" : "DOCX_GENERATED";

@@ -15,7 +15,7 @@ describe("Deadline repair cannot bypass source grounding", () => {
 
   it("durable file ID resolution happens BEFORE the deadline type dispatch", () => {
     // The durableFileId resolution must come before `field === "deadline"`
-    const durableIdx = routeSource.indexOf("durableFileId = extraction.sourceFile");
+    const durableIdx = routeSource.indexOf("durableFileId = (extraction as ExtractedField<any>).sourceFileId");
     const deadlineIdx = routeSource.indexOf('field === "deadline"');
     assert.ok(durableIdx > 0, "durableFileId resolution must exist");
     assert.ok(deadlineIdx > 0, "deadline dispatch must exist");
@@ -66,7 +66,7 @@ describe("Source grounding applies to all critical fields equally", () => {
     // The CRITICAL_SOURCE_GROUNDED_FIELDS.has(field) check must gate the
     // durableFileId resolution block
     assert.match(routeSource, /CRITICAL_SOURCE_GROUNDED_FIELDS\.has\(field\)/);
-    assert.match(routeSource, /durableFileId = extraction\.sourceFile/);
+    assert.ok(routeSource.includes("durableFileId = (extraction as ExtractedField<any>).sourceFileId"), "must resolve durableFileId from extraction.sourceFileId");
   });
 
   it("all critical fields go through quote containment verification", () => {

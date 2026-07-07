@@ -155,7 +155,11 @@ describe("candidate-pipeline — buildCandidatesFromMetadata", () => {
     assert.equal(Object.keys(result.scalarPatch).length, 0);
   });
 
-  it("rejects invalid reference (no digits)", () => {
+  it("accepts letter-only reference (mission spec: digit requirement removed)", () => {
+    // The mission spec explicitly says: "Remove the rule requiring every valid
+    // reference number to contain a digit." Letter-only references like "REFONLY",
+    // "RFP/CONSULTANCY", "PHARO-RFP" are valid. Only actual garbage, labels,
+    // placeholders, stop words, and broken OCR fragments should be rejected.
     const result = buildCandidatesFromMetadata({
       values: {
         reference: "REFONLY",
@@ -164,9 +168,9 @@ describe("candidate-pipeline — buildCandidatesFromMetadata", () => {
     });
     assert.equal(result.candidates.length, 1);
     const c = result.candidates[0]!;
-    assert.equal(c.promotionDecision, "REJECTED");
-    assert.equal(c.validationResult, "invalid");
-    assert.equal(Object.keys(result.scalarPatch).length, 0);
+    // REFONLY is a valid letter-only reference — it should NOT be rejected
+    assert.notEqual(c.promotionDecision, "REJECTED");
+    assert.notEqual(c.validationResult, "invalid");
   });
 
   it("defers candidates with no source evidence (value not in any file)", () => {

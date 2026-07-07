@@ -28,6 +28,16 @@ describe("generated-document-content adapter", () => {
     assert.equal(ok, true);
   });
 
+  it("has content for restored inline bytes even when storagePath is blank", () => {
+    const ok = generatedDocumentHasContent({ storagePath: "   ", fileContent: "UEsDBAoAAAAAA" });
+    assert.equal(ok, true);
+  });
+
+  it("does not treat a metadata-only inline-content hint as downloadable content", () => {
+    const ok = generatedDocumentHasContent({ storagePath: "", fileContent: null });
+    assert.equal(ok, false);
+  });
+
   it("returns false when both storagePath and fileContent are missing", () => {
     const ok = generatedDocumentHasContent({ storagePath: null, fileContent: null });
     assert.equal(ok, false);

@@ -508,7 +508,7 @@ describe("Release blockers — real PostgreSQL integration", () => {
       const body = await res.json();
       const outcome = body.outcomesByField?.reference;
       assert.ok(outcome, "reference outcome present");
-      assert.ok(["NOT_FOUND", "UNRESOLVED"].includes(outcome.status), `deleted-file evidence must not repair (got ${outcome.status})`);
+      assert.ok(["NOT_FOUND", "UNRESOLVED", "REJECTED"].includes(outcome.status), `deleted-file evidence must not repair (got ${outcome.status})`);
       const fresh = await prisma.tender.findUnique({ where: { id: tender.id } });
       assert.equal(fresh!.reference, null, "no value written from a deleted file");
       assert.equal(fresh!.referenceSourceFileId, null, "no evidence written from a deleted file");

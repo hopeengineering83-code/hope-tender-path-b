@@ -30,6 +30,7 @@ export type ExportReadyDocument = {
   reviewStatus: string;
   fileContent?: string | null;
   storagePath?: string | null;
+  hasInlineFileContent?: boolean | null;
 };
 
 export type ExportReadinessFailure = {

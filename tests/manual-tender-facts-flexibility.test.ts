@@ -74,11 +74,14 @@ dbDescribe("Manual Tender Facts Flexibility — DB integration tests", () => {
     });
     // Create a tender with NO title, NO reference, NO client email — just
     // requirements. This is the "tender with requirements but no metadata" scenario.
+    // Note: title is a non-nullable String column, so we use an empty string
+    // (semantically equivalent to "no title" — the authority model treats
+    // empty strings the same as null for grounding checks).
     await prisma.tender.create({
       data: {
         id: testTenderId,
         userId: testUserId,
-        title: null as any, // intentionally null — will be manually entered
+        title: "", // empty string — title column is NOT NULL in schema
         clientName: null,
         reference: null,
         deadline: null,
@@ -215,9 +218,21 @@ dbDescribe("Manual Tender Facts Flexibility — DB integration tests", () => {
   });
 
   it("5b. user-confirmed deadline WITHOUT audit does NOT resolve final-submission readiness", async () => {
-    // Create a USER_CONFIRMED override on deadline WITHOUT sufficient audit
-    const override = await prisma.tenderMetadataOverride.create({
-      data: {
+    // Update the existing deadline override (from test 5) to remove audit
+    // data. The unique constraint on (tenderId, field) means we can't create
+    // a second override — use upsert to replace the test 5 override.
+    const override = await prisma.tenderMetadataOverride.upsert({
+      where: { tenderId_field: { tenderId: testTenderId, field: "deadline" } },
+      update: {
+        fieldState: "USER_CONFIRMED",
+        overrideValue: "2026-12-20",
+        reason: "Manual value entered by user.", // boilerplate — rejected by isMeaningfulReason
+        overriddenBy: testUserId,
+        authorityClass: "HUMAN_CONFIRMED_OPERATIONAL",
+        confirmationBasis: null, // No confirmationBasis
+        confirmedAt: new Date(),
+      },
+      create: {
         tenderId: testTenderId,
         field: "deadline",
         fieldState: "USER_CONFIRMED",

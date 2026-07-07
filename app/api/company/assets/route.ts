@@ -46,11 +46,25 @@ export async function GET(_req: Request) {
       size: true,
       isActive: true,
       createdAt: true,
+      storagePath: true,
     },
     orderBy: { createdAt: "desc" },
   });
 
-  return privateJson({ assets });
+  const ids = assets.map((asset) => asset.id);
+  const inlineLengths = ids.length > 0
+    ? await prisma.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
+        SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
+        FROM "CompanyAsset"
+        WHERE id = ANY(${ids}::text[])
+      `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)
+    : [];
+  const inlineLengthById = Object.fromEntries(inlineLengths.map((asset) => [asset.id, asset.fileContentLength]));
+
+  return privateJson({ assets: assets.map((asset) => ({
+    ...asset,
+    hasInlineFileContent: (inlineLengthById[asset.id] ?? 0) > 0,
+  })) });
 }
 
 export async function POST(req: Request) {
