@@ -28,6 +28,7 @@ export async function GET() {
           exactFileName: true,
           exactOrder: true,
           contentSummary: true,
+          storagePath: true,
         },
       },
     },
@@ -35,5 +36,21 @@ export async function GET() {
     take: 20,
   });
 
-  return NextResponse.json(tenders);
+  const docIds = tenders.flatMap((tender) => tender.generatedDocuments.map((doc) => doc.id));
+  const inlineLengths = docIds.length > 0
+    ? await prisma.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
+        SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+        FROM "GeneratedDocument"
+        WHERE id = ANY(${docIds}::text[])
+      `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)
+    : [];
+  const inlineLengthById = new Map(inlineLengths.map((doc) => [doc.id, doc.fileContentLength]));
+
+  return NextResponse.json(tenders.map((tender) => ({
+    ...tender,
+    generatedDocuments: tender.generatedDocuments.map((doc) => ({
+      ...doc,
+      hasInlineFileContent: (inlineLengthById.get(doc.id) ?? 0) > 0,
+    })),
+  })));
 }

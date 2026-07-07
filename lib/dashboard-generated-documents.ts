@@ -8,6 +8,8 @@ export type DashboardGeneratedDocument = {
   validationStatus?: string | null;
   reviewStatus?: string | null;
   reviewNotes?: string | null;
+  storagePath?: string | null;
+  hasInlineFileContent?: boolean | null;
 };
 
 export type DashboardGeneratedDocumentSummary = {

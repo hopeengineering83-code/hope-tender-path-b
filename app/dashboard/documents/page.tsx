@@ -16,6 +16,8 @@ type GeneratedDocument = {
   exactFileName?: string | null;
   exactOrder?: number | null;
   contentSummary?: string | null;
+  storagePath?: string | null;
+  hasInlineFileContent?: boolean | null;
 };
 
 type Tender = {
@@ -186,6 +188,9 @@ export default function DocumentsPage() {
                               )}
                               {doc.reviewNotes && (
                                 <p className="mt-0.5 text-xs text-slate-400 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
+                              )}
+                              {doc.hasInlineFileContent && !(doc.storagePath ?? "").trim() && (
+                                <p className="mt-0.5 text-xs font-medium text-emerald-700">Restored inline file available</p>
                               )}
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-500">{doc.documentType}</td>

@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { getStorageAdapter } from "./storage";
+import { hasVisibleStoredFile } from "./restored-record-visibility";
 
 export type GeneratedContentSource = "storage" | "legacy";
 
@@ -57,8 +58,9 @@ export async function readGeneratedDocumentContent(
 export function generatedDocumentHasContent(doc: {
   storagePath?: string | null;
   fileContent?: string | null;
+  hasInlineFileContent?: boolean | null;
 }): boolean {
-  return Boolean((doc.storagePath && doc.storagePath.length > 0) || (doc.fileContent && doc.fileContent.length > 0));
+  return hasVisibleStoredFile(doc);
 }
 
 export async function writeGeneratedDocumentContent(docId: string, buffer: Buffer, filename: string, mimeType: string) {
