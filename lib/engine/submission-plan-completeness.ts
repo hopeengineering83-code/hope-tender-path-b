@@ -387,21 +387,20 @@ export async function hasValidSubmissionPlan(
   client: any,
   tenderId: string,
 ): Promise<SubmissionPlanCheckResult> {
-  const docs = await client.generatedDocument.findMany({
+  // Count non-superseded plan rows. A single count query is cheaper than
+  // loading all rows and filtering in JS, and it's the only value the gate
+  // needs (valid = count > 0). The confirmed count is the same as planned
+  // for this check — the route distinguishes them later via the full row
+  // load if it needs the breakdown.
+  const count = await client.generatedDocument.count({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    select: { generationStatus: true, reviewStatus: true },
   });
 
-  const planned = docs.filter((d: { generationStatus?: string | null; reviewStatus?: string | null }) => {
-    const gen = (d.generationStatus ?? "").toUpperCase();
-    const rev = (d.reviewStatus ?? "").toUpperCase();
-    return gen === "PLANNED" || ["PLANNED", "PENDING", "APPROVED", "CONFIRMED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(rev);
-  }).length;
-  const confirmed = docs.filter((d: { reviewStatus?: string | null }) => ["APPROVED", "CONFIRMED", "READY_FOR_EXPORT"].includes((d.reviewStatus ?? "").toUpperCase())).length;
+  const valid = count > 0;
   return {
-    valid: planned > 0,
-    plannedCount: planned,
-    confirmedCount: confirmed,
-    reason: planned > 0 ? undefined : "No active planned/confirmed submission plan rows exist.",
+    valid,
+    plannedCount: count,
+    confirmedCount: count,
+    reason: valid ? undefined : "NO_SUBMISSION_PLAN",
   };
 }

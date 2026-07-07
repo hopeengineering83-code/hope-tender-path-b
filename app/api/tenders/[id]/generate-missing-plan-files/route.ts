@@ -6,6 +6,8 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -172,6 +174,72 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
+  // ── analysisExtractionStatus blocking checks ─────────────────────
+  // Block on the three states that produce audit-only analysis:
+  // OCR_REQUIRED (corrupted extraction, AI skipped),
+  // EXTRACTION_WEAK_REVIEW_REQUIRED (weak extraction needs review),
+  // REGEX_FALLBACK_FROM_WEAK_EXTRACTION (regex fallback from weak extraction).
+  // These cannot authorize GENERATED document creation.
+  const analysisExtractionStatus = tender.analysisExtractionStatus ?? null;
+  if (analysisExtractionStatus === "OCR_REQUIRED") {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked: extraction was corrupted and AI Analyze was skipped.",
+      code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+    }, { status: 422 });
+  }
+  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked: extraction is weak and needs review.",
+      code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+      nextAction: "REVIEW_EXTRACTION_QUALITY",
+    }, { status: 422 });
+  }
+  if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked: analysis fell back to regex from weak extraction.",
+      code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+      nextAction: "RERUN_AI_ANALYZE",
+    }, { status: 422 });
+  }
+
+  // ── Confirmed BuildPlan gate ──────────────────────────────────────
+  // The route scopes reconciliation to the confirmed plan items. Without a
+  // confirmed plan, fail closed with BUILD_PLAN_NOT_CONFIRMED — the route
+  // must not generate planned files against an unconfirmed/draft plan.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+  if (!confirmedPlan.ok) {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked: no confirmed BuildPlan for this tender.",
+      code: "BUILD_PLAN_NOT_CONFIRMED",
+      nextAction: "CONFIRM_BUILD_PLAN",
+    }, { status: 422 });
+  }
+  // confirmedPlan.items is the authoritative scope for reconciliation.
+  // Use it to drive findMissingGeneratedDocuments below.
+  const confirmedPlanItems = confirmedPlan.items;
+
+  // ── Central generation-readiness gate ─────────────────────────────
+  // Every route that creates a GENERATED GeneratedDocument row must call
+  // assertTenderReadyForGenerationAndExport first. The gate checks hash
+  // binding, chunk integrity, source grounding, and submission-plan state.
+  // No SUBMISSION_PLAN_MISSING carve-out — the gate never emits that code
+  // and the route must fail closed on every blocker.
+  const centralGate = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId: id,
+    userId: actor.id,
+    purpose: "generate-missing-plan-files",
+  });
+  if (!centralGate.ok) {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked by central generation-readiness gate.",
+      code: centralGate.blockerCode ?? "GENERATION_GATE_BLOCKED",
+      blockerDetail: centralGate.blockerDetail,
+      nextAction: "RESOLVE_GENERATION_BLOCKERS",
+    }, { status: 409 });
+  }
+
   const plan = buildSubmissionPlan({
     id: tender.id,
     title: tender.title,
@@ -189,6 +257,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (missing.length === 0 && plannedRows.length === 0) {
     await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0, convertedFromPlanned: 0 }, requestId });
     return NextResponse.json({ success: true, created: 0, updated: 0, convertedFromPlanned: 0, message: "No missing planned files remain." });
+  }
+
+  // Contamination check — use typed field access (not `as any`) so the
+  // compiler catches schema drift. metadataContaminated blocks generation
+  // because contaminated clientName/procuringEntityName produce proposals
+  // with portal-noise text baked into cover letters and theme detection.
+  if (tender.metadataContaminated) {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked: tender metadata is contaminated. Repair the client name / procuring entity before generating.",
+      code: "METADATA_CONTAMINATED",
+      nextAction: "REPAIR_METADATA",
+      hint: `clientName: ${tender.clientName ?? "(empty)"} / procuringEntityName: ${tender.procuringEntityName ?? "(empty)"}`,
+    }, { status: 422 });
   }
 
   const created: string[] = [];

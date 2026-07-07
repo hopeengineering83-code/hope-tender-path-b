@@ -1239,6 +1239,51 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "RequirementEvidenceDecision_pkey" PRIMARY KEY ("id")
   )`);
+  // TenderFactsLedger: universal tender facts authority ledger (migration 20260708000000)
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderFactsLedger" (
+    "id" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "semanticKey" TEXT NOT NULL,
+    "displayLabel" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "valueType" TEXT NOT NULL,
+    "normalizedValue" TEXT,
+    "rawSourceValue" TEXT,
+    "structuredValueJson" TEXT,
+    "authorityState" TEXT NOT NULL,
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "sourceStatus" TEXT NOT NULL DEFAULT 'active',
+    "relevance" TEXT NOT NULL DEFAULT 'informational',
+    "applicability" TEXT NOT NULL DEFAULT 'applies',
+    "sourceFileId" TEXT,
+    "sourcePage" INTEGER,
+    "sourceQuote" TEXT,
+    "sourceContentHash" TEXT,
+    "reviewState" TEXT NOT NULL DEFAULT 'pending',
+    "manuallyEntered" BOOLEAN NOT NULL DEFAULT false,
+    "reason" TEXT,
+    "confirmationBasis" TEXT,
+    "createdBy" TEXT NOT NULL,
+    "confirmedBy" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "confirmedAt" TIMESTAMP(3),
+    "supersededById" TEXT,
+    CONSTRAINT "TenderFactsLedger_pkey" PRIMARY KEY ("id")
+  )`);
+  // TenderSubmissionEmail: per-tender submission email evidence (migration 20260708000000)
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderSubmissionEmail" (
+    "id" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "sourceFileId" TEXT,
+    "sourcePage" INTEGER,
+    "sourceQuote" TEXT,
+    "order" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "TenderSubmissionEmail_pkey" PRIMARY KEY ("id")
+  )`);
 
   // ── seed roles ────────────────────────────────────────────────────────────
   const roleCount = await client.role.count();

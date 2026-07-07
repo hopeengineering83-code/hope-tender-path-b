@@ -172,7 +172,13 @@ export async function POST(req: Request) {
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "AI_ANALYZE", "EXTRACT_TEXT"].includes(claimed.jobType)) break;
+    // AI_ANALYZE is a one-job-per-invocation type — the worker breaks after
+    // it so a single run-next call never claim-storms multiple AI analyses
+    // (each AI_ANALYZE job can take 30-60s and would exceed the route's
+    // maxDuration if multiple were claimed in one call).
+    if (["AI_ANALYZE"].includes(claimed.jobType)) break;
+
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {
