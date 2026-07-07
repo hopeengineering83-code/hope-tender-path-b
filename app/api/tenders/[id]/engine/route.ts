@@ -5,6 +5,7 @@ import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -31,7 +32,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await prismaReady;
 
     const { id } = await params;
-    const force = new URL(req.url).searchParams.get("force") === "true";
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
       // Select the stored entity/metadata fields the sanitizer validates so
@@ -41,7 +41,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         id: true, analysisExtractionStatus: true,
         title: true, clientName: true, reference: true, country: true, clientContactName: true,
         procuringEntityName: true, legalClientName: true, donorAgency: true, implementingAgency: true,
-        files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } },
+        files: {
+          select: {
+            id: true, originalFileName: true, fileName: true, extractedText: true,
+            extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
+          },
+        },
       },
     });
     if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
@@ -64,18 +69,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await prisma.tender.update({ where: { id: tender.id }, data: patch });
     }
 
-    const extractionReports = tender.files.map((file) => ({
+    // Shared, non-bypassable extraction gate (same predicate every generation
+    // path uses). Run Engine cannot be forced through corrupted, unknown-page,
+    // or incomplete extraction — there is deliberately no ?force= escape hatch.
+    const effectiveExtractionFiles = tender.files.map((file) => {
+      const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+    });
+    const extractionReports = effectiveExtractionFiles.map((file) => ({
       fileName: file.originalFileName || file.fileName,
-      quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
+      quality: file.quality,
+      totalPages: file.totalPages,
+      extractedPages: file.extractedPages,
+      failedPages: file.failedPages,
     }));
     const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
-    if (!force && blockers.length > 0) {
+    if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
+      const corruptedFiles = effectiveExtractionFiles.filter((file) => file.quality.corrupted).map((file) => file.originalFileName || file.fileName || file.id);
       return NextResponse.json({
-        error: "Engine run blocked: one or more tender files have poor extraction quality.",
-        code: "EXTRACTION_NOT_READY",
-        nextAction: "OPEN_EXTRACTION_QUALITY",
+        error: "Engine run blocked: tender extraction is not reliable enough for matching or AI work.",
+        code: corruptedFiles.length > 0 ? "EXTRACTION_CORRUPTED_ENGINE_SKIPPED" : "EXTRACTION_QUALITY_ENGINE_BLOCKED",
+        nextAction: corruptedFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
         blockers,
-        hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.",
+        corruptedFiles,
+        hint: "Run OCR/re-extract the tender first. Run Engine cannot be forced through corrupted, unknown-page, or incomplete extraction.",
         diagnosticId,
       }, { status: 422 });
     }
