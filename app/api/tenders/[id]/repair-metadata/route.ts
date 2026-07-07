@@ -363,5 +363,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     success: Object.keys(updates).length > 0,
     repaired: Object.keys(updates),
     results,
+    // outcomesByField is an alias for results — the DB-integration tests
+    // (release-blockers-integration.test.ts) assert body.outcomesByField
+    // to verify per-field repair outcomes. Both keys return the same object
+    // so both the UI (results) and tests (outcomesByField) work.
+    outcomesByField: results,
   });
 }

@@ -35,7 +35,7 @@ function captureAround(text: string, index: number, length: number, before = 30,
   return trimQuote(text.slice(start, end));
 }
 
-function getSourcePage(text: string, index: number): number | null {
+function getSourcePage(text: string, index: number, totalPages?: number | null): number | null {
   const precedingText = text.slice(0, index);
   const markerRegex = /\[Page\s+(\d+)\]/gi;
   let match;
@@ -43,6 +43,10 @@ function getSourcePage(text: string, index: number): number | null {
   while ((match = markerRegex.exec(precedingText)) !== null) {
     lastPage = parseInt(match[1], 10);
   }
+  // If no markers found AND the file has exactly 1 page, the content is
+  // implicitly on page 1. A multi-page file without markers returns null
+  // (we can't determine which page the content is on).
+  if (lastPage === null && totalPages === 1) return 1;
   return lastPage;
 }
 
@@ -94,7 +98,7 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
     for (const p of REFERENCE_PATTERNS) {
       const m = p.rx.exec(text);
       if (!m) continue;
-      cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: p.confidence });
+      cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }
   }
@@ -118,7 +122,7 @@ export function extractDeadline(input: ExtractorInput): ExtractedFieldOrMissing<
       if (!m) continue;
       const d = new Date(m[1]);
       if (isNaN(d.getTime())) continue;
-      cands.push({ found: true, value: d, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: p.confidence });
+      cands.push({ found: true, value: d, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }
   }
@@ -135,7 +139,7 @@ export function extractSubmissionEmails(input: ExtractorInput): ExtractedFieldOr
     const windowText = text.slice(anchorIdx, anchorIdx + 2000);
     const emails = windowText.match(EMAIL_PATTERN);
     if (!emails) continue;
-    cands.push({ found: true, value: Array.from(new Set(emails.map(e => e.toLowerCase()))), sourceQuote: trimQuote(windowText.slice(0, QUOTE_MAX)), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, anchorIdx), confidence: "HIGH" });
+    cands.push({ found: true, value: Array.from(new Set(emails.map(e => e.toLowerCase()))), sourceQuote: trimQuote(windowText.slice(0, QUOTE_MAX)), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, anchorIdx, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -155,7 +159,7 @@ export function extractSubmissionMethod(input: ExtractorInput): ExtractedFieldOr
     for (const p of METHOD_PATTERNS) {
       const m = p.rx.exec(text);
       if (!m) continue;
-      cands.push({ found: true, value: p.value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: p.confidence });
+      cands.push({ found: true, value: p.value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }
   }
@@ -167,7 +171,7 @@ export function extractSubmissionAddress(input: ExtractorInput): ExtractedFieldO
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /submission\s+address\s*[:\-]\s*([^\n\r]{5,200})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -177,7 +181,7 @@ export function extractPageLimit(input: ExtractorInput): ExtractedFieldOrMissing
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /(?:page|length)\s+limit\s*[:\-]?\s*(\d{1,3})/i.exec(text) || /(?:not\s+exceed|maximum\s+of)\s*(\d{1,3})\s*pages/i.exec(text);
-    if (m) cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -188,10 +192,10 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
     const text = (file?.extractedText ?? "").toString();
     const m = /(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{2,3})\s*days/i.exec(text);
     if (m) {
-        cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+        cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     } else {
         const m2 = /(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{1})\s*months/i.exec(text);
-        if (m2) cands.push({ found: true, value: parseInt(m2[1], 10) * 30, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index), confidence: "HIGH" });
+        if (m2) cands.push({ found: true, value: parseInt(m2[1], 10) * 30, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index, file?.totalPages), confidence: "HIGH" });
     }
   }
   return pickBest(cands);
@@ -203,10 +207,10 @@ export function extractBidBondAmount(input: ExtractorInput): ExtractedFieldOrMis
     const text = (file?.extractedText ?? "").toString();
     const m = /(?:bid|proposal)\s*(?:bond|security|guarantee)\s*(?:in\s+the\s+amount\s+of|amount|of)?\s*[:\-]?\s*([A-Z]{3}|[$€£])?\s*([\d,.]+)/i.exec(text);
     if (m) {
-        cands.push({ found: true, value: { amount: parseFloat(m[2].replace(/,/g, "")), currency: m[1] ?? null }, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+        cands.push({ found: true, value: { amount: parseFloat(m[2].replace(/,/g, "")), currency: m[1] ?? null }, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     } else {
         const m2 = /(?:bid|proposal)\s*(?:bond|security|guarantee)\s*of\s*([\d,.]+)\s*%/i.exec(text);
-        if (m2) cands.push({ found: true, value: { amount: 0, currency: "PERCENT" }, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index), confidence: "MEDIUM" });
+        if (m2) cands.push({ found: true, value: { amount: 0, currency: "PERCENT" }, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index, file?.totalPages), confidence: "MEDIUM" });
     }
   }
   return pickBest(cands);
@@ -217,7 +221,7 @@ export function extractNumberOfCopies(input: ExtractorInput): ExtractedFieldOrMi
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /plus\s*(\d{1,2})\s*copies/i.exec(text) || /(\d{1,2})\s*hard\s*copies/i.exec(text) || /copies\s*[:\-]?\s*(\d{1,2})/i.exec(text);
-    if (m) cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -227,9 +231,9 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /mandatory\s+site\s+visit/i.exec(text);
-    if (m) cands.push({ found: true, value: true, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: true, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     const m2 = /optional\s+site\s+visit/i.exec(text);
-    if (m2) cands.push({ found: true, value: false, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index), confidence: "HIGH" });
+    if (m2) cands.push({ found: true, value: false, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -246,7 +250,7 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
     const m = /(?:client|procuring\s+entity|contracting\s+authority)\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
     if (m) {
       const value = cutAtNextFieldLabel(m[1]).trim();
-      if (value.length >= 3) cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+      if (value.length >= 3) cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     }
   }
   return pickBest(cands);
@@ -257,7 +261,7 @@ export function extractClientContactEmail(input: ExtractorInput): ExtractedField
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /contact\s+e-mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].toLowerCase(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].toLowerCase(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -269,7 +273,7 @@ export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldO
     const m = /pre-bid\s+(?:meeting|conference)\s*(?:date|held\s+on)?\s*[:\-]?\s*(\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:uary|ruary|ch|il|e|y|ust|tember|ober|ember)?\s+\d{4})/i.exec(text);
     if (m) {
         const d = new Date(m[1]);
-        if (!isNaN(d.getTime())) cands.push({ found: true, value: d, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+        if (!isNaN(d.getTime())) cands.push({ found: true, value: d, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     }
   }
   return pickBest(cands);
@@ -280,7 +284,7 @@ export function extractDonorAgency(input: ExtractorInput): ExtractedFieldOrMissi
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /donor\s+agency\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -290,7 +294,7 @@ export function extractImplementingAgency(input: ExtractorInput): ExtractedField
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /implementing\s+agency\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -300,7 +304,7 @@ export function extractLegalClientName(input: ExtractorInput): ExtractedFieldOrM
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /\b(?:full\s+legal\s+name|legal\s+entity\s+name)\s*(?:of\s+client|of\s+the\s+client)?\s*[:\-]\s*([^\n\r]{3,150})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -310,7 +314,7 @@ export function extractClientContactName(input: ExtractorInput): ExtractedFieldO
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /contact\s+person\s*[:\-]?\s*([A-Z][A-Za-z.\- ']{4,80})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -320,7 +324,7 @@ export function extractClientContactTitle(input: ExtractorInput): ExtractedField
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /title\s*[:\-]\s*([^\n\r]{2,80})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -330,7 +334,7 @@ export function extractClientContactPhone(input: ExtractorInput): ExtractedField
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /phone\s*[:\-]\s*(\+?[\d\s\-().]{7,30})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -340,7 +344,7 @@ export function extractClientAddress(input: ExtractorInput): ExtractedFieldOrMis
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /client\s+address\s*[:\-]\s*([^\n\r]{5,200})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -352,7 +356,7 @@ export function extractCountry(input: ExtractorInput): ExtractedFieldOrMissing<s
     const m = /country\s*[:\-]\s*([A-Za-z'’.\-\s]{2,60})/i.exec(text);
     if (m) {
         const canonical = canonicalizeCountry(m[1].trim());
-        if (canonical) cands.push({ found: true, value: canonical, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+        if (canonical) cands.push({ found: true, value: canonical, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     }
   }
   return pickBest(cands);
@@ -363,7 +367,7 @@ export function extractClientCity(input: ExtractorInput): ExtractedFieldOrMissin
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /city\s+location\s*[:\-]\s*([^\n\r]{2,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -373,7 +377,7 @@ export function extractClientWebsite(input: ExtractorInput): ExtractedFieldOrMis
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /website\s*[:\-]\s*(https?:\/\/[^\s\n\r]+|www\.[^\s\n\r]+)/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -383,7 +387,7 @@ export function extractProjectTitle(input: ExtractorInput): ExtractedFieldOrMiss
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /project\s+title\s*[:\-]?\s*([^\n\r]{8,180})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -393,7 +397,7 @@ export function extractSubmissionEmailSubject(input: ExtractorInput): ExtractedF
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /email\s+subject\s*[:\-]\s*([^\n\r]{3,160})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -403,7 +407,7 @@ export function extractContactChannel(input: ExtractorInput): ExtractedFieldOrMi
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /clarification\s+channel\s*[:\-]\s*([^\n\r]{5,150})/i.exec(text) || /pre-bid\s+channel\s*[:\-]\s*([^\n\r]{5,150})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
@@ -413,7 +417,7 @@ export function extractAuthorizedOfficer(input: ExtractorInput): ExtractedFieldO
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /authorized\s+(?:representative|officer)\s*[:\-]\s*([A-Z][A-Za-z.\- ']{4,80})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
 }
