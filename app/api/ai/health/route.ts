@@ -68,6 +68,14 @@ export async function GET() {
   const preferredProvider = preferredConfiguredProviderName();
   const noAiProviderReady = !anyConfigured || allConfiguredCooling;
 
+  // Compute lastProviderUsed from actual runtime data — the most recently
+  // successful configured provider. Lets the UI show which provider actually
+  // served the last request without leaking key values.
+  const lastProviderUsed = configuredNames
+    .map((n) => ({ name: n, at: providerRuntime[n].lastSuccessAt }))
+    .filter((x) => x.at !== null)
+    .sort((a, b) => new Date(b.at as unknown as string).getTime() - new Date(a.at as unknown as string).getTime())[0]?.name ?? null;
+
   if (!anyConfigured) {
     blockers.push("No AI providers are configured.");
   }
@@ -129,14 +137,13 @@ export async function GET() {
         label: "Deterministic draft fallback",
       },
     },
-    // Activity flags. These are populated by the runtime AI Analyze /
-    // proposal-generation flows; the health endpoint surfaces their current
-    // value so the operator UI can show what the last request did without
-    // having to query the audit log.
+    // Activity flags — computed from actual runtime data so the operator UI
+    // can see which providers are active, which were attempted, and which
+    // provider served the last request.
     inactive: configuredNames.filter((n) => !providerRuntime[n].coolingDown && !providerRuntime[n].runtimeVerified),
-    skipped: [] as string[],
-    attempted: [] as string[],
-    lastProviderUsed: null as string | null,
+    skipped: allProviderNames.filter((n) => !configuredNames.includes(n)),
+    attempted: configuredNames.filter((n) => providerRuntime[n].lastSuccessAt !== null || providerRuntime[n].coolingDown),
+    lastProviderUsed,
     blockers,
     warnings,
     providerHealthRestoreWarning: !restore.ok
