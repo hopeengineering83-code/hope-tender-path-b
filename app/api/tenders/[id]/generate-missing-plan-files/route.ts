@@ -184,7 +184,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", error: "AI analysis was skipped due to corrupted extraction; re-run AI Analyze before generating plan files.", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" }, { status: 422 });
   }
   if (analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_DEGRADED_EXTRACTION", error: "AI analysis was produced from weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_WEAK_EXTRACTION", error: "AI analysis was produced from weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
   }
 
   // Client/procuring entity must be present (a document set with no client is
