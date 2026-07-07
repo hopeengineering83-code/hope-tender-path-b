@@ -153,7 +153,14 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       analysisInputHash: currentAnalysisBinding.contentHash ?? "__NO_CURRENT_ANALYSIS_HASH__",
       OR: [
         { status: "PARTIAL_SUCCESS" },
-        { status: "FAILED", analyzeChunks: { some: { status: "SUCCEEDED" } } },
+        {
+          status: "FAILED",
+          analyzeChunks: { some: { status: "SUCCEEDED" } },
+          OR: [
+            { retryState: { is: null } },
+            { retryState: { is: { nonRetryable: false } } },
+          ],
+        },
       ],
     },
     orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }, { createdAt: "desc" }],

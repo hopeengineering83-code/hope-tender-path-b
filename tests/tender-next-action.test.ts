@@ -108,7 +108,9 @@ describe("visible wording contract", () => {
     assert.match(source, /analysisInputHash:\s*currentAnalysisBinding\.contentHash/);
     assert.match(source, /OR:\s*\[/);
     assert.match(source, /status:\s*"PARTIAL_SUCCESS"/);
-    assert.match(source, /status:\s*"FAILED",\s*analyzeChunks:\s*\{\s*some:\s*\{\s*status:\s*"SUCCEEDED"/);
+    assert.match(source, /status:\s*"FAILED"/);
+    assert.match(source, /analyzeChunks:\s*\{\s*some:\s*\{\s*status:\s*"SUCCEEDED"/);
+    assert.match(source, /nonRetryable:\s*false/);
     assert.match(source, /hasResumableAiAnalyzeCheckpoint/);
     assert.doesNotMatch(source, /take:\s*5/);
   });
