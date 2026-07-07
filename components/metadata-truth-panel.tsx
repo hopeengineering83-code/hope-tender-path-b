@@ -89,7 +89,7 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
     },
   ];
 
-  const hasGenerationBlockers = metadata.hasGenerationBlocker;
+  const hasExportBlockers = metadata.hasExportBlocker;
   const hasBlockers = metadata.blockedFields > 0;
 
   return (

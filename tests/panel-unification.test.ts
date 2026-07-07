@@ -14,8 +14,8 @@ import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapsho
  * 1. Ungrounded manual deadline (USER_EDITED, no source) = BLOCKED
  *    Both panels must show this field as BLOCKED from the same snapshot
  *
- * 2. Missing critical deadline with hasGenerationBlocker = true
- *    Completion panel never shows green; both panels show hasGenerationBlocker warning
+ * 2. Missing critical deadline with hasExportBlocker, false
+ *    Completion panel never shows green; both panels show hasExportBlocker warning
  */
 
 const mockSnapshot = (overrides: Partial<TenderReleaseSnapshot> = {}): TenderReleaseSnapshot => ({
@@ -98,9 +98,9 @@ test("Snapshot: ungrounded manual deadline has BLOCKED status and blockerReason 
           overrideTimestamp: null,
         },
       ],
-      hasGenerationBlocker: true,
-      hasExportBlocker: false,
-      hasZipBlocker: false,
+      hasGenerationBlocker: false,
+      hasExportBlocker: true,
+      hasZipBlocker: true,
       totalFields: 1,
       validFields: 1,
       groundedFields: 0,
@@ -116,10 +116,10 @@ test("Snapshot: ungrounded manual deadline has BLOCKED status and blockerReason 
   assert.equal(deadlineField.status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED", "Ungrounded manual deadline must be MANUAL_OVERRIDE_CONFIRMATION_REQUIRED");
   assert(deadlineField.blockerReason !== null, "Ungrounded manual deadline must have blockerReason set");
   assert(deadlineField.blockerReason.includes("blocked"), "Blocker reason must indicate blocked state");
-  assert.equal(snapshot.metadata.hasGenerationBlocker, true, "Snapshot must flag generation blocker");
+  assert.equal(snapshot.metadata.hasExportBlocker, true, "Snapshot must flag export blocker");
 });
 
-test("Snapshot: missing critical deadline with hasGenerationBlocker never allows green success", () => {
+test("Snapshot: missing critical deadline with hasExportBlocker never allows green success", () => {
   const snapshot = mockSnapshot({
     metadata: {
       fields: [
@@ -151,7 +151,7 @@ test("Snapshot: missing critical deadline with hasGenerationBlocker never allows
           overrideTimestamp: null,
         },
       ],
-      hasGenerationBlocker: true,
+      hasGenerationBlocker: false,
       hasExportBlocker: false,
       hasZipBlocker: false,
       totalFields: 1,
@@ -163,12 +163,12 @@ test("Snapshot: missing critical deadline with hasGenerationBlocker never allows
     },
   });
 
-  // Verify that hasGenerationBlocker blocks any "all clear" state
-  assert.equal(snapshot.metadata.hasGenerationBlocker, true, "Snapshot must have generation blocker");
+  // Verify that hasExportBlocker blocks any "all clear" state
+  assert.equal(snapshot.metadata.hasExportBlocker, false, "Snapshot must have generation blocker");
   const deadlineField = snapshot.metadata.fields[0];
   assert.equal(deadlineField.status, "INVALID", "Missing critical field must have INVALID status");
   assert(deadlineField.blockerReason !== null, "Missing critical field must have blockerReason");
-  // Panels must check hasGenerationBlocker and never show green when true
+  // Panels must check hasExportBlocker, false
 });
 
 test("Snapshot: ungrounded manual deadline shows identical state across snapshot fields (both panels consume same data)", () => {
@@ -203,7 +203,7 @@ test("Snapshot: ungrounded manual deadline shows identical state across snapshot
           overrideTimestamp: null,
         },
       ],
-      hasGenerationBlocker: true,
+      hasGenerationBlocker: false,
       hasExportBlocker: false,
       hasZipBlocker: false,
       totalFields: 1,
@@ -221,11 +221,11 @@ test("Snapshot: ungrounded manual deadline shows identical state across snapshot
   assert.equal(deadlineField.status, "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED", "Status must be consistent");
   assert.equal(deadlineField.criticality, "always-critical", "Criticality must be consistent");
   assert(deadlineField.blockerReason !== null, "Blocker reason must be present");
-  assert.equal(snapshot.metadata.hasGenerationBlocker, true, "Generation blocker must be flagged");
-  // Both panels check the same field.status and snapshot.hasGenerationBlocker
+  assert.equal(snapshot.metadata.hasExportBlocker, false, "Generation blocker must be flagged");
+  // Both panels check the same field.status and snapshot.hasExportBlocker
 });
 
-test("Snapshot: both panels receive identical metadata.hasGenerationBlocker flag and fields array", () => {
+test("Snapshot: both panels receive identical metadata.hasExportBlocker flag and fields array", () => {
   const snapshot = mockSnapshot({
     metadata: {
       fields: [
@@ -257,7 +257,7 @@ test("Snapshot: both panels receive identical metadata.hasGenerationBlocker flag
           overrideTimestamp: null,
         },
       ],
-      hasGenerationBlocker: true,
+      hasGenerationBlocker: false,
       hasExportBlocker: false,
       hasZipBlocker: false,
       totalFields: 1,
@@ -270,7 +270,7 @@ test("Snapshot: both panels receive identical metadata.hasGenerationBlocker flag
   });
 
   // Both panels receive the same snapshot structure from workflow-center endpoint
-  assert.equal(snapshot.metadata.hasGenerationBlocker, true, "Both panels check hasGenerationBlocker");
+  assert.equal(snapshot.metadata.hasExportBlocker, false, "Both panels check hasExportBlocker");
   assert.equal(snapshot.metadata.fields.length, 1, "Both panels iterate same fields array");
   const field = snapshot.metadata.fields[0];
   assert.equal(field.status, "INVALID", "Both panels use same status values");

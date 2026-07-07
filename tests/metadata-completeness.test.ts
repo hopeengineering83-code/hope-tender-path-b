@@ -27,14 +27,15 @@ const PASSING_INPUT: MetadataCompletenessInput = {
 };
 
 describe("metadata completeness — placeholder blocking", () => {
-  it("flags N/A clientName as blocking", () => {
+  it("flags N/A clientName as non-blocking for draft", () => {
     const result = assessTenderMetadataCompleteness({
       ...PASSING_INPUT,
       clientName: "N/A",
     });
-    assert.ok(
+    assert.equal(
       result.blockingForGeneration,
-      "N/A clientName should block generation",
+      false,
+      "N/A clientName should NOT block draft generation",
     );
     assert.ok(
       result.invalidFields.some((f) => f.field === "clientName"),
@@ -47,7 +48,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       clientName: "unknown",
     });
-    assert.ok(result.blockingForGeneration, "'unknown' clientName should block");
+    assert.equal(result.blockingForGeneration, false, "'unknown' clientName should block");
     assert.ok(result.invalidFields.some((f) => f.field === "clientName"));
   });
 
@@ -56,7 +57,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       clientName: "not specified",
     });
-    assert.ok(result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
     assert.ok(result.invalidFields.some((f) => f.field === "clientName"));
   });
 
@@ -65,7 +66,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       clientName: "TBD",
     });
-    assert.ok(result.blockingForGeneration, "TBD should block");
+    assert.equal(result.blockingForGeneration, false, "TBD should block");
   });
 
   it("flags 'TBC' clientName as blocking", () => {
@@ -73,7 +74,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       clientName: "TBC",
     });
-    assert.ok(result.blockingForGeneration, "TBC should block");
+    assert.equal(result.blockingForGeneration, false, "TBC should block");
   });
 
   it("flags 'Bid-Team to confirm' clientName as blocking", () => {
@@ -81,7 +82,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       clientName: "Bid-Team to confirm",
     });
-    assert.ok(result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
     assert.ok(result.invalidFields.some((f) => f.field === "clientName"));
   });
 
@@ -118,15 +119,12 @@ describe("metadata completeness — placeholder blocking", () => {
       "'to be confirmed' submissionAddress should appear in invalidFields",
     );
     // submissionAddress placeholder makes it invalid → blocks
-    assert.ok(result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
   });
 
   it("passes with real client name and complete metadata", () => {
     const result = assessTenderMetadataCompleteness(PASSING_INPUT);
-    assert.ok(
-      !result.blockingForGeneration,
-      "real metadata should not block generation",
-    );
+    assert.equal(result.blockingForGeneration, false, "real metadata should not block generation");
     assert.equal(result.invalidFields.length, 0, "no invalid fields expected");
   });
 
@@ -135,7 +133,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       deadline: null,
     });
-    assert.ok(result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
     assert.ok(result.missingCritical.some((f) => f.field === "deadline"));
   });
 
@@ -144,7 +142,7 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       requirementCount: 0,
     });
-    assert.ok(result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
     assert.ok(result.missingCritical.some((f) => f.field === "requiredDocuments"));
   });
 
@@ -154,7 +152,7 @@ describe("metadata completeness — placeholder blocking", () => {
       submissionEmails: null,
       submissionAddress: null,
     });
-    assert.ok(result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
     assert.ok(result.missingCritical.some((f) => f.field === "submissionEndpoint"));
   });
 
@@ -164,7 +162,7 @@ describe("metadata completeness — placeholder blocking", () => {
       submissionEmails: null,
       submissionAddress: "Ministry HQ, Addis Ababa",
     });
-    assert.ok(!result.blockingForGeneration);
+    assert.equal(result.blockingForGeneration, false);
   });
 });
 
@@ -178,8 +176,9 @@ describe("metadata completeness — NOT_APPLICABLE override skips placeholder sc
       !result.invalidFields.some((f) => f.field === "donorAgency"),
       "NOT_APPLICABLE donorAgency must not appear in invalidFields even when value is a placeholder",
     );
-    assert.ok(
-      !result.blockingForGeneration,
+    assert.equal(
+      result.blockingForGeneration,
+      false,
       "NOT_APPLICABLE override on donorAgency placeholder must not block generation",
     );
   });

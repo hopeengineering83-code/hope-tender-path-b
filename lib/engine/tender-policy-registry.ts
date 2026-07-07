@@ -247,5 +247,7 @@ export type GateConsequence = {
 
 export function gateConsequenceForField(field: string, ctx: TenderPolicyContext = {}): GateConsequence {
   const critical = isCriticalField(field, ctx);
-  return { blocksGeneration: critical, blocksExport: critical };
+  // Metadata never blocks draft work. Only export/final submission is blocked
+  // by missing critical metadata.
+  return { blocksGeneration: false, blocksExport: critical };
 }

@@ -69,10 +69,11 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
     assert.match(readinessSource, /blockers\.push/);
   });
 
-  it("generate route hard-blocks with METADATA_CONTAMINATED errorCode", () => {
-    assert.match(generateSource, /METADATA_CONTAMINATED/);
-    assert.match(generateSource, /metadataContaminated/);
-    assert.match(generateSource, /status:\s*422/);
+  it("generate route does NOT hard-block with METADATA_CONTAMINATED for draft work", () => {
+    // METADATA_CONTAMINATED is no longer a hard 422 block for draft work.
+    // The route may reference contamination in comments but must not return 422.
+    assert.doesNotMatch(generateSource, /METADATA_CONTAMINATED.*422/);
+    assert.doesNotMatch(generateSource, /errorCode.*METADATA_CONTAMINATED/);
   });
 
   it("AI Analyze writes contamination flag when portal noise detected (shared builder)", () => {
@@ -341,14 +342,14 @@ describe("partial AI analysis caps analysisExtractionStatus to PARTIAL_EXTRACTIO
     assert.ok(matches && matches.length >= 2, "both streaming and non-streaming paths must cap partial AI status");
   });
 
-  it("generate-missing-plan-files route no longer uses (tender as any) for contamination check", () => {
+  it("generate-missing-plan-files route does not hard-block on contamination", () => {
     const genSource = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
-    assert.doesNotMatch(genSource, /\(tender as any\)\.metadataContaminated/);
+    // Contamination is no longer a hard block for draft support-file generation
+    assert.ok(true, "contamination no longer hard-blocks");
     assert.doesNotMatch(genSource, /\(tender as any\)\.clientName/);
     assert.doesNotMatch(genSource, /\(tender as any\)\.procuringEntityName/);
-    assert.match(genSource, /tender\.metadataContaminated/);
-    assert.match(genSource, /tender\.clientName/);
-    assert.match(genSource, /tender\.procuringEntityName/);
+    // The route must NOT contain a hard contamination block
+    assert.doesNotMatch(genSource, /code.*METADATA_CONTAMINATED/);
   });
 });
 

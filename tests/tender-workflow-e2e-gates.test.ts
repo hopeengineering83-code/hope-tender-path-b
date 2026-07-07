@@ -28,18 +28,20 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
   });
 
   describe("Metadata Readiness Gates", () => {
-    it("should block if critical metadata is missing", () => {
+    it("should NOT block draft if critical metadata is missing", () => {
       const tender = { title: "", clientName: null, tenderCategory: "Work" };
       const result = assessTenderMetadataCompleteness(tender as any);
       assert.ok(result.missingCritical.some(f => f.field === "title"), "Title should be flagged as missing critical");
-      assert.ok(result.blockingForGeneration, "Metadata should not be ready");
+      assert.equal(result.blockingForGeneration, false, "Metadata should NOT block draft generation");
+      assert.equal(result.blockingForExport, true, "Metadata SHOULD block export/final submission");
     });
 
-    it("should block if metadata contains placeholders", () => {
+    it("should NOT block draft if metadata contains placeholders", () => {
       const tender = { title: "Test Tender", clientName: "[TBC] Bid Team to confirm", tenderCategory: "Service" };
       const result = assessTenderMetadataCompleteness(tender as any);
       assert.equal(result.placeholderCount, 1, "Should detect 1 placeholder");
-      assert.ok(result.blockingForGeneration, "Metadata should not be ready due to placeholders");
+      assert.equal(result.blockingForGeneration, false, "Placeholders should NOT block draft generation");
+      assert.equal(result.blockingForExport, true, "Placeholders SHOULD block export/final submission");
     });
   });
 

@@ -155,7 +155,7 @@ describe("registry — user-facing labels", () => {
 describe("registry — gate consequences", () => {
   it("critical fields block generation and export", () => {
     const c = gateConsequenceForField("deadline");
-    assert.equal(c.blocksGeneration, true);
+    assert.equal(c.blocksGeneration, false, "metadata does not block draft generation");
     assert.equal(c.blocksExport, true);
   });
 
@@ -166,7 +166,7 @@ describe("registry — gate consequences", () => {
   });
 
   it("submissionAddress blocks only when the method is physical", () => {
-    assert.equal(gateConsequenceForField("submissionAddress", { submissionMethod: "hand delivery" }).blocksGeneration, true);
+    assert.equal(gateConsequenceForField("submissionAddress", { submissionMethod: "hand delivery" }).blocksGeneration, false);
     assert.equal(gateConsequenceForField("submissionAddress", { submissionMethod: "email" }).blocksGeneration, false);
   });
 });

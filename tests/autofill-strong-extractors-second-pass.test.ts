@@ -59,7 +59,7 @@ describe("generate route — metadata-incomplete error names fields + nudges rep
   it("names the missing fields in the user-facing error string", () => {
     assert.match(src, /missingNames\.join\(", "\)/);
   });
-  it("nudges the user toward the Repair-all button rather than just \"edit and fill\"", () => {
+  it("nudges the user toward the repair button rather than just \"edit and fill\"", () => {
     assert.match(src, /Repair all empty fields from source/);
   });
   it("uses the more actionable nextAction REPAIR_OR_EDIT_TENDER", () => {
@@ -69,8 +69,8 @@ describe("generate route — metadata-incomplete error names fields + nudges rep
 
 describe("readiness helper — FULL_PROPOSAL_METADATA_INCOMPLETE blocker mirrors the new copy", () => {
   const src = readFileSync("lib/tender-generation-readiness.ts", "utf8");
-  it("the blocker message mentions the Repair-all button", () => {
-    assert.match(src, /Repair all empty fields from source/);
+  it("the warning message mentions repair (not a hard blocker)", () => {
+    assert.match(src, /Tender details incomplete|REPAIR_OR_EDIT_TENDER/);
   });
   it("nextAction is REPAIR_OR_EDIT_TENDER", () => {
     assert.match(src, /nextAction:\s*"REPAIR_OR_EDIT_TENDER"/);

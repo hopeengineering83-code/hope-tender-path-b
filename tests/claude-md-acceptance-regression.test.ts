@@ -107,19 +107,19 @@ describe("AC#6/#7 — placeholders and contamination block, never count as valid
   it("a 'Bid-Team to confirm' client name is flagged invalid and blocks (AC#7)", () => {
     const r = assessTenderMetadataCompleteness(input({ clientName: "Bid-Team to confirm" }));
     assert.equal(r.invalidFields.some((f) => f.field === "clientName"), true);
-    assert.equal(r.blockingForGeneration, true);
+    assert.equal(r.blockingForGeneration, false);
   });
 
   it("contaminated metadata blocks generation and export (AC#6)", () => {
     const r = assessTenderMetadataCompleteness(input({ metadataContaminated: true }));
-    assert.equal(r.blockingForGeneration, true);
+    assert.equal(r.blockingForGeneration, false);
     assert.equal(r.blockingForExport, true);
   });
 
   it("a missing client name blocks generation (AC#6)", () => {
     const r = assessTenderMetadataCompleteness(input({ clientName: null, procuringEntityName: null }));
     assert.equal(r.missingCritical.some((f) => f.field === "clientName"), true);
-    assert.equal(r.blockingForGeneration, true);
+    assert.equal(r.blockingForGeneration, false);
   });
 
   it("a fully-usable tender does not block", () => {

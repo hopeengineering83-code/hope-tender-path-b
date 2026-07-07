@@ -282,15 +282,15 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     });
   }
 
-  // Contaminated client name — portal navigation text, status banners, or
-  // unrelated tender alerts ended up in the extracted client name.
-  // Generating with a contaminated name produces cover pages and addressing
-  // blocks with portal garbage. The /generate route hard-blocks on this too;
-  // surface it here so the panel shows blocked before the user tries to generate.
+  // Contaminated client name is NOT a blocker for draft work. It is
+  // treated as unavailable metadata — the contaminated value is omitted
+  // from generated output and replaced with neutral framing. Only Final
+  // Submission Check blocks on contaminated metadata.
+  // (Previously: hard blocker removed per metadata-optional policy)
   if ((tender as { metadataContaminated?: boolean | null }).metadataContaminated && !overrideByField.has("clientName")) {
-    blockers.push({
+    warnings.push({
       code: "METADATA_CONTAMINATED",
-      message: "Client/procuring entity metadata is contaminated with portal navigation text or unrelated tender alerts. Correct the Client Name field and re-run AI Analyze before generating documents.",
+      message: "Tender details incomplete — optional information was omitted from draft output.",
       nextAction: "EDIT_TENDER_METADATA",
     });
   }
@@ -507,15 +507,19 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
   });
-  if (metadataReport.blockingForGeneration) {
+  // Metadata completeness is NOT a blocker for draft work. It is an
+  // informational report only. Only Final Submission Check blocks on
+  // incomplete metadata (via blockingForExport).
+  // (Previously: FULL_PROPOSAL_METADATA_INCOMPLETE blocker removed per metadata-optional policy)
+  if (metadataReport.blockingForExport) {
     const missingCount = metadataReport.missingCritical.length;
     const placeholderCount = metadataReport.invalidFields.length;
     const parts: string[] = [];
-    if (missingCount > 0) parts.push(`${missingCount} critical metadata field(s) missing (${metadataReport.missingCritical.slice(0, 4).map((f) => f.field).join(", ")})`);
+    if (missingCount > 0) parts.push(`${missingCount} critical metadata field(s) missing`);
     if (placeholderCount > 0) parts.push(`${placeholderCount} field(s) contain placeholder language`);
-    fullProposalBlockers.push({
+    warnings.push({
       code: "FULL_PROPOSAL_METADATA_INCOMPLETE",
-      message: `Full proposal generation is blocked: ${parts.join("; ")}. Try the "Repair all empty fields from source" button first — the deterministic extractor will populate any value that's actually in the uploaded tender file. If the field is genuinely absent from the tender source, edit the tender to confirm it manually.`,
+      message: `Tender details incomplete — optional information was omitted from draft output.`,
       nextAction: "REPAIR_OR_EDIT_TENDER",
     });
   }

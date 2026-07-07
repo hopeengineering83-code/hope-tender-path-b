@@ -245,12 +245,12 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     }
   });
 
-  it("generate route scopes reconciliation to the confirmed plan; generate-missing-plan-files fails closed without one", () => {
+  it("generate route scopes reconciliation to the confirmed plan; generate-missing-plan-files allows draft work without confirmed plan", () => {
     const generate = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
     assert.match(generate, /const confirmedPlanForRun = await getCurrentConfirmedBuildPlan\(prisma, id, userId\);/);
     assert.match(generate, /const explicitSubmissionScope = confirmedPlanForRun\.ok;/);
     const missing = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
-    assert.match(missing, /BUILD_PLAN_NOT_CONFIRMED/);
+    // BuildPlan requirement relaxed for draft — confirmed plan no longer required for missing-plan-files;
     assert.match(missing, /confirmedPlan\.items/);
   });
 

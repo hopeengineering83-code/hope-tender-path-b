@@ -178,7 +178,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
     requirementCount: tender.requirements.length,
   }, tender.metadataOverrides);
-  const metaScore = meta.blockingForGeneration || tender.metadataContaminated ? 0
+  const metaScore = meta.blockingForExport || tender.metadataContaminated ? 0
     : Math.round(meta.overallRatio * 15);
   const metaStatusLabel: Dimension["status"] = metaScore >= 12 ? "PASS" : metaScore >= 8 ? "WARN" : "FAIL";
   const missingCriticalNames = meta.missingCritical.map((f) => f.field);

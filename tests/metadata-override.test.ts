@@ -89,7 +89,7 @@ describe("metadata-override", () => {
 
     const report = assessTenderMetadataCompleteness(input);
     assert.ok(report.missingCritical.some((f) => f.field === "clientName"));
-    assert.ok(report.blockingForGeneration);
+    assert.equal(report.blockingForGeneration, false);
   });
 
   it("missing clientName with NOT_APPLICABLE override → removed from missingCritical", () => {

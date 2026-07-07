@@ -602,25 +602,27 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;
-    // DRAFT: never blocked by manual values. Only blocked by:
-    //   - requiredDocuments (handled above)
-    //   - contamination (PORTAL_CONTAMINATION) — the value is corrupted
-    //   - invalid format / placeholder — the value is unusable
-    //   - BLOCKED status (NOT_APPLICABLE on critical field)
-    const draftHardBlockReasons =
+    // DRAFT: metadata is NEVER a hard blocker for draft work. Missing,
+    // contaminated, placeholder, or invalid metadata values are treated
+    // as unavailable — they are omitted from generated output and surfaced
+    // as warnings, but they do NOT block analysis, draft generation,
+    // support-file generation, regeneration, or review export.
+    //
+    // The only field that can block draft work is requiredDocuments
+    // (handled above at lines 562-571) — when no requirements are
+    // extracted at all, the draft has nothing to work with.
+    const draftHardBlockReasons = false;
+
+    // FINAL: blocked by missing critical field, manual value without
+    // sufficient audit, contamination, placeholder, invalid format, or
+    // BLOCKED status. Only FINAL_SUBMISSION_CHECK uses this gate.
+    const exportHardBlockReasons =
       status === "PORTAL_CONTAMINATION" ||
       status === "INTERNAL_PLACEHOLDER" ||
       status === "GENERIC_FIELD_LABEL" ||
       status === "INVALID_FORMAT" ||
       status === "BLOCKED" ||
-      (isCritical && !isManualValuePresent && isBlocked && !isGrounded);
-
-    // FINAL: blocked by draft reasons PLUS:
-    //   - critical field without value (UNKNOWN)
-    //   - critical field with manual value but insufficient audit
-    //   - NOT_STATED_IN_SOURCE on critical field
-    const exportHardBlockReasons =
-      draftHardBlockReasons ||
+      (isCritical && !isManualValuePresent && isBlocked && !isGrounded) ||
       (isCritical && !effectiveStr?.trim() && !override) || // missing critical, no override
       (isCritical && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
 
@@ -630,7 +632,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const isHardBlock = exportHardBlockReasons;
     if (isHardBlock) {
-      hasGenerationBlocker = draftHardBlockReasons; // Draft blocker only for contamination/placeholder/etc
+      // Metadata never blocks draft work — only export/final.
       hasExportBlocker = true;
       hasZipBlocker = true;
     }

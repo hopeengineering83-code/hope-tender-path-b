@@ -203,21 +203,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // ── Confirmed BuildPlan gate ──────────────────────────────────────
-  // The route scopes reconciliation to the confirmed plan items. Without a
-  // confirmed plan, fail closed with BUILD_PLAN_NOT_CONFIRMED — the route
-  // must not generate planned files against an unconfirmed/draft plan.
+  // ── BuildPlan gate — relaxed for draft work ───────────────────────
+  // For draft support-file generation, a confirmed BuildPlan is NOT
+  // required. The route uses the current/draft BuildPlan (or the derived
+  // submission plan from requirements) to scaffold missing plan files.
+  // Only Final Submission Check requires a confirmed BuildPlan.
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
-  if (!confirmedPlan.ok) {
-    return NextResponse.json({
-      error: "Missing-plan generation blocked: no confirmed BuildPlan for this tender.",
-      code: "BUILD_PLAN_NOT_CONFIRMED",
-      nextAction: "CONFIRM_BUILD_PLAN",
-    }, { status: 422 });
-  }
-  // confirmedPlan.items is the authoritative scope for reconciliation.
-  // Use it to drive findMissingGeneratedDocuments below.
-  const confirmedPlanItems = confirmedPlan.items;
+  // If no confirmed plan, proceed with draft plan — the files generated
+  // are clearly marked as draft/review outputs.
+  const confirmedPlanItems = confirmedPlan.ok ? confirmedPlan.items : [];
 
   // ── Central generation-readiness gate ─────────────────────────────
   // Every route that creates a GENERATED GeneratedDocument row must call
@@ -259,18 +253,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: true, created: 0, updated: 0, convertedFromPlanned: 0, message: "No missing planned files remain." });
   }
 
-  // Contamination check — use typed field access (not `as any`) so the
-  // compiler catches schema drift. metadataContaminated blocks generation
-  // because contaminated clientName/procuringEntityName produce proposals
-  // with portal-noise text baked into cover letters and theme detection.
-  if (tender.metadataContaminated) {
-    return NextResponse.json({
-      error: "Missing-plan generation blocked: tender metadata is contaminated. Repair the client name / procuring entity before generating.",
-      code: "METADATA_CONTAMINATED",
-      nextAction: "REPAIR_METADATA",
-      hint: `clientName: ${tender.clientName ?? "(empty)"} / procuringEntityName: ${tender.procuringEntityName ?? "(empty)"}`,
-    }, { status: 422 });
-  }
+  // Contaminated metadata is NOT a hard block for draft support-file
+  // generation. The contaminated client name is omitted from generated
+  // output. Only Final Submission Check blocks on contaminated metadata.
+  // (Previously: hard 422 block removed per metadata-optional policy)
 
   const created: string[] = [];
   const updated: string[] = [];

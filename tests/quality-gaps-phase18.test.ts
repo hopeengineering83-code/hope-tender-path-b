@@ -174,7 +174,8 @@ describe("phase 18 — generate gate regression checks", () => {
   const existingGates = [
     "NO_REQUIREMENTS",
     "CLIENT_NAME_REQUIRED",
-    "METADATA_CONTAMINATED",
+    // METADATA_CONTAMINATED removed — metadata no longer hard-blocks draft work.
+    // Contamination is surfaced as a warning, not a 422 error.
     "ANALYSIS_PARTIAL",
     "EXTRACTION_NOT_READY",
     "PARTIAL_EXTRACTION_ANALYSIS",
