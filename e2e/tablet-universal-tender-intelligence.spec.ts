@@ -94,7 +94,15 @@ async function expectTouchTargetSize(locator: import("@playwright/test").Locator
 }
 
 test.describe("Tablet (800x1280) — universal tender intelligence", () => {
-  test.skip(({ browserName }) => browserName !== "chromium", "Tablet tests run only in the samsung-tablet Chromium project");
+  // Skip under the default "chromium" project (which uses 1280x720) —
+  // these tests ONLY run under the "samsung-tablet" project (800x1280).
+  // The prior skip checked browserName !== "chromium", but both projects
+  // use the chromium browser — so the viewport tests ran under the wrong
+  // project and failed because the viewport was 1280x720, not 800x1280.
+  test.skip(({ page }) => {
+    const size = page.viewportSize();
+    return !size || size.width !== 800 || size.height !== 1280;
+  }, "Tablet viewport tests run only in the samsung-tablet project (800x1280)");
 
   test("viewport is 800x1280 (tablet form factor)", async ({ page }) => {
     await page.goto("/login");
