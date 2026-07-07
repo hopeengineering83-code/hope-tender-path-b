@@ -290,6 +290,7 @@ model CompanyComplianceRecord {
 }
 
 model Tender {
+  facts           TenderFact[]
   id                    String               @id @default(uuid())
   title                 String
   description           String?
