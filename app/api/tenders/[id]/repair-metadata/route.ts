@@ -6,7 +6,7 @@
 // It NEVER paraphrases or fuzzes; it only captures verbatim strings with source grounding.
 //
 // Safety:
-//   • uses requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"),
+//   • uses requireRole("ADMIN", "PROPOSAL_MANAGER"),
 //   • rate-limited per user,
 //   • when the extractor returns found: false, the tender row is not touched,
 //   • every successful repair writes an audit log entry with sourceFile and sourceQuote.
@@ -38,7 +38,7 @@ type SupportedField = (typeof SUPPORTED_FIELDS)[number];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const requestId = extractRequestId(req);
