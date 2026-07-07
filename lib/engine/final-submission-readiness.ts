@@ -214,6 +214,7 @@ function asReadyDoc(doc: {
   reviewStatus: string;
   fileContent?: string | null;
   storagePath: string | null;
+  hasInlineFileContent?: boolean | null;
 }): ExportReadyDocument {
   return {
     id: doc.id,
@@ -227,6 +228,7 @@ function asReadyDoc(doc: {
     reviewStatus: String(doc.reviewStatus ?? ""),
     fileContent: doc.fileContent ?? null,
     storagePath: doc.storagePath ?? null,
+    hasInlineFileContent: doc.hasInlineFileContent ?? null,
   };
 }
 
@@ -524,9 +526,22 @@ export async function getFinalSubmissionReadiness(
   // — the dashboard screenshot showed 152 hidden historical outputs that
   // should be auditable but excluded from blocker counts.
   const staleRowCount = await client.generatedDocument.count({ where: { tenderId: opts.tenderId, generationStatus: "SUPERSEDED" } });
+  const generatedDocumentIds = tender.generatedDocuments.map((doc) => doc.id);
+  const generatedContentMetrics = generatedDocumentIds.length > 0
+    ? await client.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
+        SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+        FROM "GeneratedDocument"
+        WHERE id = ANY(${generatedDocumentIds}::text[])
+      `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)
+    : [];
+  const generatedContentMetricById = new Map(generatedContentMetrics.map((doc) => [doc.id, doc.fileContentLength]));
+  const generatedDocuments = tender.generatedDocuments.map((doc) => ({
+    ...doc,
+    hasInlineFileContent: Boolean((doc.fileContent ?? "").trim()) || (generatedContentMetricById.get(doc.id) ?? 0) > 0,
+  }));
 
-  const workspaceDocuments = tender.generatedDocuments.length;
-  const finalCandidates = filterFinalExportCandidateDocuments(tender.generatedDocuments);
+  const workspaceDocuments = generatedDocuments.length;
+  const finalCandidates = filterFinalExportCandidateDocuments(generatedDocuments);
   const dedupedDocs = (() => {
     const seen = new Set<string>();
     const sorted = finalCandidates.slice().sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999));
@@ -1106,7 +1121,7 @@ export async function getFinalSubmissionReadiness(
     readinessCapReason: readinessScoreResult.appliedCap?.reason ?? null,
     readinessCapDimension: readinessScoreResult.appliedCap?.dimension ?? null,
     readinessCapScore: readinessScoreResult.appliedCap?.capScore ?? null,
-    ungeneratedPlannedRequired: tender.generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length,
+    ungeneratedPlannedRequired: generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length,
     missingCriticalMetadataFields: metadata.missingCritical.map((f) => f.field),
   };
 

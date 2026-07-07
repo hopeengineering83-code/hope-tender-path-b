@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
 import { hasRestoredInlineFileContent, hasVisibleStoredFile } from "../lib/restored-record-visibility";
+import { checkExportReadiness } from "../lib/engine/export-readiness";
 import { deriveDocumentOutputState } from "../lib/engine/document-output-state";
 
 const DOCX_HEADER_BASE64 = "UEsDBAoAAAAAA";
@@ -66,5 +68,33 @@ describe("restored record visibility", () => {
     );
 
     assert.deepEqual(visibleToOwner.map((row) => row.id), ["doc-1", "asset-1", "file-1"]);
+  });
+
+  it("does not block export-readiness checks that use metadata-only inline restored bytes", () => {
+    const result = checkExportReadiness([{
+      id: "doc-inline",
+      name: "Cover Letter",
+      exactFileName: "Cover Letter.docx",
+      generationStatus: "GENERATED",
+      validationStatus: "VALIDATED",
+      reviewStatus: "READY_FOR_EXPORT",
+      storagePath: "",
+      fileContent: null,
+      hasInlineFileContent: true,
+    }], { requireFileContent: true });
+
+    assert.equal(result.ok, true);
+  });
+
+  it("keeps restored inline hints wired into document archive and tender dashboard APIs", () => {
+    const archiveRoute = readFileSync("app/api/documents/route.ts", "utf8");
+    assert.match(archiveRoute, /storagePath:\s*true/);
+    assert.match(archiveRoute, /char_length\("fileContent"\)/);
+    assert.match(archiveRoute, /hasInlineFileContent/);
+
+    const tenderApiRoute = readFileSync("app/api/tenders/[id]/route.ts", "utf8");
+    assert.match(tenderApiRoute, /storagePath:\s*true/);
+    assert.match(tenderApiRoute, /char_length\("fileContent"\)/);
+    assert.match(tenderApiRoute, /hasInlineFileContent/);
   });
 });
