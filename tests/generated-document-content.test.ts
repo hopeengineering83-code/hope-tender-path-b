@@ -33,9 +33,9 @@ describe("generated-document-content adapter", () => {
     assert.equal(ok, true);
   });
 
-  it("has content from a metadata-only inline-content hint", () => {
-    const ok = generatedDocumentHasContent({ storagePath: "", fileContent: null, hasInlineFileContent: true });
-    assert.equal(ok, true);
+  it("does not treat a metadata-only inline-content hint as downloadable content", () => {
+    const ok = generatedDocumentHasContent({ storagePath: "", fileContent: null });
+    assert.equal(ok, false);
   });
 
   it("returns false when both storagePath and fileContent are missing", () => {

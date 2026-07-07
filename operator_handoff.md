@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-07 UTC — ChatGPT
 
+- **Mode:** restored inline visibility safety follow-up
+- **Branch / PR:** `codex/restored-inline-safety-gaps` / PR pending
+- **Scope:** fixed remaining restored-inline safety gaps by keeping metadata-only `hasInlineFileContent` valid for visibility/state surfaces while preventing it from satisfying strict downloadable/export byte-content checks; restored `generatedDocumentHasContent` to mean actual `fileContent` or non-empty `storagePath` only.
+- **Files changed:** `lib/engine/export-readiness.ts`, `lib/generated-document-content.ts`, `tests/restored-record-visibility.test.ts`, `tests/generated-document-content.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/restored-record-visibility.test.ts tests/generated-document-content.test.ts tests/document-output-state.test.ts tests/export-readiness.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status not checked from this container.
+- **Known risk:** full repository baseline is known red from unrelated suites/integration guards; this session focused on strict restored-inline safety regression tests.
+- **Next action:** review PR diff and run full CI in the hosted environment.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
 - **Mode:** restored inline visibility follow-up and app status check
 - **Branch / PR:** `codex/restored-record-visibility` / PR pending update
 - **Scope:** checked local app/repo status, AGENTS.md, CLAUDE.md, Active Workboard, and available PR tooling; no Git remote is configured and `gh` is unavailable, so open-PR/CI status could not be inspected from this container. Closed remaining restored-inline gaps by wiring inline-content hints through Document Archive, tender dashboard API payloads, generated-document output/readiness helpers, final package manifest state, and final-submission readiness without database writes or migrations.

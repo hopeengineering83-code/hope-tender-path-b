@@ -70,8 +70,8 @@ describe("restored record visibility", () => {
     assert.deepEqual(visibleToOwner.map((row) => row.id), ["doc-1", "asset-1", "file-1"]);
   });
 
-  it("does not block export-readiness checks that use metadata-only inline restored bytes", () => {
-    const result = checkExportReadiness([{
+  it("keeps metadata-only inline hints visible but does not let them bypass strict export byte validation", () => {
+    const metadataOnlyDoc = {
       id: "doc-inline",
       name: "Cover Letter",
       exactFileName: "Cover Letter.docx",
@@ -80,6 +80,26 @@ describe("restored record visibility", () => {
       reviewStatus: "READY_FOR_EXPORT",
       storagePath: "",
       fileContent: null,
+      hasInlineFileContent: true,
+    };
+
+    assert.equal(deriveDocumentOutputState(metadataOnlyDoc), "READY_FOR_EXPORT");
+
+    const result = checkExportReadiness([metadataOnlyDoc], { requireFileContent: true });
+    assert.equal(result.ok, false);
+    assert.match(result.failures[0]?.reasons.join(" "), /fileContent is missing/);
+  });
+
+  it("accepts actual restored inline bytes for strict export byte validation", () => {
+    const result = checkExportReadiness([{
+      id: "doc-inline",
+      name: "Cover Letter",
+      exactFileName: "Cover Letter.docx",
+      generationStatus: "GENERATED",
+      validationStatus: "VALIDATED",
+      reviewStatus: "READY_FOR_EXPORT",
+      storagePath: "",
+      fileContent: DOCX_HEADER_BASE64,
       hasInlineFileContent: true,
     }], { requireFileContent: true });
 
