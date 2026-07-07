@@ -35,14 +35,21 @@ function captureAround(text: string, index: number, length: number, before = 30,
   return trimQuote(text.slice(start, end));
 }
 
-function getSourcePage(text: string, index: number): number | null {
+function getSourcePage(text: string, index: number, totalPages?: number | null): number | null {
+  if (index < 0 || index > text.length) return null;
   const precedingText = text.slice(0, index);
   const markerRegex = /\[Page\s+(\d+)\]/gi;
   let match;
-  let lastPage = null;
+  let lastPage: number | null = null;
   while ((match = markerRegex.exec(precedingText)) !== null) {
     lastPage = parseInt(match[1], 10);
   }
+  // An impossible marker page (beyond the file's known page count) is unreliable
+  // and must never be persisted → null.
+  if (lastPage !== null && typeof totalPages === "number" && totalPages > 0 && lastPage > totalPages) return null;
+  // No boundary markers: only a single-page file may safely attribute to page 1;
+  // a multi-page file with no markers must not guess a page by assumption.
+  if (lastPage === null) return totalPages === 1 ? 1 : null;
   return lastPage;
 }
 
@@ -77,8 +84,8 @@ export function cutAtNextFieldLabel(val: string): string {
 
 const LABEL_WORDS = "(?:Number|Reference|Ref|No|ID|Code)";
 const REFERENCE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
-  { rx: new RegExp("\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID)\\s*[:#-]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
-  { rx: new RegExp("\\bReference\\s+(?:No\\.?|Number|#)\\s*[:.]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
+  { rx: new RegExp("\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID\\b)\\s*[:#-]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
+  { rx: new RegExp("\\bReference\\s+(?:No\\.?|Number\\b|#)\\s*[:.]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
 ];
 
 // Pure label words that must never be returned as a reference *value* — a
@@ -96,7 +103,7 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
       if (!m) continue;
       const value = m[1].trim();
       if (LABEL_REJECT.test(value)) continue; // reject pure-label captures
-      cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: p.confidence });
+      cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }
   }
