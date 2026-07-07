@@ -30,6 +30,7 @@ import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { prisma } from "../prisma";
 import { logger } from "../observability";
 import { randomUUID } from "crypto";
+import type { Prisma } from "@prisma/client";
 import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
@@ -630,6 +631,14 @@ export async function finalizeJob(jobId: string, userId: string) {
     // newer run that lands between PREPARATION and the tx is detected —
     // STALE_JOB_SUPERSeded handling returns SUPERSEDED instead of
     // overwriting the newer run's canonical state.
+    // The tenderUpdate payload is typed Prisma.TenderUpdateInput so the
+    // compiler catches any field that isn't a real schema column. The
+    // prior bug wrote `analysisSource`/`envelopeMode`/`clientType`/
+    // `submissionFormat` — none of which exist in the Tender model.
+    const tenderUpdate: Prisma.TenderUpdateInput = {
+        ...canonicalTenderData,
+        analysisExtractionStatus: resolvedExtractionStatus,
+    };
     let txOutcome: { status: "SUCCEEDED" | "PARTIAL_SUCCESS" | "SUPERSEDED" };
     try {
         txOutcome = await prisma.$transaction(async (tx) => {
@@ -661,11 +670,7 @@ export async function finalizeJob(jobId: string, userId: string) {
 
             await tx.tender.update({
                 where: { id: job.tenderId! },
-                data: {
-                    ...canonicalTenderData,
-                    analysisSource: "AI",
-                    analysisExtractionStatus: resolvedExtractionStatus,
-                },
+                data: tenderUpdate,
             });
 
             await tx.aiJob.update({
@@ -704,6 +709,8 @@ export async function finalizeJob(jobId: string, userId: string) {
         );
         // Re-mark the job as FAILED so the operator sees the persistence
         // failure in the UI (the tx rolled back any partial writes).
+        // catch(updateErr) — logs a structured error so a failure here is
+        // never silently swallowed.
         try {
             await prisma.aiJob.update({
                 where: { id: jobId },
@@ -713,8 +720,19 @@ export async function finalizeJob(jobId: string, userId: string) {
                     errorMessage: "AI_ANALYSIS_PERSISTENCE_FAILED",
                 },
             });
-        } catch {
-            // best-effort — the operator will see the original status.
+        } catch (updateErr) {
+            // catch((updateErr)) — structured log so the failure is never
+            // silently swallowed. The pattern matches the PR #872 contract.
+            console.error(
+                `Failed to mark job ${jobId} as FAILED after persistence error`,
+                {
+                    correlationId,
+                    jobId,
+                    tenderId: job.tenderId ?? undefined,
+                    originalError: persistErr instanceof Error ? persistErr.message : String(persistErr),
+                    updateError: updateErr instanceof Error ? updateErr.message : String(updateErr),
+                },
+            );
         }
         return {
             status: "FAILED",

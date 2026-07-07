@@ -75,10 +75,15 @@ export function cutAtNextFieldLabel(val: string): string {
   return m ? val.slice(0, m.index).trim() : val.trim();
 }
 
-const LABEL_WORDS = "(?:Number|Reference|Ref|No|ID|Code)";
+// LABEL_REJECT — words that are field LABELS, not reference values. Used as
+// a negative-lookahead in REFERENCE_PATTERNS so the extractor never returns
+// "Number" / "Reference" / "Ref" / "No" / "ID" / "Code" as the captured
+// reference value (the prior bug: "Tender Reference Number: ABC-2026-001"
+// matched "Number" as the value because the regex captured the label).
+const LABEL_REJECT = "(?:Number|Reference|Ref|No|ID|Code)";
 const REFERENCE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
-  { rx: new RegExp("\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID)\\s*[:#-]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
-  { rx: new RegExp("\\bReference\\s+(?:No\\.?|Number|#)\\s*[:.]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
+  { rx: new RegExp("\\b(?:Tender|RFP|RFQ|ITB|EOI|Procurement)\\s+(?:Reference|Ref\\.|ID)\\s*[:#-]?\\s*(?!" + LABEL_REJECT + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
+  { rx: new RegExp("\\bReference\\s+(?:No\\.?|Number|#)\\s*[:.]?\\s*(?!" + LABEL_REJECT + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
 ];
 
 export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing<string> {
