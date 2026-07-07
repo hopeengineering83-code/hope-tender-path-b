@@ -166,7 +166,7 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
     if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
       reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package file.`);
     }
-    if (opts.requireFileContent && !doc.fileContent && !doc.storagePath && doc.hasInlineFileContent !== true) reasons.push("fileContent is missing");
+    if (opts.requireFileContent && !doc.fileContent && !doc.storagePath) reasons.push("fileContent is missing");
     for (const issue of documentHygieneIssues(doc.fileContent, doc)) reasons.push(issue);
 
     if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName: documentFileName(doc), reasons });
