@@ -137,7 +137,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const updates: Record<string, unknown> = {};
   const contactDetails: Record<string, { page: number | null, quote: string | null, fileId?: string | null }> = JSON.parse(tender.contactDetailsSourceJson || "{}");
 
-  const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText, totalPages: f.totalPages ?? null })) };
+  // Build the extractor input — MUST include file.id so extractors return
+  // sourceFileId (the durable evidence identity). Two files with the same
+  // filename produce different sourceFileIds, so duplicate filenames can
+  // never cross-ground evidence.
+  const filesInput = { files: tender.files.map((f) => ({ id: f.id, fileName: f.fileName, extractedText: f.extractedText, totalPages: f.totalPages ?? null })) };
 
   // ── evaluationMethodology (Specialized AI/Deterministic extractor, NON-critical) ───
   // evaluationMethodology is not in CRITICAL_SOURCE_GROUNDED_FIELDS — its
@@ -200,12 +204,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let provenPage: number | null = null;
     let evidenceCols: { fileId: string; page: string; quote: string } | null = null;
     if (CRITICAL_SOURCE_GROUNDED_FIELDS.has(field)) {
-      // Resolve durableFileId from extraction.sourceFile. The extractor
-      // returns sourceFile as a FILENAME (e.g. "tender.pdf"), not a file
-      // ID. We must map it to the active file's ID by matching the fileName.
-      durableFileId = extraction.sourceFile;
-      const matchedFile = activeFiles.find((f) => f.fileName === durableFileId);
-      durableFileId = matchedFile?.id ?? null;
+      // Resolve durableFileId from extraction.sourceFileId — the durable
+      // evidence identity (a TenderFile.id UUID). The extractor returns the
+      // file ID it pulled the quote from. We verify the file is still ACTIVE.
+      // No filename-to-ID lookup — sourceFileId is the identity.
+      durableFileId = (extraction as ExtractedField<any>).sourceFileId ?? null;
       evidenceCols = EVIDENCE_COLUMNS[field] ?? null;
 
       // UNRESOLVED case 1: source file is missing or not an active tender file
@@ -228,8 +231,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         continue;
       }
 
-      // UNRESOLVED case 3: quote is not contained in the referenced active file
-      const verified = verifyQuoteInActiveFiles(extraction.sourceQuote, activeFiles);
+      // UNRESOLVED case 3: quote is not contained in the EXACT active file
+      // identified by durableFileId. Verify ONLY against that one file —
+      // NOT across all active files (the prior bug: a quote found in a
+      // different file with the same name could satisfy the check).
+      const identifiedFile = activeFiles.find((f) => f.id === durableFileId);
+      const verified = identifiedFile
+        ? verifyQuoteInActiveFiles(extraction.sourceQuote, [identifiedFile])
+        : { verified: false, sourceFileId: null };
       if (!verified.verified) {
         results[field] = {
           status: "UNRESOLVED",
