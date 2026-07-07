@@ -73,6 +73,78 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-07 UTC — ChatGPT
 
+- **Mode:** review follow-up on non-retryable AI Analyze failures
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** tightened Next Required Action resume lookup so checkpointed FAILED AI_ANALYZE jobs are excluded when their retry state is explicitly non-retryable, while preserving PARTIAL_SUCCESS and retryable/no-retry-state checkpointed failures for resume guidance.
+- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
+- **Mode:** review follow-up on stale AI Analyze resume jobs
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** aligned the Next Required Action resume lookup with the durable AI Analyze re-arm policy by requiring the resumable job's `analysisInputHash` to match the current tender/company analysis content hash, preventing stale checkpointed jobs from offering Resume after tender or vault content changes.
+- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
+- **Mode:** review follow-up on AI Analyze resume lookup query
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** removed the arbitrary recent-candidate window from the Next Required Action resume lookup; the panel now asks the database directly for any resumable AI_ANALYZE job (`PARTIAL_SUCCESS` or `FAILED` with a SUCCEEDED chunk) and still double-checks the helper before showing resume guidance.
+- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
+- **Mode:** review follow-up on AI Analyze resume candidate masking
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** fixed the resume-guidance edge case where the newest non-checkpointed FAILED AI Analyze job could hide an older resumable PARTIAL_SUCCESS or checkpointed FAILED job; the panel now evaluates recent resume candidates and resumes if any candidate has durable progress.
+- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
+- **Mode:** review follow-up on AI Analyze resume guidance
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** refined the prior Next Required Action panel change so FAILED AI Analyze jobs only show Resume when they have at least one SUCCEEDED durable chunk checkpoint; added a pure helper and behavioral regression coverage for partial-success vs failed-with/without-checkpoint cases.
+- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
+- **Mode:** app review and resumable AI Analyze next-action fix
+- **Branch / PR:** `work` / PR pending
+- **Scope:** reviewed local branch/worktree state, open-PR/CI availability, app build/test health, and fixed the tender Next Required Action panel so FAILED durable AI Analyze jobs with saved checkpoints are treated the same as PARTIAL_SUCCESS jobs for resume guidance instead of sending users to a cold restart.
+- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed; `npm run audit:release-integrity` passed; `npm test` failed only on integration suites that require `RUN_DB_INTEGRATION=true` (`ai-promotion-evidence-persistence`, `build-plan-db-integration`, `build-plan-route-integration`, `database-safety-integration`, `metadata-evidence-proof`, `re-extract-page-provenance-route`, `release-blockers-integration`, `unified-snapshot-integration`).
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** broad app review was limited to local static/build/test checks and source inspection; database-backed integration suites were not run because the required isolated DB env flag was absent.
+- **Next action:** run GitHub/Vercel CI and the DB integration suites in an isolated database environment.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
 - **Mode:** restored inline visibility safety follow-up
 - **Branch / PR:** `codex/restored-inline-safety-gaps` / PR pending
 - **Scope:** fixed remaining restored-inline safety gaps by keeping metadata-only `hasInlineFileContent` valid for visibility/state surfaces while preventing it from satisfying strict downloadable/export byte-content checks; restored `generatedDocumentHasContent` to mean actual `fileContent` or non-empty `storagePath` only.
