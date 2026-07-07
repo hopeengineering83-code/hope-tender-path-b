@@ -201,9 +201,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let evidenceCols: { fileId: string; page: string; quote: string } | null = null;
     if (CRITICAL_SOURCE_GROUNDED_FIELDS.has(field)) {
       // Resolve durableFileId from extraction.sourceFile. The extractor
-      // returns the file ID it pulled the quote from; we verify the file
-      // is still ACTIVE before accepting it.
+      // returns sourceFile as a FILENAME (e.g. "tender.pdf"), not a file
+      // ID. We must map it to the active file's ID by matching the fileName.
       durableFileId = extraction.sourceFile;
+      const matchedFile = activeFiles.find((f) => f.fileName === durableFileId);
+      durableFileId = matchedFile?.id ?? null;
       evidenceCols = EVIDENCE_COLUMNS[field] ?? null;
 
       // UNRESOLVED case 1: source file is missing or not an active tender file

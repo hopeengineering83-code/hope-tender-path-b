@@ -43,6 +43,11 @@ function getSourcePage(text: string, index: number, totalPages?: number | null):
   while ((match = markerRegex.exec(precedingText)) !== null) {
     lastPage = parseInt(match[1], 10);
   }
+  // If a marker page was found but exceeds totalPages, the marker is
+  // unreliable — return null (don't trust an out-of-bounds page claim).
+  if (lastPage !== null && totalPages !== null && totalPages !== undefined && lastPage > totalPages) {
+    return null;
+  }
   // If no markers found AND the file has exactly 1 page, the content is
   // implicitly on page 1. A multi-page file without markers returns null
   // (we can't determine which page the content is on).
