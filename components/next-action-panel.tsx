@@ -9,6 +9,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+import { resolveCurrentAnalysisBinding } from "../lib/engine/generation-readiness-gate";
 import { safeParseJsonArray } from "../lib/safe-json";
 import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 
@@ -139,13 +140,17 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
+  const currentAnalysisBinding = await resolveCurrentAnalysisBinding(prisma, tenderId, userId)
+    .catch(() => ({ jobId: null, contentHash: null }));
+
   const resumableAnalysisJob = await prisma.aiJob.findFirst({
-    // No arbitrary recency window: any matching durable job can be re-armed by
-    // createAnalysisJob. FAILED jobs qualify only when a succeeded chunk exists.
+    // Align with createAnalysisJob: only the current content-hash job can be
+    // re-armed. FAILED jobs qualify only when a succeeded chunk exists.
     where: {
       tenderId,
       userId,
       jobType: "AI_ANALYZE",
+      analysisInputHash: currentAnalysisBinding.contentHash ?? "__NO_CURRENT_ANALYSIS_HASH__",
       OR: [
         { status: "PARTIAL_SUCCESS" },
         { status: "FAILED", analyzeChunks: { some: { status: "SUCCEEDED" } } },

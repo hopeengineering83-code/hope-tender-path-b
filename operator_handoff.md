@@ -73,6 +73,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-07 UTC — ChatGPT
 
+- **Mode:** review follow-up on stale AI Analyze resume jobs
+- **Branch / PR:** `work` / PR pending update
+- **Scope:** aligned the Next Required Action resume lookup with the durable AI Analyze re-arm policy by requiring the resumable job's `analysisInputHash` to match the current tender/company analysis content hash, preventing stale checkpointed jobs from offering Resume after tender or vault content changes.
+- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
+- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
+- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
+- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
+- **Next action:** run hosted CI and DB integration suites before merge.
+- **Merge status:** not reviewed
+
+### 2026-07-07 UTC — ChatGPT
+
 - **Mode:** review follow-up on AI Analyze resume lookup query
 - **Branch / PR:** `work` / PR pending update
 - **Scope:** removed the arbitrary recent-candidate window from the Next Required Action resume lookup; the panel now asks the database directly for any resumable AI_ANALYZE job (`PARTIAL_SUCCESS` or `FAILED` with a SUCCEEDED chunk) and still double-checks the helper before showing resume guidance.

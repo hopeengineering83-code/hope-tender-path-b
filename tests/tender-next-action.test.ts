@@ -104,6 +104,8 @@ describe("visible wording contract", () => {
 
   it("next action panel treats failed checkpointed analysis jobs as resumable", () => {
     const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
+    assert.match(source, /resolveCurrentAnalysisBinding/);
+    assert.match(source, /analysisInputHash:\s*currentAnalysisBinding\.contentHash/);
     assert.match(source, /OR:\s*\[/);
     assert.match(source, /status:\s*"PARTIAL_SUCCESS"/);
     assert.match(source, /status:\s*"FAILED",\s*analyzeChunks:\s*\{\s*some:\s*\{\s*status:\s*"SUCCEEDED"/);
