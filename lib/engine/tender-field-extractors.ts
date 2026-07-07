@@ -46,15 +46,31 @@ function getSourcePage(text: string, index: number): number | null {
   return lastPage;
 }
 
+// Trims a captured value at the first *secondary* field label, so a flattened
+// single-line page ("Org Name Reference: X Donor: Y ...") does not run past the
+// organisation name into the following labelled fields. Labels are matched only
+// when colon/dash-terminated, so they never cut inside a legitimate org name.
+// Multi-word labels (e.g. "Funded By", "Implementing Partner") and the #793
+// funder/recipient family must all be recognised — see pdfjs-metadata-safety and
+// extract-client-name-flattened regression tests.
 export function cutAtNextFieldLabel(val: string): string {
   const labels = [
-    "deadline", "closing", "submission", "reference", "ref", "procurement",
-    "budget", "currency", "validity", "bond", "copies", "client",
-    "contact", "email", "phone", "address", "country", "city", "website",
-    "portal", "donor", "implementing", "owner", "representative", "officer",
-    "title", "subject", "channel"
+    "submission deadline", "deadline", "closing date", "closing", "submission",
+    "reference", "ref", "procurement", "project",
+    "budget", "currency", "validity", "bond", "copies",
+    "client", "contact", "email", "e-mail", "phone", "address", "country", "city", "website", "portal",
+    "donor agency", "donor", "funded by", "funder", "financier",
+    "implementing partner", "implementing agency", "implementing",
+    "recipient", "grantee", "consultant", "beneficiary", "employer",
+    "name of procuring entity", "procuring entity",
+    "owner", "representative", "officer", "title", "subject", "channel",
   ];
-  const rx = new RegExp(`\\s+(?:${labels.join("|")})\\s*[:\\-]`, "i");
+  // Convert intra-label spaces to \s+ so "Funded By" / "Implementing Partner"
+  // match across arbitrary whitespace; escape hyphens for the character-class-free
+  // alternation. Ordering is irrelevant to the cut position because every
+  // alternative begins at the same leading-whitespace boundary.
+  const alt = labels.map((l) => l.replace(/\s+/g, "\\s+").replace(/-/g, "\\-")).join("|");
+  const rx = new RegExp(`\\s+(?:${alt})\\s*[:\\-]`, "i");
   const m = rx.exec(val);
   return m ? val.slice(0, m.index).trim() : val.trim();
 }
@@ -217,8 +233,16 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
   const cands: ExtractedField<string>[] = [];
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
-    const m = /(?:client|procuring\s+entity|contracting\s+authority|employer|procuring\s+entity)\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    // Only genuine procuring-entity labels seed a client name. "Employer",
+    // "Beneficiary", "Donor Agency", "Implementing Partner" etc. are non-client
+    // roles (Fix B / #793) and must NOT be accepted here. Cut the captured value
+    // at the next field label so a flattened one-line page does not absorb the
+    // following labelled fields.
+    const m = /(?:client|procuring\s+entity|contracting\s+authority)\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
+    if (m) {
+      const value = cutAtNextFieldLabel(m[1]).trim();
+      if (value.length >= 3) cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: "HIGH" });
+    }
   }
   return pickBest(cands);
 }
