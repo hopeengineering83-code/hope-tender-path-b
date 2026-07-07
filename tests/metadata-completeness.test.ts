@@ -32,9 +32,10 @@ describe("metadata completeness — placeholder blocking", () => {
       ...PASSING_INPUT,
       clientName: "N/A",
     });
-    assert.ok(
+    assert.equal(
       result.blockingForGeneration,
-      "N/A clientName should block generation",
+      false,
+      "N/A clientName should NOT block draft generation",
     );
     assert.ok(
       result.invalidFields.some((f) => f.field === "clientName"),
@@ -175,8 +176,9 @@ describe("metadata completeness — NOT_APPLICABLE override skips placeholder sc
       !result.invalidFields.some((f) => f.field === "donorAgency"),
       "NOT_APPLICABLE donorAgency must not appear in invalidFields even when value is a placeholder",
     );
-    assert.ok(
+    assert.equal(
       result.blockingForGeneration,
+      false,
       "NOT_APPLICABLE override on donorAgency placeholder must not block generation",
     );
   });

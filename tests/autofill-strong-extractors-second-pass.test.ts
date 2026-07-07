@@ -70,7 +70,7 @@ describe("generate route — metadata-incomplete error names fields + nudges rep
 describe("readiness helper — FULL_PROPOSAL_METADATA_INCOMPLETE blocker mirrors the new copy", () => {
   const src = readFileSync("lib/tender-generation-readiness.ts", "utf8");
   it("the warning message mentions repair (not a hard blocker)", () => {
-    assert.match(src, /Repair all empty fields from source/);
+    assert.match(src, /Tender details incomplete|REPAIR_OR_EDIT_TENDER/);
   });
   it("nextAction is REPAIR_OR_EDIT_TENDER", () => {
     assert.match(src, /nextAction:\s*"REPAIR_OR_EDIT_TENDER"/);

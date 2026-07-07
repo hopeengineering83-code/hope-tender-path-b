@@ -298,9 +298,12 @@ describe("Generate Docs route — extraction gate wiring (source assertions)", (
   });
 
   it("does NOT block draft when metadata is contaminated (guards against corrupt-derived metadata)", () => {
-    assert.ok(
-      src.includes("METADATA_CONTAMINATED"),
-      "Generate Docs route must block when metadata is contaminated",
+    // Contamination is no longer a hard block for draft work.
+    // The route must NOT return a hard 422 on METADATA_CONTAMINATED.
+    assert.doesNotMatch(
+      src,
+      /errorCode.*METADATA_CONTAMINATED/,
+      "Generate Docs route must NOT hard-block when metadata is contaminated",
     );
   });
 

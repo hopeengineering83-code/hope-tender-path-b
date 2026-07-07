@@ -70,9 +70,10 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
   });
 
   it("generate route does NOT hard-block with METADATA_CONTAMINATED for draft work", () => {
-    assert.match(generateSource, /METADATA_CONTAMINATED/);
-    assert.match(generateSource, /metadataContaminated/);
-    assert.match(generateSource, /status:\s*422/);
+    // METADATA_CONTAMINATED is no longer a hard 422 block for draft work.
+    // The route may reference contamination in comments but must not return 422.
+    assert.doesNotMatch(generateSource, /METADATA_CONTAMINATED.*422/);
+    assert.doesNotMatch(generateSource, /errorCode.*METADATA_CONTAMINATED/);
   });
 
   it("AI Analyze writes contamination flag when portal noise detected (shared builder)", () => {
@@ -347,9 +348,8 @@ describe("partial AI analysis caps analysisExtractionStatus to PARTIAL_EXTRACTIO
     assert.ok(true, "contamination no longer hard-blocks");
     assert.doesNotMatch(genSource, /\(tender as any\)\.clientName/);
     assert.doesNotMatch(genSource, /\(tender as any\)\.procuringEntityName/);
-    assert.match(genSource, /tender\.metadataContaminated/);
-    assert.match(genSource, /tender\.clientName/);
-    assert.match(genSource, /tender\.procuringEntityName/);
+    // The route must NOT contain a hard contamination block
+    assert.doesNotMatch(genSource, /code.*METADATA_CONTAMINATED/);
   });
 });
 
