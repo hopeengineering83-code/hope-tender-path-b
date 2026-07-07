@@ -42,14 +42,14 @@ describe("D — readiness helper mirrors the POST /generate metadata gate", () =
     }
   });
 
-  it("pushes a FULL_PROPOSAL_METADATA_INCOMPLETE blocker when blockingForGeneration", () => {
-    assert.match(source, /if \(metadataReport\.blockingForGeneration\)/);
+  it("pushes a FULL_PROPOSAL_METADATA_INCOMPLETE warning when blockingForExport", () => {
+    assert.match(source, /if \(metadataReport\.blockingForExport\)/);
     assert.match(source, /code: "FULL_PROPOSAL_METADATA_INCOMPLETE"/);
-    assert.match(source, /nextAction: "EDIT_TENDER"/);
+    assert.match(source, /nextAction: "REPAIR_OR_EDIT_TENDER"/);
   });
 
-  it("blocker reason names the actual missing field(s) so the panel can render them", () => {
-    assert.match(source, /missingCritical\.slice\(0,\s*4\)\.map/);
+  it("warning message is compact and non-blocking", () => {
+    assert.match(source, /Tender details incomplete/);
   });
 });
 

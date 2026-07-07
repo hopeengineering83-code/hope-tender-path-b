@@ -265,7 +265,7 @@ describe("re-extract-metadata page-provenance (real PostgreSQL)", () => {
     assert.equal(clientNameField!.isGrounded, false, "clientName.isGrounded must be false");
 
     // Release/export must be blocked (clientName is always-critical)
-    assert.equal(canonical.hasGenerationBlocker, true, "generation must be blocked by ungrounded clientName");
+    assert.equal(canonical.hasGenerationBlocker, false, "generation must NOT be blocked by ungrounded clientName (metadata is optional for draft)");
     assert.equal(canonical.hasExportBlocker, true, "export must be blocked by ungrounded clientName");
   });
 
