@@ -81,6 +81,11 @@ const REFERENCE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> =
   { rx: new RegExp("\\bReference\\s+(?:No\\.?|Number|#)\\s*[:.]?\\s*(?!" + LABEL_WORDS + "\\b)([A-Z0-9][A-Z0-9./_\\-]{2,40})", "i"), confidence: "HIGH" },
 ];
 
+// Pure label words that must never be returned as a reference *value* — a
+// capture that is only "Number"/"Reference"/"Tender" etc. means the pattern ran
+// onto the label instead of the code.
+const LABEL_REJECT = /^(number|reference|ref|no|id|code|tender|rfp|rfq|itb|eoi|procurement)$/i;
+
 export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing<string> {
   const cands: ExtractedField<string>[] = [];
   for (const file of input.files ?? []) {
@@ -89,7 +94,9 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
     for (const p of REFERENCE_PATTERNS) {
       const m = p.rx.exec(text);
       if (!m) continue;
-      cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: p.confidence });
+      const value = m[1].trim();
+      if (LABEL_REJECT.test(value)) continue; // reject pure-label captures
+      cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index), confidence: p.confidence });
       break;
     }
   }
