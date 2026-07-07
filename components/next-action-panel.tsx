@@ -10,7 +10,7 @@ import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
-import { hasAnyResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
+import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 
 const STEPS = [
   "Upload Tender",
@@ -139,18 +139,25 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  const recentAnalysisResumeCandidates = await prisma.aiJob.findMany({
-    // FAILED jobs are only resumable when at least one durable chunk checkpoint
-    // succeeded; a hard failure before checkpointing should still start fresh.
-    where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
+  const resumableAnalysisJob = await prisma.aiJob.findFirst({
+    // No arbitrary recency window: any matching durable job can be re-armed by
+    // createAnalysisJob. FAILED jobs qualify only when a succeeded chunk exists.
+    where: {
+      tenderId,
+      userId,
+      jobType: "AI_ANALYZE",
+      OR: [
+        { status: "PARTIAL_SUCCESS" },
+        { status: "FAILED", analyzeChunks: { some: { status: "SUCCEEDED" } } },
+      ],
+    },
     orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }, { createdAt: "desc" }],
-    take: 5,
     select: {
       id: true,
       status: true,
       _count: { select: { analyzeChunks: { where: { status: "SUCCEEDED" } } } },
     },
-  }).catch(() => []);
+  }).catch(() => null);
 
   const hasFiles = tender.files.length > 0;
   const fileQuality = tender.files.map((f) => {
@@ -225,12 +232,9 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       pageCoveragePercent: minPageCoveragePercent,
       averageScore: avgScore,
     },
-    resumableAnalysisAvailable: hasAnyResumableAiAnalyzeCheckpoint(
-      recentAnalysisResumeCandidates.map((job) => ({
-        status: job.status,
-        succeededChunkCount: job._count.analyzeChunks,
-      })),
-    ),
+    resumableAnalysisAvailable: hasResumableAiAnalyzeCheckpoint(resumableAnalysisJob
+      ? { status: resumableAnalysisJob.status, succeededChunkCount: resumableAnalysisJob._count.analyzeChunks }
+      : null),
     aiAnalysis: {
       exists: aiAnalyzed,
       trusted: aiAnalyzed && tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED",

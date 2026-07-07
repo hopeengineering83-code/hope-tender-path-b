@@ -35,10 +35,6 @@ export function hasResumableAiAnalyzeCheckpoint(job: ResumableAiAnalyzeJobCandid
   return job.status === "FAILED" && (job.succeededChunkCount ?? 0) > 0;
 }
 
-export function hasAnyResumableAiAnalyzeCheckpoint(jobs: Array<ResumableAiAnalyzeJobCandidate | null | undefined>): boolean {
-  return jobs.some((job) => hasResumableAiAnalyzeCheckpoint(job));
-}
-
 export type TenderNextActionInput = {
   hasFiles: boolean;
   extraction: {
