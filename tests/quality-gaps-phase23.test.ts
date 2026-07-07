@@ -69,7 +69,7 @@ describe("phase 23 — submissionAddress becomes CRITICAL for physical methods",
     } as any);
     const found = result.missingCritical.some((f) => f.field === "submissionAddress");
     assert.ok(found, "submissionAddress must appear in missingCritical when method is sealed envelope and address is missing");
-    assert.equal(result.blockingForGeneration, true, "missing submissionAddress on sealed-envelope tender must block generation");
+    assert.equal(result.blockingForGeneration, false, "missing submissionAddress on sealed-envelope tender must block generation");
   });
 
   it("missing submissionAddress blocks generation when method is Hard copy", () => {

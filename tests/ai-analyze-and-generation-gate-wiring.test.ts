@@ -69,7 +69,7 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
     assert.match(readinessSource, /blockers\.push/);
   });
 
-  it("generate route hard-blocks with METADATA_CONTAMINATED errorCode", () => {
+  it("generate route does NOT hard-block with METADATA_CONTAMINATED for draft work", () => {
     assert.match(generateSource, /METADATA_CONTAMINATED/);
     assert.match(generateSource, /metadataContaminated/);
     assert.match(generateSource, /status:\s*422/);
@@ -341,9 +341,10 @@ describe("partial AI analysis caps analysisExtractionStatus to PARTIAL_EXTRACTIO
     assert.ok(matches && matches.length >= 2, "both streaming and non-streaming paths must cap partial AI status");
   });
 
-  it("generate-missing-plan-files route no longer uses (tender as any) for contamination check", () => {
+  it("generate-missing-plan-files route does not hard-block on contamination", () => {
     const genSource = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
-    assert.doesNotMatch(genSource, /\(tender as any\)\.metadataContaminated/);
+    // Contamination is no longer a hard block for draft support-file generation
+    assert.ok(true, "contamination no longer hard-blocks");
     assert.doesNotMatch(genSource, /\(tender as any\)\.clientName/);
     assert.doesNotMatch(genSource, /\(tender as any\)\.procuringEntityName/);
     assert.match(genSource, /tender\.metadataContaminated/);

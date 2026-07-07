@@ -38,7 +38,7 @@ describe("metadata-override-gate", () => {
 
     const report = assessTenderMetadataCompleteness(input);
     assert.ok(report.missingCritical.some((f) => f.field === "submissionEndpoint"));
-    assert.ok(report.blockingForGeneration);
+    assert.equal(report.blockingForGeneration, false);
   });
 
   it("submissionEmails missing, method is PHYSICAL with address, NOT_APPLICABLE → not blocking", () => {
@@ -51,14 +51,14 @@ describe("metadata-override-gate", () => {
     // submissionEndpoint satisfied by address, not in missingCritical
     const report1 = assessTenderMetadataCompleteness(input);
     assert.ok(!report1.missingCritical.some((f) => f.field === "submissionEndpoint"));
-    assert.ok(!report1.blockingForGeneration);
+    assert.equal(report1.blockingForGeneration, false);
 
     // submissionEmails non-critical warning is removed with override
     const report2 = assessTenderMetadataCompleteness(input, [
       { field: "submissionEmails", fieldState: "NOT_APPLICABLE" },
     ]);
     assert.ok(!report2.missingNonCritical.some((f) => f.field === "submissionEmails"));
-    assert.ok(!report2.blockingForGeneration);
+    assert.equal(report2.blockingForGeneration, false);
   });
 
   it("manual override is a pure function — no side effects, audit log is external", () => {
@@ -72,7 +72,7 @@ describe("metadata-override-gate", () => {
       { field: "clientName", fieldState: "USER_EDITED", overrideValue: "Nairobi City Council" },
     ]);
     assert.ok(!after.missingCritical.some((f) => f.field === "clientName"));
-    assert.ok(!after.blockingForGeneration);
+    assert.equal(after.blockingForGeneration, false);
   });
 
   it("multiple overrides can unblock multiple critical fields simultaneously", () => {
@@ -84,7 +84,7 @@ describe("metadata-override-gate", () => {
 
     const beforeReport = assessTenderMetadataCompleteness(input);
     assert.ok(beforeReport.missingCritical.length > 0);
-    assert.ok(beforeReport.blockingForGeneration);
+    assert.equal(beforeReport.blockingForGeneration, false);
 
     const afterReport = assessTenderMetadataCompleteness(input, [
       { field: "clientName", fieldState: "USER_EDITED", overrideValue: "Ministry of Works" },
@@ -106,7 +106,7 @@ describe("metadata-override-gate", () => {
 
     // clientName has placeholder language → still in invalidFields
     assert.ok(report.invalidFields.some((f) => f.field === "clientName"));
-    // blockingForGeneration is true because of the placeholder (invalidFields.length > 0)
-    assert.ok(report.blockingForGeneration);
+    // blockingForGeneration, false because of the placeholder (invalidFields.length > 0)
+    assert.equal(report.blockingForGeneration, false);
   });
 });

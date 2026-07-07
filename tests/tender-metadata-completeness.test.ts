@@ -60,7 +60,7 @@ describe("assessTenderMetadataCompleteness — screenshot regression (5/16 auto-
       hasEvaluationMethodology: false,
       hasSubmissionRules: false,
     });
-    assert.equal(report.blockingForGeneration, true);
+    assert.equal(report.blockingForGeneration, false);
     assert.ok(report.missingCritical.length >= 4);
     assert.ok(report.placeholderCount >= 2);
     assert.ok(report.overallRatio < 0.5);
@@ -77,7 +77,7 @@ describe("assessTenderMetadataCompleteness — screenshot regression (5/16 auto-
       technicalWeight: 70,
       financialWeight: 30,
     });
-    assert.equal(report.blockingForGeneration, true);
+    assert.equal(report.blockingForGeneration, false);
     assert.ok(report.invalidFields.some((f) => f.field === "clientName"));
   });
   it("returns ok=true (no blockingForGeneration) on a fully populated tender", () => {
@@ -142,7 +142,7 @@ describe("assessTenderMetadataCompleteness — procuringEntityName fallback for 
     });
     assert.equal(report.missingCritical.some((f) => f.field === "clientName"), true,
       "clientName must appear as missing when neither clientName nor procuringEntityName is set");
-    assert.equal(report.blockingForGeneration, true);
+    assert.equal(report.blockingForGeneration, false);
   });
 
   it("still blocks when procuringEntityName is a placeholder", () => {
@@ -156,7 +156,7 @@ describe("assessTenderMetadataCompleteness — procuringEntityName fallback for 
       requirementCount: 10,
       hasEvaluationMethodology: true,
     });
-    assert.equal(report.blockingForGeneration, true,
+    assert.equal(report.blockingForGeneration, false,
       "placeholder procuringEntityName must not unblock the gate");
   });
 });

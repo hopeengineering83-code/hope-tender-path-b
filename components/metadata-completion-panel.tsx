@@ -62,8 +62,8 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   });
 
   // If no fields need action AND no generation blocker, show success
-  // But if hasGenerationBlocker is true, ALWAYS show the panel with blockers
-  if (fieldsNeedingAction.length === 0 && !metadata.hasGenerationBlocker) {
+  // But if hasExportBlocker is true, ALWAYS show the panel with blockers
+  if (fieldsNeedingAction.length === 0 && !metadata.hasExportBlocker) {
     return (
       <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
         All critical metadata is present and valid. No additional resolution required.
@@ -87,7 +87,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
-      {metadata.hasGenerationBlocker && (
+      {metadata.hasExportBlocker && (
         <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           Generation is blocked by missing or invalid critical metadata.
         </p>

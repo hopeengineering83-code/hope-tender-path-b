@@ -324,7 +324,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
         </button>
       </div>
 
-      {metadata.hasGenerationBlocker && (
+      {metadata.hasExportBlocker && (
         <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-700">
           Critical fields are blocked. Resolve these before proceeding.
         </div>

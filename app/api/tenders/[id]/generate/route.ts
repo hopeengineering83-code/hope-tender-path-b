@@ -314,21 +314,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     diagnosticId: `placeholder-client-${id}`,
   }, { status: 422 });
 
-  // ── Contaminated metadata hard block ─────────────────────────────────────
-  // metadataContaminated is set by detectMetadataContamination() during AI
-  // Analyze when portal navigation text, status banners, or unrelated tender
-  // alerts were detected inside the extracted client/procuring entity name.
-  // Generating a proposal with a contaminated client name produces cover pages,
-  // addressing blocks, and reference letters with garbage in the "To:" field.
-  if (tender.metadataContaminated) {
-    return NextResponse.json({
-      errorCode: "METADATA_CONTAMINATED",
-      error: "Generation blocked: client/procuring entity metadata is contaminated with portal navigation text, status banners, or unrelated tender alerts. Open the tender, correct the Client Name field, and re-run AI Analyze before generating documents.",
-      blockers: ["metadataContaminated: client name was extracted from portal noise — requires manual correction before generation is allowed"],
-      nextAction: "EDIT_TENDER_METADATA",
-      diagnosticId: `metadata-contaminated-${id}`,
-    }, { status: 422 });
-  }
+  // ── Contaminated metadata: NOT a hard block for draft work ─────────────
+  // Contaminated metadata (portal noise in client name) is treated as
+  // unavailable — it is omitted from generated output and surfaced as a
+  // warning. Draft generation proceeds normally. Only Final Submission
+  // Check blocks on contaminated metadata.
+  // (Previously: hard 422 block removed per metadata-optional policy)
 
   // ── Generation gates check ──────────────────────────────────────────────
   // Check: extraction quality, client details, requirements, submission plan.
@@ -778,21 +769,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // ── Standalone contamination gate ─────────────────────────────────────────
-  // metadataReport.blockingForGeneration only fires when required fields are
-  // missing or placeholder-filled. A contaminated client name can pass that
-  // check (the field is non-empty and not a placeholder) yet still be wrong.
-  // Block unconditionally when contamination is flagged, regardless of whether
-  // other metadata is present.
-  if (tender.metadataContaminated) {
-    return NextResponse.json({
-      errorCode: "METADATA_CONTAMINATED",
-      error: "Generation blocked: client/procuring entity metadata is flagged as contaminated. The extracted client name may be polluted by unrelated tender portal text or navigation content. Correct the client name before generating documents.",
-      blockers: ["Client/procuring entity name is contaminated — review and correct before generating."],
-      nextAction: "REPAIR_OR_EDIT_TENDER",
-      diagnosticId: `metadata-contaminated-${id}`,
-      metadataContaminated: true,
-    }, { status: 422 });
-  }
+  // Contaminated metadata is NOT a hard block for draft generation.
+  // The contaminated client name is omitted from generated output (replaced
+  // with neutral framing like "To the Procurement Committee"). Only Final
+  // Submission Check blocks on contaminated metadata.
+  // (Previously: hard 422 block removed per metadata-optional policy)
 
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
   // If the last engine run fell back to regex analysis because AI providers

@@ -141,7 +141,7 @@ describe("canonical resolver — behavioral gate decisions", () => {
   it("blocks requiredDocuments when there are no extracted requirements", () => {
     const r = resolve(cleanTender(), { hasExtractedRequirements: false });
     assert.ok(field(r, "requiredDocuments").blockerReason !== null);
-    assert.equal(r.hasGenerationBlocker, true);
+    assert.equal(r.hasGenerationBlocker, false);
   });
 
   it("blocks FINAL export when clientName is empty even if procuringEntityName is set if ungrounded (draft proceeds)", () => {

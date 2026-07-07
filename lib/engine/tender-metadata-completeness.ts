@@ -525,7 +525,7 @@ export function assessTenderMetadataCompleteness(
     missingNonCritical,
     notApplicableFields,
     invalidFields,
-    blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0 || input.metadataContaminated === true,
+    blockingForGeneration: false, // Metadata never blocks draft work
     blockingForExport: missingCritical.length > 0 || invalidFields.length > 0 || input.metadataContaminated === true,
     placeholderCount,
     deadlinePassed,
