@@ -7,7 +7,7 @@ type Settings = {
   allowBrandingDefault: boolean;
   allowSignatureDefault: boolean;
   allowStampDefault: boolean;
-  exportFormat: string;
+  exportFormat: string; // document format: DOCX or PDF (NOT ZIP — ZIP is a package-download mode)
   pageNumbering: boolean;
   includeTableOfContents: boolean;
   language: string;
@@ -48,14 +48,29 @@ export default function SettingsPage() {
     setSaved(false);
   }
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   async function handleSave(e: React.FormEvent) {
-    e.preventDefault(); setSaving(true);
+    e.preventDefault(); setSaving(true); setSaveError(null);
     try {
-      await Promise.all([
+      // Save settings + company name. Show success only when BOTH succeed.
+      const [settingsRes, companyRes] = await Promise.all([
         fetch("/api/settings", { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(s) }),
         fetch("/api/company", { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ name: companyName }) }),
       ]);
+      if (!settingsRes.ok) {
+        const err = await settingsRes.json().catch(() => ({})) as { error?: string; fieldErrors?: Array<{field:string;message:string}> };
+        const msg = err.fieldErrors?.length ? err.fieldErrors.map(fe => `${fe.field}: ${fe.message}`).join("; ") : (err.error || `HTTP ${settingsRes.status}`);
+        setSaveError(`Settings: ${msg}`);
+        return;
+      }
+      if (!companyRes.ok) {
+        setSaveError(`Company: HTTP ${companyRes.status}`);
+        return;
+      }
       setSaved(true); setTimeout(() => setSaved(false), 3000);
+    } catch {
+      setSaveError("Network error — please retry.");
     } finally { setSaving(false); }
   }
 
@@ -129,15 +144,16 @@ export default function SettingsPage() {
         <div className="rounded-2xl border bg-white p-5 shadow-sm space-y-3">
           <h2 className="font-semibold text-slate-900">Export &amp; Document Format</h2>
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-2">Default Export Format</label>
+            <label className="block text-xs font-medium text-slate-600 mb-2">Default Document Format</label>
             <div className="flex gap-4">
-              {["DOCX","ZIP"].map(fmt => (
+              {["DOCX","PDF"].map(fmt => (
                 <label key={fmt} className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="exportFormat" value={fmt} checked={s.exportFormat===fmt} onChange={()=>set("exportFormat",fmt)} className="h-4 w-4" />
-                  <span className="text-sm text-slate-700">{fmt==="ZIP"?"ZIP Package (all files)":"DOCX (single proposal)"}</span>
+                  <span className="text-sm text-slate-700">{fmt==="PDF"?"PDF (single proposal)":"DOCX (single proposal)"}</span>
                 </label>
               ))}
             </div>
+            <p className="mt-1 text-[10px] text-slate-400">Document format for generated proposals. The final ZIP package is always available on the tender page regardless of this setting.</p>
           </div>
           <label className="flex items-center gap-3 cursor-pointer">
             <input type="checkbox" checked={s.pageNumbering} onChange={e=>set("pageNumbering",e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
@@ -160,6 +176,7 @@ export default function SettingsPage() {
             {saving?"Saving…":"Save Settings"}
           </button>
           {saved && <span className="text-sm text-green-600">✓ Settings saved</span>}
+          {saveError && <span className="text-sm text-red-600">{saveError}</span>}
         </div>
       </form>
     </div>

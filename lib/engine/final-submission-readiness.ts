@@ -529,7 +529,7 @@ export async function getFinalSubmissionReadiness(
   const generatedDocumentIds = tender.generatedDocuments.map((doc) => doc.id);
   const generatedContentMetrics = generatedDocumentIds.length > 0
     ? await client.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
-        SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+        SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
         FROM "GeneratedDocument"
         WHERE id = ANY(${generatedDocumentIds}::text[])
       `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)

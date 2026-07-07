@@ -39,7 +39,7 @@ export async function GET() {
   const docIds = tenders.flatMap((tender) => tender.generatedDocuments.map((doc) => doc.id));
   const inlineLengths = docIds.length > 0
     ? await prisma.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
-        SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+        SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
         FROM "GeneratedDocument"
         WHERE id = ANY(${docIds}::text[])
       `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)

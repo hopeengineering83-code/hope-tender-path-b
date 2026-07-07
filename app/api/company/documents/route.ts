@@ -45,7 +45,7 @@ export async function GET(req: Request) {
     ids.length > 0
       ? await prisma.$queryRaw<Array<{ id: string; len: number; fileContentLength: number }>>`
           SELECT id, COALESCE(char_length("extractedText"), 0)::int AS len,
-                 COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+                 ("fileContent" IS NOT NULL)::int AS "fileContentLength"
           FROM "CompanyDocument"
           WHERE id = ANY(${ids}::text[])
         `

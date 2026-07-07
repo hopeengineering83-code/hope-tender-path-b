@@ -54,7 +54,7 @@ export async function GET(_req: Request) {
   const ids = assets.map((asset) => asset.id);
   const inlineLengths = ids.length > 0
     ? await prisma.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
-        SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+        SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
         FROM "CompanyAsset"
         WHERE id = ANY(${ids}::text[])
       `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)

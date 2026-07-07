@@ -25,7 +25,7 @@ async function withDashboardFileMetrics<T extends { id: string; files: any[] }>(
       id,
       COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
       COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder",
-      COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+      ("fileContent" IS NOT NULL)::int AS "fileContentLength"
     FROM "TenderFile"
     WHERE "tenderId" = ${tender.id}
   `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean; fileContentLength: number }>);
@@ -48,7 +48,7 @@ async function withDashboardGeneratedDocumentMetrics<T extends { generatedDocume
   const ids = tender.generatedDocuments.map((doc) => doc.id);
   const generatedContentMetrics = ids.length > 0
     ? await prisma.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
-        SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+        SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
         FROM "GeneratedDocument"
         WHERE id = ANY(${ids}::text[])
       `.catch(() => [] as Array<{ id: string; fileContentLength: number }>)

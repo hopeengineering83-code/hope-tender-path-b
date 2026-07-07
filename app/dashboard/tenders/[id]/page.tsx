@@ -123,7 +123,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       id,
       COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
       COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder",
-      COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+      ("fileContent" IS NOT NULL)::int AS "fileContentLength"
     FROM "TenderFile"
     WHERE "tenderId" = ${tender.id}
   `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean; fileContentLength: number }>);
@@ -147,7 +147,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   };
 
   const generatedContentMetrics = await prismaClient.$queryRaw<Array<{ id: string; fileContentLength: number }>>`
-    SELECT id, COALESCE(char_length("fileContent"), 0)::int AS "fileContentLength"
+    SELECT id, ("fileContent" IS NOT NULL)::int AS "fileContentLength"
     FROM "GeneratedDocument"
     WHERE "tenderId" = ${tender.id}
   `.catch(() => [] as Array<{ id: string; fileContentLength: number }>);

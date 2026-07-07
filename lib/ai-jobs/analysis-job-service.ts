@@ -414,16 +414,26 @@ export async function finalizeJob(jobId: string, userId: string) {
     const runningOrQueued = allChunks.filter((c: any) => c.status === "RUNNING" || c.status === "QUEUED");
 
     if (runningOrQueued.length > 0) {
-        // satisfy non-destructive test for stagePartialResult
+        // Chunks are still active — do NOT fail the finalization. Instead,
+        // return a PARTIAL_SUCCESS-safe status that tells the caller to
+        // retry later. The job stays RUNNING so run-next can re-claim it.
+        // This preserves canonical promotion — the finalizer will run again
+        // once all chunks reach a terminal state (SUCCEEDED/FAILED/SKIPPED).
         await stagePartialResult(jobId, {
             requirements: [],
-            summary: "Partial analysis in progress",
+            summary: "Partial analysis in progress — chunks still active",
             contentHash: job.analysisInputHash || "",
             isPartial: true,
             completedChunks: succeeded.length,
             totalChunks: allChunks.length
         });
-        throw new Error("Cannot finalize: some chunks are still in progress");
+        // Return a non-error status so the caller knows to retry, not fail.
+        return {
+            status: "PARTIAL_SUCCESS",
+            code: "CHUNKS_STILL_ACTIVE",
+            message: `${runningOrQueued.length} chunk(s) still in progress. Finalization deferred — retry once all chunks reach a terminal state.`,
+            activeChunkCount: runningOrQueued.length,
+        };
     }
 
     if (succeeded.length === 0) {

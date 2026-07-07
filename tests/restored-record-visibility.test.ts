@@ -109,12 +109,13 @@ describe("restored record visibility", () => {
   it("keeps restored inline hints wired into document archive and tender dashboard APIs", () => {
     const archiveRoute = readFileSync("app/api/documents/route.ts", "utf8");
     assert.match(archiveRoute, /storagePath:\s*true/);
-    assert.match(archiveRoute, /char_length\("fileContent"\)/);
+    // Lightweight presence check (IS NOT NULL) instead of expensive char_length scan
+    assert.match(archiveRoute, /"fileContent" IS NOT NULL/);
     assert.match(archiveRoute, /hasInlineFileContent/);
 
     const tenderApiRoute = readFileSync("app/api/tenders/[id]/route.ts", "utf8");
     assert.match(tenderApiRoute, /storagePath:\s*true/);
-    assert.match(tenderApiRoute, /char_length\("fileContent"\)/);
+    assert.match(tenderApiRoute, /"fileContent" IS NOT NULL/);
     assert.match(tenderApiRoute, /hasInlineFileContent/);
   });
 });
