@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { resolveTenderNextAction } from "../lib/tender-next-action";
+import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction } from "../lib/tender-next-action";
 
 const base = {
   hasFiles: true,
@@ -76,6 +76,18 @@ describe("resolveTenderNextAction", () => {
   });
 });
 
+describe("hasResumableAiAnalyzeCheckpoint", () => {
+  it("treats PARTIAL_SUCCESS jobs as resumable", () => {
+    assert.equal(hasResumableAiAnalyzeCheckpoint({ status: "PARTIAL_SUCCESS", succeededChunkCount: 0 }), true);
+  });
+
+  it("treats FAILED jobs as resumable only when a successful chunk checkpoint exists", () => {
+    assert.equal(hasResumableAiAnalyzeCheckpoint({ status: "FAILED", succeededChunkCount: 2 }), true);
+    assert.equal(hasResumableAiAnalyzeCheckpoint({ status: "FAILED", succeededChunkCount: 0 }), false);
+    assert.equal(hasResumableAiAnalyzeCheckpoint({ status: "FAILED", succeededChunkCount: null }), false);
+  });
+});
+
 describe("visible wording contract", () => {
   it("analysis panel uses draft-only regex fallback wording", () => {
     const source = readFileSync(resolve(process.cwd(), "components/analysis-quality-panel.tsx"), "utf8");
@@ -93,8 +105,8 @@ describe("visible wording contract", () => {
   it("next action panel treats failed checkpointed analysis jobs as resumable", () => {
     const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
     assert.match(source, /status:\s*\{\s*in:\s*\["PARTIAL_SUCCESS",\s*"FAILED"\]\s*\}/);
-    assert.match(source, /latestResumableAnalysisJob/);
-    assert.doesNotMatch(source, /latestPartialAnalysisJob/);
+    assert.match(source, /analyzeChunks:\s*\{\s*where:\s*\{\s*status:\s*"SUCCEEDED"\s*\}/);
+    assert.match(source, /hasResumableAiAnalyzeCheckpoint/);
   });
 
   it("untrusted sector warning is visible in the analysis quality panel", () => {

@@ -10,7 +10,7 @@ import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
-import { resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
+import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 
 const STEPS = [
   "Upload Tender",
@@ -140,12 +140,15 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   if (!tender) return null;
 
   const latestResumableAnalysisJob = await prisma.aiJob.findFirst({
-    // FAILED jobs can still be resumable when durable chunk checkpoints were saved.
-    // Keep this aligned with the AI Analyze auto-resume route so the visible
-    // next action does not incorrectly send users back to a cold restart.
+    // FAILED jobs are only resumable when at least one durable chunk checkpoint
+    // succeeded; a hard failure before checkpointing should still start fresh.
     where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
     orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }, { createdAt: "desc" }],
-    select: { id: true },
+    select: {
+      id: true,
+      status: true,
+      _count: { select: { analyzeChunks: { where: { status: "SUCCEEDED" } } } },
+    },
   }).catch(() => null);
 
   const hasFiles = tender.files.length > 0;
@@ -221,7 +224,9 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       pageCoveragePercent: minPageCoveragePercent,
       averageScore: avgScore,
     },
-    resumableAnalysisAvailable: Boolean(latestResumableAnalysisJob),
+    resumableAnalysisAvailable: hasResumableAiAnalyzeCheckpoint(latestResumableAnalysisJob
+      ? { status: latestResumableAnalysisJob.status, succeededChunkCount: latestResumableAnalysisJob._count.analyzeChunks }
+      : null),
     aiAnalysis: {
       exists: aiAnalyzed,
       trusted: aiAnalyzed && tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED",
