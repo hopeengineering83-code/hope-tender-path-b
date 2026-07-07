@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
+import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -33,7 +34,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const force = new URL(req.url).searchParams.get("force") === "true";
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
-      include: { files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } } },
+      // Select the stored entity/metadata fields the sanitizer validates so
+      // contaminated values can be nullified BEFORE the engine run — otherwise
+      // polluted client/reference/entity text would flow into matching and AI.
+      select: {
+        id: true, analysisExtractionStatus: true,
+        title: true, clientName: true, reference: true, country: true, clientContactName: true,
+        procuringEntityName: true, legalClientName: true, donorAgency: true, implementingAgency: true,
+        files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } },
+      },
     });
     if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
 
@@ -45,6 +54,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         hint: "Upload the tender/RFP document first, then run AI Analyze or Run Engine.",
         diagnosticId,
       }, { status: 422 });
+    }
+
+    // Nullify any contaminated stored metadata (placeholder/label/portal noise)
+    // before the run so the sanitizer — not the engine — owns data hygiene.
+    const invalidFields = listInvalidStoredFields(tender);
+    if (invalidFields.length > 0) {
+      const patch = computeStoredMetadataPatch(tender);
+      await prisma.tender.update({ where: { id: tender.id }, data: patch });
     }
 
     const extractionReports = tender.files.map((file) => ({
@@ -61,6 +78,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.",
         diagnosticId,
       }, { status: 422 });
+    }
+
+    // After the extraction-quality gate: block when the stored AI analysis was
+    // itself produced from corrupted or weak extraction (regex fallback / OCR
+    // required). A confident engine run must not build on untrustworthy analysis.
+    const engineAnalysisStatus = tender.analysisExtractionStatus;
+    if (engineAnalysisStatus === "OCR_REQUIRED") {
+      return NextResponse.json({ error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.", code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
+    }
+    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+      return NextResponse.json({ error: "Engine run blocked: AI Analyze ran on a weak extraction. Re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze ran on weak extraction — requirements and metadata may be incomplete. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
+    }
+    if (engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+      return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
     const result = await runTenderEngine(id, userId);
