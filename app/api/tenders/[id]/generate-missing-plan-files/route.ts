@@ -6,6 +6,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -171,6 +172,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
+
+  // Never generate onto contaminated metadata or analysis produced from
+  // corrupted/weak extraction.
+  if (tender.metadataContaminated) {
+    return NextResponse.json({ success: false, ok: false, code: "METADATA_CONTAMINATED", error: "Tender metadata is contaminated; re-extract before generating plan files.", nextAction: "RE_EXTRACT_METADATA" }, { status: 422 });
+  }
+  const analysisStatus = tender.analysisExtractionStatus;
+  if (analysisStatus === "OCR_REQUIRED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_DEGRADED_EXTRACTION", error: "AI analysis was produced from corrupted/weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
+  }
+
+  // Central generation gate — this route is NOT a chicken-and-egg escape hatch.
+  // It must fail closed on every blocker (including BUILD_PLAN_MISSING /
+  // BUILD_PLAN_NOT_CONFIRMED); there is no SUBMISSION_PLAN_MISSING carve-out.
+  const centralGate = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId: id,
+    userId: actor.id,
+    purpose: "generate-missing-plan-files",
+  });
+  if (!centralGate.ok) {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: centralGate.blockerCode,
+      error: centralGate.blockerDetail,
+      nextAction: "Resolve the analysis readiness blocker before generating missing plan files.",
+    }, { status: 422 });
+  }
 
   const plan = buildSubmissionPlan({
     id: tender.id,
