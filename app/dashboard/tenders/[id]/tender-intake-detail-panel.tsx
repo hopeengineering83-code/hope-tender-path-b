@@ -19,9 +19,15 @@ import {
   deriveSourceDrivenTenderDetail,
   type SourceDrivenTenderFact,
 } from "../../../../lib/engine/source-driven-tender-detail";
+import {
+  normalizeEmailList,
+  buildTenderFactSourceText,
+  parseTenderDocumentIntelligence,
+} from "../../../../lib/engine/source-driven-tender-text-parser";
 
 type TenderDetailLike = {
   id: string;
+  title?: string | null;
   reference?: string | null;
   clientName?: string | null;
   clientContactName?: string | null;
@@ -220,7 +226,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const preBid = formatDeadline(tender.preBidMeetingDate);
   const budget = fmtNumber(tender.budget, tender.currency);
   const bond = fmtNumber(tender.bidBondAmount, tender.bidBondCurrency);
-  const emails = (tender.submissionEmails ?? "").split("|").filter(Boolean);
+  const emails = normalizeEmailList(tender.submissionEmails);
   const evaluation = tender.technicalWeight && tender.financialWeight
     ? `Technical ${tender.technicalWeight}% / Financial ${tender.financialWeight}%`
     : null;
@@ -237,7 +243,9 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const sCountry = sanitize("country", tender.country);
   const sDeadline = sanitize("deadline", deadline);
   const sMethod = sanitize("submissionMethod", tender.submissionMethod);
-  const sEmails = sanitize("submissionEmails", tender.submissionEmails);
+  // Email display: use normalizeEmailList to split on | ; , and "and",
+  // then join with ", " for clean comma-separated display.
+  const sEmails = emails.length > 0 ? emails.join(", ") : NOT_EXTRACTED;
   const sSubAddress = sanitize("submissionAddress", tender.submissionAddress);
   const sPreBid = sanitize("preBidMeetingDate", preBid);
   const sPreBidLoc = sanitize("preBidMeetingLocation", tender.preBidMeetingLocation);
@@ -252,6 +260,55 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
 
   // Derive source-driven tender detail from raw tender columns
   const sourceDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
+
+  // Source-driven text parsing: derive intelligence from the FULL extracted
+  // tender content (extractedText, intakeSummary, analysisSummary, description,
+  // evaluationMethodology) — not just from stale scalar columns.
+  // The source text is the authority; scalar fields are fallback only.
+  const sourceText = buildTenderFactSourceText({
+    extractedText: (tender as Record<string, unknown>).extractedText as string | undefined,
+    intakeSummary: tender.intakeSummary,
+    analysisSummary: tender.analysisSummary,
+    description: tender.description,
+    evaluationMethodology: tender.evaluationMethodology,
+  });
+  const intelligence = sourceText.trim()
+    ? parseTenderDocumentIntelligence(sourceText, {
+        tenderTitle: tender.title,
+        tenderReference: tender.reference,
+        tenderClientName: tender.clientName,
+        tenderSubmissionMethod: tender.submissionMethod,
+        tenderDeadline: tender.deadline,
+        tenderSubmissionEmails: tender.submissionEmails,
+        tenderSubmissionAddress: tender.submissionAddress,
+      })
+    : null;
+
+  // Override scalar-derived values with source-driven values when the source
+  // text provides them. This fixes Defect 1 (extracted facts exist but are
+  // not recognized) and Defect 2 (parser still depends on stored scalar columns).
+  const effectiveMethod = intelligence?.submissionInstructions.method
+    && intelligence.submissionInstructions.method !== "Unknown"
+    ? intelligence.submissionInstructions.method
+    : (sMethod !== NOT_EXTRACTED ? sMethod : NOT_EXTRACTED);
+  const effectiveDeadline = intelligence?.submissionInstructions.deadlineDisplay
+    ?? (sDeadline !== NOT_EXTRACTED ? sDeadline : NOT_EXTRACTED);
+  const effectiveEmails = intelligence?.submissionInstructions.emails.length
+    ? intelligence.submissionInstructions.emails.join(", ")
+    : sEmails;
+  const effectiveEmailSubject = intelligence?.submissionInstructions.emailSubject ?? NOT_EXTRACTED;
+  const effectiveTenderType = intelligence?.tenderType && intelligence.tenderType !== "Unknown"
+    ? intelligence.tenderType
+    : NOT_EXTRACTED;
+  const effectiveServiceStreams = intelligence?.serviceStreams.length
+    ? intelligence.serviceStreams.join(", ")
+    : NOT_EXTRACTED;
+  const effectiveProjectTitle = intelligence?.projectTitle ?? tender.title ?? NOT_EXTRACTED;
+  const effectiveClient = intelligence?.clientOrProcuringEntity
+    ?? (sClient !== NOT_EXTRACTED ? sClient : NOT_EXTRACTED);
+  const effectiveFinancialProposal = intelligence
+    ? (intelligence.financialProposalRequired ? "Required" : "Not required at this stage")
+    : NOT_EXTRACTED;
 
   // Coverage = valid extracted facts / facts detected or relevant for this tender
   // Does not penalize the tender for not containing facts it never needed
@@ -308,12 +365,17 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
       )}
 
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm md:grid-cols-2">
+        <Detail label="Tender type" value={effectiveTenderType} />
+        <Detail label="Service stream(s)" value={effectiveServiceStreams} />
+        <Detail label="Project title" value={effectiveProjectTitle} />
+        <Detail label="Client / Procuring entity" value={effectiveClient} />
         <Detail label="Reference number" value={sReference} />
         <Detail label="Country" value={sCountry} />
-        <Detail label="Client / Procuring entity" value={sClient} />
-        <Detail label="Deadline" value={sDeadline} />
-        <Detail label="Submission method" value={sMethod} />
-        <Detail label="Submission emails" value={sEmails} />
+        <Detail label="Deadline" value={effectiveDeadline} />
+        <Detail label="Submission method" value={effectiveMethod} />
+        <Detail label="Submission emails" value={effectiveEmails} />
+        <Detail label="Email subject" value={effectiveEmailSubject} />
+        <Detail label="Financial proposal" value={effectiveFinancialProposal} />
       </div>
 
       {/* Source-driven missing facts with user actions */}
