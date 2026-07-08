@@ -582,44 +582,34 @@ describe("generate-missing-plan-files: gate 5 — required documents pages or ma
 });
 
 // ── Evaluation criteria as hard blocker in generate/route.ts ─────────────────
-// Per CLAUDE.md: evaluation criteria pages are required for correct scoring.
-// generate/route.ts must block — not just warn — when eval criteria pages are absent.
+// Evaluation criteria missing is NOT a hard blocker for draft work.
+// It is a warning — draft generation proceeds with available source text.
 
-describe("generate route — evaluation criteria missing is a hard blocker", () => {
-  it("generate route source includes evaluation criteria in the CRITICAL_CONTENT_PAGES_MISSING block", () => {
+describe("generate route — evaluation criteria missing is a warning (not a hard blocker)", () => {
+  it("generate route does NOT hard-block with CRITICAL_CONTENT_PAGES_MISSING for draft work", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      src, /errorCode.*CRITICAL_CONTENT_PAGES_MISSING/,
+      "generate route must NOT return CRITICAL_CONTENT_PAGES_MISSING error for draft work",
+    );
+  });
+
+  it("generate route checks anyEvaluation as a warning (not a blocker)", () => {
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
     );
     assert.ok(
-      src.includes("anyEvaluation") && src.includes('"CRITICAL_CONTENT_PAGES_MISSING"'),
-      "generate route must check anyEvaluation inside the CRITICAL_CONTENT_PAGES_MISSING block",
+      src.includes("anyEvaluation"),
+      "generate route must still check for evaluation criteria pages",
     );
-  });
-
-  it("evaluation criteria blocker message is in contentBlockers array (not just advisory)", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
-      "utf8",
-    );
-    // Must contain anyEvaluation pushed into contentBlockers — not just set as evaluationCriteriaMissing flag
     assert.ok(
-      src.includes("contentBlockers.push") && src.includes("anyEvaluation"),
-      "generate route must push an eval criteria message into contentBlockers, not just surface it as a warning flag",
+      src.includes("contentWarnings"),
+      "generate route must use contentWarnings (not contentBlockers) for missing evaluation criteria",
     );
-  });
-
-  it("evaluation criteria blocking logic: contentBlockers includes a blocker when !anyEvaluation", () => {
-    // Simulate the generate route's content-page gate logic
-    const contentBlockers: string[] = [];
-    const anySubmission = true;
-    const anyRequiredDocs = true;
-    const anyEvaluation = false;
-    if (!anySubmission) contentBlockers.push("No submission instruction pages detected.");
-    if (!anyRequiredDocs) contentBlockers.push("No required documents pages detected.");
-    if (!anyEvaluation) contentBlockers.push("No evaluation criteria pages detected — re-extract before generating.");
-    assert.ok(contentBlockers.length > 0, "Should have a blocker when evaluation criteria missing");
-    assert.ok(contentBlockers.some((b) => /evaluation criteria/i.test(b)));
   });
 
   it("no blocker when all three content page types are present", () => {

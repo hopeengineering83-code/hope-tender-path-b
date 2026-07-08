@@ -152,7 +152,7 @@ describe("phase 18 — generate gate regression checks", () => {
     "EXTRACTION_NOT_READY",
     "PARTIAL_EXTRACTION_ANALYSIS",
     "NO_BID_BLOCK",
-    "CRITICAL_CONTENT_PAGES_MISSING",
+    
     "ANALYSIS_QUALITY_NOT_READY",
     
     // NOTE: "NO_SUBMISSION_PLAN" was REMOVED — GeneratedDocument rows must

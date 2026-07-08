@@ -47,14 +47,13 @@ describe("URL bypass removal — acceptNoMandatoryReqs", () => {
     );
   });
 
-  it("mandatory requirements gate applies unconditionally (no planOnly bypass)", () => {
-    // The NO_MANDATORY_REQUIREMENTS gate must not check planOnly
-    const mandatoryIdx = generateRoute.indexOf("NO_MANDATORY_REQUIREMENTS");
-    assert.ok(mandatoryIdx > -1, "Mandatory requirements gate must exist");
-    const gateSection = generateRoute.slice(mandatoryIdx, mandatoryIdx + 500);
-    assert.ok(
-      !gateSection.includes('planOnly'),
-      "Mandatory requirements gate must not check planOnly — must apply unconditionally",
+  it("mandatory requirements gate is non-blocking for draft work (no planOnly bypass needed)", () => {
+    // NO_MANDATORY_REQUIREMENTS is no longer a hard block for draft work.
+    // The gate was removed entirely — mandatory requirement classification
+    // absence is a warning only. There is no bypass because there is no gate.
+    assert.doesNotMatch(
+      generateRoute, /errorCode.*NO_MANDATORY_REQUIREMENTS/,
+      "NO_MANDATORY_REQUIREMENTS must NOT be a hard-block errorCode for draft work",
     );
   });
 });

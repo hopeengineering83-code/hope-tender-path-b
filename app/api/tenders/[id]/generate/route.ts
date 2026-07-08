@@ -485,18 +485,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
       }
       if (totalDetected > 0) {
-        const contentBlockers: string[] = [];
-        if (!anySubmission) contentBlockers.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods cannot be verified.");
-        if (!anyRequiredDocs) contentBlockers.push("No required documents/forms pages were detected. The generated proposal may be missing mandatory annexures or official forms.");
-        if (!anyEvaluation) contentBlockers.push("No evaluation criteria pages were detected in the extracted text. The generated proposal cannot be scored correctly without evaluation criteria — re-extract or run OCR before generating documents.");
-        if (contentBlockers.length > 0) {
-          return NextResponse.json({
-            errorCode: "CRITICAL_CONTENT_PAGES_MISSING",
-            error: "Generation blocked: critical tender sections (submission instructions, required documents, or evaluation criteria) were not found in the extracted text. Re-extract the PDF or run OCR to ensure these sections are readable before generating documents.",
-            blockers: contentBlockers,
-            nextAction: "OPEN_EXTRACTION_QUALITY",
-            diagnosticId: `content-pages-missing-${id}`,
-          }, { status: 422 });
+        const contentWarnings: string[] = [];
+        if (!anySubmission) contentWarnings.push("No submission instruction pages detected — submission details will be omitted from draft output.");
+        if (!anyRequiredDocs) contentWarnings.push("No required document pages detected — required documents may be missing from draft output.");
+        if (!anyEvaluation) contentWarnings.push("No evaluation criteria pages detected — evaluation guidance will be limited in draft output.");
+        if (contentWarnings.length > 0) {
+          // Content-page coverage is NOT a hard block for draft work.
+          // Missing submission/required-doc/evaluation pages are warnings —
+          // draft generation proceeds with available source text.
+          logger.warn(`[generate] tender=${id} content-page coverage incomplete: ${contentWarnings.join("; ")}`);
         }
       }
     }
