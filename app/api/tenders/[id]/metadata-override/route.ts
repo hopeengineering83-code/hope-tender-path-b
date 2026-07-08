@@ -29,6 +29,11 @@ import {
   MIN_CRITICAL_REASON_LENGTH,
   type HumanConfirmedAudit,
 } from "../../../../../lib/engine/tender-fact-authority";
+import {
+  upsertTenderFactFromManualOverride,
+  markTenderFactNotApplicable,
+  rejectInvalidTenderFact,
+} from "../../../../../lib/engine/tender-facts-ledger-service";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -516,6 +521,68 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     description: `Metadata field "${field}" set to ${fieldState}${reason ? `: ${reason}` : ""}`,
     metadata: { field, fieldState, overrideValue, reason, overrideId: upserted.id },
   });
+
+  // ─── TenderFactsLedger mutation (durable authority) ──────────────────────
+  // The metadata-override route now writes to TenderFactsLedger as the
+  // primary authority. The legacy TenderMetadataOverride row above is kept
+  // for backward compatibility with existing readers, but the ledger is the
+  // durable source of truth. Runtime resolvers (canonical-field-state) prefer
+  // the ledger over scalar columns when both exist.
+  //
+  // Ledger mutations are best-effort: if the ledger table is not yet migrated,
+  // the override still succeeds via the legacy path. The ledger mutation is
+  // wrapped in try/catch so a ledger failure never blocks the override.
+  try {
+    const displayLabel = field; // The field key is used as the display label; UI resolves a human label separately
+    const category = "procuring-entity"; // Default category; can be refined later
+    const valueType = "TEXT";
+
+    if (fieldState === "USER_EDITED" || fieldState === "USER_CONFIRMED") {
+      // User confirmed or edited a value — write USER_CONFIRMED/USER_EDITED ledger fact
+      if (overrideValue && reason && confirmationBasis) {
+        await upsertTenderFactFromManualOverride(prisma, {
+          tenderId: id,
+          semanticKey: field,
+          displayLabel,
+          category,
+          valueType,
+          normalizedValue: overrideValue,
+          reason,
+          confirmationBasis,
+          userId: actor.id,
+          action: fieldState === "USER_EDITED" ? "USER_EDITED" : "USER_CONFIRMED",
+        });
+      }
+    } else if (fieldState === "NOT_APPLICABLE") {
+      // User marked as not applicable — write NOT_APPLICABLE ledger fact
+      await markTenderFactNotApplicable(prisma, {
+        tenderId: id,
+        semanticKey: field,
+        displayLabel,
+        category,
+        reason: reason ?? "Marked not applicable by user",
+        userId: actor.id,
+      });
+    } else if (fieldState === "IGNORED_WITH_REASON") {
+      // User ignored with reason — treat as NOT_APPLICABLE in the ledger
+      // (the ledger doesn't have a separate IGNORED state; IGNORED is an
+      // audited absence, which maps to NOT_APPLICABLE with a reason)
+      await markTenderFactNotApplicable(prisma, {
+        tenderId: id,
+        semanticKey: field,
+        displayLabel,
+        category,
+        reason: reason ?? "Ignored with reason by user",
+        userId: actor.id,
+      });
+    }
+    // MISSING fieldState is used for "retry on next AI Analyze" — no ledger
+    // mutation needed; the fact will be re-extracted.
+  } catch (ledgerErr) {
+    // Ledger mutation failed — log but don't fail the override. The legacy
+    // TenderMetadataOverride row is already written and is the fallback.
+    console.error("[metadata-override] ledger mutation failed (non-blocking):", ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr));
+  }
 
   // ─── Post-override source-evidence enrichment (INFORMATIONAL ONLY) ────────
   // The enrichment locates the effective value in an active tender file's

@@ -253,6 +253,28 @@ export type CanonicalResolverInput = {
   activeFiles?: ReadonlyArray<GroundingActiveFile>;
   hasExtractedRequirements: boolean;
   submissionMethodContext?: string;
+  /**
+   * TenderFactsLedger snapshot (optional). When provided, the resolver
+   * prefers ledger facts over raw scalar columns for each field. This
+   * makes TenderFactsLedger the runtime authority — scalar columns are
+   * used only as fallback when no ledger fact exists for a semantic key.
+   *
+   * Callers should fetch the snapshot via
+   * `getTenderFactLedgerSnapshot(prisma, tenderId)` and pass it here.
+   */
+  ledgerFacts?: ReadonlyArray<{
+    semanticKey: string;
+    displayLabel: string;
+    normalizedValue: string | null;
+    rawSourceValue: string | null;
+    authorityState: string;
+    sourceFileId: string | null;
+    sourcePage: number | null;
+    sourceQuote: string | null;
+    manuallyEntered: boolean;
+    reason: string | null;
+    confirmationBasis: string | null;
+  }>;
 };
 
 /**
@@ -463,7 +485,46 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       : (fieldKey === "evaluationCriteria"
         ? tender.evaluationMethodology
         : tender[fieldKey as keyof typeof tender]);
-    const rawValue = rawValueRaw instanceof Date ? rawValueRaw.toISOString() : typeof rawValueRaw === "string" ? rawValueRaw : rawValueRaw ? String(rawValueRaw) : null;
+    let rawValue = rawValueRaw instanceof Date ? rawValueRaw.toISOString() : typeof rawValueRaw === "string" ? rawValueRaw : rawValueRaw ? String(rawValueRaw) : null;
+
+    // ── TenderFactsLedger authority resolution ──────────────────────────
+    // When a ledger fact exists for this semantic key, prefer it over the
+    // raw scalar column. The ledger is the durable authority; scalar columns
+    // are fallback only when no ledger fact exists.
+    //
+    // Authority resolution order:
+    //   1. SOURCE_GROUNDED_CONFIRMED  — use ledger value + evidence
+    //   2. HUMAN_CONFIRMED_OPERATIONAL — use ledger value (USER_CONFIRMED/EDITED)
+    //   3. NOT_APPLICABLE              — fact does not apply (omit from output)
+    //   4. CANDIDATE_NEEDS_REVIEW      — use ledger value as candidate
+    //   5. (fall through to scalar rawValue)
+    //   6. REJECTED_EXTRACTION / SUPERSEDED — ignore ledger, fall through to scalar
+    const ledgerFact = input.ledgerFacts?.find((f) =>
+      f.semanticKey === fieldKey
+      || (fieldKey === "evaluationCriteria" && f.semanticKey === "evaluationMethodology")
+    );
+    let ledgerAuthorityState: string | null = null;
+    let ledgerOverridesValue = false;
+    if (ledgerFact) {
+      const ls = ledgerFact.authorityState.toUpperCase();
+      if (ls === "SOURCE_GROUNDED_CONFIRMED" || ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === "CANDIDATE_NEEDS_REVIEW") {
+        // Ledger provides the authoritative value
+        if (ledgerFact.normalizedValue !== null) {
+          rawValue = ledgerFact.normalizedValue;
+          ledgerOverridesValue = true;
+        }
+        ledgerAuthorityState = ls;
+      } else if (ls === "NOT_APPLICABLE") {
+        // Fact does not apply — treat as explicitly null
+        rawValue = null;
+        ledgerAuthorityState = ls;
+      } else if (ls === "REJECTED_EXTRACTION" || ls === "SUPERSEDED") {
+        // Ledger rejected this fact — don't use ledger value; fall through to scalar
+        // but mark so we know the ledger rejected it
+        ledgerAuthorityState = ls;
+      }
+    }
+
     const effectiveStr = override?.overrideValue ?? rawValue;
     const overrideState = override?.fieldState ?? null;
     const isManuallyConfirmed = overrideState === "USER_CONFIRMED"; // isManuallyConfirmed = override.fieldState === "USER_CONFIRMED"
