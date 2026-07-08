@@ -81,11 +81,11 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
         "Valid fields linked to a source page and/or verbatim quote from the tender document. A field is only grounded when both value and evidence exist.",
     },
     {
-      label: "Blocked fields",
+      label: "Final-check items",
       numerator: metadata.blockedFields,
       denominator: metadata.totalFields,
       tooltip:
-        "Fields that block generation or export: missing critical data, invalid format, contaminated, or ungrounded manual edits.",
+        "These details affect Final Submission Check only. Draft generation can continue.",
     },
   ];
 
@@ -101,9 +101,8 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
         <span className="text-[10px] text-slate-400 font-mono">rev: {snapshotRevision.slice(0, 8)}</span>
       </div>
       {hasBlockers && (
-        <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Extraction quality is sufficient for AI Analyze. Final generation and final packaging
-          remain blocked until critical metadata and source evidence are resolved.
+        <p className="mb-4 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+          These details affect Final Submission Check only. Draft generation can continue.
         </p>
       )}
 

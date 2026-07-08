@@ -79,6 +79,13 @@ export const ABSENCE_OVERRIDE_STATES: ReadonlySet<MetadataFieldState> = new Set(
  *   submissionEndpoint = a usable submission email list OR submission address
  *   requiredDocuments  = at least one extracted requirement / required document
  */
+/**
+ * Fields historically treated as "always critical." Under the source-driven
+ * model, these are NOT universally critical for draft work — they are only
+ * critical for Final Submission Check when the tender explicitly requires
+ * them. The set is kept for backward compatibility with final-submission
+ * gates but is no longer used to block draft generation.
+ */
 export const ALWAYS_CRITICAL_FIELDS: ReadonlySet<string> = new Set([
   "clientName",
   "title",
@@ -174,8 +181,9 @@ export function isConditionallyCriticalField(
 }
 
 /**
- * Canonical criticality decision. Every gate must call this rather than
- * consulting its own list (Policy point 7).
+ * Canonical criticality decision. Used by Final Submission Check gates.
+ * For DRAFT work, no field is critical — metadata is optional.
+ * Every gate must call this rather than consulting its own list.
  */
 export function isCriticalField(field: string, ctx: TenderPolicyContext = {}): boolean {
   if (ALWAYS_CRITICAL_FIELDS.has(field)) return true;

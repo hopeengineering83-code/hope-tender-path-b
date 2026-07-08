@@ -3,6 +3,16 @@
 // dropdowns so the tender workspace stays short.
 
 import { ReExtractMetadataButton } from "./re-extract-button";
+import {
+  isDisplayValidMetadataValue,
+  normalizeMetadataDisplayValue,
+  NOT_EXTRACTED,
+  type MetadataFieldKey,
+} from "../../../../lib/engine/metadata-display-sanitizer";
+import {
+  deriveSourceDrivenTenderDetail,
+  type SourceDrivenTenderFact,
+} from "../../../../lib/engine/source-driven-tender-detail";
 
 type TenderDetailLike = {
   id: string;
@@ -50,7 +60,16 @@ function fmtNumber(value: number | null | undefined, currency?: string | null): 
   return currency ? `${currency} ${formatted}` : formatted;
 }
 
-const MISSING_NOTE = "Not extracted";
+const MISSING_NOTE = NOT_EXTRACTED;
+
+// Sanitize a value for display: returns "Not extracted" for invalid values
+function sanitize(fieldKey: MetadataFieldKey, value: unknown): string {
+  if (isDisplayValidMetadataValue(fieldKey, value)) {
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return String(value).trim();
+  }
+  return NOT_EXTRACTED;
+}
 
 export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }) {
   const deadline = formatDeadline(tender.deadline);
@@ -63,21 +82,44 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
     : null;
   const client = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
 
-  const fields = [
-    tender.reference, client, tender.clientContactName, tender.clientContactEmail,
-    tender.clientContactPhone, tender.clientAddress, tender.country, deadline, tender.submissionMethod,
-    budget, tender.validityDays, bond, preBid, tender.numberOfCopiesRequired, tender.pageLimit,
-    evaluation, tender.description, tender.evaluationMethodology, tender.intakeSummary, tender.analysisSummary,
-  ];
-  const filledCount = fields.filter((f) => f !== null && f !== undefined && f !== "").length;
-  const totalCount = fields.length;
+  // Sanitize all metadata values — only display-valid values count
+  // toward auto-fill coverage
+  const sReference = sanitize("reference", tender.reference);
+  const sClient = sanitize("clientName", client);
+  const sContactName = sanitize("clientContactName", tender.clientContactName);
+  const sContactEmail = sanitize("clientContactEmail", tender.clientContactEmail);
+  const sContactPhone = sanitize("clientContactPhone", tender.clientContactPhone);
+  const sAddress = sanitize("clientAddress", tender.clientAddress);
+  const sCountry = sanitize("country", tender.country);
+  const sDeadline = sanitize("deadline", deadline);
+  const sMethod = sanitize("submissionMethod", tender.submissionMethod);
+  const sEmails = sanitize("submissionEmails", tender.submissionEmails);
+  const sSubAddress = sanitize("submissionAddress", tender.submissionAddress);
+  const sPreBid = sanitize("preBidMeetingDate", preBid);
+  const sPreBidLoc = sanitize("preBidMeetingLocation", tender.preBidMeetingLocation);
+  const sBudget = sanitize("budget", budget);
+  const sBond = sanitize("bidBondAmount", bond);
+  const sPageLimit = sanitize("pageLimit", tender.pageLimit);
+  const sValidity = sanitize("validityDays", tender.validityDays);
+  const sCopies = sanitize("numberOfCopiesRequired", tender.numberOfCopiesRequired);
+  const sEvaluation = sanitize("technicalWeight", evaluation);
+  const sDesc = sanitize("description", tender.description);
+  const sEvalMethod = sanitize("evaluationMethodology", tender.evaluationMethodology);
+
+  // Derive source-driven tender detail from raw tender columns
+  const sourceDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
+
+  // Coverage = valid extracted facts / facts detected or relevant for this tender
+  // Does not penalize the tender for not containing facts it never needed
+  const filledCount = sourceDetail.extractedCount;
+  const totalCount = sourceDetail.extractedCount + sourceDetail.missingRelevantCount;
 
   return (
     <section id="tender-edit-form" className="rounded-2xl border bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div className="flex-1">
           <h2 className="text-lg font-semibold text-slate-900">Tender Detail</h2>
-          <p className="mt-1 text-xs text-slate-500">Submission-critical metadata is shown first. Secondary extracted fields are collapsed.</p>
+          <p className="mt-1 text-xs text-slate-500">Facts extracted from this tender source. Missing optional details do not block draft generation.</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
@@ -89,30 +131,30 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
       </div>
 
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm md:grid-cols-2">
-        <Detail label="Reference number" value={tender.reference} />
-        <Detail label="Country" value={tender.country} />
-        <Detail label="Client / Procuring entity" value={client} />
-        <Detail label="Deadline" value={deadline} />
-        <Detail label="Submission method" value={tender.submissionMethod} />
-        <Detail label="Submission emails" value={emails.length > 0 ? emails.join(", ") : null} />
+        <Detail label="Reference number" value={sReference} />
+        <Detail label="Country" value={sCountry} />
+        <Detail label="Client / Procuring entity" value={sClient} />
+        <Detail label="Deadline" value={sDeadline} />
+        <Detail label="Submission method" value={sMethod} />
+        <Detail label="Submission emails" value={sEmails} />
       </div>
 
       <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
         <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show all extracted metadata</summary>
         <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 bg-white p-3 text-sm md:grid-cols-2">
-          <Detail label="Client address" value={tender.clientAddress} />
-          <Detail label="Client contact" value={tender.clientContactName ? `${tender.clientContactName}${tender.clientContactTitle ? ` — ${tender.clientContactTitle}` : ""}` : null} />
-          <Detail label="Contact email" value={tender.clientContactEmail} />
-          <Detail label="Contact phone" value={tender.clientContactPhone} />
-          <Detail label="Submission address" value={tender.submissionAddress} />
-          <Detail label="Pre-bid meeting" value={preBid || tender.preBidMeetingLocation} />
-          <Detail label="Proposal validity" value={tender.validityDays ? `${tender.validityDays} days` : null} />
-          <Detail label="Budget" value={budget} />
-          <Detail label="Bid bond" value={bond} />
-          <Detail label="Page limit" value={tender.pageLimit ? `${tender.pageLimit} pages` : null} />
-          <Detail label="Copies required" value={tender.numberOfCopiesRequired ? `Original + ${tender.numberOfCopiesRequired}` : null} />
-          <Detail label="Mandatory site visit" value={tender.mandatorySiteVisit ? "YES" : null} highlight={tender.mandatorySiteVisit} />
-          <Detail label="Evaluation weights" value={evaluation} />
+          <Detail label="Client address" value={sAddress} />
+          <Detail label="Client contact" value={sContactName} />
+          <Detail label="Contact email" value={sContactEmail} />
+          <Detail label="Contact phone" value={sContactPhone} />
+          <Detail label="Submission address" value={sSubAddress} />
+          <Detail label="Pre-bid meeting" value={sPreBid !== NOT_EXTRACTED ? sPreBid : (sPreBidLoc !== NOT_EXTRACTED ? sPreBidLoc : NOT_EXTRACTED)} />
+          <Detail label="Proposal validity" value={sValidity !== NOT_EXTRACTED ? `${sValidity} days` : NOT_EXTRACTED} />
+          <Detail label="Budget" value={sBudget} />
+          <Detail label="Bid bond" value={sBond} />
+          <Detail label="Page limit" value={sPageLimit !== NOT_EXTRACTED ? `${sPageLimit} pages` : NOT_EXTRACTED} />
+          <Detail label="Copies required" value={sCopies !== NOT_EXTRACTED ? `Original + ${sCopies}` : NOT_EXTRACTED} />
+          <Detail label="Mandatory site visit" value={tender.mandatorySiteVisit ? "YES" : NOT_EXTRACTED} highlight={tender.mandatorySiteVisit} />
+          <Detail label="Evaluation weights" value={sEvaluation} />
         </div>
       </details>
 

@@ -2313,7 +2313,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       </CollapsiblePanel>
 
       <CollapsiblePanel
-        title="Metadata Completion"
+        title="Final Submission Details"
         isOpen={panels["metadata"]}
         onToggle={() => togglePanel("metadata")}
       >

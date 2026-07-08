@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
 import { AuthorityReviewTruthPanel } from "../../../../components/authority-review-truth-panel";
-import { MetadataTruthPanel } from "../../../../components/metadata-truth-panel";
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
 import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
 import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
@@ -46,7 +45,6 @@ import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
 import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
 import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
-import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
 import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
@@ -195,8 +193,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
-        <MetadataTruthPanel tenderId={tender.id} />
-        <MetadataCompletionPanel tenderId={tender.id} />
         <ClientSubmissionDetailsPanel tenderId={tender.id} canMutate={canMutate} />
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
