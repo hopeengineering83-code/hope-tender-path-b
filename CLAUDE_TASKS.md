@@ -7,7 +7,7 @@
 - **Repo**: hopeengineering83-code/hope-tender-path-b
 - **Production URL**: https://hope-tender-path-b.vercel.app
 - **Stack**: Next.js 15.5 / React 19 / TypeScript 6 / Prisma 6.19.3 / PostgreSQL
-- **AI providers**: Claude (primary) → Gemini → OpenAI → DeepSeek → deterministic fallback
+- **AI providers**: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic (canonical order in `lib/ai-provider-catalog.cjs`)
 - **Deployment**: Vercel (auto-deploy on merge to main)
 
 ## Development branch rule
