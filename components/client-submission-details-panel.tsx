@@ -312,7 +312,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
             )}
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-600">
-            Key fields extracted from the tender document. Critical fields must be resolved before final packaging.
+            Optional tender details used to improve draft output. Missing or ungrounded details do not block draft generation.
           </p>
         </div>
         <button
@@ -325,7 +325,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
       </div>
 
       {metadata.hasExportBlocker && (
-        <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-700">
+        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
           Tender details incomplete — optional information was omitted from draft output.
         </div>
       )}
@@ -363,8 +363,8 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-slate-700">{field.label}</span>
                     {isCritical && (
-                      <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700">
-                        Critical
+                      <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600">
+                        Final-check item
                       </span>
                     )}
                     {hasSource && (

@@ -52,7 +52,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   const { metadata } = snapshot;
 
   // Derive actions directly from snapshot fields: show only fields that need action
-  // - Blocked fields (hard gate blockers)
+  // - Final-check items (final submission only)
   // - Critical fields that are missing/invalid
   const fieldsNeedingAction = metadata.fields.filter(f => {
     const isCritical = f.criticality === "always-critical";
@@ -82,7 +82,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
             )}
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
-            Critical fields that block generation. Resolve these to proceed.
+            Final submission details to verify before official packaging.
           </p>
         </div>
       </div>
