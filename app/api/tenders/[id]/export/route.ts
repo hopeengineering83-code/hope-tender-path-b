@@ -12,6 +12,8 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
 import { reportError, logger } from "../../../../../lib/observability";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -213,6 +215,49 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json(
         { error: `Export blocked: ${centralGate.blockerDetail}`, code: centralGate.blockerCode },
         { status: 409 },
+      );
+    }
+
+    // ── Operation gate (REVIEW_EXPORT) — authoritative metadata check ────
+    // For REVIEW_EXPORT, metadata NEVER blocks. The gate surfaces warnings
+    // for the UI and is the single authority for metadata eligibility.
+    // This connects the source-driven tender model to the live export route.
+    const reviewBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+    const reviewOperationGate = resolveTenderOperationGate({
+      tender: {
+        id: tender.id,
+        title: tender.title,
+        reference: tender.reference,
+        clientName: tender.clientName,
+        deadline: tender.deadline,
+        submissionMethod: tender.submissionMethod,
+        submissionEmails: tender.submissionEmails,
+        submissionAddress: tender.submissionAddress,
+        country: tender.country,
+        metadataContaminated: tender.metadataContaminated,
+        analysisExtractionStatus: tender.analysisExtractionStatus,
+      },
+      requirements: tender.requirements.map((r: any) => ({
+        priority: r.priority,
+        sourceTenderFileId: r.sourceTenderFileId,
+      })),
+      overrides: [],
+      buildPlan: { ok: reviewBuildPlan.ok, items: reviewBuildPlan.ok ? reviewBuildPlan.items : [] },
+      operation: "REVIEW_EXPORT",
+    });
+    if (reviewOperationGate.warnings.length > 0) {
+      logger.info(`[export] tender=${id} operation-gate warnings: ${reviewOperationGate.warnings.join("; ")}`);
+    }
+    // Defensive: REVIEW_EXPORT should never be blocked by the operation gate.
+    if (reviewOperationGate.blockers.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Export blocked by operation gate (REVIEW_EXPORT): ${reviewOperationGate.blockers.join("; ")}`,
+          code: "OPERATION_GATE_BLOCKED",
+          blockers: reviewOperationGate.blockers,
+          warnings: reviewOperationGate.warnings,
+        },
+        { status: 422 },
       );
     }
 

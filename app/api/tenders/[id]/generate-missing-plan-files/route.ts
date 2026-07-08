@@ -8,6 +8,8 @@ import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -212,6 +214,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // If no confirmed plan, proceed with draft plan — the files generated
   // are clearly marked as draft/review outputs.
   const confirmedPlanItems = confirmedPlan.ok ? confirmedPlan.items : [];
+
+  // ── Operation gate (SUPPORT_PACKAGE_GENERATION) — authoritative check ──
+  // For SUPPORT_PACKAGE_GENERATION, metadata NEVER blocks. The gate is
+  // the single authority for metadata eligibility and surfaces warnings
+  // for the UI. Same source-driven model as DRAFT_GENERATION.
+  const operationGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: tender.requirements.map((r: any) => ({
+      priority: r.priority,
+      sourceTenderFileId: r.sourceTenderFileId,
+    })),
+    overrides: [],
+    buildPlan: { ok: confirmedPlan.ok, items: confirmedPlanItems },
+    operation: "SUPPORT_PACKAGE_GENERATION",
+  });
+  if (operationGate.warnings.length > 0) {
+    logger.info(`[generate-missing-plan-files] tender=${id} operation-gate warnings: ${operationGate.warnings.join("; ")}`);
+  }
+  // Defensive: operation gate should never block SUPPORT_PACKAGE_GENERATION.
+  // If it does, fail closed to catch regressions.
+  if (operationGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked by operation gate (SUPPORT_PACKAGE_GENERATION).",
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: operationGate.blockers,
+      warnings: operationGate.warnings,
+    }, { status: 422 });
+  }
 
   // ── Central generation-readiness gate ─────────────────────────────
   // Every route that creates a GENERATED GeneratedDocument row must call

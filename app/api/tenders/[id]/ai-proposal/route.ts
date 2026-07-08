@@ -13,6 +13,7 @@ import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
@@ -207,6 +208,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // ── Operation gate (DRAFT_GENERATION) — non-blocking observability ────
+  // AI proposal generation is a DRAFT_GENERATION operation. The gate
+  // surfaces metadata warnings without blocking; the central readiness
+  // gate (called below for persist) is the real hard blocker.
+  const aiPropOpGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: tender.requirements.map((r: any) => ({
+      priority: r.priority,
+      sourceTenderFileId: r.sourceTenderFileId,
+    })),
+    overrides: [],
+    buildPlan: null,
+    operation: "DRAFT_GENERATION",
+  });
+  if (aiPropOpGate.warnings.length > 0) {
+    logger.info(`[ai-proposal] tender=${id} operation-gate warnings: ${aiPropOpGate.warnings.join("; ")}`);
+  }
+  if (aiPropOpGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: `AI proposal blocked by operation gate: ${aiPropOpGate.blockers.join("; ")}`,
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: aiPropOpGate.blockers,
+    }, { status: 422 });
+  }
 
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
   // Mirror the gate in /api/tenders/[id]/generate so the AI-proposal route

@@ -29,6 +29,7 @@
 
 import { normalizeSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
+import { MIN_CRITICAL_REASON_LENGTH } from "./tender-fact-authority";
 
 export type TenderOperation =
   | "ANALYSIS"
@@ -53,7 +54,15 @@ export type OperationGateInput = {
     [key: string]: unknown;
   };
   requirements?: Array<{ priority?: string | null; sourceTenderFileId?: string | null }>;
-  overrides?: Array<{ field: string; fieldState: string; overrideValue?: string | null }>;
+  overrides?: Array<{
+    field: string;
+    fieldState: string;
+    overrideValue?: string | null;
+    /** Audit reason — required for USER_CONFIRMED/USER_EDITED on critical fields */
+    reason?: string | null;
+    /** Confirmation basis — required for USER_CONFIRMED/USER_EDITED on critical fields */
+    confirmationBasis?: string | null;
+  }>;
   buildPlan?: { ok: boolean; items?: unknown[] } | null;
   operation: TenderOperation;
 };
@@ -150,11 +159,27 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
   // ═══════════════════════════════════════════════════════════════════
 
   // ── 1. Critical fields must be present and non-placeholder ───────
+  // For USER_CONFIRMED / USER_EDITED overrides, also require audit
+  // sufficiency (reason + confirmationBasis) — matches the authority
+  // model in canonical-field-state.ts. Without this check, a user could
+  // mark a missing clientName as "confirmed" with no audit trail and
+  // bypass the final-submission gate.
   for (const field of CRITICAL_FINAL_FIELDS) {
     const rawValue = (tender as Record<string, unknown>)[field] as string | null;
-    const effectiveValue = hasOverride(overrides, field) ? (getOverrideValue(overrides, field) ?? rawValue) : rawValue;
+    const override = overrides?.find((o) => o.field === field);
+    const hasResolvingOverride = !!(override && override.fieldState !== "NOT_APPLICABLE");
+    const effectiveValue = hasResolvingOverride ? (override?.overrideValue ?? rawValue) : rawValue;
     if (!effectiveValue || (typeof effectiveValue === "string" && isPlaceholder(effectiveValue))) {
       blockers.push(`Critical field "${field}" is missing or contains a placeholder — final submission requires a real value.`);
+      continue;
+    }
+    // Audit sufficiency for manual overrides on critical fields
+    if (override && (override.fieldState === "USER_CONFIRMED" || override.fieldState === "USER_EDITED")) {
+      const hasReason = !!(override.reason && override.reason.trim().length >= MIN_CRITICAL_REASON_LENGTH);
+      const hasConfirmationBasis = !!(override.confirmationBasis && override.confirmationBasis.trim());
+      if (!hasReason || !hasConfirmationBasis) {
+        blockers.push(`Critical field "${field}" has a manual override but the audit is incomplete — final submission requires both a meaningful reason and a confirmation basis.`);
+      }
     }
   }
 

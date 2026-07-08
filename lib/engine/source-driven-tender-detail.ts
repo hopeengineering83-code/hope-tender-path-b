@@ -69,7 +69,7 @@ export type SourceDrivenTenderDetail = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-import { isDisplayValidMetadataValue, NOT_EXTRACTED } from "./metadata-display-sanitizer";
+import { isDisplayValidMetadataValue } from "./metadata-display-sanitizer";
 
 /**
  * Derive a source-driven tender detail from raw tender columns.
@@ -83,13 +83,16 @@ export function deriveSourceDrivenTenderDetail(
 ): SourceDrivenTenderDetail {
   const facts: SourceDrivenTenderFact[] = [];
 
-  // Determine submission method from tender text
+  // Determine submission method from tender text.
+  // Order matters: HYBRID must be checked BEFORE EMAIL/PHYSICAL because
+  // hybrid tender text often contains both "email" and "physical" keywords
+  // (e.g., "Hybrid submission: email or physical").
   const rawSubmissionMethod = String(tender.submissionMethod ?? "").toLowerCase();
   const submissionMethod: SourceDrivenTenderDetail["submissionMethod"] =
-    rawSubmissionMethod.includes("email") ? "EMAIL"
+    rawSubmissionMethod.includes("hybrid") ? "HYBRID"
     : rawSubmissionMethod.includes("portal") || rawSubmissionMethod.includes("e-procurement") ? "PORTAL"
     : rawSubmissionMethod.includes("physical") || rawSubmissionMethod.includes("sealed") || rawSubmissionMethod.includes("courier") || rawSubmissionMethod.includes("hand") ? "PHYSICAL"
-    : rawSubmissionMethod.includes("hybrid") ? "HYBRID"
+    : rawSubmissionMethod.includes("email") ? "EMAIL"
     : "UNKNOWN";
 
   // Determine what the tender requires based on its actual content
@@ -102,6 +105,25 @@ export function deriveSourceDrivenTenderDetail(
   const hasBudget = !!tender.budget;
 
   // ─── Build facts from tender columns ───────────────────────────
+  //
+  // The field list covers BOTH:
+  //   • Fields the source-driven model classifies as required-for-final
+  //     based on tender content (e.g. submissionEmails when method=email)
+  //   • Fields canonical-field-state iterates, so that
+  //     `matchingFact = sourceDrivenDetail.facts.find(...)` is non-undefined
+  //     for every canonical field. This ensures `requiredForFinal` on
+  //     CanonicalFieldState always has a source-driven signal (even when
+  //     the signal is "optional"), rather than silently falling back to
+  //     legacy criticality.
+  //
+  // Fields not present in the tender columns (e.g. submissionEmailSubject,
+  // requiredDocuments) are still emitted with `requiredFor: "optional"` so
+  // the matchingFact lookup succeeds and downstream logic can engage.
+  //
+  // `submissionEmailSubject` is conditionally required when the tender
+  // explicitly requires an email subject line (operation-gate logic). We
+  // default to optional here; conditional elevation happens in
+  // isFactRequiredForFinal() based on the tender's submission method.
 
   const fieldDefs: Array<{
     key: string;
@@ -116,23 +138,50 @@ export function deriveSourceDrivenTenderDetail(
     { key: "clientName", label: "Client / Procuring Entity", value: tender.clientName ?? tender.procuringEntityName, requiredFor: "draft_context", pageKey: "clientNameSourcePage", quoteKey: "clientNameSourceQuote" },
     { key: "deadline", label: "Submission Deadline", value: tender.deadline, requiredFor: requiresDeadline ? "final_submission" : "optional", pageKey: "deadlineSourcePage", quoteKey: "deadlineSourceQuote" },
     { key: "submissionMethod", label: "Submission Method", value: tender.submissionMethod, requiredFor: "draft_context" },
+    { key: "submissionEndpoint", label: "Submission Endpoint", value: tender.submissionEmails ?? tender.submissionAddress, requiredFor: (requiresEmailEndpoint || requiresPhysicalAddress) ? "final_submission" : "optional" },
     { key: "submissionEmails", label: "Submission Emails", value: tender.submissionEmails, requiredFor: requiresEmailEndpoint ? "final_submission" : "optional" },
     { key: "submissionAddress", label: "Submission Address", value: tender.submissionAddress, requiredFor: requiresPhysicalAddress ? "final_submission" : "not_required" },
+    { key: "submissionEmailSubject", label: "Submission Email Subject", value: tender.submissionEmailSubject, requiredFor: "optional" },
+    { key: "requiredDocuments", label: "Required Documents", value: tender.requirements ?? null, requiredFor: "optional" },
     { key: "country", label: "Country", value: tender.country, requiredFor: "optional" },
+    { key: "currency", label: "Currency", value: tender.currency, requiredFor: "optional" },
     { key: "budget", label: "Budget", value: tender.budget, requiredFor: "optional" },
     { key: "bidBondAmount", label: "Bid Bond", value: tender.bidBondAmount, requiredFor: "optional" },
     { key: "pageLimit", label: "Page Limit", value: tender.pageLimit, requiredFor: "optional" },
     { key: "validityDays", label: "Proposal Validity", value: tender.validityDays, requiredFor: "optional" },
     { key: "mandatorySiteVisit", label: "Mandatory Site Visit", value: tender.mandatorySiteVisit, requiredFor: "optional" },
     { key: "preBidMeetingDate", label: "Pre-bid Meeting", value: tender.preBidMeetingDate, requiredFor: "optional" },
+    { key: "preBidMeetingLocation", label: "Pre-bid Meeting Location", value: tender.preBidMeetingLocation, requiredFor: "optional" },
+    { key: "preBidChannel", label: "Pre-bid Channel", value: tender.preBidChannel, requiredFor: "optional" },
     { key: "evaluationMethodology", label: "Evaluation Methodology", value: tender.evaluationMethodology, requiredFor: "optional" },
+    { key: "evaluationCriteria", label: "Evaluation Criteria", value: tender.evaluationMethodology, requiredFor: "optional" },
     { key: "clientContactName", label: "Client Contact", value: tender.clientContactName, requiredFor: "optional" },
     { key: "clientContactEmail", label: "Contact Email", value: tender.clientContactEmail, requiredFor: "optional" },
     { key: "clientContactPhone", label: "Contact Phone", value: tender.clientContactPhone, requiredFor: "optional" },
+    { key: "clientContactTitle", label: "Contact Title", value: tender.clientContactTitle, requiredFor: "optional" },
+    { key: "clientAddress", label: "Client Address", value: tender.clientAddress, requiredFor: "optional" },
+    { key: "clientCity", label: "Client City", value: tender.clientCity, requiredFor: "optional" },
+    { key: "clientWebsite", label: "Client Website", value: tender.clientWebsite, requiredFor: "optional" },
+    { key: "clientRepresentative", label: "Client Representative", value: tender.clientRepresentative, requiredFor: "optional" },
+    { key: "legalClientName", label: "Legal Client Name", value: tender.legalClientName, requiredFor: "optional" },
+    { key: "donorAgency", label: "Donor Agency", value: tender.donorAgency, requiredFor: "optional" },
+    { key: "implementingAgency", label: "Implementing Agency", value: tender.implementingAgency, requiredFor: "optional" },
+    { key: "numberOfCopiesRequired", label: "Number of Copies Required", value: tender.numberOfCopiesRequired, requiredFor: "optional" },
+    { key: "procuringEntityName", label: "Procuring Entity Name", value: tender.procuringEntityName, requiredFor: "optional" },
   ];
 
+  // Skip validation for fields whose value is an array (requiredDocuments is
+  // an array of requirement objects) — isDisplayValidMetadataValue expects
+  // a scalar/string. We treat non-empty arrays as valid extracted values.
+  function isFactValueValid(key: string, value: unknown): boolean {
+    if (key === "requiredDocuments") {
+      return Array.isArray(value) && value.length > 0;
+    }
+    return isDisplayValidMetadataValue(key as never, value);
+  }
+
   for (const def of fieldDefs) {
-    const isValid = isDisplayValidMetadataValue(def.key, def.value);
+    const isValid = isFactValueValid(def.key, def.value);
     const sourcePage = def.pageKey ? (tender[def.pageKey] as number | null | undefined) ?? null : null;
     const sourceQuote = def.quoteKey ? (tender[def.quoteKey] as string | null | undefined) ?? null : null;
     const hasSourceEvidence = sourcePage !== null && sourceQuote !== null;
@@ -143,7 +192,7 @@ export function deriveSourceDrivenTenderDetail(
 
     if (!isValid) {
       // Value is missing, placeholder, or invalid
-      if (def.value === null || def.value === undefined || def.value === "") {
+      if (def.value === null || def.value === undefined || def.value === "" || (Array.isArray(def.value) && def.value.length === 0)) {
         status = "missing";
       } else {
         status = "rejected_invalid";
@@ -229,5 +278,3 @@ export function isFactRequiredForFinal(
 export function doesFactBlockDraft(_fact: SourceDrivenTenderFact): boolean {
   return false;
 }
-
-export { NOT_EXTRACTED };

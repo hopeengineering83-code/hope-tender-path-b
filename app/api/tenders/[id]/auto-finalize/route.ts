@@ -20,6 +20,8 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { validateDocumentQuality } from "../../../../../lib/engine/document-quality-validator";
 import { POLISH_TIMEOUT_MS } from "../../../../../lib/timeout-config";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -273,6 +275,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
   const planEmpty = plan.files.length === 0;
   const plannedNames = new Set(plan.files.map((f: any) => (f.exactFileName ?? "").trim().toLowerCase()));
+
+  // ── Operation gate (FINAL_SUBMISSION_READY) — authoritative metadata check ─
+  // The operation gate enforces tender-derived final-submission requirements:
+  // critical fields present, requirements extracted, confirmed BuildPlan,
+  // endpoint matches method, no contamination, no degraded extraction.
+  // This is the source-driven authority for what the tender itself requires.
+  const autoFinalizeOperationGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: (tender.requirements ?? []).map((r: any) => ({
+      priority: r.priority,
+      sourceTenderFileId: r.sourceTenderFileId,
+    })),
+    overrides: [],
+    buildPlan: { ok: confirmedPlan.ok, items: planItems },
+    operation: "FINAL_SUBMISSION_READY",
+  });
+  if (autoFinalizeOperationGate.warnings.length > 0) {
+    logger.info(`[auto-finalize] tender=${tenderId} operation-gate warnings: ${autoFinalizeOperationGate.warnings.join("; ")}`);
+  }
+  if (autoFinalizeOperationGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: `Auto-finalize blocked by operation gate: ${autoFinalizeOperationGate.blockers.join("; ")}`,
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: autoFinalizeOperationGate.blockers,
+      warnings: autoFinalizeOperationGate.warnings,
+      nextAction: "RESOLVE_FINAL_SUBMISSION_BLOCKERS",
+    }, { status: 422 });
+  }
 
   // Reconcile old wrong rows: submission rules + outside-plan supersede
   for (const doc of tender.generatedDocuments) {

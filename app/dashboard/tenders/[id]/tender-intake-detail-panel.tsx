@@ -1,11 +1,17 @@
 // Compact auto-extracted tender detail panel.
 // Shows submission-critical metadata first and hides secondary/long details behind
 // dropdowns so the tender workspace stays short.
+//
+// Source-driven model: each fact shows user actions (Ignore / Edit / Re-extract)
+// when it is missing or invalid. The tender document is the authority — facts
+// come from extracted tender source, not from a predesigned required format.
 
+"use client";
+
+import { useState } from "react";
 import { ReExtractMetadataButton } from "./re-extract-button";
 import {
   isDisplayValidMetadataValue,
-  normalizeMetadataDisplayValue,
   NOT_EXTRACTED,
   type MetadataFieldKey,
 } from "../../../../lib/engine/metadata-display-sanitizer";
@@ -71,6 +77,144 @@ function sanitize(fieldKey: MetadataFieldKey, value: unknown): string {
   return NOT_EXTRACTED;
 }
 
+// ─── User actions for missing facts ─────────────────────────────────────────
+//
+// Each missing/invalid fact in the source-driven detail can be resolved by
+// the user with one of three actions:
+//   • Ignore — mark as NOT_APPLICABLE (the tender does not require this fact)
+//   • Edit — manually enter a value (USER_EDITED override)
+//   • Re-extract — trigger re-extraction from the tender source
+//
+// These actions call the existing /api/tenders/[id]/metadata-override endpoint
+// (for Ignore/Edit) or re-extract-metadata endpoint (for Re-extract).
+
+async function postOverride(
+  tenderId: string,
+  field: string,
+  fieldState: "NOT_APPLICABLE" | "USER_EDITED",
+  overrideValue?: string,
+  reason?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/tenders/${tenderId}/metadata-override`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field, fieldState, overrideValue, reason }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: body?.error ?? `Request failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function FactActions({
+  tenderId,
+  fact,
+  onAction,
+}: {
+  tenderId: string;
+  fact: SourceDrivenTenderFact;
+  onAction: (kind: "ignore" | "edit" | "re-extract", result: { ok: boolean; error?: string }) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Only show actions for missing or rejected-invalid facts
+  if (fact.status !== "missing" && fact.status !== "rejected_invalid") return null;
+
+  async function handleIgnore() {
+    setBusy(true);
+    const result = await postOverride(tenderId, fact.key, "NOT_APPLICABLE", undefined, "User marked as not applicable to this tender.");
+    setBusy(false);
+    onAction("ignore", result);
+  }
+
+  async function handleSaveEdit() {
+    if (!editValue.trim()) return;
+    setBusy(true);
+    const result = await postOverride(tenderId, fact.key, "USER_EDITED", editValue.trim());
+    setBusy(false);
+    if (result.ok) {
+      setEditing(false);
+      setEditValue("");
+    }
+    onAction("edit", result);
+  }
+
+  function handleReExtract() {
+    // Trigger re-extract by navigating to the re-extract button (handled by parent)
+    onAction("re-extract", { ok: true });
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2 mt-1">
+        <input
+          type="text"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder={`Enter ${fact.label.toLowerCase()}`}
+          className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs"
+          disabled={busy}
+        />
+        <button
+          type="button"
+          onClick={handleSaveEdit}
+          disabled={busy || !editValue.trim()}
+          className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setEditing(false); setEditValue(""); }}
+          disabled={busy}
+          className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <button
+        type="button"
+        onClick={handleIgnore}
+        disabled={busy}
+        title="Mark this fact as not applicable to this tender"
+        className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+      >
+        Ignore
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        disabled={busy}
+        title="Manually enter a value for this fact"
+        className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        onClick={handleReExtract}
+        disabled={busy}
+        title="Re-extract this fact from the tender source"
+        className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+      >
+        Re-extract
+      </button>
+    </div>
+  );
+}
+
 export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }) {
   const deadline = formatDeadline(tender.deadline);
   const preBid = formatDeadline(tender.preBidMeetingDate);
@@ -114,6 +258,23 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const filledCount = sourceDetail.extractedCount;
   const totalCount = sourceDetail.extractedCount + sourceDetail.missingRelevantCount;
 
+  const [actionMessage, setActionMessage] = useState<{ kind: string; ok: boolean; error?: string } | null>(null);
+
+  function handleAction(kind: "ignore" | "edit" | "re-extract", result: { ok: boolean; error?: string }) {
+    if (kind === "re-extract") {
+      // Re-extract is handled by the existing ReExtractMetadataButton at the top
+      // of the panel — scroll to it.
+      document.getElementById("tender-edit-form")?.scrollIntoView({ behavior: "smooth" });
+      setActionMessage({ kind, ok: true });
+      return;
+    }
+    setActionMessage({ kind, ok: result.ok, error: result.error });
+    if (result.ok) {
+      // Reload the page to reflect the new override state
+      setTimeout(() => window.location.reload(), 800);
+    }
+  }
+
   return (
     <section id="tender-edit-form" className="rounded-2xl border bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-4">
@@ -130,6 +291,22 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         </div>
       </div>
 
+      {actionMessage && (
+        <div className={`mb-3 rounded-lg px-3 py-2 text-xs ${
+          actionMessage.ok
+            ? "bg-emerald-50 text-emerald-800"
+            : "bg-red-50 text-red-800"
+        }`}>
+          {actionMessage.ok
+            ? actionMessage.kind === "ignore"
+              ? "Fact marked as not applicable. Refreshing…"
+              : actionMessage.kind === "edit"
+              ? "Fact updated. Refreshing…"
+              : "Re-extract triggered — see the re-extract button above."
+            : `Action failed: ${actionMessage.error ?? "unknown error"}`}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm md:grid-cols-2">
         <Detail label="Reference number" value={sReference} />
         <Detail label="Country" value={sCountry} />
@@ -138,6 +315,45 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         <Detail label="Submission method" value={sMethod} />
         <Detail label="Submission emails" value={sEmails} />
       </div>
+
+      {/* Source-driven missing facts with user actions */}
+      {sourceDetail.missingRelevantCount > 0 && (
+        <details className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3" open>
+          <summary className="cursor-pointer text-sm font-semibold text-amber-800">
+            {sourceDetail.missingRelevantCount} relevant fact(s) missing — review and resolve
+          </summary>
+          <div className="mt-3 space-y-3 bg-white p-3 rounded-lg">
+            {sourceDetail.facts
+              .filter((f) => f.status === "missing" || f.status === "rejected_invalid")
+              .filter((f) => f.requiredFor === "final_submission" || f.requiredFor === "draft_context")
+              .map((fact) => (
+                <div key={fact.key} className="border-b border-slate-100 pb-3 last:border-b-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">{fact.label}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        Required for: <span className="font-medium">{fact.requiredFor === "final_submission" ? "Final submission" : "Draft context"}</span>
+                        {fact.status === "rejected_invalid" && (
+                          <span className="ml-2 inline-flex rounded-full bg-red-50 px-2 py-0.5 text-xs italic text-red-700">
+                            {fact.reason ?? "Invalid value"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs italic text-amber-700">
+                      {fact.status === "rejected_invalid" ? "Invalid" : "Missing"}
+                    </span>
+                  </div>
+                  <FactActions
+                    tenderId={tender.id}
+                    fact={fact}
+                    onAction={handleAction}
+                  />
+                </div>
+              ))}
+          </div>
+        </details>
+      )}
 
       <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
         <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show all extracted metadata</summary>

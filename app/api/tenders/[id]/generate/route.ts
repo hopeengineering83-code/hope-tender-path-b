@@ -37,6 +37,8 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
 import { assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import { checkGenerationGates } from "../../../../../lib/generation-gates";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { deriveSourceDrivenTenderDetail } from "../../../../../lib/engine/source-driven-tender-detail";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -348,6 +350,91 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (preGenValidation.warnings.length > 0) {
     logger.warn(`[generate] tender=${id} has metadata warnings: ${preGenValidation.warnings.join("; ")}`);
   }
+
+  // ── Operation gate (DRAFT_GENERATION) — authoritative metadata check ────
+  // The operation gate is the single authority for metadata eligibility.
+  // For DRAFT_GENERATION, metadata NEVER blocks — the gate returns ok=true
+  // and surfaces warnings/placeholders for UI display. This is the wiring
+  // point that connects the source-driven tender model to the live route.
+  const operationGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: effectiveClientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: tender.requirements.map((r: any) => ({
+      priority: r.priority,
+      sourceTenderFileId: r.sourceTenderFileId,
+    })),
+    overrides: [], // overrides are resolved by canonical-field-state for UI; gate uses raw tender
+    buildPlan: { ok: true, items: [] }, // draft does not require confirmed BuildPlan
+    operation: "DRAFT_GENERATION",
+  });
+  // For DRAFT_GENERATION, the operation gate is non-blocking. Log warnings
+  // for observability and surface them later in the response.
+  if (operationGate.warnings.length > 0) {
+    logger.info(`[generate] tender=${id} operation-gate warnings: ${operationGate.warnings.join("; ")}`);
+  }
+  if (operationGate.placeholderFields.length > 0) {
+    logger.info(`[generate] tender=${id} placeholder fields: ${operationGate.placeholderFields.join(", ")}`);
+  }
+  // Defensive: if the operation gate ever returns blockers for DRAFT_GENERATION
+  // (it should not, by design), surface them as a hard block. This catches
+  // regressions where a future change accidentally reintroduces metadata
+  // blocking for draft work.
+  if (operationGate.blockers.length > 0) {
+    return NextResponse.json({
+      errorCode: "OPERATION_GATE_BLOCKED",
+      error: "Generation blocked by operation gate (DRAFT_GENERATION).",
+      blockers: operationGate.blockers,
+      warnings: operationGate.warnings,
+      placeholderFields: operationGate.placeholderFields,
+      diagnosticId: `operation-gate-blocked-${id}`,
+    }, { status: 422 });
+  }
+
+  // ── Source-driven tender detail (for response payload) ─────────────────
+  // Derive source-driven tender facts from the extracted tender data.
+  // This makes the source-driven model available to the UI without an extra
+  // round-trip, and proves that draft generation is driven by the extracted
+  // tender source, not by a predesigned required format.
+  const sourceDrivenDetail = deriveSourceDrivenTenderDetail({
+    id: tender.id,
+    title: tender.title,
+    reference: tender.reference,
+    clientName: tender.clientName,
+    procuringEntityName: tender.procuringEntityName,
+    deadline: tender.deadline,
+    submissionMethod: tender.submissionMethod,
+    submissionEmails: tender.submissionEmails,
+    submissionAddress: tender.submissionAddress,
+    country: tender.country,
+    budget: tender.budget,
+    bidBondAmount: tender.bidBondAmount,
+    pageLimit: tender.pageLimit,
+    validityDays: tender.validityDays,
+    mandatorySiteVisit: tender.mandatorySiteVisit,
+    preBidMeetingDate: tender.preBidMeetingDate,
+    preBidMeetingLocation: tender.preBidMeetingLocation,
+    evaluationMethodology: tender.evaluationMethodology,
+    clientContactName: tender.clientContactName,
+    clientContactEmail: tender.clientContactEmail,
+    clientContactPhone: tender.clientContactPhone,
+    clientNameSourcePage: tender.clientNameSourcePage,
+    clientNameSourceQuote: tender.clientNameSourceQuote,
+    titleSourcePage: tender.titleSourcePage,
+    titleSourceQuote: tender.titleSourceQuote,
+    deadlineSourcePage: tender.deadlineSourcePage,
+    deadlineSourceQuote: tender.deadlineSourceQuote,
+  });
 
   // ── Partial AI analysis gate ─────────────────────────────────────────────
   // When tender.status === "AI_ANALYSIS_PARTIAL", the AI analysis job hit its
@@ -1011,7 +1098,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const qualityScoreValue = qMatch ? parseInt(qMatch[1], 10) : null;
     let axisScoresValue: Record<string, number> | null = null;
     try { axisScoresValue = aMatch ? JSON.parse(aMatch[1]) as Record<string, number> : null; } catch { axisScoresValue = null; }
-    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null, ...(metadataOverrideLookupFailed ? { metadataOverrideLookupFailed: true, metadataOverrideLookupWarning: "TenderMetadataOverride table is not yet available — run database migration." } : {}) });
+    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null, sourceDrivenDetail: { tenderId: sourceDrivenDetail.tenderId, extractedCount: sourceDrivenDetail.extractedCount, missingRelevantCount: sourceDrivenDetail.missingRelevantCount, coverageRatio: sourceDrivenDetail.coverageRatio, submissionMethod: sourceDrivenDetail.submissionMethod, requiresDeadline: sourceDrivenDetail.requiresDeadline, requiresEmailEndpoint: sourceDrivenDetail.requiresEmailEndpoint, requiresPhysicalAddress: sourceDrivenDetail.requiresPhysicalAddress }, operationGate: { ok: operationGate.ok, warnings: operationGate.warnings, placeholderFields: operationGate.placeholderFields }, ...(metadataOverrideLookupFailed ? { metadataOverrideLookupFailed: true, metadataOverrideLookupWarning: "TenderMetadataOverride table is not yet available — run database migration." } : {}) });
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });

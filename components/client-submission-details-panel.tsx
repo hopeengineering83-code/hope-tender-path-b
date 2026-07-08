@@ -339,7 +339,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
       <div className="space-y-1">
         {metadata.fields.map((field) => {
           const badge = STATUS_BADGE[field.status] ?? STATUS_BADGE.INVALID;
-          const isCritical = field.criticality === "always-critical";
+          const isCritical = field.requiredForFinal ?? (field.criticality === "always-critical");
           // Grounding is shown from the canonical isGrounded flag — the
           // resolver's single source of truth. A field counts as sourced
           // only when it has a real page AND a usable quote AND a valid

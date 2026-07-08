@@ -17,6 +17,8 @@ import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engin
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -205,6 +207,56 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         tenderLevelBlockers: canonical.tenderLevelBlockers,
         advisoryWarnings: canonical.advisoryWarnings,
         summary: canonical.summary,
+      },
+    );
+  }
+
+  // ── Operation gate (FINAL_SUBMISSION_READY) — authoritative metadata check ─
+  // The operation gate is the single authority for operation-specific
+  // metadata eligibility. For FINAL_SUBMISSION_READY, the gate enforces:
+  //   • Critical fields (title, clientName, deadline, submissionMethod) present
+  //   • Requirements extracted
+  //   • Confirmed BuildPlan
+  //   • Submission endpoint matches the tender-derived method
+  //     (EMAIL → email endpoint, PHYSICAL → address, HYBRID → at least one)
+  //   • No metadata contamination
+  //   • No OCR_REQUIRED / REGEX_FALLBACK extraction status
+  // This complements the canonical readiness gate — both must pass for
+  // final submission to proceed.
+  const finalBuildPlan = await getCurrentConfirmedBuildPlan(prisma, tender.id, userId);
+  const finalOperationGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: (tender.requirements ?? []).map((r: any) => ({
+      priority: r.priority,
+      sourceTenderFileId: r.sourceTenderFileId,
+    })),
+    overrides: [],
+    buildPlan: { ok: finalBuildPlan.ok, items: finalBuildPlan.ok ? finalBuildPlan.items : [] },
+    operation: "FINAL_SUBMISSION_READY",
+  });
+  if (finalOperationGate.warnings.length > 0) {
+    logger.info(`[download/zip] tender=${tender.id} operation-gate warnings: ${finalOperationGate.warnings.join("; ")}`);
+  }
+  if (finalOperationGate.blockers.length > 0) {
+    return err(
+      `Final submission blocked by operation gate: ${finalOperationGate.blockers.join("; ")}`,
+      409,
+      {
+        code: "OPERATION_GATE_BLOCKED",
+        blockers: finalOperationGate.blockers,
+        warnings: finalOperationGate.warnings,
       },
     );
   }
