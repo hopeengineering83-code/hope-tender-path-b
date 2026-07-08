@@ -196,7 +196,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
   async function runGenerate() {
     if (!fullProposalReady) {
       setKind("error");
-      setMessage("Generation is blocked by canonical readiness. Resolve the listed blockers first.");
+      setMessage("Tender details incomplete — review optional warnings before proceeding.");
       return;
     }
     setRunning(true);

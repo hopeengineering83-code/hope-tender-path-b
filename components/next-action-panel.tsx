@@ -349,7 +349,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.primary === "GENERATE_DOCUMENTS" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
-          <strong>All pre-generation gates pass.</strong> You can now generate the proposal. Generation is blocked server-side until extraction, analysis, metadata, requirements, source traceability, and plan are all valid.
+          <strong>All pre-generation gates pass.</strong> You can now generate the proposal. Draft generation proceeds with available data. Optional metadata is omitted from output. Final submission requires strict validation.
         </div>
       )}
 

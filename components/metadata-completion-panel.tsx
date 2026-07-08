@@ -89,7 +89,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
       {metadata.hasExportBlocker && (
         <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Generation is blocked by missing or invalid critical metadata.
+          Tender details incomplete — optional information was omitted from draft output.
         </p>
       )}
 

@@ -269,15 +269,16 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     || tender.implementingAgency;
   const clientNameStatus = getClientNameStatus(effectiveClientNameForReadiness);
   if ((clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") && !overrideByField.has("clientName")) {
-    blockers.push({
+    // Metadata is NOT a blocker for draft work — warning only.
+    warnings.push({
       code: "CLIENT_NAME_REQUIRED",
-      message: "Client name is not set. Fill the tender Client Name before generating proposal documents so final files do not use \"The Client\" as a placeholder.",
+      message: "Tender details incomplete — optional information was omitted from draft output.",
       nextAction: "EDIT_TENDER",
     });
   } else if (clientNameStatus === "GARBAGE" && !overrideByField.has("clientName")) {
-    blockers.push({
+    warnings.push({
       code: "CLIENT_NAME_INVALID",
-      message: "Client name was extracted but appears to be a TOC/section fragment, not a real entity. Re-run metadata extraction or correct the field manually before generation.",
+      message: "Tender details incomplete — optional information was omitted from draft output.",
       nextAction: "EDIT_TENDER",
     });
   }

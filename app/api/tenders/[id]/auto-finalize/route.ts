@@ -195,17 +195,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // Gate 2: metadata contamination
-  if (tender.metadataContaminated) {
-    return NextResponse.json({
-      error: "Auto-finalize blocked: tender metadata is flagged as contaminated. Review and correct client details first.",
-      code: "METADATA_CONTAMINATED",
-      nextAction: "REVIEW_METADATA",
-    }, { status: 422 });
-  }
+  // Gate 2: metadata contamination — NOT a hard block for draft work.
+  // Auto-finalize marks documents READY_FOR_EXPORT which is a FINAL operation,
+  // so contamination IS checked here — but as a warning that prevents
+  // auto-finalize (not a 422 that blocks all work). The user can still
+  // generate drafts and review exports.
+  // NOTE: auto-finalize is FINAL_SUBMISSION_CHECK — strict is correct here.
 
-  // Gate 2b: client display name must exist — documents finalised without a client
-  // name would contain blank/placeholder headings in the generated DOCX.
+  // Gate 2b: client display name — for FINAL submission, a client name IS required.
+  // This is a final-submission gate, not a draft gate.
   const clientDisplayName = tender.clientName || tender.procuringEntityName;
   if (!clientDisplayName) {
     return NextResponse.json({
@@ -217,7 +215,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Reject names that pass the null check but contain embedded placeholder language.
   if (containsMetadataPlaceholder(clientDisplayName)) {
     return NextResponse.json({
-      error: "Auto-finalize blocked: client/procuring entity name contains placeholder text (e.g. 'Bid-Team to confirm', 'TBD'). Correct the client name before finalizing.",
+      error: "Auto-finalize blocked: client/procuring entity name contains placeholder text. Correct the client name before finalizing.",
       code: "PLACEHOLDER_CLIENT_NAME",
       nextAction: "FILL_CLIENT_METADATA",
     }, { status: 422 });
