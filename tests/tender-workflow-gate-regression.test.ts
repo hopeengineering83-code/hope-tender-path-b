@@ -69,15 +69,15 @@ describe("Tender Workflow Gate Regression — Corrupted Extraction Chain", () =>
     assert.ok(src.includes("isExtractionAcceptableForExport"), "Readiness lib must call the extraction gate");
   });
 
-  it("Step 6: metadataContaminated blocks Generate Docs & Export", () => {
-      // Generate route check
+  it("Step 6: metadataContaminated does NOT block Generate Docs (metadata is optional for draft)", () => {
+      // Generate route must NOT hard-block on contaminated metadata for draft work
       const generateRoute = path.resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts");
       const gSrc = fs.readFileSync(generateRoute, "utf8");
-      assert.ok(gSrc.includes("tender.metadataContaminated"), "Generate route must block on contaminated metadata");
+      assert.doesNotMatch(gSrc, /errorCode.*METADATA_CONTAMINATED/, "Generate route must NOT hard-block on contaminated metadata");
 
-      // Export readiness check
+      // Export readiness check — export IS strict
       const readinessLib = path.resolve(process.cwd(), "lib/engine/final-submission-readiness.ts");
       const rSrc = fs.readFileSync(readinessLib, "utf8");
-      assert.ok(rSrc.includes("tender.metadataContaminated"), "Readiness lib must block on contaminated metadata");
+      assert.ok(rSrc.includes("tender.metadataContaminated"), "Readiness lib must block on contaminated metadata for export");
   });
 });

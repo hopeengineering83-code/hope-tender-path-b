@@ -38,16 +38,18 @@ describe("AC#9/#10 — Generate Docs gate", () => {
     assert.equal(g.allGatesMet, true);
   });
 
-  it("blocks when there is a method but NO endpoint (no email, no address)", () => {
+  it("does NOT block when there is a method but NO endpoint (metadata is optional for draft)", () => {
     const g = checkGenerationGates({ ...base, hasSubmissionEmails: false, hasSubmissionAddress: false });
     assert.equal(g.submissionPlanOk, false);
-    assert.equal(g.allGatesMet, false);
+    assert.equal(g.allGatesMet, true, "metadata gates don't block draft generation");
+    assert.ok(g.metadataWarnings.length > 0, "should have metadata warning");
   });
 
-  it("blocks when the procuring entity is missing (AC#6)", () => {
+  it("does NOT block when the procuring entity is missing (metadata is optional for draft)", () => {
     const g = checkGenerationGates({ ...base, hasProcuringEntity: false });
     assert.equal(g.clientDetailsOk, false);
-    assert.equal(g.allGatesMet, false);
+    assert.equal(g.allGatesMet, true, "metadata gates don't block draft generation");
+    assert.ok(g.metadataWarnings.length > 0, "should have metadata warning");
   });
 
   it("blocks when no requirements were extracted (AC#8/#10)", () => {
