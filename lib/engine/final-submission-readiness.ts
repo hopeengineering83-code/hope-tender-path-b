@@ -52,6 +52,7 @@ import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
@@ -714,6 +715,19 @@ export async function getFinalSubmissionReadiness(
   // blocking for export (and vice versa). This closes the prior gap where the
   // export gate ran a separate metadata-criticality path and ignored manual
   // overrides + per-field source evidence entirely.
+  //
+  // ── TenderFactsLedger authority ──────────────────────────────────────────
+  // Fetch the ledger snapshot so the resolver prefers ledger facts over
+  // stale scalar columns. The ledger is the durable authority; scalar columns
+  // are fallback only when no ledger fact exists.
+  let ledgerSnapshot: Awaited<ReturnType<typeof getTenderFactLedgerSnapshot>> | null = null;
+  try {
+    ledgerSnapshot = await getTenderFactLedgerSnapshot(client, opts.tenderId);
+  } catch {
+    // Ledger table may not exist yet (pre-migration) — fall back to scalar-only
+    ledgerSnapshot = null;
+  }
+
   const canonicalExportState = resolveCanonicalFieldState({
     tender: {
       id: tender.id,
@@ -801,6 +815,8 @@ export async function getFinalSubmissionReadiness(
     activeFiles: (tender.files ?? [])
       .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
       .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
+    // Pass the ledger snapshot so the resolver prefers ledger facts over scalar
+    ...(ledgerSnapshot ? { ledgerFacts: ledgerSnapshot.facts } : {}),
   });
   if (canonicalExportState.hasExportBlocker) {
     const blockingFields = canonicalExportState.fields
