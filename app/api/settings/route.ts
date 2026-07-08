@@ -158,7 +158,7 @@ export async function PUT(req: Request) {
 
   await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
+  const company = await prisma.company.findUnique({ where: { userId: actor.id }, include: { settings: true } });
   if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
 
   const body = await req.json().catch(() => null) as Record<string, unknown> | null;
@@ -171,6 +171,12 @@ export async function PUT(req: Request) {
       { status: 400 },
     );
   }
+
+  // Determine which fields actually change, for a field-name-only audit trail.
+  const existing = company.settings as Record<string, unknown> | null;
+  const changedFields = Object.keys(data!)
+    .filter((k) => k !== "updatedAt")
+    .filter((k) => !existing || existing[k] !== (data as Record<string, unknown>)[k]);
 
   // Upsert preserves existing values for fields not in the request body.
   // The `data` object only contains fields that were provided + validated.
@@ -192,13 +198,17 @@ export async function PUT(req: Request) {
     },
   });
 
+  // Audit changed field NAMES only — never the values (which may be sensitive).
   void logAction({
     userId: actor.id,
     action: "SETTINGS_UPDATED",
     entityType: "AppSettings",
     entityId: settings.id,
-    description: "App settings updated",
+    description: changedFields.length > 0
+      ? `App settings updated: ${changedFields.join(", ")}`
+      : "App settings saved (no field changes)",
+    metadata: { changedFields },
   }).catch(() => {});
 
-  return NextResponse.json({ settings });
+  return NextResponse.json({ settings, changedFields });
 }

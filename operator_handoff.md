@@ -71,6 +71,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-08 UTC — Claude Code
+
+- **Mode:** Neon restored-database compatibility + settings integrity (branch `fix/neon-settings-integrity`, new draft PR off latest `main`).
+- **Scope (additive, read-only, no migration):**
+  - `lib/db-recovery/status.ts` + `app/api/admin/db-recovery/route.ts` — ADMIN-only, READ-ONLY sanitized recovery status: reachability, schema compatibility, required-tables present, Company/AppSettings existence (`initializationRequired`), core counts only, missing/inactive branding assets, invalid restored settings (field-name + reason only), and a DRY-RUN repair preview. Never exposes `DATABASE_URL`, host, DB name, credentials, users, files, or content.
+  - `app/api/settings/route.ts` — audit **changed field names only** (was a generic message); returns `changedFields`. (RBAC + unknown-field rejection + restored-value preservation were already merged into main.)
+  - `tests/db-recovery-status.test.ts` — sanitization contract (no secret/record/content leak) + initialization-required + invalid-settings + missing-asset + dry-run-preview logic.
+- **Tests:** `db-recovery-status` 6/6, `admin-audit-route-guards` 7/7; `tsc` clean; `eslint` clean; `next build` succeeds.
+- **Deferred (documented in the PR, out of this slice):** AppSettings schema expansion (documentFormat/packageMode split, timezone, notification prefs, selected asset IDs + placement) with additive migration; wiring those settings into generation. No production DB / Vercel / provider keys / frozen PR #937 touched.
+- **Next action:** open draft PR; await Hope's review.
+- **Merge status:** DO NOT MERGE — draft.
+
 ### 2026-07-07 UTC — ChatGPT
 
 - **Mode:** review follow-up on non-retryable AI Analyze failures
