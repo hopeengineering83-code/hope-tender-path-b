@@ -9,6 +9,10 @@ import {
   NOT_EXTRACTED,
   type MetadataFieldKey,
 } from "../../../../lib/engine/metadata-display-sanitizer";
+import {
+  deriveSourceDrivenTenderDetail,
+  type SourceDrivenTenderFact,
+} from "../../../../lib/engine/source-driven-tender-detail";
 
 type TenderDetailLike = {
   id: string;
@@ -102,25 +106,20 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const sDesc = sanitize("description", tender.description);
   const sEvalMethod = sanitize("evaluationMethodology", tender.evaluationMethodology);
 
-  // Count only display-valid values (not raw non-empty fields)
-  const validFields = [
-    tender.reference, client, tender.clientContactName, tender.clientContactEmail,
-    tender.clientContactPhone, tender.clientAddress, tender.country, deadline, tender.submissionMethod,
-    budget, tender.validityDays, bond, preBid, tender.numberOfCopiesRequired, tender.pageLimit,
-    evaluation, tender.description, tender.evaluationMethodology,
-  ];
-  const filledCount = validFields.filter((f, i) => {
-    const keys: MetadataFieldKey[] = ["reference", "clientName", "clientContactName", "clientContactEmail", "clientContactPhone", "clientAddress", "country", "deadline", "submissionMethod", "budget", "validityDays", "bidBondAmount", "preBidMeetingDate", "numberOfCopiesRequired", "pageLimit", "technicalWeight", "description", "evaluationMethodology"];
-    return isDisplayValidMetadataValue(keys[i], f);
-  }).length;
-  const totalCount = validFields.length;
+  // Derive source-driven tender detail from raw tender columns
+  const sourceDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
+
+  // Coverage = valid extracted facts / facts detected or relevant for this tender
+  // Does not penalize the tender for not containing facts it never needed
+  const filledCount = sourceDetail.extractedCount;
+  const totalCount = sourceDetail.extractedCount + sourceDetail.missingRelevantCount;
 
   return (
     <section id="tender-edit-form" className="rounded-2xl border bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div className="flex-1">
           <h2 className="text-lg font-semibold text-slate-900">Tender Detail</h2>
-          <p className="mt-1 text-xs text-slate-500">Submission-critical metadata is shown first. Secondary extracted fields are collapsed.</p>
+          <p className="mt-1 text-xs text-slate-500">Facts extracted from this tender source. Missing optional details do not block draft generation.</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
