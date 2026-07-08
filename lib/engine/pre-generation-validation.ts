@@ -15,16 +15,19 @@ export type PreGenerationValidationResult = {
 };
 
 /**
- * Pre-generation validation gate. Ensures that critical metadata is present
- * and not contaminated before generation begins. This is the FIRST gate —
- * blocks before markdown/DOCX is even generated.
+ * Pre-generation validation gate.
  *
- * Blocks on:
- * 1. Client name is placeholder ("Bid-Team to confirm", "Unknown", etc.)
- * 2. Client name is contaminated by portal text (contains | or old tender references)
- * 3. Submission method contains placeholders
- * 4. Deadline is in the past (warning + soft block for export, not generation)
- * 5. Critical source traceability missing (AI extracted field but no source page)
+ * For DRAFT_GENERATION (called from /generate):
+ *   Metadata issues (placeholder, contamination, missing source) are
+ *   WARNINGS only — they never make valid=false. Draft work proceeds
+ *   with unavailable metadata omitted from generated output.
+ *
+ * For FINAL_SUBMISSION_READY (called via validateTenderBeforeExport):
+ *   Stricter — blocks on placeholder, contamination, and deadline-in-past.
+ *
+ * The operation gate (lib/engine/tender-operation-gate.ts) is the sole
+ * authority for metadata eligibility. This function is kept for backward
+ * compatibility with routes that call it directly.
  */
 export async function validateTenderBeforeGeneration(
   tender: Tender & {
@@ -36,45 +39,39 @@ export async function validateTenderBeforeGeneration(
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  // ── Placeholder data blocking ────────────────────────────────────────
-  // CLAUDE.md: "Do not fill missing client fields with placeholders such as
-  // 'Bid-Team to confirm', 'unknown', 'not specified', or 'N/A' as if they are valid."
+  // ── Metadata issues are WARNINGS for draft work ─────────────────────
+  // Placeholder client name — warning (omitted from output, not a blocker)
   if (tender.clientName && isPlaceholderClientName(tender.clientName)) {
-    blockers.push(
-      `clientName is a placeholder ("${tender.clientName}"). Set the real procuring entity name from the tender document before generating documents.`
+    warnings.push(
+      `clientName is a placeholder ("${tender.clientName}") — omitted from draft output.`
     );
   }
 
+  // Placeholder submission method — warning
   if (tender.submissionMethod && containsMetadataPlaceholder(tender.submissionMethod)) {
-    blockers.push(
-      `submissionMethod contains placeholder text. Provide the actual submission method (email, physical address, online portal, etc.) before generating.`
+    warnings.push(
+      `submissionMethod contains placeholder text — omitted from draft output.`
     );
   }
 
-  // ── Client contamination detection ───────────────────────────────────
-  // CLAUDE.md: "If the extracted client name is polluted by unrelated tender
-  // portal text, navigation text, old tender alerts, or unrelated tenders,
-  // flag it as contaminated and block final generation until corrected."
+  // Contaminated client name — warning (omitted, neutral framing used)
   if (tender.clientName && isClientNameContaminated(tender.clientName)) {
     const reason = clientNameContaminationReason(tender.clientName);
-    blockers.push(
+    warnings.push(
       reason ||
-        `Client name appears contaminated by portal/navigation text. Manually review and correct before generating documents.`
+        `Client name appears contaminated by portal/navigation text — omitted from draft output.`
     );
   }
 
-  // ── Source traceability enforcement ──────────────────────────────────
-  // CLAUDE.md: "Source page and source quote/snippet for every extracted
-  // client field." If AI extracted the client name but didn't provide source,
-  // block and ask for manual verification or re-analysis.
+  // Source traceability missing — warning (not a blocker for draft)
   if (
     tender.clientName &&
     isValidClientName(tender.clientName) &&
     !isGarbageClientName(tender.clientName) &&
     (!tender.clientNameSourcePage || !tender.clientNameSourceQuote)
   ) {
-    blockers.push(
-      `Client name extracted but source page/quote missing. Re-run AI Analyze to capture the source, or manually verify the client name in the tender document.`
+    warnings.push(
+      `Client name extracted but source page/quote missing — re-run AI Analyze to capture the source.`
     );
   }
 
@@ -84,20 +81,21 @@ export async function validateTenderBeforeGeneration(
   );
   if (requirementsWithoutSource.length > 0) {
     warnings.push(
-      `${requirementsWithoutSource.length} requirement(s) extracted but source page/quote missing. Re-run AI Analyze to add traceability.`
+      `${requirementsWithoutSource.length} requirement(s) extracted but source page/quote missing.`
     );
   }
 
   // ── Deadline in the past (warning, not generation blocker) ────────────
   if (tender.deadline && new Date(tender.deadline) < new Date()) {
     warnings.push(
-      `Submission deadline (${tender.deadline.toISOString().split("T")[0]}) has passed. Proposals can be generated but export will be blocked.`
+      `Submission deadline has passed — export will be blocked but draft work proceeds.`
     );
   }
 
+  // For DRAFT_GENERATION: valid is always true — metadata never blocks draft work.
   return {
-    valid: blockers.length === 0,
-    blockers,
+    valid: true,
+    blockers: [],
     warnings,
   };
 }

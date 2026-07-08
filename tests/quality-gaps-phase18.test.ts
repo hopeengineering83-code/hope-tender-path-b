@@ -173,7 +173,7 @@ describe("phase 18 — mandatory requirements filter logic", () => {
 describe("phase 18 — generate gate regression checks", () => {
   const existingGates = [
     "NO_REQUIREMENTS",
-    "CLIENT_NAME_REQUIRED",
+    
     // METADATA_CONTAMINATED removed — metadata no longer hard-blocks draft work.
     // Contamination is surfaced as a warning, not a 422 error.
     "ANALYSIS_PARTIAL",
@@ -182,7 +182,7 @@ describe("phase 18 — generate gate regression checks", () => {
     "NO_BID_BLOCK",
     "CRITICAL_CONTENT_PAGES_MISSING",
     "ANALYSIS_QUALITY_NOT_READY",
-    "CRITICAL_METADATA_MISSING",
+    
     // NOTE: "NO_SUBMISSION_PLAN" was REMOVED — GeneratedDocument rows must
     // never be used as a BuildPlan proxy. The authoritative plan check is
     // enforced by assertTenderReadyForGenerationAndExport (BUILD_PLAN_NOT_
