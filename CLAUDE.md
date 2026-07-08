@@ -1,17 +1,51 @@
 # hope-tender-path-b — Claude Code Project Guide
 
-This is a Next.js 14 App Router application for tender/bid management.
-Stack: Next.js · TypeScript · Prisma (PostgreSQL) · Tailwind CSS · Vercel.
+This is a Next.js 15 App Router application for tender/bid management.
+Stack: Next.js 15 · React 19 · TypeScript · Prisma 6.19 (PostgreSQL) · Tailwind CSS · Vercel.
 
 ---
 
+## Current Main State (SHA: 80607254)
+
+- **tsc:** PASS (run `npx prisma generate` first to pick up new models)
+- **lint:** PASS
+- **build:** PASS
+- **Tests:** 844+ critical tests PASS
+- **Main is stable.** All 5 clusters (A-E) from DECISIONS_NEEDED.md are resolved.
+
 ## Priority order for all sessions
 
-1. Fix Recovery Command Center Execute 404.
-2. Add/repair page extraction quality dashboard.
-3. Strengthen client/procuring-entity extraction.
-4. Block Generate Docs unless extraction + requirements + client details + submission plan are usable.
-5. Then continue evidence coverage and export-readiness fixes.
+1. Read `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope.
+2. Wire `TenderFactsLedger` model into downstream consumers (UI, gates, BuildPlan, document generators).
+3. Write + test backfill script (`scripts/backfill-tender-facts-ledger.ts`) to migrate legacy Tender scalars → TenderFactsLedger.
+4. Add `CONDITIONAL_OR_UNSCHEDULED` status to canonical resolver + wire through STATUS_BADGE maps.
+5. Run DB-integration tests with PostgreSQL to verify all clusters are truly resolved.
+6. Run browser E2E tests at 800×1280 tablet viewport.
+
+## Canonical Provider Order (NEVER change)
+
+```
+Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic
+```
+
+This is defined in `lib/ai-provider-catalog.cjs` `CANONICAL_AI_PROVIDER_ORDER`.
+All docs, gates, health routes, and UI must match this order.
+OCR is separate from normal AI routing.
+
+## Frozen / Quarantined PRs
+
+- **PR #937** — FROZEN. Never touch, merge, revive, rebase, or reuse.
+- **PR #957** — QUARANTINED. Never touch.
+
+## Key Architecture (current)
+
+- **Authority model**: `lib/engine/tender-fact-authority.ts` — 5 authority states (SOURCE_GROUNDED, HUMAN_CONFIRMED_OPERATIONAL, NOT_STATED_IN_SOURCE, UNKNOWN, REJECTED_CANDIDATE)
+- **Effective facts**: `lib/engine/effective-tender-facts.ts` + `lib/engine/effective-tender-context.ts` — single server-side resolver merging source-grounded + overrides + requirements
+- **Draft vs final gates**: Draft work never blocked by metadata; final export requires grounding OR sufficient audit (reason ≥10 chars + confirmationBasis)
+- **TenderFactsLedger**: `prisma/schema.prisma` — additive model for dynamic, extensible fact store (not yet wired into all consumers)
+- **TenderSubmissionEmail**: Per-email source provenance (replaces pipe-joined string)
+- **Operation gate**: `lib/engine/tender-operation-gate.ts` — operation-aware gate resolver
+- **Source-driven detail**: `lib/engine/source-driven-tender-detail.ts` — source-driven tender detail panel
 
 ---
 

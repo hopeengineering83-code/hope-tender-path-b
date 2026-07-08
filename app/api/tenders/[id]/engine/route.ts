@@ -6,6 +6,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -26,6 +27,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "LOGIN_AGAIN",
       diagnosticId,
     }, { status: 401 });
+  }
+
+  // Persistent AI throttling — prevents abuse across serverless instances
+  const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({
+      error: "Rate limit exceeded — too many engine requests. Please wait before retrying.",
+      code: "RATE_LIMITED",
+      retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000),
+      diagnosticId,
+    }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   }
 
   try {

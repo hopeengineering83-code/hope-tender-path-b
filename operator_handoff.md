@@ -44,7 +44,11 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| None registered | — | — | — | No active lock recorded | Inspect GitHub before starting work |
+| GLM (Super Z) | `fix/main-gaps-and-doc-updates` | Doc updates (provider order, stale priorities, session log) + main gap audit | `operator_handoff.md`, `CLAUDE.md`, `CLAUDE_TASKS.md`, `AGENTS.md` | Active | Push + create DRAFT PR |
+| Claude Code | `claude/short-honest-feedback-gaps-vyh8dv` (PR #961) | #793 boundary cuts + reference validator | `lib/engine/tender-field-extractors.ts`, `lib/engine/metadata-validators.ts` | DRAFT, not merged | Await Hope's review |
+| Claude Code | `claude/fix-clusters-A-E-off-961` | Clusters A-E repair + health route | 47 files | DRAFT, partially superseded by main #964/#965 | Await Hope's review |
+| GLM (Super Z) | `hotfix/metadata-ledger-completion-v2` | Tender facts ledger classification helpers | 6 files | DRAFT, tsc fixed | Await Hope's review |
+| GLM (Super Z) | `fix/metadata-ledger-completion` | Universal tender facts ledger completion | 8 files | DRAFT, tsc fixed | Await Hope's review |
 
 ### Lock rules
 
@@ -58,7 +62,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 - Tender-controlled scope only. Never invent tender facts or evidence.
 - Company Vault is factual evidence only; no automatic all-Vault fallback.
-- Provider order: Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic last.
+- Provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic last. (This is the canonical order defined in `lib/ai-provider-catalog.cjs` `CANONICAL_AI_PROVIDER_ORDER` — all docs, gates, and UI must match this.)
 - Regex, fallback, partial, legacy, and unpromoted analysis must not unlock generation, export, or Final ZIP.
 - Only promoted `AI_SUCCEEDED` may unlock generation/export after all gates pass.
 - Critical metadata and mandatory requirements need active source file, page, and meaningful quote.
@@ -71,7 +75,23 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
-### 2026-07-07 UTC (later) — Claude Code
+### 2026-07-09 UTC — GLM (Super Z)
+
+- **Mode:** Full investigation + doc updates + gap audit (branch `fix/main-gaps-and-doc-updates`, DRAFT PR).
+- **Scope:**
+  - Fixed provider order in `operator_handoff.md` (was `Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Anthropic` — now matches the canonical `CANONICAL_AI_PROVIDER_ORDER` in `lib/ai-provider-catalog.cjs`: `Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic`).
+  - Updated `operator_handoff.md` Active Workboard with all active branches and their statuses.
+  - Updated `CLAUDE_TASKS.md` provider order (was `Claude → Gemini → OpenAI → DeepSeek`).
+  - Updated `CLAUDE.md` stale priority list (was referencing Phase 1-5 tasks from months ago).
+  - Updated `AGENTS.md` with current main SHA and open PR summary.
+  - Audited main: `tsc` PASS (after `prisma generate`), `lint` PASS, `build` PASS, 844 tests PASS.
+  - Audited all open PR branches: 4 key branches all pass `tsc` (fixed in prior sessions).
+  - Identified remaining gaps: TenderFactsLedger not yet wired into downstream consumers; backfill script needs testing; CONDITIONAL_OR_UNSCHEDULED status not in canonical resolver; DB-integration tests not run.
+- **Tests:** `tsc` clean; `eslint` clean; `next build` succeeds; 844 critical tests pass.
+- **Next action:** Open draft PR; await Hope's review.
+- **Merge status:** DO NOT MERGE — draft.
+
+### 2026-07-08 UTC — Claude Code
 
 - **Mode:** finish the reconciliation — restore ALL safety behaviours the recent refactor dropped and get current `main` fully green (Hope authorised fixing everything, including reworking the refactored files).
 - **Branch / PR:** `claude/short-honest-feedback-gaps-vyh8dv` / #961 (draft).
