@@ -44,9 +44,29 @@ async function backfill() {
   const isApply = process.argv.includes("--apply");
   const isProduction = process.env.NODE_ENV === "production";
 
+  // ── Flag parsing ────────────────────────────────────────────────────────
+  // --tender-id <id>   : limit to a specific tender (for targeted staging repair)
+  // --limit <n>        : limit the number of tenders to process (for safe staged runs)
+  // --updated-after <iso>: only process tenders updated after this date
+  const tenderIdFlag = (() => {
+    const idx = process.argv.indexOf("--tender-id");
+    return idx >= 0 ? process.argv[idx + 1] : undefined;
+  })();
+  const limitFlag = (() => {
+    const idx = process.argv.indexOf("--limit");
+    return idx >= 0 ? parseInt(process.argv[idx + 1] ?? "0", 10) : undefined;
+  })();
+  const updatedAfterFlag = (() => {
+    const idx = process.argv.indexOf("--updated-after");
+    return idx >= 0 ? process.argv[idx + 1] : undefined;
+  })();
+
   console.log("=== TenderFactsLedger Backfill ===");
   console.log(`Mode: ${isApply ? "APPLY" : "DRY-RUN (no writes)"}`);
   console.log(`Environment: ${process.env.NODE_ENV ?? "(unset)"}`);
+  if (tenderIdFlag) console.log(`Filter: tender-id=${tenderIdFlag}`);
+  if (limitFlag) console.log(`Limit: ${limitFlag} tender(s)`);
+  if (updatedAfterFlag) console.log(`Updated after: ${updatedAfterFlag}`);
 
   if (isApply && isProduction) {
     console.error("\n✗ REFUSED: --apply is not allowed in NODE_ENV=production.");
@@ -57,7 +77,21 @@ async function backfill() {
 
   await prismaReady;
 
+  // Build where clause from flags
+  const where: { id?: string; updatedAt?: { gt: Date } } = {};
+  if (tenderIdFlag) {
+    where.id = tenderIdFlag;
+  }
+  if (updatedAfterFlag) {
+    const d = new Date(updatedAfterFlag);
+    if (!isNaN(d.getTime())) {
+      where.updatedAt = { gt: d };
+    }
+  }
+
   const tenders = await prisma.tender.findMany({
+    where,
+    ...(limitFlag && limitFlag > 0 ? { take: limitFlag } : {}),
     select: {
       id: true,
       title: true,
@@ -377,9 +411,36 @@ async function backfill() {
   console.log(`  - CANDIDATE_NEEDS_REVIEW (no evidence, needs review): ${totalCandidate}`);
   console.log(`Mode: ${isApply ? "APPLY (writes performed)" : "DRY-RUN (no writes)"}`);
 
+  // ── JSON summary artifact (stdout) ──────────────────────────────────────
+  // Write a machine-readable JSON summary so CI/staging can capture and
+  // archive the backfill result. The summary includes all skipped reasons
+  // so operators can audit what was rejected and why.
+  const summary = {
+    timestamp: new Date().toISOString(),
+    mode: isApply ? "APPLY" : "DRY-RUN",
+    environment: process.env.NODE_ENV ?? "(unset)",
+    filters: {
+      tenderId: tenderIdFlag ?? null,
+      limit: limitFlag ?? null,
+      updatedAfter: updatedAfterFlag ?? null,
+    },
+    totals: {
+      tendersScanned: tenders.length,
+      tendersSkipped: totalSkipped,
+      candidateEntries: totalCandidates,
+      grounded: totalGrounded,
+      candidate: totalCandidate,
+    },
+    skippedTenders,
+  };
+  console.log(`\n=== JSON Summary ===`);
+  console.log(JSON.stringify(summary, null, 2));
+
   if (!isApply) {
     console.log(`\nTo apply these changes, run: npx tsx scripts/backfill-tender-facts-ledger.ts --apply`);
     console.log(`(Only allowed in non-production environments)`);
+    console.log(`\nFor targeted staging repair: npx tsx scripts/backfill-tender-facts-ledger.ts --apply --tender-id <id>`);
+    console.log(`For safe staged runs: npx tsx scripts/backfill-tender-facts-ledger.ts --apply --limit 10`);
   }
 
   await prisma.$disconnect();
