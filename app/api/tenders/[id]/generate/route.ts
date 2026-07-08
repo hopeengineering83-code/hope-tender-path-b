@@ -306,6 +306,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // for metadata eligibility. For DRAFT_GENERATION, metadata never blocks.
 
   // ── Generation gates check (metadata gates downgraded to warnings) ───
+  // For DRAFT_GENERATION, metadata issues (client details, submission
+  // method/endpoint, requirements) are all warnings — they never return 422.
+  // Only genuine non-metadata risks (extraction quality, no usable source
+  // text) may hard-block. Requirements being empty is a warning for draft
+  // work — the user can generate a skeleton/draft proposal from source text.
   const generationGates = checkGenerationGates({
     extractionStatus: (tender.analysisExtractionStatus as any) ?? null,
     requirementCount: tender.requirements.length,
@@ -316,10 +321,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     hasEvaluationMethodology: !!tender.evaluationMethodology,
     buildsSubmissionPlan: true,
   });
-  // Metadata gate failures are warnings for draft work — do NOT return 422.
-  // Only genuine non-metadata blockers (extraction quality) may hard-block.
+  // Only extraction quality (no usable source text) may hard-block draft work.
+  // Requirements missing = warning (draft can be generated from source text).
   const hardBlockers = generationGates.blockers.filter(b =>
-    b.includes("extraction") || b.includes("analyzed") || b.includes("requirements")
+    b.includes("extraction") || b.includes("analyzed")
   );
   if (hardBlockers.length > 0) {
     return NextResponse.json({
@@ -437,37 +442,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     nextAction: "CHANGE_BID_DECISION",
     diagnosticId: `no-bid-${id}`,
   }, { status: 409 });
+  // ── Requirements check — NOT a hard block for draft work ──────────────
+  // Missing requirements is a warning, not a blocker. The user can generate
+  // a skeleton/draft proposal from available tender source text. Final
+  // submission still requires extracted requirements.
   if (tender.requirements.length === 0) {
-    return NextResponse.json({
-      errorCode: "NO_REQUIREMENTS",
-      error: "Generation blocked: no tender requirements were extracted yet. Run AI Analyze / Run Engine first, or add requirements manually before generating documents.",
-      blockers: ["No tender requirements have been extracted."],
-      nextAction: "RUN_ENGINE",
-      diagnosticId: `no-requirements-${id}`,
-    }, { status: 422 });
+    logger.warn(`[generate] tender=${id} has no extracted requirements — generating draft from source text only`);
   }
 
   // ── Mandatory requirements classification advisory ────────────────────────
-  // Per CLAUDE.md: "Mandatory requirements are extracted" is a generation gate.
-  // When the AI extracted requirements but classified none as MANDATORY, the
-  // mandatory-compliance section may be incomplete. Fire an advisory block so
-  // the user can re-run AI Analyze or reclassify before generating.
-  // Only applies when >= 3 requirements exist (avoids false positives on simple
-  // scopes where all requirements are genuinely optional/desirable).
-  // URL bypass removed
+  // Advisory only — NOT a hard block for draft work. When the AI extracted
+  // requirements but classified none as MANDATORY, the mandatory-compliance
+  // section may be incomplete. This is a warning for the user.
   {
     const reqUrl0 = new URL(req.url);
     {
       const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
       if (mandatoryCount === 0 && tender.requirements.length >= 3) {
-        return NextResponse.json({
-          errorCode: "NO_MANDATORY_REQUIREMENTS",
-          error: "Generation advisory: requirements were extracted but none are classified as MANDATORY. This may indicate the AI missed mandatory compliance requirements. Re-run AI Analyze or manually mark critical requirements as MANDATORY before generating documents.",
-          blockers: ["No requirements are classified as MANDATORY — mandatory requirement classification may be incomplete."],
-          nextAction: "RERUN_AI_ANALYZE",
-          // URL bypass removed
-          diagnosticId: `no-mandatory-reqs-${id}`,
-        }, { status: 422 });
+        logger.warn(`[generate] tender=${id} has ${tender.requirements.length} requirements but none classified as MANDATORY — advisory only for draft work`);
       }
     }
   }
@@ -493,18 +485,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
       }
       if (totalDetected > 0) {
-        const contentBlockers: string[] = [];
-        if (!anySubmission) contentBlockers.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods cannot be verified.");
-        if (!anyRequiredDocs) contentBlockers.push("No required documents/forms pages were detected. The generated proposal may be missing mandatory annexures or official forms.");
-        if (!anyEvaluation) contentBlockers.push("No evaluation criteria pages were detected in the extracted text. The generated proposal cannot be scored correctly without evaluation criteria — re-extract or run OCR before generating documents.");
-        if (contentBlockers.length > 0) {
-          return NextResponse.json({
-            errorCode: "CRITICAL_CONTENT_PAGES_MISSING",
-            error: "Generation blocked: critical tender sections (submission instructions, required documents, or evaluation criteria) were not found in the extracted text. Re-extract the PDF or run OCR to ensure these sections are readable before generating documents.",
-            blockers: contentBlockers,
-            nextAction: "OPEN_EXTRACTION_QUALITY",
-            diagnosticId: `content-pages-missing-${id}`,
-          }, { status: 422 });
+        const contentWarnings: string[] = [];
+        if (!anySubmission) contentWarnings.push("No submission instruction pages detected — submission details will be omitted from draft output.");
+        if (!anyRequiredDocs) contentWarnings.push("No required document pages detected — required documents may be missing from draft output.");
+        if (!anyEvaluation) contentWarnings.push("No evaluation criteria pages detected — evaluation guidance will be limited in draft output.");
+        if (contentWarnings.length > 0) {
+          // Content-page coverage is NOT a hard block for draft work.
+          // Missing submission/required-doc/evaluation pages are warnings —
+          // draft generation proceeds with available source text.
+          logger.warn(`[generate] tender=${id} content-page coverage incomplete: ${contentWarnings.join("; ")}`);
         }
       }
     }

@@ -52,10 +52,11 @@ describe("AC#9/#10 — Generate Docs gate", () => {
     assert.ok(g.metadataWarnings.length > 0, "should have metadata warning");
   });
 
-  it("blocks when no requirements were extracted (AC#8/#10)", () => {
+  it("does NOT block when no requirements were extracted (metadata is optional for draft)", () => {
     const g = checkGenerationGates({ ...base, requirementCount: 0 });
     assert.equal(g.requirementsOk, false);
-    assert.equal(g.allGatesMet, false);
+    assert.equal(g.allGatesMet, true, "requirements missing does not block draft generation");
+    assert.ok(g.metadataWarnings.length > 0, "should have metadata warning");
   });
 
   it("blocks on weak / missing extraction (AC#5/#10)", () => {

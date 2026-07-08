@@ -63,11 +63,13 @@ export function checkGenerationGates(input: {
     recommendations.push("Manually confirm or correct the procuring entity name");
   }
 
-  // Gate 3: Requirements — genuine non-metadata risk (no requirements = nothing to work with)
+  // Gate 3: Requirements — METADATA (warning only for draft)
+  // Missing requirements is a warning for draft work. The user can generate
+  // a skeleton/draft proposal from available tender source text.
   const requirementsOk = input.requirementCount > 0;
   if (!requirementsOk) {
-    blockers.push("No requirements extracted - analysis did not identify tender requirements");
-    recommendations.push("Review tender document manually or retry analysis");
+    metadataWarnings.push("No requirements extracted — draft will use source text only");
+    recommendations.push("Run AI Analyze to extract requirements for better draft coverage");
   }
 
   // Gate 4: Submission Plan — METADATA (warning only for draft)
@@ -87,14 +89,15 @@ export function checkGenerationGates(input: {
     recommendations.push("Evaluation methodology not found - evaluation guidance will be limited");
   }
 
-  // allGatesMet: only extraction quality and requirements are hard gates.
-  // Metadata gates (client details, submission plan) are warnings for draft work.
+  // allGatesMet: only extraction quality is a hard gate for draft work.
+  // All metadata gates (client details, requirements, submission plan) are
+  // warnings — they never make allGatesMet false.
   return {
     extractionOk,
     clientDetailsOk,
     requirementsOk,
     submissionPlanOk,
-    allGatesMet: extractionOk && requirementsOk,
+    allGatesMet: extractionOk,
     blockers,
     recommendations,
     metadataWarnings,
