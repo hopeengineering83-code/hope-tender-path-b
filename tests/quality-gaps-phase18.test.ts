@@ -61,23 +61,17 @@ describe("phase 18 — AI prompt entity source tracing", () => {
   });
 });
 
-// ── 2. generate/route.ts — mandatory requirements advisory gate ──────────────
+// ── 2. generate/route.ts — mandatory requirements advisory (non-blocking) ────
 
-describe("phase 18 — generate route mandatory requirements gate (static audit)", () => {
-  it("route contains NO_MANDATORY_REQUIREMENTS errorCode", () => {
+describe("phase 18 — generate route mandatory requirements advisory (non-blocking)", () => {
+  it("route does NOT hard-block with NO_MANDATORY_REQUIREMENTS for draft work", () => {
     const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    assert.ok(
-      src.includes("NO_MANDATORY_REQUIREMENTS"),
-      "generate route must define NO_MANDATORY_REQUIREMENTS errorCode",
-    );
+    assert.doesNotMatch(src, /errorCode.*NO_MANDATORY_REQUIREMENTS/, "route must NOT return NO_MANDATORY_REQUIREMENTS error for draft work");
   });
 
-  it("gate fires when zero mandatory requirements and >= 3 requirements exist", () => {
+  it("route does NOT hard-block with NO_REQUIREMENTS for draft work", () => {
     const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    assert.ok(
-      src.includes("mandatoryCount === 0 && tender.requirements.length >= 3"),
-      "gate condition must check for zero MANDATORY count with minimum 3 requirements",
-    );
+    assert.doesNotMatch(src, /errorCode.*NO_REQUIREMENTS/, "route must NOT return NO_REQUIREMENTS error for draft work");
   });
 
   it("gate no longer uses acceptNoMandatoryReqs bypass (removed)", () => {
@@ -85,28 +79,6 @@ describe("phase 18 — generate route mandatory requirements gate (static audit)
     assert.ok(
       !src.includes("acceptNoMandatoryReqs"),
       "generate route must NOT support acceptNoMandatoryReqs bypass",
-    );
-  });
-
-  it("nextAction is RERUN_AI_ANALYZE for mandatory requirements advisory", () => {
-    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    const gateStart = src.indexOf("NO_MANDATORY_REQUIREMENTS");
-    assert.ok(gateStart > -1, "gate must exist");
-    // Use a wide window — the error message before nextAction is ~250 chars
-    const gateBlock = src.slice(gateStart - 200, gateStart + 700);
-    assert.ok(
-      gateBlock.includes("RERUN_AI_ANALYZE"),
-      "advisory gate must suggest RERUN_AI_ANALYZE as next action",
-    );
-  });
-
-  it("gate is always active (planOnly bypass removed)", () => {
-    const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    const gateStart = src.indexOf("NO_MANDATORY_REQUIREMENTS");
-    const before = src.slice(Math.max(0, gateStart - 400), gateStart);
-    assert.ok(
-      !before.includes("planOnly"),
-      "mandatory requirements gate must NOT respect planOnly bypass",
     );
   });
 
@@ -172,7 +144,7 @@ describe("phase 18 — mandatory requirements filter logic", () => {
 
 describe("phase 18 — generate gate regression checks", () => {
   const existingGates = [
-    "NO_REQUIREMENTS",
+    
     
     // METADATA_CONTAMINATED removed — metadata no longer hard-blocks draft work.
     // Contamination is surfaced as a warning, not a 422 error.
