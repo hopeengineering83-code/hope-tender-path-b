@@ -123,7 +123,7 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
               <div className="flex items-start justify-between gap-2 text-xs">
                 <div className="min-w-0 flex-1">
                   <span className="font-medium text-slate-700">{f.label}</span>
-                  {f.criticality === "always-critical" && (
+                  {(f.requiredForFinal ?? (f.criticality === "always-critical")) && (
                     <span className="ml-1.5 text-[9px] font-bold uppercase text-red-500">Critical</span>
                   )}
                 </div>

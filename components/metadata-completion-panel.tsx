@@ -53,12 +53,14 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
   // Derive actions directly from snapshot fields: show only fields that need action
   // - Final-check items (final submission only)
-  // - Critical fields that are missing/invalid
+  // - Required-for-final fields (source-driven + legacy criticality) that are missing/invalid
   const fieldsNeedingAction = metadata.fields.filter(f => {
-    const isCritical = f.criticality === "always-critical";
+    // Use the source-driven requiredForFinal field (tender-derived) — falls back
+    // to legacy criticality for backward compat if the field is undefined.
+    const isRequired = f.requiredForFinal ?? (f.criticality === "always-critical");
     const isBlocked = f.blockerReason != null;
     const isMissing = f.status === "INVALID" || f.status === "NOT_STATED";
-    return isBlocked || (isCritical && isMissing);
+    return isBlocked || (isRequired && isMissing);
   });
 
   // If no fields need action AND no generation blocker, show success
@@ -96,7 +98,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
       <div className="space-y-1">
         {fieldsNeedingAction.map((field) => {
           const badge = STATUS_BADGE[field.status] ?? STATUS_BADGE.INVALID;
-          const isCritical = field.criticality === "always-critical";
+          const isCritical = field.requiredForFinal ?? (field.criticality === "always-critical");
 
           return (
             <div

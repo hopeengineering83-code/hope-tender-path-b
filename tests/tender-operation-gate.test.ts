@@ -416,17 +416,49 @@ describe("operation gate — submission endpoint validation", () => {
 // ─── 7. Override-aware ──────────────────────────────────────────────────────
 
 describe("operation gate — overrides", () => {
-  it("FINAL: USER_CONFIRMED override on critical field resolves the blocker", () => {
+  it("FINAL: USER_CONFIRMED override on critical field WITH audit resolves the blocker", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({ clientName: null }),
+      overrides: [
+        {
+          field: "clientName",
+          fieldState: "USER_CONFIRMED",
+          overrideValue: "Ministry of Test",
+          reason: "Confirmed via phone call to procurement office",
+          confirmationBasis: "PHONE_CALL",
+        },
+      ],
+    }));
+    assert.equal(r.ok, true, "USER_CONFIRMED override with audit should resolve the missing clientName blocker");
+  });
+
+  it("FINAL: USER_CONFIRMED override on critical field WITHOUT audit does NOT resolve the blocker", () => {
     const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
       tender: makeTender({ clientName: null }),
       overrides: [
         { field: "clientName", fieldState: "USER_CONFIRMED", overrideValue: "Ministry of Test" },
       ],
     }));
-    assert.equal(r.ok, true, "USER_CONFIRMED override should resolve the missing clientName blocker");
+    assert.equal(r.ok, false, "USER_CONFIRMED override without audit should NOT resolve the blocker");
+    assert.ok(r.blockers.some((b) => b.includes("audit is incomplete")), "should mention incomplete audit");
   });
 
-  it("FINAL: USER_EDITED override on submissionEmails resolves EMAIL endpoint blocker", () => {
+  it("FINAL: USER_CONFIRMED override with reason but no confirmationBasis does NOT resolve", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({ clientName: null }),
+      overrides: [
+        {
+          field: "clientName",
+          fieldState: "USER_CONFIRMED",
+          overrideValue: "Ministry of Test",
+          reason: "Confirmed via phone call to procurement office",
+        },
+      ],
+    }));
+    assert.equal(r.ok, false, "USER_CONFIRMED override without confirmationBasis should NOT resolve");
+  });
+
+  it("FINAL: USER_EDITED override on submissionEmails (non-critical for FINAL CRITICAL_FINAL_FIELDS) resolves EMAIL endpoint blocker", () => {
     const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
       tender: makeTender({
         submissionMethod: "Email submission",

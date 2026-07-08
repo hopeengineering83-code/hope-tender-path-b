@@ -12,7 +12,6 @@ import { useState } from "react";
 import { ReExtractMetadataButton } from "./re-extract-button";
 import {
   isDisplayValidMetadataValue,
-  normalizeMetadataDisplayValue,
   NOT_EXTRACTED,
   type MetadataFieldKey,
 } from "../../../../lib/engine/metadata-display-sanitizer";

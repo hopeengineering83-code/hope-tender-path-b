@@ -679,7 +679,15 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     //      (e.g. submissionEmails required when tender uses email method)
     // The OR preserves backward compat: legacy always-critical fields stay
     // required, AND source-driven tender-derived fields are also required.
-    const matchingFact = sourceDrivenDetail.facts.find((f) => f.key === fieldKey);
+    // NOTE: evaluationCriteria in canonical-field-state maps to
+    // evaluationMethodology in the source-driven model (the field is named
+    // "Evaluation criteria" in the UI but stored as evaluationMethodology).
+    // The source-driven model uses the storage column name; we fall back to
+    // both keys so the source-driven signal is not lost.
+    const matchingFact = sourceDrivenDetail.facts.find((f) =>
+      f.key === fieldKey
+      || (fieldKey === "evaluationCriteria" && f.key === "evaluationMethodology")
+    );
     const sourceDrivenRequired = matchingFact
       ? isFactRequiredForFinal(matchingFact, sourceDrivenDetail)
       : false;
