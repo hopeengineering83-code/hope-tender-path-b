@@ -38,6 +38,7 @@ import {
   stagePartialResult,
 } from "../../../../../lib/ai-analyze-promotion";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -1118,6 +1119,39 @@ async function handleBackgroundEnqueue(
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  // ── Operation gate (ANALYSIS) — non-blocking observability ─────────────
+  // Same as the synchronous POST handler: surface metadata warnings without
+  // blocking. ANALYSIS is never blocked by metadata.
+  const bgAnalysisOpGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: [],
+    overrides: [],
+    buildPlan: null,
+    operation: "ANALYSIS",
+  });
+  if (bgAnalysisOpGate.warnings.length > 0) {
+    logger.info(`[ai-analyze/background] tender=${id} operation-gate warnings: ${bgAnalysisOpGate.warnings.join("; ")}`);
+  }
+  if (bgAnalysisOpGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: `AI Analyze (background) blocked by operation gate: ${bgAnalysisOpGate.blockers.join("; ")}`,
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: bgAnalysisOpGate.blockers,
+    }, { status: 422 });
+  }
+
   // Extraction-quality gate BEFORE enqueueing — mirrors the synchronous path so
   // the durable worker never starts on corrupted or too-weak extraction.
   const extractionReports = tender.files.map((file) => ({
@@ -1238,6 +1272,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const tenderRecord = tender;
+
+  // ── Operation gate (ANALYSIS) — non-blocking observability ─────────────
+  // AI Analyze is the PRODUCER of analysisExtractionStatus, not the consumer.
+  // The operation gate is called here for SYMMETRY with the other 4 operation
+  // routes and for OBSERVABILITY — it surfaces metadata warnings without
+  // blocking. ANALYSIS is never blocked by metadata (the route's own
+  // extraction-quality gates are the real blockers for analysis).
+  const analysisOpGate = resolveTenderOperationGate({
+    tender: {
+      id: tenderRecord.id,
+      title: tenderRecord.title,
+      reference: tenderRecord.reference,
+      clientName: tenderRecord.clientName,
+      deadline: tenderRecord.deadline,
+      submissionMethod: tenderRecord.submissionMethod,
+      submissionEmails: tenderRecord.submissionEmails,
+      submissionAddress: tenderRecord.submissionAddress,
+      country: tenderRecord.country,
+      metadataContaminated: tenderRecord.metadataContaminated,
+      analysisExtractionStatus: tenderRecord.analysisExtractionStatus,
+    },
+    requirements: [],
+    overrides: [],
+    buildPlan: null,
+    operation: "ANALYSIS",
+  });
+  if (analysisOpGate.warnings.length > 0) {
+    logger.info(`[ai-analyze] tender=${id} operation-gate warnings: ${analysisOpGate.warnings.join("; ")}`);
+  }
+  // Defensive: ANALYSIS should never be blocked by the operation gate.
+  // If it ever returns blockers, fail closed to catch regressions.
+  if (analysisOpGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: `AI Analyze blocked by operation gate (ANALYSIS): ${analysisOpGate.blockers.join("; ")}`,
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: analysisOpGate.blockers,
+      warnings: analysisOpGate.warnings,
+    }, { status: 422 });
+  }
+
   // ONLY ACTIVE TenderFile IDs are accepted as valid sourceTenderFileId values.
   // Deleted/foreign file IDs are rejected so a requirement cannot be grounded
   // against a file that no longer exists in the tender.

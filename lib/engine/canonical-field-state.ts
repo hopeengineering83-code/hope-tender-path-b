@@ -41,6 +41,10 @@ import {
   MIN_CRITICAL_REASON_LENGTH,
 } from "./tender-fact-authority";
 import type { TenderPolicyContext } from "./tender-policy-registry";
+import {
+  deriveSourceDrivenTenderDetail,
+  isFactRequiredForFinal,
+} from "./source-driven-tender-detail";
 
 /**
  * Check if a manual override's audit is sufficient for FINAL export.
@@ -117,6 +121,16 @@ export type CanonicalFieldState = {
   overrideState: PolicyFieldState | null;
   isManuallyConfirmed: boolean;
   criticality: "always-critical" | "conditionally-critical" | "non-critical";
+  /**
+   * Source-driven: true when this field is required for FINAL submission
+   * based on what the tender itself requires (e.g. email endpoint for an
+   * email-method tender). This complements `criticality` — `criticality`
+   * reflects the legacy "always-critical" classification (kept for backward
+   * compatibility with final-submission gates), while `requiredForFinal`
+   * reflects the source-driven model. UI panels may use either; new code
+   * should prefer `requiredForFinal` because it is tender-derived.
+   */
+  requiredForFinal: boolean;
   /** Hard gate blocker — blocks generation/export when set. */
   blockerReason: string | null;
   /**
@@ -353,6 +367,13 @@ function parseContactDetailsSource(json: unknown): Record<string, { page: number
 export function resolveCanonicalFieldState(input: CanonicalResolverInput): CanonicalFieldStateResult {
   const { tender, overrides, activeTenderFileIds, activeFiles, hasExtractedRequirements, submissionMethodContext } = input;
   const fields: CanonicalFieldState[] = [];
+
+  // ── Source-driven tender detail (computed once) ───────────────────────
+  // Derive the source-driven tender detail from the tender record. This
+  // drives the new `requiredForFinal` field on each CanonicalFieldState,
+  // which is tender-derived (e.g. email endpoint required only when the
+  // tender uses email submission) — not based on a universal list.
+  const sourceDrivenDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
 
   // EFFECTIVE submission method (override-aware) drives conditional
   // criticality AND the value-driven email-subject rule — a USER_EDITED /
@@ -650,6 +671,20 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     if (effectiveStr && !override) permittedActions.push("not_stated");
     if (evidence.page) permittedActions.push("review_source");
 
+    // ── Source-driven requiredForFinal ─────────────────────────────────
+    // A field is required for FINAL submission when:
+    //   1. The legacy criticality says it's always-critical OR conditionally-critical
+    //      (preserves backward compat with existing final-submission gates)
+    //   2. OR the source-driven model says it's required for this tender
+    //      (e.g. submissionEmails required when tender uses email method)
+    // The OR preserves backward compat: legacy always-critical fields stay
+    // required, AND source-driven tender-derived fields are also required.
+    const matchingFact = sourceDrivenDetail.facts.find((f) => f.key === fieldKey);
+    const sourceDrivenRequired = matchingFact
+      ? isFactRequiredForFinal(matchingFact, sourceDrivenDetail)
+      : false;
+    const requiredForFinal = isCritical || sourceDrivenRequired;
+
     fields.push({
       fieldKey,
       label,
@@ -661,6 +696,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       overrideState,
       isManuallyConfirmed,
       criticality,
+      requiredForFinal,
       blockerReason,
       evidenceReviewNeeded,
       warningReason,

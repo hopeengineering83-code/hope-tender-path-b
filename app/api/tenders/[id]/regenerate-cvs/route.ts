@@ -17,6 +17,8 @@ import { generateExpertCvDocx, expertCvFileName } from "../../../../../lib/engin
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { logger } from "../../../../../lib/observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -37,9 +39,47 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    select: { id: true, title: true },
+    select: {
+      id: true, title: true, reference: true, clientName: true, deadline: true,
+      submissionMethod: true, submissionEmails: true, submissionAddress: true,
+      country: true, metadataContaminated: true, analysisExtractionStatus: true,
+    },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // ── Operation gate (DRAFT_GENERATION) — non-blocking observability ────
+  // CV regeneration is a DRAFT_GENERATION operation. The gate surfaces
+  // metadata warnings without blocking; the central readiness gate above
+  // is the real hard blocker.
+  const cvOpGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: [],
+    overrides: [],
+    buildPlan: null,
+    operation: "DRAFT_GENERATION",
+  });
+  if (cvOpGate.warnings.length > 0) {
+    logger.info(`[regenerate-cvs] tender=${tenderId} operation-gate warnings: ${cvOpGate.warnings.join("; ")}`);
+  }
+  if (cvOpGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: `CV regeneration blocked by operation gate: ${cvOpGate.blockers.join("; ")}`,
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: cvOpGate.blockers,
+    }, { status: 422 });
+  }
 
   // ── Central generation readiness gate ──────────────────────────────────
   // Regenerating expert CVs creates GENERATED GeneratedDocument rows —
