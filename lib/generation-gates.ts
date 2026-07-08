@@ -1,3 +1,19 @@
+// Generation gates — operation-aware.
+//
+// For DRAFT_GENERATION and REVIEW_EXPORT:
+//   • Metadata gates (client details, submission method/endpoint) are
+//     WARNINGS only — they never make allGatesMet false.
+//   • Only extraction quality and requirements (genuine non-metadata risks)
+//     may push to blockers.
+//
+// For FINAL_SUBMISSION_READY:
+//   • All gates are strict — use the FINAL_SUBMISSION_READY operation
+//     via resolveTenderOperationGate instead of this function.
+//
+// This module is kept for backward compatibility with routes that call
+// checkGenerationGates. The operation gate (lib/engine/tender-operation-gate.ts)
+// is the sole authority for metadata eligibility.
+
 type ExtractionStatus = string;
 
 export interface GenerationGateStatus {
@@ -8,6 +24,8 @@ export interface GenerationGateStatus {
   allGatesMet: boolean;
   blockers: string[];
   recommendations: string[];
+  /** Metadata warnings (non-blocking) — surfaced to the UI as optional notices. */
+  metadataWarnings: string[];
 }
 
 export function checkGenerationGates(input: {
@@ -16,16 +34,15 @@ export function checkGenerationGates(input: {
   hasProcuringEntity: boolean;
   hasSubmissionMethod: boolean;
   hasSubmissionEmails: boolean;
-  /** A physical / sealed-envelope tender's submission endpoint is an address,
-   *  not an email. The endpoint is satisfied by an email OR an address. */
   hasSubmissionAddress?: boolean;
   hasEvaluationMethodology: boolean;
   buildsSubmissionPlan: boolean;
 }): GenerationGateStatus {
   const blockers: string[] = [];
   const recommendations: string[] = [];
+  const metadataWarnings: string[] = [];
 
-  // Gate 1: Extraction Quality
+  // Gate 1: Extraction Quality — genuine non-metadata risk
   const extractionOk =
     input.extractionStatus === "FULL_EXTRACTION_AI_ANALYZED" ||
     input.extractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED";
@@ -39,49 +56,48 @@ export function checkGenerationGates(input: {
     }
   }
 
-  // Gate 2: Client/Procuring Entity Details
+  // Gate 2: Client/Procuring Entity Details — METADATA (warning only for draft)
   const clientDetailsOk = input.hasProcuringEntity;
   if (!clientDetailsOk) {
-    blockers.push("Procuring entity not extracted - required for document generation");
+    metadataWarnings.push("Procuring entity not extracted — omitted from draft output");
     recommendations.push("Manually confirm or correct the procuring entity name");
   }
 
-  // Gate 3: Requirements
+  // Gate 3: Requirements — genuine non-metadata risk (no requirements = nothing to work with)
   const requirementsOk = input.requirementCount > 0;
   if (!requirementsOk) {
     blockers.push("No requirements extracted - analysis did not identify tender requirements");
     recommendations.push("Review tender document manually or retry analysis");
   }
 
-  // Gate 4: Submission Plan — needs a method AND a usable endpoint. The
-  // endpoint is an email OR a submission address: a physical / sealed-envelope
-  // tender is submitted to an address and legitimately has no email, so we must
-  // not block it merely because submissionEmails is empty (consistent with the
-  // canonical resolver and the metadata-completeness gate).
+  // Gate 4: Submission Plan — METADATA (warning only for draft)
   const hasEndpoint = input.hasSubmissionEmails || input.hasSubmissionAddress === true;
   const submissionPlanOk = input.hasSubmissionMethod && hasEndpoint;
   if (!submissionPlanOk) {
     if (!input.hasSubmissionMethod) {
-      blockers.push("Submission method not extracted - required for submission plan");
+      metadataWarnings.push("Submission method not extracted — omitted from draft output");
     } else {
-      blockers.push("Submission endpoint not extracted - an email address or a physical submission address is required for the submission plan");
+      metadataWarnings.push("Submission endpoint not extracted — omitted from draft output");
     }
     recommendations.push("Manually confirm the submission method and a submission endpoint (email or address)");
   }
 
-  // Gate 5: Evaluation Methodology (for scoring/evaluation guidance)
+  // Gate 5: Evaluation Methodology (warning only — never blocks)
   if (!input.hasEvaluationMethodology && input.requirementCount > 0) {
     recommendations.push("Evaluation methodology not found - evaluation guidance will be limited");
   }
 
+  // allGatesMet: only extraction quality and requirements are hard gates.
+  // Metadata gates (client details, submission plan) are warnings for draft work.
   return {
     extractionOk,
     clientDetailsOk,
     requirementsOk,
     submissionPlanOk,
-    allGatesMet: extractionOk && clientDetailsOk && requirementsOk && submissionPlanOk,
+    allGatesMet: extractionOk && requirementsOk,
     blockers,
     recommendations,
+    metadataWarnings,
   };
 }
 
@@ -92,9 +108,7 @@ export function getGatesSummary(gates: GenerationGateStatus): string {
 
   const failedGates = [];
   if (!gates.extractionOk) failedGates.push("extraction");
-  if (!gates.clientDetailsOk) failedGates.push("client details");
   if (!gates.requirementsOk) failedGates.push("requirements");
-  if (!gates.submissionPlanOk) failedGates.push("submission plan");
 
   return `${failedGates.length} gate(s) blocked: ${failedGates.join(", ")}`;
 }

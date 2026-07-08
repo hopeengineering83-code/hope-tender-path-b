@@ -239,14 +239,14 @@ describe("generate route — embedded placeholder in client name blocked", () =>
     );
   });
 
-  it("generate route blocks with PLACEHOLDER_CLIENT_NAME code", () => {
+  it("generate route does NOT block with PLACEHOLDER_CLIENT_NAME for draft work", () => {
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
     );
     assert.ok(
-      src.includes('"PLACEHOLDER_CLIENT_NAME"'),
-      "generate route must return PLACEHOLDER_CLIENT_NAME error code when embedded placeholder is detected",
+      !src.includes('"PLACEHOLDER_CLIENT_NAME"'),
+      "generate route must NOT return PLACEHOLDER_CLIENT_NAME error code for draft work",
     );
   });
 

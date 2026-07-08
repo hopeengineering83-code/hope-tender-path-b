@@ -294,35 +294,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     || tender.legalClientName
     || tender.donorAgency
     || tender.implementingAgency;
-  if (!hasRealClientName(effectiveClientName)) return NextResponse.json({
-    errorCode: "CLIENT_NAME_REQUIRED",
-    error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.",
-    blockers: ["Client name is missing or invalid."],
-    nextAction: "EDIT_TENDER",
-    diagnosticId: `no-client-name-${id}`,
-  }, { status: 422 });
 
-  // Reject names that pass the structural check but still embed placeholder
-  // language (e.g. "Ministry of Water / Bid-Team to confirm"). isValidClientName
-  // only tests full-string patterns; containsMetadataPlaceholder catches embedded
-  // placeholder tokens anywhere in the value.
-  if (containsMetadataPlaceholder(effectiveClientName)) return NextResponse.json({
-    errorCode: "PLACEHOLDER_CLIENT_NAME",
-    error: "Generation blocked: client/procuring entity name contains placeholder text (e.g. 'Bid-Team to confirm', 'TBD'). Edit the tender and fill in the actual client name before generating documents.",
-    blockers: ["Client name contains an internal placeholder pattern and must be corrected before generation."],
-    nextAction: "EDIT_TENDER_METADATA",
-    diagnosticId: `placeholder-client-${id}`,
-  }, { status: 422 });
+  // ── Metadata is NOT a hard blocker for draft generation ──────────────
+  // Missing client name, placeholder values, contaminated metadata, missing
+  // submission method/endpoint, and missing source evidence are all treated
+  // as unavailable information — they are omitted from generated output and
+  // surfaced as warnings. Only genuine non-metadata risks (auth, tenant
+  // ownership, no source file, corrupted extraction) may hard-block.
+  //
+  // The operation gate (resolveTenderOperationGate) is the sole authority
+  // for metadata eligibility. For DRAFT_GENERATION, metadata never blocks.
 
-  // ── Contaminated metadata: NOT a hard block for draft work ─────────────
-  // Contaminated metadata (portal noise in client name) is treated as
-  // unavailable — it is omitted from generated output and surfaced as a
-  // warning. Draft generation proceeds normally. Only Final Submission
-  // Check blocks on contaminated metadata.
-  // (Previously: hard 422 block removed per metadata-optional policy)
-
-  // ── Generation gates check ──────────────────────────────────────────────
-  // Check: extraction quality, client details, requirements, submission plan.
+  // ── Generation gates check (metadata gates downgraded to warnings) ───
   const generationGates = checkGenerationGates({
     extractionStatus: (tender.analysisExtractionStatus as any) ?? null,
     requirementCount: tender.requirements.length,
@@ -333,11 +316,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     hasEvaluationMethodology: !!tender.evaluationMethodology,
     buildsSubmissionPlan: true,
   });
-  if (!generationGates.allGatesMet) {
+  // Metadata gate failures are warnings for draft work — do NOT return 422.
+  // Only genuine non-metadata blockers (extraction quality) may hard-block.
+  const hardBlockers = generationGates.blockers.filter(b =>
+    b.includes("extraction") || b.includes("analyzed") || b.includes("requirements")
+  );
+  if (hardBlockers.length > 0) {
     return NextResponse.json({
       errorCode: "GENERATION_GATES_FAILED",
-      error: "Generation blocked: not all readiness gates are met.",
-      blockers: generationGates.blockers,
+      error: "Generation blocked: tender source is not ready for generation.",
+      blockers: hardBlockers,
       recommendations: generationGates.recommendations,
       gates: generationGates,
       nextAction: "OPEN_GENERATION_GATES",
@@ -345,25 +333,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // ── Pre-generation validation gate ───────────────────────────────────────
-  // Check for placeholder data, client name contamination, and source
-  // traceability issues. This is the comprehensive pre-generation check that
-  // blocks if critical metadata is missing, placeholder, or contaminated.
+  // ── Pre-generation validation (metadata issues → warnings only) ──────
   const preGenValidation = await validateTenderBeforeGeneration({
     ...tender,
     clientNameSourcePage: tender.clientNameSourcePage as number | null,
     clientNameSourceQuote: tender.clientNameSourceQuote as string | null,
   });
-  if (!preGenValidation.valid) {
-    return NextResponse.json({
-      errorCode: "METADATA_VALIDATION_FAILED",
-      error: "Generation blocked: critical metadata is missing, contains placeholders, or is contaminated.",
-      blockers: preGenValidation.blockers,
-      warnings: preGenValidation.warnings,
-      nextAction: "EDIT_TENDER_METADATA",
-      diagnosticId: `metadata-validation-failed-${id}`,
-    }, { status: 422 });
-  }
+  // Metadata validation failures are warnings for draft work — do NOT return 422.
   if (preGenValidation.warnings.length > 0) {
     logger.warn(`[generate] tender=${id} has metadata warnings: ${preGenValidation.warnings.join("; ")}`);
   }
@@ -648,13 +624,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Final submission gates enforce strict endpoint requirements.
       }
       if (missingCritical.length > 0) {
-        return NextResponse.json({
-          errorCode: "CRITICAL_METADATA_MISSING",
-          error: "Generation blocked: critical submission metadata (deadline or submission method/endpoint) is missing. Fill these fields before generating documents.",
-          blockers: missingCritical,
-          nextAction: "EDIT_TENDER_METADATA",
-          diagnosticId: `critical-metadata-${id}`,
-        }, { status: 422 });
+        // Metadata is NOT a hard blocker for draft generation.
+        // Missing critical metadata is a warning — draft work proceeds.
+        logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
       }
     }
   }
@@ -736,36 +708,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
   }, metadataOverrides);
   if (metadataReport.blockingForGeneration) {
-    // Name the actual missing fields so the user knows exactly what's wrong,
-    // and nudge them to the one-click repair button. The endpoint behind that
-    // button never invents — it returns NOT_FOUND when no source quote matches.
-    const missingNames = metadataReport.missingCritical.map((f) => f.field).slice(0, 5);
-    const placeholderNames = metadataReport.invalidFields.map((f) => f.field).slice(0, 5);
-    const parts: string[] = [];
-    if (missingNames.length > 0) parts.push(`${missingNames.length} critical field(s) missing (${missingNames.join(", ")})`);
-    if (placeholderNames.length > 0) parts.push(`${placeholderNames.length} field(s) contain placeholder language (${placeholderNames.join(", ")})`);
-    const contaminatedExtra = tender.metadataContaminated ? " Client/procuring entity metadata is flagged as contaminated — correct it before generating." : "";
-    return NextResponse.json({
-      errorCode: "METADATA_INCOMPLETE",
-      error: `Generation blocked: ${parts.join("; ")}.${contaminatedExtra} First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
-      blockers: [
-        ...metadataReport.missingCritical.map((f) => `Critical field missing: ${f.field}`),
-        ...metadataReport.invalidFields.map((f) => `Field contains placeholder: ${f.field}`),
-      ].slice(0, 10),
-      nextAction: "REPAIR_OR_EDIT_TENDER",
-      diagnosticId: `metadata-incomplete-${id}`,
-      missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
-      invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
-      // missingFields is a flat list of field names for convenient client-side
-      // rendering of per-field guidance without needing to merge two arrays.
-      missingFields: [
-        ...metadataReport.missingCritical.map((f) => f.field),
-        ...metadataReport.invalidFields.map((f) => f.field),
-      ],
-      overallRatio: metadataReport.overallRatio,
-      metadataContaminated: Boolean(tender.metadataContaminated),
-      deadlinePassed: metadataReport.deadlinePassed,
-    }, { status: 422 });
+    // Metadata is NOT a hard blocker for draft generation.
+    // blockingForGeneration is always false per the metadata-optional policy
+    // (set in tender-metadata-completeness.ts). This block is kept as a
+    // safety net but should never execute. If it does, log a warning.
+    logger.warn(`[generate] tender=${id} metadata blockingForGeneration was true (should be false)`);
   }
 
   // ── Standalone contamination gate ─────────────────────────────────────────

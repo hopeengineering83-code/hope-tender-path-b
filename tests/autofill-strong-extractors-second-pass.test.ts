@@ -54,16 +54,22 @@ describe("auto-fill — strong-extractor second pass wiring", () => {
   });
 });
 
-describe("generate route — metadata-incomplete error names fields + nudges repair", () => {
+describe("generate route — metadata is non-blocking for draft work", () => {
   const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-  it("names the missing fields in the user-facing error string", () => {
-    assert.match(src, /missingNames\.join\(", "\)/);
+  it("does NOT return CLIENT_NAME_REQUIRED 422", () => {
+    assert.doesNotMatch(src, /errorCode.*CLIENT_NAME_REQUIRED/);
   });
-  it("nudges the user toward the repair button rather than just \"edit and fill\"", () => {
-    assert.match(src, /Repair all empty fields from source/);
+  it("does NOT return PLACEHOLDER_CLIENT_NAME 422", () => {
+    assert.doesNotMatch(src, /errorCode.*PLACEHOLDER_CLIENT_NAME/);
   });
-  it("uses the more actionable nextAction REPAIR_OR_EDIT_TENDER", () => {
-    assert.match(src, /nextAction:\s*"REPAIR_OR_EDIT_TENDER"/);
+  it("does NOT return METADATA_VALIDATION_FAILED 422", () => {
+    assert.doesNotMatch(src, /errorCode.*METADATA_VALIDATION_FAILED/);
+  });
+  it("does NOT return CRITICAL_METADATA_MISSING 422", () => {
+    assert.doesNotMatch(src, /errorCode.*CRITICAL_METADATA_MISSING/);
+  });
+  it("does NOT return METADATA_INCOMPLETE 422", () => {
+    assert.doesNotMatch(src, /errorCode.*METADATA_INCOMPLETE/);
   });
 });
 
