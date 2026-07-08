@@ -326,7 +326,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
 
       {metadata.hasExportBlocker && (
         <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-700">
-          Critical fields are blocked. Resolve these before proceeding.
+          Tender details incomplete — optional information was omitted from draft output.
         </div>
       )}
 

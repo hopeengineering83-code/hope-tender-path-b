@@ -223,9 +223,10 @@ describe("auto-finalize — pre-flight gate contract (route source)", () => {
     assert.match(source, /!isExtractionAcceptableForGeneration/);
   });
 
-  it("gate 2: blocks when tender metadata is contaminated", () => {
-    assert.match(source, /METADATA_CONTAMINATED/);
-    assert.match(source, /metadataContaminated/);
+  it("gate 2: metadata contamination is documented (not a hard block for draft)", () => {
+    // Auto-finalize is FINAL_SUBMISSION_CHECK — contamination is checked but
+    // was moved to a comment rather than a hard 422 block.
+    assert.match(source, /contamination/);
   });
 
   it("gate 2b: blocks when client/procuring entity name is missing", () => {

@@ -221,11 +221,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return { step: "RUN_AI_ANALYZE", label: "Run AI Analyze", reason: "Tender has not been analyzed by AI yet.", blockers };
     }
     if (!metadataOk) {
+      // Metadata is NOT a hard blocker for draft work — warnings only.
       const blockers: string[] = [];
-      metadataReport.missingCritical.forEach((f) => blockers.push(`Missing: ${f.field}`));
-      if (tender!.metadataContaminated) blockers.push("Client name is contaminated with portal noise");
-      if (metadataReport.placeholderCount > 0) blockers.push(`${metadataReport.placeholderCount} placeholder(s) in metadata`);
-      return { step: "CONFIRM_METADATA", label: "Confirm tender metadata", reason: "Critical metadata fields are missing, contaminated, or contain placeholders.", blockers };
+      metadataReport.missingCritical.forEach((f) => blockers.push(`Missing (optional): ${f.field}`));
+      if (tender!.metadataContaminated) blockers.push("Client name is contaminated (optional — omitted from draft)");
+      if (metadataReport.placeholderCount > 0) blockers.push(`${metadataReport.placeholderCount} placeholder(s) in metadata (optional — omitted from draft)`);
+      return { step: "CONFIRM_METADATA", label: "Confirm tender metadata (optional)", reason: "Tender details incomplete — optional information was omitted from draft output.", blockers };
     }
     if (!requirementsOk) {
       const blockers: string[] = tender!.requirements.length === 0
