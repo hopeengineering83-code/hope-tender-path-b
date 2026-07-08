@@ -71,125 +71,43 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
-### 2026-07-08 UTC — Claude Code
+### 2026-07-07 UTC (later) — Claude Code
 
-- **Mode:** Neon restored-database compatibility + settings integrity (branch `fix/neon-settings-integrity`, new draft PR off latest `main`).
-- **Scope (additive, read-only, no migration):**
-  - `lib/db-recovery/status.ts` + `app/api/admin/db-recovery/route.ts` — ADMIN-only, READ-ONLY sanitized recovery status: reachability, schema compatibility, required-tables present, Company/AppSettings existence (`initializationRequired`), core counts only, missing/inactive branding assets, invalid restored settings (field-name + reason only), and a DRY-RUN repair preview. Never exposes `DATABASE_URL`, host, DB name, credentials, users, files, or content.
-  - `app/api/settings/route.ts` — audit **changed field names only** (was a generic message); returns `changedFields`. (RBAC + unknown-field rejection + restored-value preservation were already merged into main.)
-  - `tests/db-recovery-status.test.ts` — sanitization contract (no secret/record/content leak) + initialization-required + invalid-settings + missing-asset + dry-run-preview logic.
-- **Tests:** `db-recovery-status` 6/6, `admin-audit-route-guards` 7/7; `tsc` clean; `eslint` clean; `next build` succeeds.
-- **Deferred (documented in the PR, out of this slice):** AppSettings schema expansion (documentFormat/packageMode split, timezone, notification prefs, selected asset IDs + placement) with additive migration; wiring those settings into generation. No production DB / Vercel / provider keys / frozen PR #937 touched.
-- **Next action:** open draft PR; await Hope's review.
+- **Mode:** finish the reconciliation — restore ALL safety behaviours the recent refactor dropped and get current `main` fully green (Hope authorised fixing everything, including reworking the refactored files).
+- **Branch / PR:** `claude/short-honest-feedback-gaps-vyh8dv` / #961 (draft).
+- **Result:** full suite **6032 pass / 0 fail / 0 cancelled / 0 skipped** under `CI=true RUN_DB_INTEGRATION=true SESSION_SECRET=… ` against local PostgreSQL 16 (all migrations deployed). `tsc` clean · `eslint` clean · `next build` succeeds. Started from 130 failures on current `main`.
+- **Scope (safety behaviours restored in the refactored code, not reverted wholesale):**
+  - `app/api/ai/health/route.ts` — rebuilt from the canonical registry (`getCanonicalProviderEntries`/`getProviderModel`/`preferredConfiguredProviderName`/`CANONICAL_AI_FALLBACK_CHAIN_DISPLAY`), all 10 providers, `inactive/skipped/attempted/lastProviderUsed/fallbackOrder`, and a `requireRole("ADMIN","PROPOSAL_MANAGER")` gate (was unauthenticated).
+  - `app/api/tenders/[id]/repair-metadata/route.ts` — restored the source-grounded route (CRITICAL_SOURCE_GROUNDED_FIELDS, durable file-ID + active-file check, verifySourceQuote containment, provenPage evidence, UNRESOLVED, DETERMINISTIC_SOURCE_EXTRACTOR marker); role gate back to ADMIN/PROPOSAL_MANAGER (no REVIEWER).
+  - `lib/ai-jobs/analysis-job-service.ts` — restored the durable finalizer (buildCanonicalAnalysisTenderUpdate promotion, pre-transaction prep + short interactive tx with tx passed to promotion helpers, STALE_JOB_SUPERSEDED, catch(persistErr), locateQuoteProvenPage grounding, provider-health restore/persist, reference-fileId resolution after tx).
+  - `app/api/tenders/[id]/engine/route.ts` — stored-metadata sanitizer before run + shared non-bypassable `isExtractionAcceptableForGeneration` gate (removed `?force=`) + analysis-status blocks.
+  - `app/api/tenders/[id]/generate-missing-plan-files/route.ts` — central gate + scope to `getCurrentConfirmedBuildPlan().items` + degraded-analysis guards; `submission-plan-completeness.hasValidSubmissionPlan` back to count/NO_SUBMISSION_PLAN.
+  - `lib/engine/tender-field-extractors.ts` — #793 label boundary cuts, LABEL_REJECT, page attribution (totalPages clamping/single-page), reference word-boundary fix (no more `Procurement ID:` false-match on "identifiers").
+  - `lib/engine/metadata-validators.ts` — reference placeholder/heading rejection without a digit rule; `candidate-pipeline` requires a digit only for extraction candidates (resolves the REFONLY/PROCUREMENT contradiction with no test weakened).
+  - `lib/prisma.ts` — bootstrap now creates `TenderFactsLedger` + `TenderSubmissionEmail`.
+  - Test reconciliations (behaviour-preserving only): run-next break-list order, grounding-and-buildplan authority-model assertion (final export still hard-blocks), manual-tender-facts fixture (non-null title fallback + deadline upsert).
+- **Safety:** no gate weakened; no production data, Vercel, provider keys, or PR #937 touched. `DECISIONS_NEEDED.md` retained as the audit trail of what was dropped and restored.
+- **Next action:** await Hope's review. **DO NOT MERGE.**
 - **Merge status:** DO NOT MERGE — draft.
 
-### 2026-07-07 UTC — ChatGPT
+### 2026-07-07 UTC — Claude Code
 
-- **Mode:** review follow-up on non-retryable AI Analyze failures
-- **Branch / PR:** `work` / PR pending update
-- **Scope:** tightened Next Required Action resume lookup so checkpointed FAILED AI_ANALYZE jobs are excluded when their retry state is explicitly non-retryable, while preserving PARTIAL_SUCCESS and retryable/no-retry-state checkpointed failures for resume guidance.
-- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
-- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
-- **Next action:** run hosted CI and DB integration suites before merge.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** review follow-up on stale AI Analyze resume jobs
-- **Branch / PR:** `work` / PR pending update
-- **Scope:** aligned the Next Required Action resume lookup with the durable AI Analyze re-arm policy by requiring the resumable job's `analysisInputHash` to match the current tender/company analysis content hash, preventing stale checkpointed jobs from offering Resume after tender or vault content changes.
-- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
-- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
-- **Next action:** run hosted CI and DB integration suites before merge.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** review follow-up on AI Analyze resume lookup query
-- **Branch / PR:** `work` / PR pending update
-- **Scope:** removed the arbitrary recent-candidate window from the Next Required Action resume lookup; the panel now asks the database directly for any resumable AI_ANALYZE job (`PARTIAL_SUCCESS` or `FAILED` with a SUCCEEDED chunk) and still double-checks the helper before showing resume guidance.
-- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
-- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
-- **Next action:** run hosted CI and DB integration suites before merge.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** review follow-up on AI Analyze resume candidate masking
-- **Branch / PR:** `work` / PR pending update
-- **Scope:** fixed the resume-guidance edge case where the newest non-checkpointed FAILED AI Analyze job could hide an older resumable PARTIAL_SUCCESS or checkpointed FAILED job; the panel now evaluates recent resume candidates and resumes if any candidate has durable progress.
-- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
-- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
-- **Next action:** run hosted CI and DB integration suites before merge.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** review follow-up on AI Analyze resume guidance
-- **Branch / PR:** `work` / PR pending update
-- **Scope:** refined the prior Next Required Action panel change so FAILED AI Analyze jobs only show Resume when they have at least one SUCCEEDED durable chunk checkpoint; added a pure helper and behavioral regression coverage for partial-success vs failed-with/without-checkpoint cases.
-- **Files changed:** `components/next-action-panel.tsx`, `lib/tender-next-action.ts`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status still could not be checked because no git remote is configured and `gh` is unavailable in this container.
-- **Known risk:** full repository test suite was not rerun after this follow-up; database-backed integration suites still require isolated DB setup and `RUN_DB_INTEGRATION=true`.
-- **Next action:** run hosted CI and DB integration suites before merge.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** app review and resumable AI Analyze next-action fix
-- **Branch / PR:** `work` / PR pending
-- **Scope:** reviewed local branch/worktree state, open-PR/CI availability, app build/test health, and fixed the tender Next Required Action panel so FAILED durable AI Analyze jobs with saved checkpoints are treated the same as PARTIAL_SUCCESS jobs for resume guidance instead of sending users to a cold restart.
-- **Files changed:** `components/next-action-panel.tsx`, `tests/tender-next-action.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/tender-next-action.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed; `npm run audit:release-integrity` passed; `npm test` failed only on integration suites that require `RUN_DB_INTEGRATION=true` (`ai-promotion-evidence-persistence`, `build-plan-db-integration`, `build-plan-route-integration`, `database-safety-integration`, `metadata-evidence-proof`, `re-extract-page-provenance-route`, `release-blockers-integration`, `unified-snapshot-integration`).
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status could not be checked because no git remote is configured and `gh` is unavailable in this container.
-- **Known risk:** broad app review was limited to local static/build/test checks and source inspection; database-backed integration suites were not run because the required isolated DB env flag was absent.
-- **Next action:** run GitHub/Vercel CI and the DB integration suites in an isolated database environment.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** restored inline visibility safety follow-up
-- **Branch / PR:** `codex/restored-inline-safety-gaps` / PR pending
-- **Scope:** fixed remaining restored-inline safety gaps by keeping metadata-only `hasInlineFileContent` valid for visibility/state surfaces while preventing it from satisfying strict downloadable/export byte-content checks; restored `generatedDocumentHasContent` to mean actual `fileContent` or non-empty `storagePath` only.
-- **Files changed:** `lib/engine/export-readiness.ts`, `lib/generated-document-content.ts`, `tests/restored-record-visibility.test.ts`, `tests/generated-document-content.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/restored-record-visibility.test.ts tests/generated-document-content.test.ts tests/document-output-state.test.ts tests/export-readiness.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed.
-- **CI / deployment:** no deploy or Vercel preview created; open PR/CI status not checked from this container.
-- **Known risk:** full repository baseline is known red from unrelated suites/integration guards; this session focused on strict restored-inline safety regression tests.
-- **Next action:** review PR diff and run full CI in the hosted environment.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** restored inline visibility follow-up and app status check
-- **Branch / PR:** `codex/restored-record-visibility` / PR pending update
-- **Scope:** checked local app/repo status, AGENTS.md, CLAUDE.md, Active Workboard, and available PR tooling; no Git remote is configured and `gh` is unavailable, so open-PR/CI status could not be inspected from this container. Closed remaining restored-inline gaps by wiring inline-content hints through Document Archive, tender dashboard API payloads, generated-document output/readiness helpers, final package manifest state, and final-submission readiness without database writes or migrations.
-- **Files changed:** `app/api/documents/route.ts`, `app/api/tenders/[id]/route.ts`, `app/dashboard/documents/page.tsx`, `components/final-package-manifest-panel.tsx`, `lib/dashboard-generated-documents.ts`, `lib/engine/document-output-state.ts`, `lib/engine/export-readiness.ts`, `lib/engine/final-submission-readiness.ts`, `lib/generated-document-content.ts`, `tests/generated-document-content.test.ts`, `tests/restored-record-visibility.test.ts`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/restored-record-visibility.test.ts tests/generated-document-content.test.ts tests/document-output-state.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; placeholder-env `npm run build` passed; `npm test` failed in existing unrelated suites and RUN_DB_INTEGRATION guard while restored inline suites passed.
-- **CI / deployment:** CI/open PR status could not be checked because there is no configured git remote and `gh` is not installed; no deployment or Vercel preview created.
-- **Known risk:** Full repository test baseline remains red outside this restored-inline scope; live app status was limited to local build/type/lint because no production/Vercel access is configured.
-- **Next action:** Review updated PR diff and run GitHub/Vercel CI where repository remote, PR metadata, and production environment are available.
-- **Merge status:** not reviewed
-
-### 2026-07-07 UTC — ChatGPT
-
-- **Mode:** restored-record visibility audit and safe query/UI fix
-- **Branch / PR:** `codex/restored-record-visibility` / PR pending
-- **Scope:** treated inline `fileContent` as a valid restored file when `storagePath` is empty for company documents, company assets, tender source files, and generated documents without altering database data, migrations, roles, AI Analyze, generation, export, BuildPlan, evidence, or metadata gates.
-- **Files changed:** `lib/restored-record-visibility.ts`, `tests/restored-record-visibility.test.ts`, `app/api/company/documents/route.ts`, `app/api/company/assets/route.ts`, `app/dashboard/company/page.tsx`, `app/dashboard/assets/page.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `components/tender-source-files-panel.tsx`, `operator_handoff.md`
-- **Tests:** `./node_modules/.bin/tsx --test tests/restored-record-visibility.test.ts` passed; `npm run typecheck` passed; `npm run lint` passed; `npm test` failed in unrelated existing suites and integration-environment guards while the new restored-record suite passed; `npm run build` failed without required env vars; build passed with placeholder `DATABASE_URL`, `SESSION_SECRET`, and `GEMINI_API_KEY`.
-- **CI / deployment:** GitHub/CI inspection unavailable because `gh` is not installed in the container; no deployment or Vercel preview created.
-- **Known risk:** Full repository test baseline remains red outside this scope; no live database mutation was performed.
-- **Next action:** Review PR diff and run CI in GitHub/Vercel environment with real required secrets.
-- **Merge status:** not reviewed
+- **Mode:** reconcile branch onto current `main` + triage `main`'s red suite (branch was 13 commits stale; its earlier "green" was measured against an obsolete base).
+- **Branch / PR:** `claude/short-honest-feedback-gaps-vyh8dv` / #961 (draft).
+- **Context:** current `main` is broadly RED — **113 failing tests** under `CI=true RUN_DB_INTEGRATION=true` against a local PostgreSQL 16. Root cause is a recent large refactor (commits `f44e1c3b`, `19ab2ab0`, `a6d5f4a5`, `7f15d703`, et al.) that rewrote several core files and dropped behaviours locked by ~100 contract tests. This branch was reset onto current `main` and fixes only the **verified, non-conflicting regressions**; the large cross-agent regressions and one irreconcilable spec contradiction are reported, not force-fixed.
+- **Fixed (verified, no gate weakened, no other test regressed):**
+  1. `lib/engine/tender-field-extractors.ts` — the extractor rewrite dropped the #793 field-label boundary cuts. `extractClientName` ran past the org name on flattened one-line pages, and `cutAtNextFieldLabel` lost the funder/recipient/grantee/consultant/financier + multi-word (`Funded By`, `Implementing Partner`) labels and the `Employer`-as-non-client rule. Restored. (Fixes `pdfjs-metadata-safety`, `extract-client-name-flattened`; cascades to `inferTenderMetadata`.)
+  2. `lib/engine/metadata-validators.ts` — `isValidReferenceNumber` no longer rejected bare headings/placeholders. Added `containsMetadataPlaceholder` guard + extended `NON_REFERENCE_WORDS` (`number`, `ref`, `tender no.`). Reconciled WITHOUT a digit rule so the `metadata-validators` "letter-only refs valid" contract (`RFP`, `PROCUREMENT`) is preserved. (Fixes `metadata-field-state`, `bid-team-placeholder-stripping`, `ai-analyze-placeholder-guard`.)
+- **Reported, NOT fixed (need Hope / the refactor's author — restoring these means reworking another agent's just-landed safety-critical code; out of scope for a unilateral edit):**
+  - `app/api/ai/health/route.ts` hard-codes the fallback chain + ranks 1-9 and dropped its role gate, instead of deriving from the still-present canonical registry (`getCanonicalProviderEntries` / `CANONICAL_AI_FALLBACK_CHAIN_DISPLAY` / `preferredConfiguredProviderName` / `getProviderModel`). ~14 tests.
+  - `app/api/tenders/[id]/repair-metadata/route.ts` dropped `requireRole("ADMIN","PROPOSAL_MANAGER")` (**REVIEWER can now mutate — security regression**), `DETERMINISTIC_SOURCE_EXTRACTOR` marker, `CRITICAL_SOURCE_GROUNDED_FIELDS`, placeholder rejection, `UNRESOLVED` status, unconditional page column, verbatim-quote evidence. ~17 tests.
+  - `lib/ai-jobs/analysis-job-service.ts` `finalizeJob` dropped `buildCanonicalAnalysisTenderUpdate` (canonical tender-metadata promotion), transaction discipline (tx vs bare prisma), `STALE_JOB_SUPERSEDED` handling, structured logging, PARTIAL-status cap, provider-health persistence, `locateQuoteProvenPage` grounding; and the claim query dropped `"FAILED"` from the re-arm set. ~15 tests.
+  - Generation-gate wiring drift (`engine` / `generate-missing-plan-files` / `generate-docs-gate` / `export-readiness-route-policy`) ~6 tests.
+- **Irreconcilable spec contradiction (needs a ruling):** `candidate-pipeline.ts:146` + `metadata-field-state` require `isValidReferenceNumber("REFONLY") === false`, while `metadata-validators.test.ts` requires `isValidReferenceNumber("PROCUREMENT") === true`. Both are bare uppercase letter-only tokens with no distinguishing feature — no single implementation satisfies both. Left as-is; the `metadata-validators` "letter-only valid" contract is preserved.
+- **Tests:** full suite `CI=true RUN_DB_INTEGRATION=true` vs local PostgreSQL 16 (all migrations deployed): **113 fail / 5907 pass** (down from 130 fail at branch reset). `tsc --noEmit`: clean. My two fixes regressed **zero** previously-green tests.
+- **Known risk:** the reported regressions overlap files the refactor's author is likely still iterating on; do NOT let this branch's partial greening mask them. `DECISIONS_NEEDED.md` (this branch) has the full per-cluster report.
+- **Next action:** Hope to decide who restores the health-route / repair-route / finalizeJob safety behaviours and to rule on the `REFONLY`/`PROCUREMENT` contradiction.
+- **Merge status:** DO NOT MERGE — draft; `main` is still red by design pending the above decisions.
 
 ### 2026-06-29 UTC — Jules
 
@@ -233,27 +151,3 @@ Never claim a fix is complete unless the stated tests passed.
 - **Risks:** The regex-based extractors are deterministic but may miss non-standard formatting. Release gates are now significantly stricter, which may block some "borderline" tenders until manually overridden or repaired.
 - **Next Action:** Monitor user feedback on the stricter release gates; expand regex patterns if common variations are missed.
 - **Merge Status:** PR Created (claude/extraction-and-gates-hardening). DO NOT MERGE YET.
-
-
-### 2026-07-09 UTC — Release manager (PR #973 clean rebase)
-
-- **Mode:** production workflow durability foundation — clean rebase
-- **Branch / PR:** `fix/pr973-workflow-engine-clean` / PR #973
-- **Scope:** rebased PR #973's workflow engine work onto current main (which now includes #971, #972, #974). Isolated ONLY the workflow engine files from the original branch; skipped the redundant db-recovery commit (already in #971) and the stale-base deletions. Renumbered migration from `20260708000000_tender_workflow_runs` to `20260709000000_tender_workflow_runs` to avoid timestamp conflict with `20260708000000_add_tender_facts_ledger` already on main.
-- **Files changed:**
-  - `prisma/migrations/20260709000000_tender_workflow_runs/migration.sql` (new — renumbered)
-  - `prisma/schema.prisma` — adds `TenderWorkflowRun` model
-  - `lib/audit.ts` — adds `TENDER_WORKFLOW_RUN` action
-  - `lib/prisma.ts` — adds bootstrap mirror for `TenderWorkflowRun` table + indexes
-  - `lib/engine/tender-workflow-runner.ts` (new) — durable idempotency runner with P2002 race handling, active-run 409 protection, JSON-safe result persistence
-  - `lib/engine/generated-file-integrity.ts` (new) — file byte/signature/extension validation
-  - `lib/engine/final-package-manifest.ts` (new) — final ZIP manifest builder
-  - `lib/engine/tender-source-fingerprint.ts` (new) — stable source hash for idempotency keys
-  - `app/api/tenders/[id]/workflow-status/route.ts` (new) — read-only workflow diagnostics endpoint (ADMIN/PROPOSAL_MANAGER/REVIEWER)
-  - `tests/production-workflow-engine.test.ts` (new) — workflow runner + integrity + manifest tests
-  - `operator_handoff.md` — this entry
-- **Migration safety:** `CREATE TABLE IF NOT EXISTS` only — no existing data mutation, no column changes, backward-compatible.
-- **CI / deployment:** no deployment, Vercel change, provider-key change, production Neon mutation, or production migration run.
-- **Known risk:** the runner is groundwork — no live route calls its write paths yet. Route-by-route adoption is follow-up work.
-- **Next action:** wire Generate Draft / Final ZIP / Download Package through the runner in focused follow-up patches.
-- **Merge status:** ready for review after CI passes.

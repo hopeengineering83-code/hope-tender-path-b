@@ -3,13 +3,11 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
-import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
-import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
-import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -176,91 +174,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
-  // ── analysisExtractionStatus blocking checks ─────────────────────
-  // Block on the three states that produce audit-only analysis:
-  // OCR_REQUIRED (corrupted extraction, AI skipped),
-  // EXTRACTION_WEAK_REVIEW_REQUIRED (weak extraction needs review),
-  // REGEX_FALLBACK_FROM_WEAK_EXTRACTION (regex fallback from weak extraction).
-  // These cannot authorize GENERATED document creation.
-  const analysisExtractionStatus = tender.analysisExtractionStatus ?? null;
-  if (analysisExtractionStatus === "OCR_REQUIRED") {
-    return NextResponse.json({
-      error: "Missing-plan generation blocked: extraction was corrupted and AI Analyze was skipped.",
-      code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
-      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
-    }, { status: 422 });
+  // Never generate onto contaminated metadata or analysis produced from
+  // corrupted/weak extraction.
+  if (tender.metadataContaminated) {
+    return NextResponse.json({ success: false, ok: false, code: "METADATA_CONTAMINATED", error: "Tender metadata is contaminated; re-extract before generating plan files.", nextAction: "RE_EXTRACT_METADATA" }, { status: 422 });
   }
-  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
-    return NextResponse.json({
-      error: "Missing-plan generation blocked: extraction is weak and needs review.",
-      code: "ANALYSIS_FROM_WEAK_EXTRACTION",
-      nextAction: "REVIEW_EXTRACTION_QUALITY",
-    }, { status: 422 });
+  const analysisStatus = tender.analysisExtractionStatus;
+  if (analysisStatus === "OCR_REQUIRED") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", error: "AI analysis was skipped due to corrupted extraction; re-run AI Analyze before generating plan files.", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" }, { status: 422 });
   }
-  if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-    return NextResponse.json({
-      error: "Missing-plan generation blocked: analysis fell back to regex from weak extraction.",
-      code: "ANALYSIS_FROM_WEAK_EXTRACTION",
-      nextAction: "RERUN_AI_ANALYZE",
-    }, { status: 422 });
+  if (analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_WEAK_EXTRACTION", error: "AI analysis was produced from weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
   }
 
-  // ── BuildPlan gate — relaxed for draft work ───────────────────────
-  // For draft support-file generation, a confirmed BuildPlan is NOT
-  // required. The route uses the current/draft BuildPlan (or the derived
-  // submission plan from requirements) to scaffold missing plan files.
-  // Only Final Submission Check requires a confirmed BuildPlan.
-  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
-  // If no confirmed plan, proceed with draft plan — the files generated
-  // are clearly marked as draft/review outputs.
-  const confirmedPlanItems = confirmedPlan.ok ? confirmedPlan.items : [];
-
-  // ── Operation gate (SUPPORT_PACKAGE_GENERATION) — authoritative check ──
-  // For SUPPORT_PACKAGE_GENERATION, metadata NEVER blocks. The gate is
-  // the single authority for metadata eligibility and surfaces warnings
-  // for the UI. Same source-driven model as DRAFT_GENERATION.
-  const operationGate = resolveTenderOperationGate({
-    tender: {
-      id: tender.id,
-      title: tender.title,
-      reference: tender.reference,
-      clientName: tender.clientName,
-      deadline: tender.deadline,
-      submissionMethod: tender.submissionMethod,
-      submissionEmails: tender.submissionEmails,
-      submissionAddress: tender.submissionAddress,
-      country: tender.country,
-      metadataContaminated: tender.metadataContaminated,
-      analysisExtractionStatus: tender.analysisExtractionStatus,
-    },
-    requirements: tender.requirements.map((r: any) => ({
-      priority: r.priority,
-      sourceTenderFileId: r.sourceTenderFileId,
-    })),
-    overrides: [],
-    buildPlan: { ok: confirmedPlan.ok, items: confirmedPlanItems },
-    operation: "SUPPORT_PACKAGE_GENERATION",
-  });
-  if (operationGate.warnings.length > 0) {
-    logger.info(`[generate-missing-plan-files] tender=${id} operation-gate warnings: ${operationGate.warnings.join("; ")}`);
-  }
-  // Defensive: operation gate should never block SUPPORT_PACKAGE_GENERATION.
-  // If it does, fail closed to catch regressions.
-  if (operationGate.blockers.length > 0) {
-    return NextResponse.json({
-      error: "Missing-plan generation blocked by operation gate (SUPPORT_PACKAGE_GENERATION).",
-      code: "OPERATION_GATE_BLOCKED",
-      blockers: operationGate.blockers,
-      warnings: operationGate.warnings,
-    }, { status: 422 });
+  // Client/procuring entity must be present (a document set with no client is
+  // never exportable).
+  const clientDisplayName = tender.clientName || tender.procuringEntityName;
+  if (!clientDisplayName) {
+    return NextResponse.json({ success: false, ok: false, code: "MISSING_CLIENT_DETAILS", error: "Document generation requires a client or procuring entity name. Run AI Analyze or enter the client name first.", nextAction: "EDIT_TENDER_METADATA" }, { status: 422 });
   }
 
-  // ── Central generation-readiness gate ─────────────────────────────
-  // Every route that creates a GENERATED GeneratedDocument row must call
-  // assertTenderReadyForGenerationAndExport first. The gate checks hash
-  // binding, chunk integrity, source grounding, and submission-plan state.
-  // No SUBMISSION_PLAN_MISSING carve-out — the gate never emits that code
-  // and the route must fail closed on every blocker.
+  // Central generation gate — this route is NOT a chicken-and-egg escape hatch.
+  // It must fail closed on every blocker (including BUILD_PLAN_MISSING /
+  // BUILD_PLAN_NOT_CONFIRMED); there is no SUBMISSION_PLAN_MISSING carve-out.
   const centralGate = await assertTenderReadyForGenerationAndExport({
     prisma,
     tenderId: id,
@@ -269,21 +205,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!centralGate.ok) {
     return NextResponse.json({
-      error: "Missing-plan generation blocked by central generation-readiness gate.",
-      code: centralGate.blockerCode ?? "GENERATION_GATE_BLOCKED",
-      blockerDetail: centralGate.blockerDetail,
-      nextAction: "RESOLVE_GENERATION_BLOCKERS",
-    }, { status: 409 });
+      success: false, ok: false,
+      code: centralGate.blockerCode,
+      error: centralGate.blockerDetail,
+      nextAction: "Resolve the analysis readiness blocker before generating missing plan files.",
+    }, { status: 422 });
   }
 
-  const plan = buildSubmissionPlan({
-    id: tender.id,
-    title: tender.title,
-    exactFileNaming: tender.exactFileNaming,
-    exactFileOrder: tender.exactFileOrder,
-    pageLimit: tender.pageLimit,
-    requirements: tender.requirements,
-  });
+  // "Missing plan files" are the files the CONFIRMED BuildPlan already specifies
+  // but which have not yet been generated — scope strictly to confirmedPlan.items,
+  // never a recomputed requirements plan (that would be an escape hatch).
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+  if (!confirmedPlan.ok) {
+    return NextResponse.json({ success: false, ok: false, code: "BUILD_PLAN_NOT_CONFIRMED", error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`, nextAction: "CONFIRM_BUILD_PLAN" }, { status: 422 });
+  }
+  const plan = { files: confirmedPlan.items };
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId: id, generationStatus: "PLANNED" },
@@ -294,11 +230,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0, convertedFromPlanned: 0 }, requestId });
     return NextResponse.json({ success: true, created: 0, updated: 0, convertedFromPlanned: 0, message: "No missing planned files remain." });
   }
-
-  // Contaminated metadata is NOT a hard block for draft support-file
-  // generation. The contaminated client name is omitted from generated
-  // output. Only Final Submission Check blocks on contaminated metadata.
-  // (Previously: hard 422 block removed per metadata-optional policy)
 
   const created: string[] = [];
   const updated: string[] = [];

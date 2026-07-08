@@ -74,14 +74,14 @@ dbDescribe("Manual Tender Facts Flexibility — DB integration tests", () => {
     });
     // Create a tender with NO title, NO reference, NO client email — just
     // requirements. This is the "tender with requirements but no metadata" scenario.
-    // Note: title is a non-nullable String column, so we use an empty string
-    // (semantically equivalent to "no title" — the authority model treats
-    // empty strings the same as null for grounding checks).
     await prisma.tender.create({
       data: {
         id: testTenderId,
         userId: testUserId,
-        title: "", // empty string — title column is NOT NULL in schema
+        // Tender.title is a non-nullable column; production never persists null —
+        // it writes the cleanTenderTitle fallback. Use the same fallback here so
+        // the fixture reflects a real "requirements but no real metadata" tender.
+        title: "Tender Submission",
         clientName: null,
         reference: null,
         deadline: null,
@@ -218,31 +218,23 @@ dbDescribe("Manual Tender Facts Flexibility — DB integration tests", () => {
   });
 
   it("5b. user-confirmed deadline WITHOUT audit does NOT resolve final-submission readiness", async () => {
-    // Update the existing deadline override (from test 5) to remove audit
-    // data. The unique constraint on (tenderId, field) means we can't create
-    // a second override — use upsert to replace the test 5 override.
+    // Create a USER_CONFIRMED override on deadline WITHOUT sufficient audit.
+    // One override per (tenderId, field) — @@unique — and test 5 may already have
+    // written a deadline override on this tender, so upsert instead of create to
+    // stay idempotent (production writes exactly one override per field).
+    const overrideData = {
+      fieldState: "USER_CONFIRMED",
+      overrideValue: "2026-12-20",
+      reason: "Manual value entered by user.", // boilerplate — rejected by isMeaningfulReason
+      overriddenBy: testUserId,
+      authorityClass: "HUMAN_CONFIRMED_OPERATIONAL",
+      confirmationBasis: null, // No confirmationBasis
+      confirmedAt: new Date(),
+    };
     const override = await prisma.tenderMetadataOverride.upsert({
       where: { tenderId_field: { tenderId: testTenderId, field: "deadline" } },
-      update: {
-        fieldState: "USER_CONFIRMED",
-        overrideValue: "2026-12-20",
-        reason: "Manual value entered by user.", // boilerplate — rejected by isMeaningfulReason
-        overriddenBy: testUserId,
-        authorityClass: "HUMAN_CONFIRMED_OPERATIONAL",
-        confirmationBasis: null, // No confirmationBasis
-        confirmedAt: new Date(),
-      },
-      create: {
-        tenderId: testTenderId,
-        field: "deadline",
-        fieldState: "USER_CONFIRMED",
-        overrideValue: "2026-12-20",
-        reason: "Manual value entered by user.", // boilerplate — rejected by isMeaningfulReason
-        overriddenBy: testUserId,
-        authorityClass: "HUMAN_CONFIRMED_OPERATIONAL",
-        // No confirmationBasis
-        confirmedAt: new Date(),
-      },
+      create: { tenderId: testTenderId, field: "deadline", ...overrideData },
+      update: overrideData,
     });
     // The override is persisted, but the canonical resolver's
     // auditSufficientForFinal() returns false (boilerplate reason + no basis).

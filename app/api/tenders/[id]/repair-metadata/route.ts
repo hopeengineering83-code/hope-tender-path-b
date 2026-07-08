@@ -1,24 +1,19 @@
 // POST /api/tenders/[id]/repair-metadata
 //
-// Multi-field deterministic source extractor repair route.
-// This route uses the regex-only fallback framework in lib/engine/tender-field-extractors.ts
-// to repair or fill missing tender metadata fields from the uploaded source files.
-// It NEVER paraphrases or fuzzes; it only captures verbatim strings with source grounding.
+// Repairs missing critical tender-metadata fields from the already-extracted
+// tender file text using deterministic, source-grounded extractors. Today the
+// only supported field is `evaluationMethodology`; the route is structured so
+// additional fields can be wired in without changing the contract.
 //
-// Safety:
-//   • uses requireRole("ADMIN", "PROPOSAL_MANAGER"),
-//   • rate-limited per user,
-//   • when the extractor returns found: false, the tender row is not touched,
-//   • every successful repair writes an audit log entry with sourceFile and sourceQuote.
-//
-// Critical fields (deadline, reference, title, clientName, submissionMethod,
-// submissionAddress, submissionEmails) go through source grounding:
-//   • durableFileId resolved from extraction.sourceFile
-//   • activeFileIds.has(durableFileId) — the file must be ACTIVE
-//   • verify the quote is contained in the active file text
-//   • when grounding fails, return UNRESOLVED and do NOT write the scalar
-// When grounding fails, the route returns status: "UNRESOLVED" and does NOT
-// write the scalar value (no fall-through to updates).
+// Hard safety rules (enforced here, NOT optional):
+//   • only the tender owner (or ADMIN / PROPOSAL_MANAGER) may run repair,
+//   • we NEVER overwrite a non-empty existing value unless the caller passes
+//     { force: true } AND has ADMIN role,
+//   • when the extractor returns `found: false` the tender row is not
+//     touched and we return 404 (with a structured reason),
+//   • every successful repair writes an audit log entry with the source
+//     file name, confidence, and the verbatim source quote (≤600 chars),
+//   • we never echo raw provider keys, raw prompt text, or stack traces.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -35,49 +30,25 @@ import {
   runExtractorByField,
   type ExtractorFieldName,
   type ExtractedFieldOrMissing,
-  type ExtractedField,
 } from "../../../../../lib/engine/tender-field-extractors";
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
+import type { RepairOutcome, RepairMetadataResponse } from "../../../../../lib/engine/repair-metadata-contract";
 import {
-  verifySourceQuote as verifyQuoteInActiveFiles,
   isValidReferenceCandidate,
   isValidDeadlineCandidate,
+  isValidTitleOrClientCandidate,
+  verifySourceQuote,
   type ActiveTenderFile,
 } from "../../../../../lib/engine/source-grounded-metadata-repair";
 
 export const dynamic = "force-dynamic";
 
-// Critical fields that MUST go through source grounding (durable file ID
-// resolution, active-file check, quote containment) BEFORE the type dispatch.
-// If grounding fails, the route returns UNRESOLVED and does NOT write the
-// scalar value. This prevents the deadline branch from bypassing grounding
-// (the prior bug) and ensures reference evidence carries a real fileId.
-const CRITICAL_SOURCE_GROUNDED_FIELDS = new Set([
-  "clientName",
-  "title",
-  "deadline",
-  "submissionMethod",
-  "submissionAddress",
-  "submissionEmails",
-  "reference",
-]);
-
+// Union of every field the repair endpoint can write. evaluationMethodology
+// has its own AI-precedent extractor (lib/engine/evaluation-methodology-source-extractor.ts);
+// the scalar metadata fields come from the multi-field extractor framework.
 const SUPPORTED_FIELDS = ["evaluationMethodology", ...SUPPORTED_EXTRACTORS] as const;
 type SupportedField = (typeof SUPPORTED_FIELDS)[number];
-
-// Maps each critical field to its dedicated source-evidence columns so the
-// PERSIST CANONICAL SOURCE EVIDENCE block can write them unconditionally
-// (clearing stale pages when provenPage is null).
-const EVIDENCE_COLUMNS: Record<string, { fileId: string; page: string; quote: string }> = {
-  clientName: { fileId: "clientNameSourceFileId", page: "clientNameSourcePage", quote: "clientNameSourceQuote" },
-  title: { fileId: "titleSourceFileId", page: "titleSourcePage", quote: "titleSourceQuote" },
-  deadline: { fileId: "deadlineSourceFileId", page: "deadlineSourcePage", quote: "deadlineSourceQuote" },
-  submissionMethod: { fileId: "submissionMethodSourceFileId", page: "submissionMethodSourcePage", quote: "submissionMethodSourceQuote" },
-  submissionAddress: { fileId: "submissionAddressSourceFileId", page: "submissionAddressSourcePage", quote: "submissionAddressSourceQuote" },
-  submissionEmails: { fileId: "submissionEmailSourceFileId", page: "submissionEmailSourcePage", quote: "submissionEmailSourceQuote" },
-  reference: { fileId: "referenceSourceFileId", page: "referenceSourcePage", quote: "referenceSourceQuote" },
-};
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -99,20 +70,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? ((body as { fields: unknown[] }).fields).map(String).filter((f): f is SupportedField => (SUPPORTED_FIELDS as readonly string[]).includes(f))
     : ["evaluationMethodology" as SupportedField];
   const force = (body as { force?: unknown }).force === true && actor.role === "ADMIN";
+  // NOTE: force:true allows overwriting existing values but does NOT bypass
+  // source grounding, quote containment, active-file checks, or validation.
+  // Critical source-grounded fields still require durable file ID, quote
+  // containment, and active-file verification even when force is true.
 
+  // Scope: owner OR (ADMIN / PROPOSAL_MANAGER). The fallback `?? findFirst({ where: { id } })`
+  // was removed (audit SEC-002, 2026-06-20) — it allowed any REVIEWER (broader
+  // than the RBAC matrix in lib/security/rbac.ts intends) to overwrite scalar
+  // metadata fields on any tender they do not own. The owner-scoped findFirst
+  // is the only safe lookup; if the tender doesn't belong to the actor,
+  // return 404 (not 403, to avoid leaking existence).
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    include: {
-      files: {
-        select: {
-          id: true,
-          fileName: true,
-          extractedText: true,
-          totalPages: true,
-          deletionStatus: true,
-        },
-      },
-    },
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, fileName: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true } } },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
@@ -124,52 +95,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // Active tender files (filter out DELETED/PENDING_DELETE). The quote
-  // verification and the activeFileIds check both reference this set so a
-  // fileId pointing at a deleted file is rejected (not silently carried
-  // over).
-  const activeFiles: ActiveTenderFile[] = tender.files
-    .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
-    .map((f) => ({ id: f.id, fileName: f.fileName, extractedText: f.extractedText, totalPages: f.totalPages ?? null }));
-  const activeFileIds = new Set<string>(activeFiles.map((f) => f.id));
-
-  const results: Record<string, unknown> = {};
+  const outcomes: RepairOutcome[] = [];
+  // Prisma update map — accepts string / number / Date / null. Cast at write time.
   const updates: Record<string, unknown> = {};
-  const contactDetails: Record<string, { page: number | null, quote: string | null, fileId?: string | null }> = JSON.parse(tender.contactDetailsSourceJson || "{}");
 
-  // Build the extractor input — MUST include file.id so extractors return
-  // sourceFileId (the durable evidence identity). Two files with the same
-  // filename produce different sourceFileIds, so duplicate filenames can
-  // never cross-ground evidence.
-  const filesInput = { files: tender.files.map((f) => ({ id: f.id, fileName: f.fileName, extractedText: f.extractedText, totalPages: f.totalPages ?? null })) };
+  const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText, totalPages: f.totalPages ?? null })) };
+  // Map from fileName to durable file ID for source-grounding.
+  // The extractor returns sourceFile as a fileName; we need the durable ID
+  // to persist canonical source evidence (e.g., clientNameSourceFileId).
+  const fileNameToId = new Map<string, string>();
+  for (const f of tender.files as Array<{ id: string; fileName: string; originalFileName: string | null }>) {
+    fileNameToId.set(f.fileName, f.id);
+    if (f.originalFileName) fileNameToId.set(f.originalFileName, f.id);
+  }
+  // Active file IDs for evidence validation
+  const activeFileIds = new Set((tender.files as Array<{ id: string }>).map((f) => f.id));
+  // Active files with extracted text for quote containment verification
+  const activeFilesForQuote: ActiveTenderFile[] = (tender.files as Array<{ id: string; fileName: string; extractedText: string | null }>).map((f) => ({ id: f.id, fileName: f.fileName, extractedText: f.extractedText }));
 
-  // ── evaluationMethodology (Specialized AI/Deterministic extractor, NON-critical) ───
-  // evaluationMethodology is not in CRITICAL_SOURCE_GROUNDED_FIELDS — its
-  // sourcePage is null because the methodology extractor returns prose, not
-  // a single verbatim quote tied to one page.
+  // ── evaluationMethodology (AI-precedent extractor, separate module) ───
   if (requestedFields.includes("evaluationMethodology")) {
     if (tender.evaluationMethodology && tender.evaluationMethodology.trim().length > 0 && !force) {
-      results.evaluationMethodology = { status: "SKIPPED", reason: "Already populated" };
+      outcomes.push({ field: "evaluationMethodology", status: "SKIPPED", reason: "evaluationMethodology is already populated. Pass force:true (ADMIN only) to overwrite." });
     } else {
       const extraction = extractEvaluationMethodologyFromSource(filesInput);
       if (!extraction.found) {
-        results.evaluationMethodology = { status: "NOT_FOUND", reason: extraction.reason };
+        outcomes.push({ field: "evaluationMethodology", status: "NOT_FOUND", reason: extraction.reason });
       } else {
-        updates.evaluationMethodology = extraction.methodologyText;
-        results.evaluationMethodology = { status: "REPAIRED", sourcePage: null, sourceQuote: extraction.sourceQuote, sourceFile: extraction.sourceFile, confidence: extraction.confidence, methodologyText: extraction.methodologyText };
+        (updates as Record<string, unknown>).evaluationMethodology = extraction.methodologyText;
+        outcomes.push({ field: "evaluationMethodology", status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: null, sourceQuote: extraction.sourceQuote });
         await logAction({
           userId: actor.id,
           action: "TENDER_METADATA_REPAIRED",
           entityType: "Tender",
           entityId: tenderId,
-          description: `${actor.email} repaired evaluationMethodology`.slice(0, 500),
+          description: `${actor.email} repaired evaluationMethodology — ${formatExtractionForAudit(extraction)}`.slice(0, 500),
           metadata: {
             tenderId,
             field: "evaluationMethodology",
+            extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
             sourceFile: extraction.sourceFile,
             confidence: extraction.confidence,
+            itemCount: extraction.items.length,
             sourceQuote: extraction.sourceQuote,
-            extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
           },
           requestId,
         });
@@ -177,207 +145,193 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // ── Scalar fields via the multi-field extractor framework ─────────────
+  // ── Scalar fields via the multi-field extractor framework. ─────────────
+  // Each field consults the same per-field rule: skip when already populated
+  // (unless ADMIN force:true); set status NOT_FOUND when the regex misses;
+  // persist + audit when found.
   for (const field of SUPPORTED_EXTRACTORS) {
     if (!requestedFields.includes(field)) continue;
-    const currentValue = (tender as any)[field];
-    const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
-    if (alreadyPopulated && !force) {
-      results[field] = { status: "SKIPPED", reason: `${field} is already populated.` };
-      continue;
-    }
-
-    const extraction = runExtractorByField(field as ExtractorFieldName, filesInput) as ExtractedFieldOrMissing<unknown>;
-    if (!extraction.found) {
-      results[field] = { status: "NOT_FOUND", reason: extraction.reason };
-      continue;
-    }
-
-    const fieldData = extraction as ExtractedField<any>;
-
-    // ── Source grounding for CRITICAL fields ────────────────────────
-    // Runs BEFORE the type dispatch so the deadline branch (and every
-    // other critical field branch) cannot bypass it. When grounding fails,
-    // the route returns UNRESOLVED and `continue`s — no fall-through to
-    // the updates object.
     let durableFileId: string | null = null;
     let provenPage: number | null = null;
-    let evidenceCols: { fileId: string; page: string; quote: string } | null = null;
+    const currentValue = (tender as unknown as Record<string, unknown>)[field];
+    const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
+    if (alreadyPopulated && !force) {
+      outcomes.push({ field, status: "SKIPPED", reason: `${field} is already populated. Pass force:true (ADMIN only) to overwrite.` });
+      continue;
+    }
+    const extraction = runExtractorByField(field as ExtractorFieldName, filesInput) as ExtractedFieldOrMissing<unknown>;
+    if (!extraction.found) {
+      outcomes.push({ field, status: "NOT_FOUND", reason: extraction.reason });
+      continue;
+    }
+    // ── DURABLE SOURCE-GROUNDING: applies to ALL critical fields BEFORE type dispatch ──
+    // Resolve durable file ID from the extractor's sourceFile (which is a
+    // fileName). This must happen BEFORE the type dispatch so deadline,
+    // string fields, and any other critical field all get the same grounding
+    // check. Without this block here, the `else if (field === 'deadline')`
+    // branch would skip straight to (updates)[field] = dt and bypass the
+    // active-file check, quote-containment check, and durable-file resolution.
+    //
+    // Fields WITHOUT dedicated source-evidence columns (bidBondAmount,
+    // numberOfCopiesRequired, mandatorySiteVisit, pageLimit, validityDays,
+    // preBidMeetingDate) are intentionally NOT in this set — they are not
+    // critical BuildPlan evidence fields and do not require source grounding.
+    const CRITICAL_SOURCE_GROUNDED_FIELDS = new Set([
+      "clientName", "title", "deadline", "submissionMethod",
+      "submissionAddress", "submissionEmails", "reference",
+    ]);
+
     if (CRITICAL_SOURCE_GROUNDED_FIELDS.has(field)) {
-      // Resolve durableFileId from extraction.sourceFileId — the durable
-      // evidence identity (a TenderFile.id UUID). The extractor returns the
-      // file ID it pulled the quote from. We verify the file is still ACTIVE.
-      // No filename-to-ID lookup — sourceFileId is the identity.
-      durableFileId = (extraction as ExtractedField<any>).sourceFileId ?? null;
-      evidenceCols = EVIDENCE_COLUMNS[field] ?? null;
-
-      // UNRESOLVED case 1: source file is missing or not an active tender file
+      // Resolve durable file ID from fileName → TenderFile.id
+      durableFileId = extraction.sourceFile ? (fileNameToId.get(extraction.sourceFile) ?? null) : null;
       if (!durableFileId || !activeFileIds.has(durableFileId)) {
-        results[field] = {
-          status: "UNRESOLVED",
-          reason: "Source file is missing or not an active tender file — re-upload or re-extract the source.",
-          field,
-        };
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source file for ${field} is not an active tender file. Re-grounding required.` });
         continue;
       }
-
-      // UNRESOLVED case 2: source quote is missing or too short to ground
+      // Verify source quote is present and meaningful
       if (!extraction.sourceQuote || extraction.sourceQuote.trim().length < 5) {
-        results[field] = {
-          status: "UNRESOLVED",
-          reason: "Source quote is missing or too short to ground the field — re-extract the source.",
-          field,
-        };
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is missing or too short. Re-grounding required.` });
         continue;
       }
-
-      // UNRESOLVED case 3: quote is not contained in the EXACT active file
-      // identified by durableFileId. Verify ONLY against that one file —
-      // NOT across all active files (the prior bug: a quote found in a
-      // different file with the same name could satisfy the check).
-      const identifiedFile = activeFiles.find((f) => f.id === durableFileId);
-      const verified = identifiedFile
-        ? verifyQuoteInActiveFiles(extraction.sourceQuote, [identifiedFile])
-        : { verified: false, sourceFileId: null };
-      if (!verified.verified) {
-        results[field] = {
-          status: "UNRESOLVED",
-          reason: "Source quote is not contained in the referenced active tender file — the extractor may have hallucinated.",
-          field,
-        };
+      // Verify quote containment in the referenced active file
+      const quoteVerification = verifySourceQuote(extraction.sourceQuote, activeFilesForQuote);
+      if (!quoteVerification.verified || quoteVerification.sourceFileId !== durableFileId) {
+        outcomes.push({ field, status: "UNRESOLVED", reason: `Source quote for ${field} is not contained in the referenced active tender file. Re-grounding required.` });
         continue;
       }
-
-      provenPage = extraction.sourcePage;
+      // Use the extractor's computed sourcePage — it already uses the
+      // authoritative TenderFile.totalPages guard (via computePageNumber in
+      // tender-field-extractors.ts). The page is null when no reliable
+      // boundary exists and totalPages != 1. A null page means the field
+      // stays EXTRACTED_UNVERIFIED — never grounded, confirmed, generation-
+      // ready, or export-ready. The value and fileId are still written so
+      // the user doesn't have to re-enter the value manually.
+      provenPage = (extraction as ExtractedFieldOrMissing<unknown> & { sourcePage?: number | null }).sourcePage ?? null;
     }
 
-    // ── Type dispatch (AFTER source grounding) ──────────────────────
-    // Validate critical candidates with the shared validators BEFORE writing.
-    // isValidReferenceCandidate rejects TOC fragments / stop-words / labels.
-    // isValidDeadlineCandidate rejects past dates / placeholder strings.
-    if (field === "reference" && extraction.found) {
-      const refValue = fieldData.value as unknown;
-      if (typeof refValue === "string" && !isValidReferenceCandidate(refValue)) {
-        results[field] = { status: "REJECTED", reason: "Reference value failed shared isValidReferenceCandidate validation", value: refValue };
-        continue;
-      }
-    }
-    if (field === "deadline" && extraction.found) {
-      const dlValue = fieldData.value as unknown;
-      if (!isValidDeadlineCandidate(dlValue)) {
-        results[field] = { status: "REJECTED", reason: "Deadline value failed shared isValidDeadlineCandidate validation", value: dlValue };
-        continue;
-      }
-    }
-
+    // ── Type-specific value validation ────────────────────────────────────────────
+    // bidBondAmount produces { amount, currency } — split into two DB columns.
     if (field === "bidBondAmount") {
-      const v = fieldData.value as { amount: number; currency: string | null };
+      const v = extraction.value as { amount: number; currency: string | null };
       if (v.amount > 0 && v.currency !== "PERCENT") {
-        updates.bidBondAmount = v.amount;
-        if (v.currency) updates.bidBondCurrency = v.currency;
+        (updates as Record<string, unknown>).bidBondAmount = v.amount;
+        if (v.currency) (updates as Record<string, unknown>).bidBondCurrency = v.currency;
       }
+      // PERCENT-only matches are reported but not persisted — needs the budget
+      // to compute the absolute amount, which we will not invent.
     } else if (field === "deadline" || field === "preBidMeetingDate") {
-      // The deadline branch does NOT re-resolve the durable file id or call
-      // the quote verification helper — those happen in the
-      // CRITICAL_SOURCE_GROUNDED_FIELDS block above. Bypassing them was the
-      // prior bug; this branch just writes the validated value.
-      const dt = fieldData.value as Date;
+      const dt = extraction.value as Date;
+      if (field === "deadline" && !isValidDeadlineCandidate(dt)) {
+        outcomes.push({ field, status: "REJECTED", reason: "Extracted deadline is invalid or too far in the past.", value: dt });
+        continue;
+      }
       (updates as Record<string, unknown>)[field] = dt;
-    } else if (field === "submissionEmails") {
-      updates.submissionEmails = (fieldData.value as string[]).join("|");
-      updates.submissionEmailSourcePage = fieldData.sourcePage;
     } else {
       const rawValue = extraction.value as string;
-      if (typeof rawValue === "string" && containsMetadataPlaceholder(rawValue)) {
-        // Reject placeholder values — never store them. The continue skips
-        // the audit log and DB write so the operator sees the rejection
-        // without a spurious TENDER_METADATA_REPAIRED entry.
-        results[field] = { status: "REJECTED", reason: "placeholder pattern detected — value matches a known placeholder, not a real extraction", value: rawValue };
+      // ── Use the SHARED source-grounded metadata repair service ──────
+      if (field === "reference" && !isValidReferenceCandidate(rawValue)) {
+        outcomes.push({ field, status: "REJECTED", reason: `Extracted reference is invalid (stop-word, label, placeholder, or missing digit).`, value: rawValue });
         continue;
       }
+      if (field === "clientName" && !isValidTitleOrClientCandidate(rawValue)) {
+        outcomes.push({ field, status: "REJECTED", reason: `Extracted ${field} is invalid (placeholder, contaminated, label, or too short).`, value: rawValue });
+        continue;
+      }
+      if (containsMetadataPlaceholder(rawValue)) {
+        outcomes.push({ field, status: "REJECTED", reason: "Extracted value contains a placeholder pattern.", value: rawValue });
+        continue;
+      }
+      // Source grounding (durableFileId, active-file check, quote containment)
+      // is performed ABOVE in the CRITICAL_SOURCE_GROUNDED_FIELDS block, BEFORE
+      // the type dispatch. We do NOT repeat it here.
       (updates as Record<string, unknown>)[field] = rawValue;
-
-      // Handle field-specific mappings and source tracking
+      // When we repair clientName, also sync procuringEntityName if it's empty
+      // and re-evaluate metadataContaminated with the new clean value.
       if (field === "clientName") {
-        if (!tender.procuringEntityName) updates.procuringEntityName = rawValue;
-        updates.clientNameSourcePage = fieldData.sourcePage;
-        updates.clientNameSourceQuote = fieldData.sourceQuote;
-        if (!detectMetadataContamination(rawValue as string).contaminated) updates.metadataContaminated = false;
-      } else if (field === "submissionMethod") {
-        updates.submissionMethodSourcePage = fieldData.sourcePage;
-        updates.submissionMethodSourceQuote = fieldData.sourceQuote;
-      } else if (field === "submissionAddress") {
-        updates.submissionAddressSourcePage = fieldData.sourcePage;
-        updates.submissionAddressSourceQuote = fieldData.sourceQuote;
-      } else if (["clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "clientAddress", "country", "clientCity", "clientWebsite", "authorizedOfficer", "contactChannel"].includes(field)) {
-        contactDetails[field] = { page: fieldData.sourcePage, quote: fieldData.sourceQuote };
-      } else if (field === "projectTitle") {
-        if (!tender.title || tender.title.startsWith("[REVIEW NEEDED]")) updates.title = rawValue;
-      } else if (field === "submissionEmailSubject") {
-        updates.submissionEmailSubject = rawValue;
-      } else if (field === "reference" && durableFileId) {
-        // Persist reference evidence via contactDetailsSourceJson WITH
-        // fileId — without fileId, the canonical resolver's
-        // isGroundedEvidenceWithFileCheck can never mark reference as
-        // GROUNDED when activeTenderFileIds is enforced.
-        contactDetails["procurementReferenceNumber"] = {
-          page: provenPage,
-          quote: extraction.sourceQuote,
-          fileId: durableFileId,
-        };
+        const current = (tender as unknown as Record<string, unknown>).procuringEntityName;
+        if (!current) {
+          (updates as Record<string, unknown>).procuringEntityName = rawValue;
+        }
+        // Clear the contamination flag when the repaired value passes the check.
+        if (!detectMetadataContamination(rawValue).contaminated) {
+          (updates as Record<string, unknown>).metadataContaminated = false;
+        }
       }
     }
-    // ── PERSIST CANONICAL SOURCE EVIDENCE ───────────────────────────
-    // Write the source-evidence columns (fileId, page, quote) for critical
-    // fields UNCONDITIONALLY — even when provenPage is null. The old
-    // conditional write left stale pages on the row when a re-extraction
-    // ungrounded a field. Writing null clears the stale value.
+    // ── PERSIST CANONICAL SOURCE EVIDENCE ATOMICALLY ────────────────────
+    // For fields with dedicated source-evidence columns, persist file ID + quote.
+    // The extractor does not return page numbers — for critical source-grounded
+    // fields, the canonical resolver requires page > 0, so we cannot mark
+    // these as fully grounded. We persist what we have and let the canonical
+    // resolver determine the final state.
+    const sourceEvidenceColumns: Record<string, { fileId: string; page: string; quote: string }> = {
+      clientName: { fileId: "clientNameSourceFileId", page: "clientNameSourcePage", quote: "clientNameSourceQuote" },
+      title: { fileId: "titleSourceFileId", page: "titleSourcePage", quote: "titleSourceQuote" },
+      deadline: { fileId: "deadlineSourceFileId", page: "deadlineSourcePage", quote: "deadlineSourceQuote" },
+      submissionMethod: { fileId: "submissionMethodSourceFileId", page: "submissionMethodSourcePage", quote: "submissionMethodSourceQuote" },
+      submissionAddress: { fileId: "submissionAddressSourceFileId", page: "submissionAddressSourcePage", quote: "submissionAddressSourceQuote" },
+      submissionEmails: { fileId: "submissionEmailSourceFileId", page: "submissionEmailSourcePage", quote: "submissionEmailSourceQuote" },
+    };
+    // For reference (no dedicated source columns), persist via contactDetailsSourceJson
+    // which the canonical resolver reads under "procurementReferenceNumber".
+    if (field === "reference" && durableFileId) {
+      const existingJson = (tender as any).contactDetailsSourceJson;
+      let contactDetails: Record<string, { page: number | null; quote: string | null; fileId: string | null }> = {};
+      try { contactDetails = typeof existingJson === "string" ? JSON.parse(existingJson) : (existingJson ?? {}); } catch { contactDetails = {}; }
+      // fileId MUST be persisted here — without it, the canonical resolver's
+      // getSourceEvidence() returns fileId: null for reference, and
+      // isGroundedEvidenceWithFileCheck() can NEVER mark reference as GROUNDED
+      // (it requires fileId ∈ activeTenderFileIds).
+      contactDetails["procurementReferenceNumber"] = {
+        page: provenPage ?? null,
+        quote: extraction.sourceQuote ?? null,
+        fileId: durableFileId,
+      };
+      (updates as Record<string, unknown>).contactDetailsSourceJson = JSON.stringify(contactDetails);
+      // Also persist the dedicated reference source-evidence columns — the
+      // strict BuildPlan metadata validator reads these first.
+      (updates as Record<string, unknown>).referenceSourceFileId = durableFileId;
+      (updates as Record<string, unknown>).referenceSourceQuote = extraction.sourceQuote ?? null;
+      // Always write the page — even when null — to clear stale page evidence.
+      (updates as Record<string, unknown>).referenceSourcePage = provenPage;
+    }
+    const evidenceCols = sourceEvidenceColumns[field];
     if (evidenceCols && durableFileId) {
       (updates as Record<string, unknown>)[evidenceCols.fileId] = durableFileId;
-      (updates as Record<string, unknown>)[evidenceCols.page] = provenPage;
       (updates as Record<string, unknown>)[evidenceCols.quote] = extraction.sourceQuote;
-      // Dedicated referenceSourcePage column (written unconditionally so a
-      // null provenPage clears stale state).
-      if (field === "reference") {
-        (updates as Record<string, unknown>).referenceSourcePage = provenPage;
-      }
+      // Always write the page column — even when null. This clears any stale
+      // page from a prior extraction that doesn't correspond to the new value.
+      (updates as Record<string, unknown>)[evidenceCols.page] = provenPage;
     }
-
-    results[field] = { status: "REPAIRED", sourceFile: extraction.sourceFile, sourcePage: provenPage, sourceQuote: extraction.sourceQuote, confidence: extraction.confidence, value: fieldData.value };
+    outcomes.push({ field, status: "REPAIRED", confidence: extraction.confidence, sourceFile: extraction.sourceFile, sourcePage: provenPage, sourceQuote: extraction.sourceQuote, value: extraction.value });
     await logAction({
       userId: actor.id,
       action: "TENDER_METADATA_REPAIRED",
       entityType: "Tender",
       entityId: tenderId,
-      description: `${actor.email} repaired ${field}`.slice(0, 500),
+      description: `${actor.email} repaired ${field} from ${extraction.sourceFile ?? "tender source"} (${extraction.confidence})`.slice(0, 500),
       metadata: {
         tenderId,
         field,
+        extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
         sourceFile: extraction.sourceFile,
         confidence: extraction.confidence,
         sourceQuote: extraction.sourceQuote,
-        extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
       },
       requestId,
     });
   }
 
-  if (Object.keys(contactDetails).length > 0) {
-    updates.contactDetailsSourceJson = JSON.stringify(contactDetails);
-  }
-
   if (Object.keys(updates).length > 0) {
-    await prisma.tender.update({ where: { id: tenderId }, data: updates });
+    await prisma.tender.update({ where: { id: tenderId }, data: updates as Record<string, unknown> });
   }
 
-  return NextResponse.json({
+  const outcomesByField: Record<string, RepairOutcome> = {};
+  for (const o of outcomes) { outcomesByField[o.field] = o; }
+  const response: RepairMetadataResponse = {
     success: Object.keys(updates).length > 0,
-    repaired: Object.keys(updates),
-    results,
-    // outcomesByField is an alias for results — the DB-integration tests
-    // (release-blockers-integration.test.ts) assert body.outcomesByField
-    // to verify per-field repair outcomes. Both keys return the same object
-    // so both the UI (results) and tests (outcomesByField) work.
-    outcomesByField: results,
-  });
+    outcomes,
+    outcomesByField,
+  };
+  return NextResponse.json(response);
 }

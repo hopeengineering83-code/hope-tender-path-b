@@ -968,6 +968,55 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
   )`);
 
+  // ── TenderFactsLedger (universal tender-facts ledger) ────────────────────
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderFactsLedger" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "semanticKey" TEXT NOT NULL,
+    "displayLabel" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "valueType" TEXT NOT NULL,
+    "normalizedValue" TEXT,
+    "rawSourceValue" TEXT,
+    "structuredValueJson" TEXT,
+    "authorityState" TEXT NOT NULL,
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "sourceStatus" TEXT NOT NULL DEFAULT 'active',
+    "relevance" TEXT NOT NULL DEFAULT 'informational',
+    "applicability" TEXT NOT NULL DEFAULT 'applies',
+    "sourceFileId" TEXT,
+    "sourcePage" INTEGER,
+    "sourceQuote" TEXT,
+    "sourceContentHash" TEXT,
+    "reviewState" TEXT NOT NULL DEFAULT 'pending',
+    "manuallyEntered" BOOLEAN NOT NULL DEFAULT false,
+    "reason" TEXT,
+    "confirmationBasis" TEXT,
+    "createdBy" TEXT NOT NULL,
+    "confirmedBy" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "confirmedAt" TIMESTAMPTZ,
+    "supersededById" TEXT,
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderFactsLedger_tenderId_semanticKey_key" ON "TenderFactsLedger" ("tenderId", "semanticKey")`);
+
+  // ── TenderSubmissionEmail (structured per-email source provenance) ───────
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderSubmissionEmail" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "sourceFileId" TEXT,
+    "sourcePage" INTEGER,
+    "sourceQuote" TEXT,
+    "order" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderSubmissionEmail_tenderId_email_key" ON "TenderSubmissionEmail" ("tenderId", "email")`);
+
   // ── ProviderHealthSnapshot (in schema.prisma, no dedicated migration) ────
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ProviderHealthSnapshot" (
     "provider" TEXT NOT NULL PRIMARY KEY,

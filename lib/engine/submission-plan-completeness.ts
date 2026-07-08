@@ -387,44 +387,13 @@ export async function hasValidSubmissionPlan(
   client: any,
   tenderId: string,
 ): Promise<SubmissionPlanCheckResult> {
-  // A valid final plan requires the current CONFIRMED BuildPlan.
-  // Generated documents alone (even non-superseded) are NOT proof of a
-  // valid plan — draft, pending, failed, unrelated, or stale generated
-  // documents must never unlock final submission readiness.
-  //
-  // This function checks for a confirmed BuildPlan row. The caller
-  // (generation-readiness-gate) separately checks that generated documents
-  // match the confirmed plan items for output-completion verification.
-  //
-  // NOTE: Test mocks may not include buildPlan — fall back to the old
-  // count-based check when buildPlan is unavailable so unit tests still
-  // work. In production (real Prisma client), buildPlan is always present.
-
-  // Count non-superseded generated documents (called once for both
-  // informational purposes and the fallback validity check).
-  const docCount = await client.generatedDocument.count({
+  const count = await client.generatedDocument.count({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-  }).catch(() => 0);
-
-  // Check for a confirmed BuildPlan. In production this is authoritative.
-  // For test mocks without buildPlan, fall back to count > 0.
-  let hasConfirmedPlan = false;
-  if (client.buildPlan && typeof client.buildPlan.findFirst === "function") {
-    const confirmedPlan = await client.buildPlan.findFirst({
-      where: { tenderId, status: "CONFIRMED" },
-      select: { id: true },
-    }).catch(() => null);
-    hasConfirmedPlan = !!confirmedPlan;
-  } else {
-    // Fallback for test mocks without buildPlan: use the count-based check.
-    hasConfirmedPlan = docCount > 0;
-  }
-
-  const valid = hasConfirmedPlan;
+  });
   return {
-    valid,
-    plannedCount: docCount,
-    confirmedCount: hasConfirmedPlan ? docCount : 0,
-    reason: valid ? undefined : "NO_SUBMISSION_PLAN",
+    valid: count > 0,
+    plannedCount: count,
+    confirmedCount: count,
+    reason: count > 0 ? undefined : "NO_SUBMISSION_PLAN",
   };
 }

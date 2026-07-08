@@ -88,7 +88,13 @@ describe("Grounding enforcement — activeTenderFileIds", () => {
     assert.equal(field.blockerReason, null);
   });
 
-  it("USER_CONFIRMED critical field whose evidence file is DELETED/not active → blocked", () => {
+  it("USER_CONFIRMED critical field whose evidence file is DELETED/not active → blocks FINAL export", () => {
+    // Authority model (merged): a human-confirmed critical value whose evidence
+    // no longer points to an active file surfaces NOT_FOUND_CONFIRMED with a
+    // blockerReason and hard-blocks FINAL export (hasExportBlocker), while draft
+    // work proceeds on human authority (hasGenerationBlocker stays false) —
+    // identical to the sibling canonical-field-grounding.test.ts. The safety
+    // gate (final export) still fires; only the draft-phase deadlock is lifted.
     const result = resolveCanonicalFieldState({
       tender: makeTender({ clientName: "Pharo Ventures", clientNameSourceFileId: "file-deleted" }),
       overrides: [{ field: "clientName", fieldState: "USER_CONFIRMED", overrideValue: "Pharo Ventures", reason: "ok", overriddenBy: "u1", createdAt: new Date() }],
@@ -98,11 +104,7 @@ describe("Grounding enforcement — activeTenderFileIds", () => {
     const field = findField(result, "clientName");
     assert.equal(field.status, "NOT_FOUND_CONFIRMED", `got ${field.status}`);
     assert.ok(field.blockerReason);
-    // Authority model: draft generation is NOT blocked by missing grounding
-    // (hasGenerationBlocker is for contamination/placeholder only). Final
-    // export IS blocked — hasExportBlocker reflects the source-grounding
-    // requirement for critical fields.
-    assert.equal(result.hasExportBlocker, true, "final export must be blocked by ungrounded USER_CONFIRMED critical field");
+    assert.equal(result.hasExportBlocker, true);
   });
 
   it("USER_CONFIRMED critical field with NULL evidence fileId → blocked when enforced", () => {

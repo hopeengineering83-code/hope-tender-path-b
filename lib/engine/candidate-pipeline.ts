@@ -143,6 +143,9 @@ function validateFieldValue(field: string, value: string): "valid" | "invalid" |
       if (isPlaceholderClientName(trimmed)) return "placeholder";
       return "valid";
     case "reference":
+      // Mission spec: the digit requirement was removed — letter-only references
+      // (e.g. "REFONLY", "RFP/CONSULTANCY", "PHARO-RFP") are valid. Only garbage,
+      // labels, placeholders, and stop-words are rejected, via isValidReferenceNumber.
       if (!isValidReferenceNumber(trimmed)) return "invalid";
       return "valid";
     case "deadline":

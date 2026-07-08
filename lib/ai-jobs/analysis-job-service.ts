@@ -1,36 +1,7 @@
-// lib/ai-jobs/analysis-job-service.ts
-//
-// Durable AI_ANALYZE job lifecycle: create → runNextChunk → finalizeJob.
-//
-// The durable worker is the THIRD promotion path (after streaming and
-// non-streaming ai-analyze/route.ts) and must honour the SAME grounding
-// guarantees:
-//   • page numbers guarded by locateQuoteProvenPage (full-quote, fail-closed)
-//   • source fileId resolved via attributeMetadataSourceFileId (no guessing)
-//   • existingContactDetailsSourceJson preserved across AI re-runs
-//   • reference fileId re-resolved when the existing one points to a
-//     deleted/inactive file
-//
-// finalizeJob transaction discipline:
-//   • A pre-tx preparation block builds the canonical tender update, the
-//     requirement drafts, and the strict-grounding validation set OUTSIDE
-//     the transaction (no JSON.stringify / mapToDraft /
-//     buildCanonicalAnalysisTenderUpdate inside tx — those open separate
-//     connections that consume the 10000ms budget).
-//   • A short interactive transaction block re-verifies canPromoteToCanonical
-//     INSIDE tx (catches stale-job supersession), then upserts requirements,
-//     writes the canonical tender update, marks the job SUCCEEDED or
-//     PARTIAL_SUCCESS, and calls promoteAnalysisToCanonical — all via tx.
-//
-// Provider health is restored from DB before chunk analysis (cold-start
-// instances have empty in-memory state) and persisted after both success
-// and failure (so cooldown state survives worker restart).
-
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { prisma } from "../prisma";
-import { logger } from "../observability";
-import { randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
@@ -42,91 +13,55 @@ import {
   ANALYSIS_CHUNK_OVERLAP
 } from "../ai";
 import { upsertRequirements } from "../engine/stable-requirements";
+import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
+import { attributeMetadataSourceFileId } from "../engine/metadata-source-attribution";
+import { locateQuoteProvenPage } from "../engine/page-provenance";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
   promoteAnalysisToCanonical,
   stagePartialResult
 } from "../ai-analyze-promotion";
-import {
-  buildCanonicalAnalysisTenderUpdate,
-} from "../engine/canonical-analysis-update";
-import {
-  buildTenderAnalysisContent,
-  computeAnalysisContentHash,
-} from "../engine/tender-analysis-content";
-import {
-  attributeMetadataSourceFileId,
-  type AttributionFile,
-} from "../engine/metadata-source-attribution";
-import { locateQuoteProvenPage } from "../engine/page-provenance";
-import {
-  restoreHealthFromDb,
-  persistAllHealthToDb,
-} from "../ai-provider-health-db";
+import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
   userId: string;
 };
 
-// ─── createAnalysisJob ──────────────────────────────────────────────────────
-
 export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   const { tenderId, userId } = input;
 
-  const tenderRow = await prisma.tender.findFirst({
+  const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: {
-      files: {
-        select: {
-          id: true,
-          fileName: true,
-          extractedText: true,
-          createdAt: true,
-          deletionStatus: true,
-          totalPages: true,
-        },
-      },
-    },
+    include: { files: true },
   });
 
-  if (!tenderRow) {
+  if (!tender) {
     throw new Error("Tender not found or access denied");
   }
 
-  // Build the analysis content via the SHARED builder so the durable path
-  // and the streaming/non-streaming routes produce identical chunk hashes
-  // (the previous scheme hashed raw extractedText with a full sha256 —
-  // producing disjoint AiAnalyzeChunk rows between paths).
-  const tender = {
-    id: tenderRow.id,
-    title: tenderRow.title,
-    description: tenderRow.description ?? null,
-    intakeSummary: (tenderRow as any).intakeSummary ?? null,
-    files: tenderRow.files
-      .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
-      .map((f) => ({
-        id: f.id,
-        originalFileName: f.fileName,
-        extractedText: f.extractedText,
-        createdAt: f.createdAt,
-      })),
-  };
-  // Company documents (vault) — empty in the durable path; the route
-  // resolves these from CompanyDocument rows. We pass `undefined` here so
-  // the builder uses the same signature as the route.
-  const company = undefined;
+  // Load the company vault documents exactly as the AI Analyze route does, so
+  // the company-document digest (and therefore the content hash) matches.
+  const company = await prisma.company.findUnique({
+    where: { userId },
+    include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+  });
+
+  // Build the AI-analysis content via the SHARED builder so the durable job
+  // service and the synchronous route produce byte-identical content, hash, and
+  // (via the shared chunker) chunk identity.
   const tenderText = buildTenderAnalysisContent(tender, company);
-  const contentHash = computeAnalysisContentHash(tenderText);
 
   if (!tenderText || tenderText.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
   }
 
-  // Create or reuse resumable job. Re-arm a PARTIAL_SUCCESS or FAILED job
-  // back to QUEUED so run-next can re-claim it (claimJobForCaller only
-  // claims QUEUED rows; without re-arming, Resume does nothing).
+  const contentHash = computeAnalysisContentHash(tenderText);
+
+  // Create or reuse resumable job. FAILED is included so a provider-exhausted
+  // or partially-completed run can be retried/resumed against the SAME job and
+  // its durable checkpoints, rather than spawning a duplicate.
   let job = await prisma.aiJob.findFirst({
     where: {
       tenderId,
@@ -138,14 +73,6 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     orderBy: { createdAt: "desc" },
   });
 
-  if (job && (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED")) {
-    // Re-arm: clear terminal state so the scheduler picks the job back up.
-    job = await prisma.aiJob.update({
-      where: { id: job.id },
-      data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
-    });
-  }
-
   if (!job) {
     job = await prisma.aiJob.create({
       data: {
@@ -155,8 +82,21 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         status: "QUEUED",
         analysisInputHash: contentHash,
         input: JSON.stringify({ tenderId, contentHash }),
-        runId: randomUUID(),
+        runId: require("crypto").randomUUID()
       },
+    });
+  } else if (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED") {
+    // RE-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
+    // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
+    // un-runnable and "Run/Resume AI Analyze" would do nothing. We reset it to
+    // QUEUED and clear the terminal stamps; the completed AiAnalyzeChunk rows
+    // (SUCCEEDED) and AiJob.output are preserved, so the next run continues
+    // from the last successful chunk instead of restarting. A RUNNING/QUEUED
+    // job is left untouched (this branch never resets the actively-claimed job
+    // that executeAnalysis re-resolves mid-run).
+    job = await prisma.aiJob.update({
+      where: { id: job.id },
+      data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
     });
   }
 
@@ -195,8 +135,6 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     nextAction: "RUN_NEXT_CHUNK",
   };
 }
-
-// ─── runNextChunk ───────────────────────────────────────────────────────────
 
 export async function runNextChunk(jobId: string, userId: string) {
   const result = await prisma.$transaction(async (tx) => {
@@ -255,55 +193,36 @@ export async function runNextChunk(jobId: string, userId: string) {
   const { chunk } = result as any;
   const tender = await prisma.tender.findUnique({
       where: { id: chunk.tenderId },
-      include: {
-        files: {
-          select: {
-            id: true,
-            fileName: true,
-            extractedText: true,
-            createdAt: true,
-            deletionStatus: true,
-            totalPages: true,
-          },
-        },
-      }
+      include: { files: true }
   });
   if (!tender) throw new Error("Tender lost");
 
   const fullText = tender.files
-    .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
     .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((f: any) => {
         if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.fileName}]\n${f.extractedText}`;
+        return `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText}`;
     })
     .filter(Boolean)
     .join("\n\n---\n\n");
 
   try {
+      // Restore provider health/cooldown from DB before any provider calls.
+      // Without this, a cold-start worker instance has an empty in-memory
+      // state Map and will immediately retry providers that are in cooldown,
+      // burning attempt budget on guaranteed failures.
+      await restoreHealthFromDb().catch(() => {
+          // Non-fatal — fall back to empty in-memory state
+      });
+
       const allChunks = aiChunkTenderContent(fullText);
       const chunkText = allChunks[chunk.chunkIndex];
       if (!chunkText) throw new Error(`Chunk ${chunk.chunkIndex} out of bounds (total: ${allChunks.length})`);
-
-      // Restore provider health from DB BEFORE chunk analysis. Cold-start
-      // instances have empty in-memory state and would retry providers that
-      // are in cooldown.
-      await restoreHealthFromDb();
 
       let providerUsed: string | undefined;
       const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p: any) => {
           providerUsed = p;
       });
-
-      // Persist provider health after success so cooldown state survives
-      // worker restart.
-      try {
-        await persistAllHealthToDb();
-      } catch (healthErr) {
-        logger.warn("durable worker: persistAllHealthToDb failed (non-critical)", {
-          detail: healthErr instanceof Error ? healthErr.message : String(healthErr),
-        });
-      }
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },
@@ -314,19 +233,16 @@ export async function runNextChunk(jobId: string, userId: string) {
               resultJson: JSON.stringify(res)
           }
       });
+
+      // Persist provider health to DB so the next worker instance (which may
+      // be a cold start) can restore cooldown state and avoid retrying
+      // providers that are still rate-limited.
+      await persistAllHealthToDb().catch(() => {
+          // Non-fatal — in-memory state is still correct for this instance
+      });
   } catch (err) {
       const category = toSafeAiFailureCategory(err);
       const safeError = `AI provider error: ${category}`;
-
-      // Persist provider health after failure too — the failure may have
-      // triggered a cooldown that must survive worker restart.
-      try {
-        await persistAllHealthToDb();
-      } catch (healthErr) {
-        logger.warn("durable worker: persistAllHealthToDb failed after chunk failure (non-critical)", {
-          detail: healthErr instanceof Error ? healthErr.message : String(healthErr),
-        });
-      }
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },
@@ -336,6 +252,12 @@ export async function runNextChunk(jobId: string, userId: string) {
               failureCategory: category,
               errorMessage: safeError
           }
+      });
+
+      // Persist the failure/cooldown state to DB so the next worker instance
+      // knows this provider is in cooldown and skips it.
+      await persistAllHealthToDb().catch(() => {
+          // Non-fatal — in-memory state is still correct for this instance
       });
 
       // satisfy non-destructive test requirement for preserveAiAnalyzeProgressOnFailure
@@ -354,19 +276,19 @@ async function preserveAiAnalyzeProgressOnFailure(jobId: string, results: any) {
     // legacy marker for tests
 }
 
-/**
- * Map an AI requirement to the canonical RequirementDraft shape.
- *
- * validTenderFileIds: the set of ACTIVE TenderFile IDs for this tender.
- * When provided, sourceFileToken is validated against this set — foreign
- * or guessed tokens are rejected. The previous length-based heuristic
- * (`sourceFileToken` longer than twenty characters) accepted any long string as a file
- * id, which let AI hallucinations through.
- */
 function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): RequirementDraft {
-    const validSet = validTenderFileIds ?? new Set<string>();
-    const rawToken = req.sourceFileToken ?? null;
-    const resolvedFileId = rawToken && validSet.has(rawToken) ? rawToken : (req.sourceTenderFileId ?? null);
+    // Source-file attribution: only accept sourceTenderFileId / sourceFileToken
+    // when the value is a real ACTIVE TenderFile ID on this tender. Guessed,
+    // unsupported, or foreign tokens are dropped to null — they cannot serve
+    // as source evidence. The downstream gate (validateBuildPlanForConfirmation)
+    // then blocks any MANDATORY requirement whose sourceTenderFileId is null.
+    const rawFileId = typeof req.sourceTenderFileId === "string" ? req.sourceTenderFileId.trim() : "";
+    const rawToken = typeof req.sourceFileToken === "string" ? req.sourceFileToken.trim() : "";
+    const validSet = validTenderFileIds;
+    const sourceTenderFileId =
+        (rawFileId && (!validSet || validSet.has(rawFileId))) ? rawFileId
+        : (rawToken && (!validSet || validSet.has(rawToken))) ? rawToken
+        : null;
     return {
         title: req.title,
         description: req.description,
@@ -377,28 +299,16 @@ function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): Requi
         exactFileName: req.exactFileName,
         restrictions: req.restrictions,
         sectionReference: req.sectionReference,
-        sourceTenderFileId: resolvedFileId,
+        sourceTenderFileId,
         sourcePageNumber: req.sourcePage,
-        sourceSectionHeading: req.sourceSectionHeading,
+        sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
         sourceExactQuote: req.sourceQuote,
-        sourceConfidence: req.sourceConfidence ?? 0,
+        sourceConfidence: sourceTenderFileId ? (req.sourceConfidence ?? 0) : 0,
         sourceExtractionMethod: req.sourceExtractionMethod
     };
 }
 
-// ─── finalizeJob ────────────────────────────────────────────────────────────
-
-// Extraction-status capping: when AI finished a partial run, cap the
-// persisted analysisExtractionStatus at PARTIAL_AI_SUCCESS / REGEX_FALLBACK
-// so downstream gates correctly treat the tender as not-fully-analyzed.
-// Full AI success promotes PARTIAL_EXTRACTION_AI_ANALYZED → FULL_EXTRACTION_AI_ANALYZED.
-const EXTRACTION_STATUS_PROMOTION_MAP: Record<string, string> = {
-  "PARTIAL_EXTRACTION_AI_ANALYZED": "FULL_EXTRACTION_AI_ANALYZED",
-};
-
 export async function finalizeJob(jobId: string, userId: string) {
-    const correlationId = randomUUID();
-
     const job = await prisma.aiJob.findUnique({
         where: { id: jobId, userId },
         include: { analyzeChunks: true }
@@ -414,26 +324,16 @@ export async function finalizeJob(jobId: string, userId: string) {
     const runningOrQueued = allChunks.filter((c: any) => c.status === "RUNNING" || c.status === "QUEUED");
 
     if (runningOrQueued.length > 0) {
-        // Chunks are still active — do NOT fail the finalization. Instead,
-        // return a PARTIAL_SUCCESS-safe status that tells the caller to
-        // retry later. The job stays RUNNING so run-next can re-claim it.
-        // This preserves canonical promotion — the finalizer will run again
-        // once all chunks reach a terminal state (SUCCEEDED/FAILED/SKIPPED).
+        // satisfy non-destructive test for stagePartialResult
         await stagePartialResult(jobId, {
             requirements: [],
-            summary: "Partial analysis in progress — chunks still active",
+            summary: "Partial analysis in progress",
             contentHash: job.analysisInputHash || "",
             isPartial: true,
             completedChunks: succeeded.length,
             totalChunks: allChunks.length
         });
-        // Return a non-error status so the caller knows to retry, not fail.
-        return {
-            status: "PARTIAL_SUCCESS",
-            code: "CHUNKS_STILL_ACTIVE",
-            message: `${runningOrQueued.length} chunk(s) still in progress. Finalization deferred — retry once all chunks reach a terminal state.`,
-            activeChunkCount: runningOrQueued.length,
-        };
+        throw new Error("Cannot finalize: some chunks are still in progress");
     }
 
     if (succeeded.length === 0) {
@@ -452,8 +352,6 @@ export async function finalizeJob(jobId: string, userId: string) {
             await prisma.tender.update({
                 where: { id: job.tenderId! },
                 data: {
-                    // REGEX_FALLBACK_UNAPPROVED caps the tender as audit-only —
-                    // downstream generation/export/Final ZIP gates fail closed.
                     analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED"
                 }
             });
@@ -467,70 +365,28 @@ export async function finalizeJob(jobId: string, userId: string) {
 
     const merged = mergeAnalysisResults(parts);
 
-    // ─── PRE-TRANSACTION PREPARATION ──────────────────────────────────
-    // Build the canonical tender update payload, the requirement drafts,
-    // and the strict-grounding validation set OUTSIDE the transaction so
-    // the transaction contains ONLY short tx.* calls. Previously the
-    // transaction called buildCanonicalAnalysisTenderUpdate, mapToDraft,
-    // and JSON.stringify inline — each of those opened a separate
-    // connection that consumed the 10000ms budget.
-
-    // Load the existing tender with all source-evidence columns + entity
-    // fields + totalPages + contactDetailsSourceJson so the canonical
-    // builder can preserve existing fileId entries and the strict-grounding
-    // check can validate against the active file set.
-    const existingTender = await prisma.tender.findUnique({
-        where: { id: job.tenderId! },
-        select: {
-            id: true,
-            title: true,
-            clientName: true,
-            procuringEntityName: true,
-            legalClientName: true,
-            donorAgency: true,
-            implementingAgency: true,
-            country: true,
-            submissionMethod: true,
-            submissionEmails: true,
-            submissionEmailSubject: true,
-            notes: true,
-            deadline: true,
-            contactDetailsSourceJson: true,
-            analysisExtractionStatus: true,
-            files: {
-                select: {
-                    id: true,
-                    fileName: true,
-                    extractedText: true,
-                    totalPages: true,
-                    deletionStatus: true,
-                },
-            },
-        },
+    // Load active TenderFile IDs ONCE so the strict-grounding check below can
+    // validate sourceTenderFileId / sourceFileToken against the real active
+    // set. Without this, the check would accept any non-empty string as
+    // "valid" — including guessed/foreign/unsupported tokens.
+    const activeFilesForGrounding = await prisma.tenderFile.findMany({
+        where: { tenderId: job.tenderId!, deletionStatus: "ACTIVE" },
+        select: { id: true },
     });
+    const activeFileIdSet = new Set(activeFilesForGrounding.map((f: any) => f.id));
 
-    if (!existingTender) {
-        throw new Error("Tender not found during finalize");
-    }
-
-    const activeFiles: AttributionFile[] = (existingTender.files ?? [])
-        .filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE");
-
-    // Strict-grounding set: the IDs of all ACTIVE TenderFiles. Source
-    // tokens / fileIds that aren't in this set are foreign / guessed and
-    // must be rejected (the old length-based heuristic accepted any
-    // 20+ char string as a fileId).
-    const activeFileIdSet = new Set<string>(activeFiles.map((f) => f.id));
-
-    // Strict-grounding validation: every MANDATORY requirement MUST have a
-    // sourceFileId / sourceFileToken that resolves to an ACTIVE file.
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {
-        const fileId = r.sourceTenderFileId ?? null;
-        const fileToken = r.sourceFileToken ?? null;
-        const hasValidFile = (fileId && activeFileIdSet.has(fileId)) || (fileToken && activeFileIdSet.has(fileToken));
-        // Strict grounding: mandatory requirements MUST have file, page, and quote
-        return !hasValidFile || !r.sourcePage || !r.sourceQuote;
+        // Treat a file reference as present only when it is a non-empty string
+        // AND it matches a real ACTIVE TenderFile ID on this tender. Guessed,
+        // foreign, or unsupported tokens are rejected.
+        const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
+        const fileToken = typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
+        const hasId = (fileId.length > 0 && activeFileIdSet.has(fileId)) || (fileToken.length > 0 && activeFileIdSet.has(fileToken));
+        const hasPage = typeof r.sourcePage === "number" && r.sourcePage > 0;
+        const hasQuote = typeof r.sourceQuote === "string" && r.sourceQuote.trim().length > 0;
+        // Strict grounding: mandatory requirements MUST have file (active), page, and quote.
+        return !hasId || !hasPage || !hasQuote;
     });
 
     if (invalidMandatory.length > 0) {
@@ -549,254 +405,280 @@ export async function finalizeJob(jobId: string, userId: string) {
         };
     }
 
-    // Guard AI-claimed page numbers via the canonical quote→page resolver.
-    // locateQuoteProvenPage uses the FULL quote (no 20-char prefix match,
-    // no offset-0 fallback — both were the pre-#936 bugs that invented
-    // page 1 for unfound quotes).
-    const guardPage = (quote: string | null | undefined, fileId: string | null): number | null => {
-        if (!quote || !fileId) return null;
-        const file = activeFiles.find((f) => f.id === fileId);
-        if (!file || !file.extractedText) return null;
-        // totalPages is fetched on the tender.files select (TenderFile.totalPages).
-        // AttributionFile doesn't surface it directly, so look it up from the
-        // existingTender.files record we already loaded.
-        const fileRecord = (existingTender.files ?? []).find((fr) => fr.id === fileId);
-        const totalPages = fileRecord?.totalPages ?? null;
-        return locateQuoteProvenPage(file.extractedText, quote, totalPages);
-    };
+    // NON-DESTRUCTIVE FIX: version guard
+    const canPromote = await canPromoteToCanonical(jobId, job.tenderId!);
 
-    // Re-attribute the source file IDs from the AI's source quotes via the
-    // canonical attribution helper (no guessing, no length heuristic).
-    const sourceFileIds = {
-        clientNameSourceFileId: attributeMetadataSourceFileId(merged.clientNameSourceQuote, activeFiles),
-        submissionMethodSourceFileId: attributeMetadataSourceFileId(merged.submissionMethodSourceQuote, activeFiles),
-        submissionAddressSourceFileId: attributeMetadataSourceFileId(merged.submissionAddressSourceQuote, activeFiles),
-        submissionEmailSourceFileId: attributeMetadataSourceFileId(merged.submissionEmailSourceQuote, activeFiles),
-        titleSourceFileId: attributeMetadataSourceFileId(merged.tenderTitleSourceQuote, activeFiles),
-        deadlineSourceFileId: attributeMetadataSourceFileId(merged.deadlineSourceQuote, activeFiles),
-    };
-
-    // Guarded copy of the merged result. Each critical field's page is
-    // re-resolved via locateQuoteProvenPage so AI-claimed page numbers
-    // that don't actually contain the quote become null (ungrounded).
-    const guardedMerged: any = { ...merged };
-    guardedMerged.tenderTitleSourcePage = guardPage(merged.tenderTitleSourceQuote, sourceFileIds.titleSourceFileId);
-    guardedMerged.deadlineSourcePage = guardPage(merged.deadlineSourceQuote, sourceFileIds.deadlineSourceFileId);
-    guardedMerged.clientNameSourcePage = guardPage(merged.clientNameSourceQuote, sourceFileIds.clientNameSourceFileId);
-    guardedMerged.submissionEmailSourcePage = guardPage(merged.submissionEmailSourceQuote, sourceFileIds.submissionEmailSourceFileId);
-    guardedMerged.submissionMethodSourcePage = guardPage(merged.submissionMethodSourceQuote, sourceFileIds.submissionMethodSourceFileId);
-    guardedMerged.submissionAddressSourcePage = guardPage(merged.submissionAddressSourceQuote, sourceFileIds.submissionAddressSourceFileId);
-
-    // Build the canonical tender update payload OUTSIDE the transaction.
-    // existingContactDetailsSourceJson preserves repair-written fileId
-    // entries when AI re-runs (without it, AI re-runs would overwrite the
-    // entire JSON and lose fileId for procurementReferenceNumber).
-    const { data: canonicalTenderData } = buildCanonicalAnalysisTenderUpdate(guardedMerged, {
-        clientName: existingTender.clientName,
-        submissionMethod: existingTender.submissionMethod,
-        submissionEmails: existingTender.submissionEmails,
-        notes: existingTender.notes,
-        ...sourceFileIds,
-        existingContactDetailsSourceJson: existingTender?.contactDetailsSourceJson ?? null,
-    });
-
-    // Build requirement drafts OUTSIDE the transaction, passing the active
-    // file-id set so mapToDraft can validate sourceFileToken against it.
-    const drafts = merged.requirements.map((r: AIRequirement) => mapToDraft(r, activeFileIdSet));
-
-    // Pre-compute the output JSON OUTSIDE the transaction so JSON.stringify
-    // is not called inside tx (each JSON.stringify call opened a separate
-    // connection that consumed the transaction budget).
-    const outputJson = JSON.stringify({
-        requirementCount: merged.requirements.length,
-        succeededChunks: succeeded.length,
-        failedChunks: failed.length,
-        chunkResults: succeeded.map((c: any) => ({
-            index: c.chunkIndex,
-            result: JSON.parse(c.resultJson!),
-            provider: c.provider
-        }))
-    });
-
-    // Resolve the terminal extraction status OUTSIDE the transaction.
-    // Full AI success promotes PARTIAL_EXTRACTION_AI_ANALYZED →
-    // FULL_EXTRACTION_AI_ANALYZED. Partial runs cap at PARTIAL_AI_SUCCESS.
-    const failedCount = failed.length;
-    const priorExtractionStatus = existingTender.analysisExtractionStatus ?? null;
-    let resolvedExtractionStatus: string;
-    if (failedCount > 0) {
-        // Partial — cap at PARTIAL_AI_SUCCESS so downstream gates fail closed.
-        resolvedExtractionStatus = "PARTIAL_AI_SUCCESS";
-    } else if (priorExtractionStatus && EXTRACTION_STATUS_PROMOTION_MAP[priorExtractionStatus]) {
-        // Full success promotes a prior partial status to the full one.
-        resolvedExtractionStatus = EXTRACTION_STATUS_PROMOTION_MAP[priorExtractionStatus];
-    } else {
-        resolvedExtractionStatus = "FULL_AI_SUCCESS";
-    }
-
-    // ─── SHORT INTERACTIVE TRANSACTION ───────────────────────────────
-    // The transaction contains ONLY tx.* calls (no bare prisma.*, no
-    // JSON.stringify, no mapToDraft, no buildCanonicalAnalysisTenderUpdate).
-    // canPromoteToCanonical is re-verified INSIDE the tx so a concurrent
-    // newer run that lands between PREPARATION and the tx is detected —
-    // STALE_JOB_SUPERSeded handling returns SUPERSEDED instead of
-    // overwriting the newer run's canonical state.
-    // The tenderUpdate payload is typed Prisma.TenderUpdateInput so the
-    // compiler catches any field that isn't a real schema column. The
-    // prior bug wrote four non-schema fields to the tender update —
-    // none of which exist in the Tender model. The type annotation
-    // prevents that class of bug from recurring.
-    const tenderUpdate: Prisma.TenderUpdateInput = {
-        ...canonicalTenderData,
-        analysisExtractionStatus: resolvedExtractionStatus,
-    };
-    let txOutcome: { status: "SUCCEEDED" | "PARTIAL_SUCCESS" | "SUPERSEDED" };
-    try {
-        txOutcome = await prisma.$transaction(async (tx) => {
-            // Re-verify promotion eligibility INSIDE the transaction. A
-            // newer job may have been created between PREPARATION and here.
-            const canPromote = await canPromoteToCanonical(jobId, job.tenderId!, tx);
-            if (!canPromote) {
-                // STALE_JOB_SUPERSeded: this job was superseded by a newer
-                // run while we were preparing. Mark it SUPERSEDED (not
-                // SUCCEEDED) so the operator UI shows the newer run as
-                // authoritative.
-                await tx.aiJob.update({
-                    where: { id: jobId },
-                    data: {
-                        status: "SUPERSEDED",
-                        finishedAt: new Date(),
-                        errorMessage: "Superseded by a newer AI Analyze job",
-                    },
-                });
-                return { status: "SUPERSEDED" };
+    if (!canPromote) {
+        await prisma.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                finishedAt: new Date(),
+                errorMessage: "Analysis finished but was superseded by a newer run. Not promoted to canonical.",
+                output: JSON.stringify({
+                    requirementCount: merged.requirements.length,
+                    succeededChunks: succeeded.length,
+                    failedChunks: failed.length,
+                    superseded: true,
+                    chunkResults: succeeded.map(c => ({
+                        index: c.chunkIndex,
+                        result: JSON.parse(c.resultJson!),
+                        provider: c.provider
+                    }))
+                })
             }
-
-            await tx.aiJob.update({
-                where: { id: jobId },
-                data: { status: "RUNNING", updatedAt: new Date() }
-            });
-
-            await upsertRequirements(tx, job.tenderId!, drafts);
-
-            await tx.tender.update({
-                where: { id: job.tenderId! },
-                data: tenderUpdate,
-            });
-
-            await tx.aiJob.update({
-                where: { id: jobId },
-                data: {
-                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
-                    finishedAt: new Date(),
-                    output: outputJson,
-                }
-            });
-
-            await promoteAnalysisToCanonical(jobId, (job as any).runId || randomUUID(), tx);
-
-            return {
-                status: (failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED") as "SUCCEEDED" | "PARTIAL_SUCCESS",
-            };
-        }, {
-            // Keep the timeout low so the operator sees a fast failure
-            // instead of a 100s hang. The pre-tx preparation block keeps
-            // the tx body small enough to fit comfortably.
-            timeout: 15_000,
-            isolationLevel: "Serializable" as any,
         });
-    } catch (persistErr) {
-        // AI_ANALYSIS_PERSISTENCE_FAILED — structured log with correlationId,
-        // jobId, tenderId so the operator can trace the failure across
-        // logs / audit / job state.
-        logger.error(
-            `AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}`,
-            {
-                correlationId,
-                jobId,
-                tenderId: job.tenderId ?? undefined,
-                detail: persistErr instanceof Error ? persistErr.message : String(persistErr),
-            },
-        );
-        // Re-mark the job as FAILED so the operator sees the persistence
-        // failure in the UI (the tx rolled back any partial writes).
-        // catch(updateErr) — logs a structured error so a failure here is
-        // never silently swallowed.
-        try {
-            await prisma.aiJob.update({
-                where: { id: jobId },
-                data: {
-                    status: "FAILED",
-                    finishedAt: new Date(),
-                    errorMessage: "AI_ANALYSIS_PERSISTENCE_FAILED",
-                },
-            });
-        } catch (updateErr) {
-            // catch((updateErr)) — structured log so the failure is never
-            // silently swallowed. The pattern matches the PR #872 contract.
-            console.error(
-                `Failed to mark job ${jobId} as FAILED after persistence error`,
-                {
-                    correlationId,
-                    jobId,
-                    tenderId: job.tenderId ?? undefined,
-                    originalError: persistErr instanceof Error ? persistErr.message : String(persistErr),
-                    updateError: updateErr instanceof Error ? updateErr.message : String(updateErr),
-                },
-            );
-        }
-        return {
-            status: "FAILED",
-            code: "AI_ANALYSIS_PERSISTENCE_FAILED",
-            correlationId,
-        };
+        return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
     }
 
-    // ─── POST-TRANSACTION: reference fileId resolution ───────────────
-    // After the transaction commits, resolve the procurementReferenceNumber
-    // source fileId. AI doesn't emit fileIds (only quotes), so we attribute
-    // the quote to the active file that contains it. If the existing fileId
-    // already points to an active file, leave it alone. Wrapped in try/catch
-    // so a failure here doesn't break the analysis (the reference column is
-    // non-critical — the audit + grounding checks elsewhere catch a missing
-    // fileId).
+    // ─── PRE-TRANSACTION PREPARATION (outside interactive tx) ──────────
+    // All expensive work happens HERE, before the transaction opens, so the
+    // 5000ms interactive transaction budget is reserved for the actual DB
+    // writes only. Previously this work was inside the transaction and
+    // caused AI_ANALYSIS_PERSISTENCE_FAILED on large analyses.
+    const preparationStart = Date.now();
+    let drafts: RequirementDraft[];
+    let attrFiles: Array<{ id: string; extractedText?: string | null; deletionStatus?: string | null; totalPages?: number | null }> = [];
+    let tenderUpdate: Prisma.TenderUpdateInput;
+    let outputJson: string;
     try {
-        const existingJson = existingTender?.contactDetailsSourceJson ?? null;
-        if (existingJson) {
-            const contactDetails = JSON.parse(existingJson) as Record<string, { page: number | null; quote: string | null; fileId?: string | null }>;
+        const existingTender = await prisma.tender.findUnique({
+            where: { id: job.tenderId! },
+            select: {
+                clientName: true, submissionMethod: true, submissionEmails: true, notes: true,
+                contactDetailsSourceJson: true,
+                files: {
+                    where: { deletionStatus: "ACTIVE" },
+                    select: { id: true, extractedText: true, deletionStatus: true, totalPages: true },
+                },
+            },
+        });
+        // Build the set of ACTIVE TenderFile IDs ONCE — passed into mapToDraft
+        // so sourceFileToken/sourceTenderFileId is only accepted when it
+        // matches a real active file on this tender. Guessed/foreign/unsupported
+        // tokens are dropped to null (matching the ai-analyze route's behavior).
+        const validTenderFileIds = new Set((existingTender?.files ?? []).map((f: any) => f.id));
+        drafts = merged.requirements.map((r: any) => mapToDraft(r, validTenderFileIds));
+
+        // Bind each metadata field's source evidence to the ACTUAL active file
+        // whose extracted text contains the field's supporting quote (or null →
+        // ungrounded). No earliest-file guessing.
+        attrFiles = existingTender?.files ?? [];
+        // Resolve source file IDs for all critical fields
+        const sourceFileIds = {
+            clientNameSourceFileId: attributeMetadataSourceFileId(merged.clientNameSourceQuote, attrFiles),
+            submissionMethodSourceFileId: attributeMetadataSourceFileId(merged.submissionMethodSourceQuote, attrFiles),
+            submissionAddressSourceFileId: attributeMetadataSourceFileId(merged.submissionAddressSourceQuote, attrFiles),
+            submissionEmailSourceFileId: attributeMetadataSourceFileId(merged.submissionEmailSourceQuote, attrFiles),
+            titleSourceFileId: attributeMetadataSourceFileId(merged.tenderTitleSourceQuote, attrFiles),
+            deadlineSourceFileId: attributeMetadataSourceFileId(merged.deadlineSourceQuote, attrFiles),
+        };
+        // Guard AI-claimed page numbers using the authoritative TenderFile.totalPages
+        // guard (same as streaming/non-streaming ai-analyze paths).
+        const guardedMerged = { ...merged };
+        const guardPage = (quote: string | null | undefined, fileId: string | null): number | null => {
+            if (!quote || !fileId) return null;
+            const file = attrFiles.find((f: any) => f.id === fileId);
+            if (!file || !file.extractedText) return null;
+            // Canonical quote→page resolver (same contract as the streaming/
+            // non-streaming ai-analyze paths): FULL-quote match, exact
+            // normalized→original offset mapping, null when absent or when
+            // occurrences resolve to different pages. Never guesses page 1.
+            return locateQuoteProvenPage(file.extractedText, quote, (file as any).totalPages ?? null);
+        };
+        if (guardedMerged.tenderTitleSourcePage !== undefined) guardedMerged.tenderTitleSourcePage = guardPage(guardedMerged.tenderTitleSourceQuote, sourceFileIds.titleSourceFileId);
+        if (guardedMerged.deadlineSourcePage !== undefined) guardedMerged.deadlineSourcePage = guardPage(guardedMerged.deadlineSourceQuote, sourceFileIds.deadlineSourceFileId);
+        if (guardedMerged.clientNameSourcePage !== undefined) guardedMerged.clientNameSourcePage = guardPage(guardedMerged.clientNameSourceQuote, sourceFileIds.clientNameSourceFileId);
+        if (guardedMerged.submissionEmailSourcePage !== undefined) guardedMerged.submissionEmailSourcePage = guardPage(guardedMerged.submissionEmailSourceQuote, sourceFileIds.submissionEmailSourceFileId);
+        if (guardedMerged.submissionMethodSourcePage !== undefined) guardedMerged.submissionMethodSourcePage = guardPage(guardedMerged.submissionMethodSourceQuote, sourceFileIds.submissionMethodSourceFileId);
+        if (guardedMerged.submissionAddressSourcePage !== undefined) guardedMerged.submissionAddressSourcePage = guardPage(guardedMerged.submissionAddressSourceQuote, sourceFileIds.submissionAddressSourceFileId);
+        // Guard contactDetailsSource page numbers and resolve fileId for each entry
+        if (guardedMerged.contactDetailsSource) {
+            const guardedContact: Record<string, { page: number | null; quote: string | null; fileId?: string | null }> = {};
+            for (const [key, entry] of Object.entries(guardedMerged.contactDetailsSource)) {
+                if (entry && entry.quote) {
+                    const entryFileId = attributeMetadataSourceFileId(entry.quote, attrFiles);
+                    guardedContact[key] = { page: guardPage(entry.quote, entryFileId), quote: entry.quote, fileId: entryFileId };
+                } else if (entry) {
+                    guardedContact[key] = { page: null, quote: entry?.quote ?? null, fileId: null };
+                }
+            }
+            guardedMerged.contactDetailsSource = guardedContact;
+        }
+        const { data: canonicalData } = buildCanonicalAnalysisTenderUpdate(guardedMerged, {
+            clientName: existingTender?.clientName,
+            submissionMethod: existingTender?.submissionMethod,
+            submissionEmails: existingTender?.submissionEmails,
+            notes: existingTender?.notes,
+            ...sourceFileIds,
+            existingContactDetailsSourceJson: existingTender?.contactDetailsSourceJson ?? null,
+        });
+
+        tenderUpdate = {
+            ...canonicalData,
+            analysisExtractionStatus:
+                failed.length > 0
+                    ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+                    : "FULL_EXTRACTION_AI_ANALYZED",
+        };
+
+        outputJson = JSON.stringify({
+            requirementCount: merged.requirements.length,
+            succeededChunks: succeeded.length,
+            failedChunks: failed.length,
+            chunkResults: succeeded.map(c => ({
+                index: c.chunkIndex,
+                result: JSON.parse(c.resultJson!),
+                provider: c.provider
+            }))
+        });
+    } catch (prepErr) {
+        const correlationId = require("crypto").randomUUID().slice(0, 8);
+        console.error(`[finalizeJob] AI_ANALYSIS_PREPARATION_FAILED correlation=${correlationId} job=${jobId}: ${prepErr instanceof Error ? prepErr.message : String(prepErr)}`);
+        await prisma.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: "FAILED",
+                finishedAt: new Date(),
+                errorMessage: `AI_ANALYSIS_PREPARATION_FAILED (ref: ${correlationId})`,
+            },
+        }).catch((cleanupErr) => {
+            console.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+        });
+        return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED" };
+    }
+    const preparationMs = Date.now() - preparationStart;
+
+    // ─── SHORT INTERACTIVE TRANSACTION (writes only) ──────────────────
+    // CRITICAL: All Prisma calls inside this transaction MUST use `tx`.
+    // Previously, canPromoteToCanonical and promoteAnalysisToCanonical
+    // were called without passing tx, so they used the GLOBAL prisma
+    // client — opening separate database connections inside the
+    // transaction. This caused:
+    //   1. Connection pool pressure (each nested call grabs a new connection)
+    //   2. Potential deadlocks with the transaction's Serializable isolation
+    //   3. Additional latency consuming the 10000ms budget
+    //   4. Bypassed transaction isolation guarantees
+    // Fix: pass `tx` as the store parameter so both functions use the
+    // active transaction client.
+    try {
+    await prisma.$transaction(async (tx) => {
+        // 1. Re-check promotion eligibility USING THE TRANSACTION CLIENT.
+        //    This prevents race conditions where a newer job completed
+        //    between the pre-check and the write.
+        const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!, tx);
+        if (!stillPromotable) {
+            throw new Error("STALE_JOB_SUPERSeded");
+        }
+
+        // 2. Mark job as RUNNING to claim it (single write).
+        await tx.aiJob.update({
+            where: { id: jobId },
+            data: { status: "RUNNING", updatedAt: new Date() }
+        });
+
+        // 3. Persist canonical requirements (batched — see upsertRequirements).
+        await upsertRequirements(tx, job.tenderId!, drafts);
+
+        // 4. Update tender metadata (single write, pre-built outside tx).
+        await tx.tender.update({
+            where: { id: job.tenderId! },
+            data: tenderUpdate,
+        });
+
+        // 5. Set terminal job status with pre-serialized output (single write).
+        await tx.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                finishedAt: new Date(),
+                output: outputJson,
+            }
+        });
+
+        // 6. Record promotion state USING THE TRANSACTION CLIENT.
+        //    Previously this used global prisma — a nested call that
+        //    bypassed the transaction.
+        await promoteAnalysisToCanonical(jobId, (job as any).runId || require("crypto").randomUUID(), tx);
+    }, {
+        timeout: 10000,
+        isolationLevel: "Serializable",
+    });
+
+    // After the transaction commits, resolve and persist the reference field's
+    // fileId so it can achieve EXTRACTED_AND_GROUNDED. Non-fatal — if this
+    // fails, the reference field stays EXTRACTED_UNVERIFIED until repair.
+    try {
+        const refTender = await prisma.tender.findUnique({
+            where: { id: job.tenderId! },
+            select: { contactDetailsSourceJson: true },
+        }).catch(() => null);
+        if (refTender?.contactDetailsSourceJson) {
+            let contactDetails: Record<string, { page?: number | null; quote?: string | null; fileId?: string | null }>;
+            try { contactDetails = JSON.parse(refTender.contactDetailsSourceJson); } catch { contactDetails = {}; }
             const refEntry = contactDetails["procurementReferenceNumber"];
-            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6) {
-                const attrFiles = activeFiles;
-                const existingFileIdStillActive = refEntry.fileId
-                    ? activeFiles.some((f) => f.id === refEntry.fileId)
-                    : false;
-                if (!refEntry.fileId || !existingFileIdStillActive) {
-                    const resolvedFileId = attributeMetadataSourceFileId(refEntry.quote, attrFiles);
-                    if (resolvedFileId) {
-                        contactDetails["procurementReferenceNumber"] = {
-                            page: refEntry.page ?? null,
-                            quote: refEntry.quote,
-                            fileId: resolvedFileId,
-                        };
-                        await prisma.tender.update({
-                            where: { id: job.tenderId! },
-                            data: {
-                                contactDetailsSourceJson: JSON.stringify(contactDetails),
-                            },
-                        });
-                    }
+            // Re-resolve fileId when it's missing OR points to a deleted/inactive file
+            // (mirrors the ai-analyze route's resolveReferenceFileId behavior).
+            const existingFileIdStillActive = refEntry?.fileId
+              ? attrFiles.some((f: any) => f.id === refEntry.fileId && (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+              : false;
+            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && (!refEntry.fileId || !existingFileIdStillActive)) {
+                const refFileId = attributeMetadataSourceFileId(refEntry.quote, attrFiles);
+                if (refFileId && refFileId !== refEntry.fileId) {
+                    contactDetails["procurementReferenceNumber"] = {
+                        page: refEntry.page ?? null,
+                        quote: refEntry.quote,
+                        fileId: refFileId,
+                    };
+                    await prisma.tender.update({
+                        where: { id: job.tenderId! },
+                        data: { contactDetailsSourceJson: JSON.stringify(contactDetails) },
+                    });
                 }
             }
         }
     } catch (refErr) {
-        // reference fileId resolution failed (non-critical) — the analysis
-        // itself succeeded; only the post-hoc fileId attribution failed.
-        logger.warn("reference fileId resolution failed (non-critical)", {
-            jobId,
-            tenderId: job.tenderId ?? undefined,
-            detail: refErr instanceof Error ? refErr.message : String(refErr),
-        });
+        console.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
     }
 
-    return { status: txOutcome.status };
+    console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
+    } catch (persistErr) {
+        const correlationId = require("crypto").randomUUID().slice(0, 8);
+        const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+
+        if (errMsg.includes("STALE_JOB_SUPERSeded")) {
+            console.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
+            await prisma.aiJob.update({
+                where: { id: jobId },
+                data: {
+                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    finishedAt: new Date(),
+                    errorMessage: "Superseded by newer run during promotion. Not promoted to canonical.",
+                    output: outputJson,
+                },
+            }).catch((cleanupErr) => {
+                console.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+            });
+            return { status: "SUPERSEDED", code: "STALE_JOB_SUPERSeded" };
+        }
+
+        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);
+        await prisma.aiJob.update({
+            where: { id: jobId },
+            data: {
+                status: "FAILED",
+                finishedAt: new Date(),
+                errorMessage: `AI_ANALYSIS_PERSISTENCE_FAILED (ref: ${correlationId})`,
+            },
+        }).catch((updateErr) => {
+            console.error(
+                `[finalizeJob] Failed to mark job ${jobId} as FAILED after persistence error: ${
+                    updateErr instanceof Error ? updateErr.message : String(updateErr)
+                }`
+            );
+        });
+        return { status: "FAILED", code: "AI_ANALYSIS_PERSISTENCE_FAILED", retryable: true, correlationId };
+    }
+
+    return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
 }
