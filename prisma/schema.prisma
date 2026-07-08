@@ -1424,3 +1424,27 @@ model TenderSubmissionEmail {
   @@unique([tenderId, email])
   @@index([tenderId])
 }
+
+model TenderWorkflowRun {
+  id             String   @id @default(cuid())
+  companyId      String
+  tenderId       String
+  operation      String
+  idempotencyKey String
+  status         String
+  phase          String?
+  inputHash      String?
+  outputHash     String?
+  errorCode      String?
+  errorMessage   String?
+  warningsJson   Json?
+  resultJson     Json?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([companyId, tenderId, operation, idempotencyKey])
+  @@index([companyId, tenderId, operation, status])
+  @@index([tenderId, createdAt])
+}
