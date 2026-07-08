@@ -1083,8 +1083,34 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "BuildPlan", "confirmedContentHash", "TEXT");
   await ensureColumn(client, "BuildPlan", "confirmedAt", "TIMESTAMPTZ");
 
+  // TenderWorkflowRun: durable idempotency ledger for production tender operations.
+  // Mirrors migration 20260709000000_tender_workflow_runs so fresh/bootstrap DBs
+  // can run workflow diagnostics and idempotency checks before full migrations.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderWorkflowRun" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "companyId" TEXT NOT NULL,
+    "tenderId" TEXT NOT NULL,
+    "operation" TEXT NOT NULL,
+    "idempotencyKey" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "phase" TEXT,
+    "inputHash" TEXT,
+    "outputHash" TEXT,
+    "errorCode" TEXT,
+    "errorMessage" TEXT,
+    "warningsJson" JSONB,
+    "resultJson" JSONB,
+    "startedAt" TIMESTAMPTZ,
+    "finishedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
+    `CREATE UNIQUE INDEX IF NOT EXISTS "TenderWorkflowRun_companyId_tenderId_operation_idempotencyKey_key" ON "TenderWorkflowRun"("companyId", "tenderId", "operation", "idempotencyKey")`,
+    `CREATE INDEX IF NOT EXISTS "TenderWorkflowRun_companyId_tenderId_operation_status_idx" ON "TenderWorkflowRun"("companyId", "tenderId", "operation", "status")`,
+    `CREATE INDEX IF NOT EXISTS "TenderWorkflowRun_tenderId_createdAt_idx" ON "TenderWorkflowRun"("tenderId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
     `CREATE INDEX IF NOT EXISTS "CompanyAsset_companyId_idx" ON "CompanyAsset"("companyId")`,
     `CREATE INDEX IF NOT EXISTS "Expert_companyId_idx" ON "Expert"("companyId")`,

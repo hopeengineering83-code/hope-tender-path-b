@@ -233,3 +233,27 @@ Never claim a fix is complete unless the stated tests passed.
 - **Risks:** The regex-based extractors are deterministic but may miss non-standard formatting. Release gates are now significantly stricter, which may block some "borderline" tenders until manually overridden or repaired.
 - **Next Action:** Monitor user feedback on the stricter release gates; expand regex patterns if common variations are missed.
 - **Merge Status:** PR Created (claude/extraction-and-gates-hardening). DO NOT MERGE YET.
+
+
+### 2026-07-09 UTC — Release manager (PR #973 clean rebase)
+
+- **Mode:** production workflow durability foundation — clean rebase
+- **Branch / PR:** `fix/pr973-workflow-engine-clean` / PR #973
+- **Scope:** rebased PR #973's workflow engine work onto current main (which now includes #971, #972, #974). Isolated ONLY the workflow engine files from the original branch; skipped the redundant db-recovery commit (already in #971) and the stale-base deletions. Renumbered migration from `20260708000000_tender_workflow_runs` to `20260709000000_tender_workflow_runs` to avoid timestamp conflict with `20260708000000_add_tender_facts_ledger` already on main.
+- **Files changed:**
+  - `prisma/migrations/20260709000000_tender_workflow_runs/migration.sql` (new — renumbered)
+  - `prisma/schema.prisma` — adds `TenderWorkflowRun` model
+  - `lib/audit.ts` — adds `TENDER_WORKFLOW_RUN` action
+  - `lib/prisma.ts` — adds bootstrap mirror for `TenderWorkflowRun` table + indexes
+  - `lib/engine/tender-workflow-runner.ts` (new) — durable idempotency runner with P2002 race handling, active-run 409 protection, JSON-safe result persistence
+  - `lib/engine/generated-file-integrity.ts` (new) — file byte/signature/extension validation
+  - `lib/engine/final-package-manifest.ts` (new) — final ZIP manifest builder
+  - `lib/engine/tender-source-fingerprint.ts` (new) — stable source hash for idempotency keys
+  - `app/api/tenders/[id]/workflow-status/route.ts` (new) — read-only workflow diagnostics endpoint (ADMIN/PROPOSAL_MANAGER/REVIEWER)
+  - `tests/production-workflow-engine.test.ts` (new) — workflow runner + integrity + manifest tests
+  - `operator_handoff.md` — this entry
+- **Migration safety:** `CREATE TABLE IF NOT EXISTS` only — no existing data mutation, no column changes, backward-compatible.
+- **CI / deployment:** no deployment, Vercel change, provider-key change, production Neon mutation, or production migration run.
+- **Known risk:** the runner is groundwork — no live route calls its write paths yet. Route-by-route adoption is follow-up work.
+- **Next action:** wire Generate Draft / Final ZIP / Download Package through the runner in focused follow-up patches.
+- **Merge status:** ready for review after CI passes.
