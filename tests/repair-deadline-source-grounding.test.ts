@@ -15,9 +15,13 @@ describe("Deadline repair cannot bypass source grounding", () => {
 
   it("durable file ID resolution happens BEFORE the deadline type dispatch", () => {
     // The durableFileId resolution must come before `field === "deadline"`
-    const durableIdx = routeSource.indexOf("durableFileId = (extraction as ExtractedField<any>).sourceFileId");
+    // PR #961 changed the resolution pattern from extraction.sourceFileId
+    // (direct ID) to extraction.sourceFile (filename → fileNameToId lookup),
+    // which is more robust against renamed files. The test checks for the
+    // current pattern (extraction.sourceFile via fileNameToId).
+    const durableIdx = routeSource.indexOf("durableFileId = extraction.sourceFile");
     const deadlineIdx = routeSource.indexOf('field === "deadline"');
-    assert.ok(durableIdx > 0, "durableFileId resolution must exist");
+    assert.ok(durableIdx > 0, "durableFileId resolution must exist (extraction.sourceFile pattern)");
     assert.ok(deadlineIdx > 0, "deadline dispatch must exist");
     assert.ok(durableIdx < deadlineIdx, "durableFileId must be resolved BEFORE deadline dispatch");
   });
@@ -64,9 +68,10 @@ describe("Source grounding applies to all critical fields equally", () => {
 
   it("all critical fields go through durableFileId resolution", () => {
     // The CRITICAL_SOURCE_GROUNDED_FIELDS.has(field) check must gate the
-    // durableFileId resolution block
+    // durableFileId resolution block. PR #961 uses extraction.sourceFile
+    // (filename → fileNameToId) instead of extraction.sourceFileId (direct).
     assert.match(routeSource, /CRITICAL_SOURCE_GROUNDED_FIELDS\.has\(field\)/);
-    assert.ok(routeSource.includes("durableFileId = (extraction as ExtractedField<any>).sourceFileId"), "must resolve durableFileId from extraction.sourceFileId");
+    assert.ok(routeSource.includes("durableFileId = extraction.sourceFile"), "must resolve durableFileId from extraction.sourceFile (filename-based)");
   });
 
   it("all critical fields go through quote containment verification", () => {

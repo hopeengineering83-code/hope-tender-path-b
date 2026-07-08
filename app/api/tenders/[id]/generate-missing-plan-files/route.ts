@@ -8,6 +8,8 @@ import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-pl
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -174,11 +176,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
-  // Never generate onto contaminated metadata or analysis produced from
-  // corrupted/weak extraction.
-  if (tender.metadataContaminated) {
-    return NextResponse.json({ success: false, ok: false, code: "METADATA_CONTAMINATED", error: "Tender metadata is contaminated; re-extract before generating plan files.", nextAction: "RE_EXTRACT_METADATA" }, { status: 422 });
-  }
+  // Contamination is NO LONGER a hard block for draft support-file generation.
+  // Per the source-driven model (PRs #968-#972), metadata contamination is a
+  // warning, not a blocker, for draft work. Final Submission Check remains
+  // strict (enforced via getFinalSubmissionReadiness / canonical resolver).
+  // The route logs contamination for observability but proceeds with generation.
+
+  // Never generate onto analysis produced from corrupted/weak extraction.
   const analysisStatus = tender.analysisExtractionStatus;
   if (analysisStatus === "OCR_REQUIRED") {
     return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", error: "AI analysis was skipped due to corrupted extraction; re-run AI Analyze before generating plan files.", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" }, { status: 422 });
@@ -220,6 +224,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, ok: false, code: "BUILD_PLAN_NOT_CONFIRMED", error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`, nextAction: "CONFIRM_BUILD_PLAN" }, { status: 422 });
   }
   const plan = { files: confirmedPlan.items };
+
+  // ── Operation gate (SUPPORT_PACKAGE_GENERATION) — authoritative metadata check ──
+  // For SUPPORT_PACKAGE_GENERATION, metadata NEVER blocks. The gate surfaces
+  // warnings for the UI. Defensive blocker check catches regressions.
+  const operationGate = resolveTenderOperationGate({
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      reference: tender.reference,
+      clientName: tender.clientName,
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionEmails: tender.submissionEmails,
+      submissionAddress: tender.submissionAddress,
+      country: tender.country,
+      metadataContaminated: tender.metadataContaminated,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+    },
+    requirements: tender.requirements.map((r: any) => ({
+      priority: r.priority,
+      sourceTenderFileId: r.sourceTenderFileId,
+    })),
+    overrides: [],
+    buildPlan: { ok: confirmedPlan.ok, items: confirmedPlan.items },
+    operation: "SUPPORT_PACKAGE_GENERATION",
+  });
+  if (operationGate.warnings.length > 0) {
+    logger.info(`[generate-missing-plan-files] tender=${id} operation-gate warnings: ${operationGate.warnings.join("; ")}`);
+  }
+  if (operationGate.blockers.length > 0) {
+    return NextResponse.json({
+      error: "Missing-plan generation blocked by operation gate (SUPPORT_PACKAGE_GENERATION).",
+      code: "OPERATION_GATE_BLOCKED",
+      blockers: operationGate.blockers,
+      warnings: operationGate.warnings,
+    }, { status: 422 });
+  }
+
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId: id, generationStatus: "PLANNED" },
