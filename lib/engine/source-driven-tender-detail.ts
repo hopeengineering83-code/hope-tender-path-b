@@ -83,13 +83,16 @@ export function deriveSourceDrivenTenderDetail(
 ): SourceDrivenTenderDetail {
   const facts: SourceDrivenTenderFact[] = [];
 
-  // Determine submission method from tender text
+  // Determine submission method from tender text.
+  // Order matters: HYBRID must be checked BEFORE EMAIL/PHYSICAL because
+  // hybrid tender text often contains both "email" and "physical" keywords
+  // (e.g., "Hybrid submission: email or physical").
   const rawSubmissionMethod = String(tender.submissionMethod ?? "").toLowerCase();
   const submissionMethod: SourceDrivenTenderDetail["submissionMethod"] =
-    rawSubmissionMethod.includes("email") ? "EMAIL"
+    rawSubmissionMethod.includes("hybrid") ? "HYBRID"
     : rawSubmissionMethod.includes("portal") || rawSubmissionMethod.includes("e-procurement") ? "PORTAL"
     : rawSubmissionMethod.includes("physical") || rawSubmissionMethod.includes("sealed") || rawSubmissionMethod.includes("courier") || rawSubmissionMethod.includes("hand") ? "PHYSICAL"
-    : rawSubmissionMethod.includes("hybrid") ? "HYBRID"
+    : rawSubmissionMethod.includes("email") ? "EMAIL"
     : "UNKNOWN";
 
   // Determine what the tender requires based on its actual content
