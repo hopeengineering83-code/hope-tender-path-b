@@ -17,12 +17,23 @@
 // is in an invalid state. Once the user clicks "Clean now", the
 // re-extract route overwrites the invalid values, the banner detects
 // no remaining corruption on the next render, and disappears.
+//
+// SCOPE RULE (source-driven model)
+// ─────────────────────────────────
+// This banner surfaces only GENUINELY CORRUPTED values — TOC fragments,
+// portal text, OCR noise — not placeholder-ish short values like "Not",
+// "TBD", "N/A", "Unknown". Those placeholder values are already hidden
+// by the TenderIntakeDetailPanel's sanitizer (shown as "Not extracted")
+// and do NOT block draft generation. Showing them here as "corrupted"
+// would be misleading and would prompt the user to "Clean now" when
+// the value is simply missing/placeholder, not corrupted.
 
 import {
   isValidClientName,
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
+  containsMetadataPlaceholder,
 } from "../lib/engine/metadata-validators";
 import { CleanCorruptedMetadataButton } from "./clean-corrupted-metadata-button";
 
@@ -35,19 +46,35 @@ type TenderShape = {
   clientContactName: string | null;
 };
 
+/**
+ * A value is "placeholder-ish" (not corrupted) when it is short AND
+ * matches a placeholder/negative pattern. These values are hidden by
+ * the Tender Detail panel's sanitizer as "Not extracted" and must NOT
+ * trigger the corrupted-metadata banner.
+ */
+function isPlaceholderIsh(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return true;
+  // Explicit placeholder patterns: "Not", "TBD", "N/A", "Unknown", etc.
+  if (containsMetadataPlaceholder(trimmed)) return true;
+  // Short single-word values that are not real data (≤4 chars, no digits)
+  if (trimmed.length <= 4 && !/\d/.test(trimmed)) return true;
+  return false;
+}
+
 function badFieldsFor(tender: TenderShape): Array<{ field: string; label: string; stored: string }> {
   const bad: Array<{ field: string; label: string; stored: string }> = [];
-  if (tender.reference && tender.reference.trim() !== "" && !isValidReferenceNumber(tender.reference)) {
+  if (tender.reference && tender.reference.trim() !== "" && !isValidReferenceNumber(tender.reference) && !isPlaceholderIsh(tender.reference)) {
     bad.push({ field: "reference", label: "Reference Number", stored: tender.reference });
   }
   const effectiveClientName = tender.clientName || tender.procuringEntityName || null;
-  if (effectiveClientName && effectiveClientName.trim() !== "" && !isValidClientName(effectiveClientName)) {
+  if (effectiveClientName && effectiveClientName.trim() !== "" && !isValidClientName(effectiveClientName) && !isPlaceholderIsh(effectiveClientName)) {
     bad.push({ field: "clientName", label: "Client / Procuring Entity", stored: effectiveClientName });
   }
-  if (tender.country && tender.country.trim() !== "" && !isValidCountry(tender.country)) {
+  if (tender.country && tender.country.trim() !== "" && !isValidCountry(tender.country) && !isPlaceholderIsh(tender.country)) {
     bad.push({ field: "country", label: "Country", stored: tender.country });
   }
-  if (tender.clientContactName && tender.clientContactName.trim() !== "" && !isValidClientContact(tender.clientContactName)) {
+  if (tender.clientContactName && tender.clientContactName.trim() !== "" && !isValidClientContact(tender.clientContactName) && !isPlaceholderIsh(tender.clientContactName)) {
     bad.push({ field: "clientContactName", label: "Client Contact", stored: tender.clientContactName });
   }
   return bad;

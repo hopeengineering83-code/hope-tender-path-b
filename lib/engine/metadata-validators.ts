@@ -126,7 +126,7 @@ export function formatDateUnambiguous(value: string | Date | null | undefined): 
 }
 
 /** Words that are NOT valid reference numbers when captured alone. */
-const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|ref|refer|number|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there|see\s+above|see\s+below|reference\s+number|reference\s+no\.?|tender\s+reference|tender\s+no\.?|no\.?)$/i;
+const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|ref|refer|number|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there|see\s+above|see\s+below|reference\s+number|reference\s+no\.?|tender\s+reference|tender\s+no\.?|no\.?|not|not\s+available|not\s+provided|not\s+specified|not\s+stated|not\s+mentioned|not\s+applicable|nil|blank|na|unknown|pending|placeholder)$/i;
 
 /** Single-word tokens that are not real first-name + last-name combinations. */
 const CONTACT_NOISE_FRAGMENT = /^(s\s+|the\s+|a\s+|an\s+|contact|person|name|email|tel|phone|address|attn|attention|focal|point|of)/i;
