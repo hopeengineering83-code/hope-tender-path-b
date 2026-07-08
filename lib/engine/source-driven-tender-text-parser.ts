@@ -1,0 +1,907 @@
+// lib/engine/source-driven-tender-text-parser.ts
+//
+// Generic, source-driven tender intelligence parser.
+//
+// The tender document is the authority. This module reads the FULL extracted
+// tender content (active TenderFile.extractedText, intakeSummary,
+// analysisSummary, description, evaluationMethodology) and derives a complete
+// TenderDocumentIntelligence object that drives document generation.
+//
+// It does NOT depend on predesigned metadata formats or stale scalar fields.
+// Scalar fields are used ONLY as fallback when the source text lacks a fact.
+//
+// Supported tender types: EOI, RFP, RFQ, Request for Technical Proposal,
+// Invitation for Bid, Prequalification, Vendor/Supplier Registration,
+// Framework Agreement, Technical-only, Financial-only, Technical+financial,
+// Single-envelope, Two-envelope.
+//
+// Supported submission methods: Email, Portal, Physical, Hybrid.
+//
+// Supported HAEC work streams: architectural design, engineering design,
+// urban planning, supervision, consultancy, geotechnical investigation,
+// soil investigation, interior design, contract administration,
+// project management, construction management, feasibility study,
+// environmental/social study, road/infrastructure consultancy,
+// water/sanitation consultancy, building consultancy.
+//
+// All tenders handled by Hope Urban Planning Architectural and Engineering
+// Consultancy (HAEC) are supported — not just the Pharo regression fixture.
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export type TenderType =
+  | "Expression of Interest"
+  | "Request for Proposal"
+  | "Request for Technical Proposal"
+  | "Request for Quotation"
+  | "Invitation for Bid"
+  | "Prequalification"
+  | "Vendor Registration"
+  | "Supplier Registration"
+  | "Framework Agreement"
+  | "Technical Proposal Only"
+  | "Financial Proposal Only"
+  | "Technical and Financial Proposal"
+  | "Single Envelope"
+  | "Two Envelope"
+  | "Unknown";
+
+export type SubmissionMethod = "Email" | "Portal" | "Physical" | "Hybrid" | "Unknown";
+
+export type ServiceStream =
+  | "architectural design"
+  | "engineering design"
+  | "urban planning"
+  | "supervision"
+  | "consultancy"
+  | "geotechnical investigation"
+  | "soil investigation"
+  | "interior design"
+  | "contract administration"
+  | "project management"
+  | "construction management"
+  | "feasibility study"
+  | "environmental study"
+  | "social study"
+  | "road consultancy"
+  | "infrastructure consultancy"
+  | "water consultancy"
+  | "sanitation consultancy"
+  | "building consultancy";
+
+export type SubmissionInstructionSet = {
+  method: SubmissionMethod;
+  format: string | null;
+  deadlineDisplay: string | null;
+  deadlineIso: string | null;
+  emails: string[];
+  emailSubject: string | null;
+  portalUrl: string | null;
+  physicalAddress: string | null;
+  physicalSubmissionRequired: boolean;
+  portalSubmissionRequired: boolean;
+  note: string | null;
+};
+
+export type RequiredTenderDocument = {
+  name: string;
+  required: boolean;
+  envelope: "technical" | "financial" | "common" | "unknown";
+  note?: string | null;
+};
+
+export type TenderCriterion = {
+  category: string;
+  text: string;
+  weight?: number | null;
+  mandatory: boolean;
+};
+
+export type TenderEvaluationMethodology = {
+  technicalWeight: number | null;
+  financialWeight: number | null;
+  methodology: string | null;
+  passFail: boolean;
+};
+
+export type RequiredExpert = {
+  role: string;
+  count: number;
+  qualifications: string[];
+  note?: string | null;
+};
+
+export type RequiredProjectReference = {
+  count: number;
+  similarTo: string | null;
+  note: string | null;
+};
+
+export type RequiredLegalDocument = {
+  name: string;
+  required: boolean;
+  note: string | null;
+};
+
+export type RequiredFinancialDocument = {
+  name: string;
+  required: boolean;
+  note: string | null;
+};
+
+export type TenderFormOrAnnex = {
+  name: string;
+  mandatory: boolean;
+  note: string | null;
+};
+
+export type TenderGenerationPlan = {
+  generate: string[];
+  exclude: string[];
+  notes: string[];
+};
+
+export type TenderDocumentIntelligence = {
+  tenderType: TenderType;
+  serviceStreams: ServiceStream[];
+  projectTitle: string | null;
+  clientOrProcuringEntity: string | null;
+  submissionInstructions: SubmissionInstructionSet;
+  requiredDocuments: RequiredTenderDocument[];
+  eligibilityCriteria: TenderCriterion[];
+  technicalCriteria: TenderCriterion[];
+  financialCriteria: TenderCriterion[];
+  evaluationMethodology: TenderEvaluationMethodology | null;
+  scopeOfServices: string[];
+  deliverables: string[];
+  requiredExperts: RequiredExpert[];
+  requiredProjectReferences: RequiredProjectReference[];
+  requiredLegalDocuments: RequiredLegalDocument[];
+  requiredFinancialDocuments: RequiredFinancialDocument[];
+  formsAndAnnexes: TenderFormOrAnnex[];
+  generationPlan: TenderGenerationPlan;
+  financialProposalRequired: boolean;
+  proposalValidity: string | null;
+  budget: string | null;
+  bidBond: string | null;
+  mandatorySiteVisit: boolean;
+  preBidMeeting: { date: string | null; location: string | null } | null;
+  pageLimit: string | null;
+  copiesRequired: string | null;
+  fileNamingRequirements: string[];
+  warnings: string[];
+  /** Raw source-text excerpts that drove each derived fact, for audit */
+  sourceExcerpts: Record<string, string>;
+};
+
+export type ParseTenderDocumentIntelligenceOptions = {
+  /** Tender title (used as fallback for project title) */
+  tenderTitle?: string | null;
+  /** Tender reference (used as fallback) */
+  tenderReference?: string | null;
+  /** Tender clientName (used as fallback for client) */
+  tenderClientName?: string | null;
+  /** Tender submissionMethod (used as fallback) */
+  tenderSubmissionMethod?: string | null;
+  /** Tender deadline (used as fallback) */
+  tenderDeadline?: Date | string | null;
+  /** Tender submissionEmails (used as fallback) */
+  tenderSubmissionEmails?: string | null;
+  /** Tender submissionAddress (used as fallback) */
+  tenderSubmissionAddress?: string | null;
+};
+
+// ─── Email normalization ─────────────────────────────────────────────────────
+
+/**
+ * Normalize a raw submission-emails value into a clean array of valid emails.
+ * Splits on |, ;, comma, "and", whitespace/newlines. Returns only valid emails.
+ */
+export function normalizeEmailList(value: unknown): string[] {
+  if (!value || typeof value !== "string") return [];
+  // Split on | ; , or whitespace, and the word "and"
+  const parts = value
+    .replace(/\s+and\s+/gi, " ")
+    .split(/[|;,]|\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return parts.filter((p) => emailRe.test(p));
+}
+
+// ─── Source-text builder ─────────────────────────────────────────────────────
+
+export type TenderFactSourceInput = {
+  extractedText?: string | null;
+  intakeSummary?: string | null;
+  analysisSummary?: string | null;
+  description?: string | null;
+  evaluationMethodology?: string | null;
+};
+
+/**
+ * Build the full tender fact source text from the available content.
+ * Priority: extractedText → intakeSummary → analysisSummary → description → evaluationMethodology.
+ * The source text is the authority for all fact derivation.
+ */
+export function buildTenderFactSourceText(input: TenderFactSourceInput): string {
+  const parts: string[] = [];
+  if (input.extractedText && input.extractedText.trim()) {
+    parts.push(input.extractedText.trim());
+  }
+  if (input.intakeSummary && input.intakeSummary.trim()) {
+    parts.push(input.intakeSummary.trim());
+  }
+  if (input.analysisSummary && input.analysisSummary.trim()) {
+    parts.push(input.analysisSummary.trim());
+  }
+  if (input.description && input.description.trim()) {
+    parts.push(input.description.trim());
+  }
+  if (input.evaluationMethodology && input.evaluationMethodology.trim()) {
+    parts.push(input.evaluationMethodology.trim());
+  }
+  return parts.join("\n\n---\n\n");
+}
+
+// ─── Tender-type classifier ──────────────────────────────────────────────────
+
+const TENDER_TYPE_PATTERNS: Array<{ type: TenderType; patterns: RegExp[] }> = [
+  {
+    type: "Request for Technical Proposal",
+    patterns: [
+      /request\s+for\s+technical\s+proposal/i,
+      /technical\s+proposal\s+for\b/i,
+      /RTP\b/i,
+    ],
+  },
+  {
+    type: "Expression of Interest",
+    patterns: [
+      /expression\s+of\s+interest/i,
+      /\bEOI\b/i,
+    ],
+  },
+  {
+    type: "Request for Quotation",
+    patterns: [
+      /request\s+for\s+quotation/i,
+      /\bRFQ\b/i,
+      /quotation\s+(?:request|invite)/i,
+    ],
+  },
+  {
+    type: "Request for Proposal",
+    patterns: [
+      /request\s+for\s+proposal/i,
+      /\bRFP\b/i,
+    ],
+  },
+  {
+    type: "Invitation for Bid",
+    patterns: [
+      /invitation\s+for\s+bids?/i,
+      /\bIFB\b/i,
+      /invitation\s+to\s+tender/i,
+    ],
+  },
+  {
+    type: "Prequalification",
+    patterns: [
+      /prequalification/i,
+      /pre-qualification/i,
+    ],
+  },
+  {
+    type: "Vendor Registration",
+    patterns: [/vendor\s+registration/i],
+  },
+  {
+    type: "Supplier Registration",
+    patterns: [/supplier\s+registration/i],
+  },
+  {
+    type: "Framework Agreement",
+    patterns: [/framework\s+agreement/i],
+  },
+];
+
+function classifyTenderType(text: string): TenderType {
+  // Two-envelope / single-envelope detection (envelope structure)
+  const twoEnvelope = /two[\s-]*envelope|double[\s-]*envelope|technical.*financial.*separate/i.test(text);
+  const singleEnvelope = /single[\s-]*envelope|one[\s-]*envelope/i.test(text);
+
+  // Detect primary tender type.
+  // Note: "Technical Proposal Only" and "Financial Proposal Only" are NOT
+  // tender types — they describe whether a financial proposal is required.
+  // That information is captured separately in `financialProposalRequired`.
+  // The tender type remains the primary classification (RFP, RTP, EOI, etc.).
+  let primary: TenderType = "Unknown";
+  for (const { type, patterns } of TENDER_TYPE_PATTERNS) {
+    if (patterns.some((p) => p.test(text))) {
+      primary = type;
+      break;
+    }
+  }
+
+  // Envelope structure overrides primary type only when explicitly stated
+  if (twoEnvelope) return "Two Envelope";
+  if (singleEnvelope) return "Single Envelope";
+  if (primary !== "Unknown") return primary;
+  // Default: if proposal language exists but no specific type, treat as RFP
+  if (/technical\s+and\s+financial\s+proposal|technical\s*\+\s*financial/i.test(text)) {
+    return "Technical and Financial Proposal";
+  }
+  return "Unknown";
+}
+
+// ─── Service-stream classifier ───────────────────────────────────────────────
+
+const SERVICE_STREAM_PATTERNS: Array<{ stream: ServiceStream; patterns: RegExp[] }> = [
+  { stream: "architectural design", patterns: [/architectur/i] },
+  { stream: "engineering design", patterns: [/engineering\s+design|structural\s+design|mechanical\s+design|electrical\s+design|civil\s+design/i] },
+  { stream: "urban planning", patterns: [/urban\s+planning|master\s+planning|city\s+planning/i] },
+  { stream: "supervision", patterns: [/supervision|construction\s+supervision/i] },
+  { stream: "consultancy", patterns: [/consultancy|consulting\s+services?/i] },
+  { stream: "geotechnical investigation", patterns: [/geotechnical\s+investigation|geotechnical\s+study/i] },
+  { stream: "soil investigation", patterns: [/soil\s+investigation|soil\s+survey/i] },
+  { stream: "interior design", patterns: [/interior\s+design/i] },
+  { stream: "contract administration", patterns: [/contract\s+administration/i] },
+  { stream: "project management", patterns: [/project\s+management/i] },
+  { stream: "construction management", patterns: [/construction\s+management/i] },
+  { stream: "feasibility study", patterns: [/feasibility\s+study/i] },
+  { stream: "environmental study", patterns: [/environmental\s+(?:impact\s+)?(?:assessment|study)/i] },
+  { stream: "social study", patterns: [/social\s+(?:impact\s+)?(?:assessment|study)/i] },
+  { stream: "road consultancy", patterns: [/road\b|highway|pavement/i] },
+  { stream: "infrastructure consultancy", patterns: [/infrastructure/i] },
+  { stream: "water consultancy", patterns: [/\bwater\s+(?:supply|system|network)\b/i] },
+  { stream: "sanitation consultancy", patterns: [/sanitation|sewerage|wastewater/i] },
+  { stream: "building consultancy", patterns: [/\bbuilding\b|G\+\d|\bG\s*\+\s*\d/i] },
+];
+
+function classifyServiceStreams(text: string): ServiceStream[] {
+  const streams = new Set<ServiceStream>();
+  for (const { stream, patterns } of SERVICE_STREAM_PATTERNS) {
+    if (patterns.some((p) => p.test(text))) {
+      streams.add(stream);
+    }
+  }
+  return Array.from(streams);
+}
+
+// ─── Submission-instruction extractor ────────────────────────────────────────
+
+function extractSubmissionInstructions(
+  text: string,
+  fallbacks: ParseTenderDocumentIntelligenceOptions,
+): SubmissionInstructionSet {
+  const lower = text.toLowerCase();
+  const warnings: string[] = [];
+
+  // Method
+  let method: SubmissionMethod = "Unknown";
+  const emailMethod = /email\s+submission|submit\s+by\s+email|submission\s+method:?\s*email/i.test(text);
+  const portalMethod = /portal\s+submission|e-procurement|upload\s+through\s+(?:the\s+)?portal/i.test(text);
+  const physicalMethod = /physical\s+submission|sealed\s+envelope|by\s+hand|courier|in[\s-]person|drop[\s-]?off/i.test(text);
+  const hybridMethod = /hybrid\s+submission|email\s+or\s+(?:physical|sealed)|physical\s+or\s+email/i.test(text);
+
+  if (hybridMethod) method = "Hybrid";
+  else if (portalMethod) method = "Portal";
+  else if (emailMethod) method = "Email";
+  else if (physicalMethod) method = "Physical";
+  else if (fallbacks.tenderSubmissionMethod) {
+    const fb = fallbacks.tenderSubmissionMethod.toLowerCase();
+    if (fb.includes("email")) method = "Email";
+    else if (fb.includes("portal") || fb.includes("e-procurement")) method = "Portal";
+    else if (fb.includes("physical") || fb.includes("sealed") || fb.includes("hand") || fb.includes("courier")) method = "Physical";
+    else if (fb.includes("hybrid")) method = "Hybrid";
+  }
+
+  // Format
+  let format: string | null = null;
+  const formatMatch = text.match(/submission\s+format:?\s*([^\n\r]{3,80})/i);
+  if (formatMatch) format = formatMatch[1].trim();
+  else if (/pdf\s+electronic\s+submission/i.test(text)) format = "PDF electronic submission only";
+
+  // Deadline
+  let deadlineDisplay: string | null = null;
+  let deadlineIso: string | null = null;
+  const deadlineMatch = text.match(/(?:submission\s+)?deadline:?\s*([^\n\r]{5,80})/i)
+    || text.match(/submit(?:ted)?\s+(?:by|before)\s*([^\n\r]{5,80})/i)
+    || text.match(/\b(?:by|before)\s+((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4}[^\n\r]{0,40})/i);
+  if (deadlineMatch) {
+    deadlineDisplay = deadlineMatch[1].trim();
+    deadlineIso = tryParseDateToIso(deadlineDisplay);
+    // If the regex matched but the parsed date is invalid (e.g. "deadline in text"
+    // captured non-date words), clear the display and fall through to the fallback.
+    if (!deadlineIso) {
+      deadlineDisplay = null;
+    }
+  }
+  if (!deadlineDisplay && fallbacks.tenderDeadline) {
+    const d = typeof fallbacks.tenderDeadline === "string"
+      ? new Date(fallbacks.tenderDeadline)
+      : fallbacks.tenderDeadline;
+    if (!isNaN(d.getTime())) {
+      deadlineIso = d.toISOString();
+      deadlineDisplay = d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+    }
+  }
+  if (!deadlineDisplay) warnings.push("Submission deadline not detected in tender source text");
+
+  // Emails
+  let emails: string[] = [];
+  const emailBlockMatch = text.match(/submission\s+email[s]?:?\s*([^\n\r]{5,300})/i)
+    || text.match(/email(?:s)?\s+(?:to|address:?)\s*([^\n\r]{5,300})/i);
+  if (emailBlockMatch) {
+    emails = normalizeEmailList(emailBlockMatch[1]);
+  }
+  if (emails.length === 0) {
+    // Fallback: extract any email addresses from the whole text
+    const emailRe = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    const found = text.match(emailRe) ?? [];
+    emails = Array.from(new Set(found));
+  }
+  if (emails.length === 0 && fallbacks.tenderSubmissionEmails) {
+    emails = normalizeEmailList(fallbacks.tenderSubmissionEmails);
+  }
+  if (emails.length === 0 && method === "Email") {
+    warnings.push("Email submission method detected but no submission email addresses found in source text");
+  }
+
+  // Email subject
+  let emailSubject: string | null = null;
+  const subjectMatch = text.match(/(?:required\s+)?email\s+subject:?\s*([^\n\r]{3,150})/i)
+    || text.match(/subject\s+line:?\s*([^\n\r]{3,150})/i);
+  if (subjectMatch) emailSubject = subjectMatch[1].trim();
+
+  // Portal URL
+  let portalUrl: string | null = null;
+  const portalMatch = text.match(/(?:portal\s+(?:url|link|address):?|submit\s+at)\s*(https?:\/\/[^\s\n\r]{5,200})/i)
+    || text.match(/(https?:\/\/\S*(?:procurement|portal|tender)\S*)/i);
+  if (portalMatch) portalUrl = portalMatch[1].trim();
+
+  // Physical address
+  let physicalAddress: string | null = null;
+  const addressMatch = text.match(/(?:submission\s+address|physical\s+address|deliver\s+to|address):?\s*([^\n\r]{10,300})/i);
+  if (addressMatch) physicalAddress = addressMatch[1].trim();
+  else if (fallbacks.tenderSubmissionAddress) physicalAddress = fallbacks.tenderSubmissionAddress;
+
+  // Absence of physical / portal
+  const noPhysical = /no\s+physical\s+address|no\s+physical\s+submission|email\s+submission\s+only/i.test(text);
+  const noPortal = /no\s+portal|no\s+online\s+submission/i.test(text);
+
+  const physicalSubmissionRequired = method === "Physical" || method === "Hybrid";
+  const portalSubmissionRequired = method === "Portal" || method === "Hybrid";
+
+  let note: string | null = null;
+  if (noPhysical && method === "Email") {
+    note = "Email submission only. No physical address or portal provided.";
+  } else if (noPortal && method === "Physical") {
+    note = "Physical submission only. No portal provided.";
+  }
+
+  return {
+    method,
+    format,
+    deadlineDisplay,
+    deadlineIso,
+    emails,
+    emailSubject,
+    portalUrl,
+    physicalAddress: noPhysical ? null : physicalAddress,
+    physicalSubmissionRequired,
+    portalSubmissionRequired,
+    note,
+  };
+}
+
+function tryParseDateToIso(display: string): string | null {
+  // Try parsing common date formats. Returns ISO string with timezone if possible.
+  // Handles: "August 25, 2026, 5:00 PM Addis Ababa Time"
+  const cleaned = display.replace(/\s+/g, " ").trim();
+  // Map common timezone names to offsets
+  const tzMap: Record<string, string> = {
+    "addis ababa time": "+03:00",
+    "eastafrica time": "+03:00",
+    "eat": "+03:00",
+    "utc": "+00:00",
+    "gmt": "+00:00",
+  };
+  let tzOffset = "";
+  for (const [name, offset] of Object.entries(tzMap)) {
+    if (cleaned.toLowerCase().includes(name)) {
+      tzOffset = offset;
+      break;
+    }
+  }
+  // Strip the timezone name for Date parsing
+  const stripped = cleaned.replace(/addis\s+ababa\s+time|eastafrica\s+time|\beat\b|\butc\b|\bgmt\b/i, "").trim();
+  const d = new Date(stripped);
+  if (isNaN(d.getTime())) return null;
+  // Apply timezone offset if we have one
+  if (tzOffset) {
+    // Build a manual ISO with offset
+    const iso = d.toISOString().replace(/\.\d{3}Z$/, "") + tzOffset;
+    return iso;
+  }
+  return d.toISOString();
+}
+
+// ─── Required-documents extractor ────────────────────────────────────────────
+
+const DOCUMENT_PATTERNS: Array<{ name: string; patterns: RegExp[]; envelope: "technical" | "financial" | "common" }> = [
+  { name: "Technical Proposal", patterns: [/technical\s+proposal/i], envelope: "technical" },
+  { name: "Financial Proposal", patterns: [/financial\s+proposal|price\s+schedule/i], envelope: "financial" },
+  { name: "Cover Letter", patterns: [/cover\s+letter/i], envelope: "common" },
+  { name: "Company Profile", patterns: [/company\s+profile/i], envelope: "common" },
+  { name: "Compliance Matrix", patterns: [/compliance\s+matrix/i], envelope: "technical" },
+  { name: "Methodology", patterns: [/\bmethodology\b/i], envelope: "technical" },
+  { name: "Work Plan", patterns: [/work\s+plan/i], envelope: "technical" },
+  { name: "Team Composition", patterns: [/team\s+composition|staffing\s+plan/i], envelope: "technical" },
+  { name: "CV Summary", patterns: [/\bCVs?\b|curriculum\s+vitae/i], envelope: "technical" },
+  { name: "Project References", patterns: [/project\s+references?|relevant\s+experience/i], envelope: "technical" },
+  { name: "Submission Checklist", patterns: [/submission\s+checklist/i], envelope: "common" },
+  { name: "Bid Bond", patterns: [/bid\s+bond|bid\s+security/i], envelope: "financial" },
+  { name: "Tax Certificate", patterns: [/tax\s+certificate|tax\s+clearance/i], envelope: "common" },
+  { name: "Business License", patterns: [/business\s+license|trade\s+license/i], envelope: "common" },
+  { name: "Audit Report", patterns: [/audit\s+report|audited\s+financial\s+statements/i], envelope: "financial" },
+  { name: "Bank Statement", patterns: [/bank\s+statement/i], envelope: "financial" },
+  { name: "Expression of Interest Document", patterns: [/expression\s+of\s+interest\s+document/i], envelope: "common" },
+  { name: "Quotation", patterns: [/\bquotation\b|price\s+quote/i], envelope: "financial" },
+];
+
+function extractRequiredDocuments(text: string, financialProposalRequired: boolean): RequiredTenderDocument[] {
+  const docs: RequiredTenderDocument[] = [];
+  const seen = new Set<string>();
+  for (const { name, patterns, envelope } of DOCUMENT_PATTERNS) {
+    if (seen.has(name)) continue;
+    if (patterns.some((p) => p.test(text))) {
+      seen.add(name);
+      // Skip Financial Proposal if not required
+      if (name === "Financial Proposal" && !financialProposalRequired) {
+        docs.push({ name, required: false, envelope, note: "Not required at this stage" });
+      } else if (name === "Quotation" && !financialProposalRequired) {
+        docs.push({ name, required: false, envelope, note: "Not required at this stage" });
+      } else {
+        docs.push({ name, required: true, envelope });
+      }
+    }
+  }
+  return docs;
+}
+
+// ─── Generation-plan builder ─────────────────────────────────────────────────
+
+function buildGenerationPlan(
+  tenderType: TenderType,
+  requiredDocuments: RequiredTenderDocument[],
+  financialProposalRequired: boolean,
+): TenderGenerationPlan {
+  const generate: string[] = [];
+  const exclude: string[] = [];
+  const notes: string[] = [];
+
+  // Default generation set by tender type
+  if (tenderType === "Expression of Interest") {
+    generate.push("EOI Cover Letter", "Expression of Interest Document", "Company Profile Summary", "Relevant Experience", "Submission Checklist");
+    notes.push("EOI: do not generate a full technical methodology unless requested");
+  } else if (tenderType === "Request for Quotation" || tenderType === "Financial Proposal Only") {
+    generate.push("Quotation Cover Letter", "Financial Quotation", "Price Schedule", "Technical Compliance Statement", "Company Eligibility Documents", "Submission Checklist");
+    notes.push("RFQ: do not generate a long technical proposal unless requested");
+  } else if (
+    tenderType === "Request for Proposal"
+    || tenderType === "Request for Technical Proposal"
+    || tenderType === "Technical Proposal Only"
+    || tenderType === "Technical and Financial Proposal"
+  ) {
+    generate.push("Technical Proposal", "Cover Letter", "Methodology", "Understanding of Assignment", "Work Plan", "Team Composition", "CV Summary", "Relevant Project References", "Compliance Matrix", "Submission Checklist");
+    if (tenderType === "Technical Proposal Only") {
+      notes.push("Technical-only tender: financial proposal excluded from generation and final ZIP");
+    }
+  } else if (tenderType === "Two Envelope") {
+    generate.push("Technical Proposal Package", "Financial Proposal Package", "Technical Cover Letter", "Financial Cover Letter", "Technical Checklist", "Financial Checklist");
+    notes.push("Two-envelope: technical and financial proposals generated as separate packages with separate filenames");
+  } else if (tenderType === "Single Envelope") {
+    generate.push("Technical Proposal", "Financial Proposal", "Cover Letter", "Submission Checklist");
+  } else {
+    // Unknown — default to RFP-style
+    generate.push("Technical Proposal", "Cover Letter", "Methodology", "Submission Checklist");
+  }
+
+  // Add required documents from source text that aren't already in the list
+  for (const doc of requiredDocuments) {
+    if (doc.required && !generate.some((g) => g.toLowerCase().includes(doc.name.toLowerCase()) || doc.name.toLowerCase().includes(g.toLowerCase()))) {
+      generate.push(doc.name);
+    }
+  }
+
+  // Exclude financial proposal if not required
+  if (!financialProposalRequired) {
+    exclude.push("Financial Proposal");
+    if (!notes.some((n) => n.includes("financial proposal excluded"))) {
+      notes.push("Financial proposal not required at this stage — excluded from generation and final ZIP");
+    }
+  }
+
+  // For two-envelope, never mix financial content into technical
+  if (tenderType === "Two Envelope") {
+    notes.push("Two-envelope: do not mix financial price content into the technical proposal");
+  }
+
+  return { generate, exclude, notes };
+}
+
+// ─── Main parser ─────────────────────────────────────────────────────────────
+
+/**
+ * Parse the full tender source text and derive a complete
+ * TenderDocumentIntelligence object that drives document generation.
+ *
+ * The source text is the authority. Scalar fields are used ONLY as fallback
+ * when the source text lacks a fact.
+ */
+export function parseTenderDocumentIntelligence(
+  text: string,
+  options: ParseTenderDocumentIntelligenceOptions = {},
+): TenderDocumentIntelligence {
+  const warnings: string[] = [];
+  const sourceExcerpts: Record<string, string> = {};
+
+  if (!text || !text.trim()) {
+    warnings.push("Empty tender source text — cannot derive intelligence");
+    return {
+      tenderType: "Unknown",
+      serviceStreams: [],
+      projectTitle: options.tenderTitle ?? null,
+      clientOrProcuringEntity: options.tenderClientName ?? null,
+      submissionInstructions: {
+        method: "Unknown",
+        format: null,
+        deadlineDisplay: null,
+        deadlineIso: null,
+        emails: normalizeEmailList(options.tenderSubmissionEmails),
+        emailSubject: null,
+        portalUrl: null,
+        physicalAddress: options.tenderSubmissionAddress ?? null,
+        physicalSubmissionRequired: false,
+        portalSubmissionRequired: false,
+        note: null,
+      },
+      requiredDocuments: [],
+      eligibilityCriteria: [],
+      technicalCriteria: [],
+      financialCriteria: [],
+      evaluationMethodology: null,
+      scopeOfServices: [],
+      deliverables: [],
+      requiredExperts: [],
+      requiredProjectReferences: [],
+      requiredLegalDocuments: [],
+      requiredFinancialDocuments: [],
+      formsAndAnnexes: [],
+      generationPlan: { generate: [], exclude: [], notes: ["Empty source text"] },
+      financialProposalRequired: true,
+      proposalValidity: null,
+      budget: null,
+      bidBond: null,
+      mandatorySiteVisit: false,
+      preBidMeeting: null,
+      pageLimit: null,
+      copiesRequired: null,
+      fileNamingRequirements: [],
+      warnings,
+      sourceExcerpts,
+    };
+  }
+
+  // Tender type
+  const tenderType = classifyTenderType(text);
+  if (tenderType === "Unknown") {
+    warnings.push("Tender type not detected in source text — defaulting to RFP-style generation");
+  }
+
+  // Service streams
+  const serviceStreams = classifyServiceStreams(text);
+  if (serviceStreams.length === 0) {
+    warnings.push("No HAEC service stream detected in source text");
+  }
+
+  // Project title
+  let projectTitle: string | null = options.tenderTitle ?? null;
+  const titleMatch = text.match(/project\s+name:?\s*([^\n\r]{5,150})/i)
+    || text.match(/project\s+title:?\s*([^\n\r]{5,150})/i)
+    || text.match(/for\s+([A-Z][^\n\r]{5,150})/);
+  if (titleMatch) {
+    projectTitle = titleMatch[1].trim();
+    sourceExcerpts.projectTitle = titleMatch[0];
+  }
+
+  // Client / procuring entity
+  let clientOrProcuringEntity: string | null = options.tenderClientName ?? null;
+  // Try specific patterns first (avoid bare "for" which matches "Request for...")
+  const clientMatch = text.match(/(?:client|procuring\s+entity)\s*:?\s*([^\n\r]{3,100})/i)
+    || text.match(/Technical\s+Proposal\s+for\s+([A-Z][^\n\r]{3,100})/i)
+    || text.match(/Proposal\s+for\s+([A-Z][^\n\r]{3,100})/i);
+  if (clientMatch) {
+    clientOrProcuringEntity = clientMatch[1].trim();
+    sourceExcerpts.clientOrProcuringEntity = clientMatch[0];
+  }
+
+  // Financial proposal required?
+  const financialNotRequired = /financial\s+proposal\s+not\s+required|do\s+not\s+generate\s+a\s+financial\s+proposal|technical\s+proposal\s+only\s+at\s+this\s+stage|financial\s+proposal\s*:\s*no/i.test(text);
+  const financialProposalRequired = !financialNotRequired;
+  if (!financialProposalRequired) {
+    sourceExcerpts.financialProposalRequired = "Financial proposal not required at this stage";
+  }
+
+  // Submission instructions
+  const submissionInstructions = extractSubmissionInstructions(text, options);
+
+  // Required documents
+  const requiredDocuments = extractRequiredDocuments(text, financialProposalRequired);
+
+  // Evaluation methodology
+  let evaluationMethodology: TenderEvaluationMethodology | null = null;
+  // Match "Technical weight: 70%" or "Technical 70%" or "Technical weightage 70%"
+  const techWeightMatch = text.match(/technical\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
+    || text.match(/technical\s+(\d{1,3})\s*%/i);
+  const finWeightMatch = text.match(/financial\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
+    || text.match(/financial\s+(\d{1,3})\s*%/i);
+  if (techWeightMatch || finWeightMatch || /evaluation\s+methodology/i.test(text)) {
+    evaluationMethodology = {
+      technicalWeight: techWeightMatch ? parseInt(techWeightMatch[1], 10) : null,
+      financialWeight: finWeightMatch ? parseInt(finWeightMatch[1], 10) : null,
+      methodology: "Detected evaluation methodology section",
+      passFail: /pass\/fail|pass-fail|compliance\s+only/i.test(text),
+    };
+  }
+
+  // Generation plan
+  const generationPlan = buildGenerationPlan(tenderType, requiredDocuments, financialProposalRequired);
+
+  // Proposal validity
+  let proposalValidity: string | null = null;
+  const validityMatch = text.match(/proposal\s+validity:?\s*([^\n\r]{3,80})/i)
+    || text.match(/validity\s+period:?\s*([^\n\r]{3,80})/i);
+  if (validityMatch) proposalValidity = validityMatch[1].trim();
+
+  // Budget
+  let budget: string | null = null;
+  const budgetMatch = text.match(/(?:budget|estimated\s+cost|contract\s+value):?\s*([^\n\r]{3,100})/i);
+  if (budgetMatch) budget = budgetMatch[1].trim();
+
+  // Bid bond
+  let bidBond: string | null = null;
+  const bidBondMatch = text.match(/(?:bid\s+bond|bid\s+security):?\s*([^\n\r]{3,100})/i);
+  if (bidBondMatch) bidBond = bidBondMatch[1].trim();
+
+  // Mandatory site visit
+  const mandatorySiteVisit = /mandatory\s+site\s+visit|site\s+visit\s+(?:is\s+)?mandatory|pre-bid\s+site\s+visit\s+(?:is\s+)?mandatory/i.test(text);
+
+  // Pre-bid meeting
+  let preBidMeeting: { date: string | null; location: string | null } | null = null;
+  const preBidDateMatch = text.match(/pre-bid\s+meeting\s+(?:date)?:?\s*([^\n\r]{5,80})/i);
+  const preBidLocMatch = text.match(/pre-bid\s+meeting\s+(?:location|venue)?:?\s*([^\n\r]{5,120})/i);
+  if (preBidDateMatch || preBidLocMatch || /pre-bid\s+meeting/i.test(text)) {
+    preBidMeeting = {
+      date: preBidDateMatch ? preBidDateMatch[1].trim() : null,
+      location: preBidLocMatch ? preBidLocMatch[1].trim() : null,
+    };
+  }
+
+  // Page limit
+  let pageLimit: string | null = null;
+  const pageLimitMatch = text.match(/page\s+limit:?\s*([^\n\r]{3,40})/i)
+    || text.match(/maximum\s+(?:of\s+)?(\d+)\s+pages/i);
+  if (pageLimitMatch) pageLimit = pageLimitMatch[1].trim();
+
+  // Copies required
+  let copiesRequired: string | null = null;
+  const copiesMatch = text.match(/(?:number\s+of\s+)?copies(?:\s+required)?:?\s*([^\n\r]{3,40})/i)
+    || text.match(/(\d+)\s+(?:hard\s+)?copies/i);
+  if (copiesMatch) copiesRequired = copiesMatch[1].trim();
+
+  // File naming requirements
+  const fileNamingRequirements: string[] = [];
+  const namingMatch = text.match(/file\s+naming(?:\s+requirement)?:?\s*([^\n\r]{5,200})/i)
+    || text.match(/name\s+your\s+file:?\s*([^\n\r]{5,200})/i);
+  if (namingMatch) fileNamingRequirements.push(namingMatch[1].trim());
+
+  // Required experts
+  const requiredExperts: RequiredExpert[] = [];
+  const expertMatches = text.matchAll(/(?:key\s+)?(?:expert|specialist|professional|consultant)\s*:?\s*([^\n\r]{5,120})/gi);
+  for (const m of expertMatches) {
+    const role = m[1].trim();
+    if (role.length > 3 && role.length < 120) {
+      requiredExperts.push({ role, count: 1, qualifications: [] });
+    }
+  }
+
+  // Project references
+  const requiredProjectReferences: RequiredProjectReference[] = [];
+  const refMatch = text.match(/(\d+)\s+(?:relevant\s+)?project\s+references?/i)
+    || text.match(/(\d+)\s+(?:similar\s+)?(?:projects?|assignments?)/i);
+  if (refMatch) {
+    requiredProjectReferences.push({
+      count: parseInt(refMatch[1], 10),
+      similarTo: projectTitle,
+      note: "Similar project references required",
+    });
+  }
+
+  // Legal documents
+  const requiredLegalDocuments: RequiredLegalDocument[] = [];
+  if (/tax\s+clearance|tax\s+certificate/i.test(text)) {
+    requiredLegalDocuments.push({ name: "Tax Clearance Certificate", required: true, note: "Required by source text" });
+  }
+  if (/business\s+license|trade\s+license/i.test(text)) {
+    requiredLegalDocuments.push({ name: "Business License", required: true, note: "Required by source text" });
+  }
+  if (/registration\s+certificate/i.test(text)) {
+    requiredLegalDocuments.push({ name: "Registration Certificate", required: true, note: "Required by source text" });
+  }
+
+  // Financial documents
+  const requiredFinancialDocuments: RequiredFinancialDocument[] = [];
+  if (/audited\s+financial\s+statements?|audit\s+report/i.test(text)) {
+    requiredFinancialDocuments.push({ name: "Audited Financial Statements", required: true, note: "Required by source text" });
+  }
+  if (/bank\s+statement/i.test(text)) {
+    requiredFinancialDocuments.push({ name: "Bank Statement", required: true, note: "Required by source text" });
+  }
+
+  // Forms and annexes
+  const formsAndAnnexes: TenderFormOrAnnex[] = [];
+  const formMatches = text.matchAll(/(?:form|annex)\s+([A-Z0-9][^\n\r]{1,80})/gi);
+  for (const m of formMatches) {
+    const name = `Form/Annex ${m[1].trim()}`;
+    if (!formsAndAnnexes.some((f) => f.name === name)) {
+      formsAndAnnexes.push({ name, mandatory: true, note: "Detected in source text" });
+    }
+  }
+
+  // Scope of services
+  const scopeOfServices: string[] = [];
+  const scopeMatch = text.match(/scope\s+of\s+(?:services?|work):?\s*([^\n\r]{10,500})/i);
+  if (scopeMatch) scopeOfServices.push(scopeMatch[1].trim());
+
+  // Deliverables
+  const deliverables: string[] = [];
+  const deliverableMatches = text.matchAll(/deliverable\s*\d*:?\s*([^\n\r]{5,200})/gi);
+  for (const m of deliverableMatches) {
+    deliverables.push(m[1].trim());
+  }
+
+  return {
+    tenderType,
+    serviceStreams,
+    projectTitle,
+    clientOrProcuringEntity,
+    submissionInstructions,
+    requiredDocuments,
+    eligibilityCriteria: [],
+    technicalCriteria: [],
+    financialCriteria: [],
+    evaluationMethodology,
+    scopeOfServices,
+    deliverables,
+    requiredExperts,
+    requiredProjectReferences,
+    requiredLegalDocuments,
+    requiredFinancialDocuments,
+    formsAndAnnexes,
+    generationPlan,
+    financialProposalRequired,
+    proposalValidity,
+    budget,
+    bidBond,
+    mandatorySiteVisit,
+    preBidMeeting,
+    pageLimit,
+    copiesRequired,
+    fileNamingRequirements,
+    warnings,
+    sourceExcerpts,
+  };
+}

@@ -15,6 +15,10 @@ import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-gener
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
+// ClientSubmissionDetailsPanel is intentionally NOT imported here — it was a
+// duplicate of TenderIntakeDetailPanel in the normal Stage 1 workflow.
+// It may still be used under Final Submission Check or admin diagnostics,
+// but it must not appear in the normal draft workflow.
 import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-panel";
 import { ExportReadinessPanel } from "../../../../components/export-readiness-panel";
 import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objections-panel";
@@ -34,7 +38,9 @@ import { AuthorityReviewPanel } from "../../../../components/authority-review-pa
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
-import { ClientSubmissionDetailsPanel } from "../../../../components/client-submission-details-panel";
+// ClientSubmissionDetailsPanel removed from normal workflow — was a duplicate
+// of TenderIntakeDetailPanel. Kept available for Final Submission Check /
+// admin diagnostics via its component file.
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
 import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
@@ -193,7 +199,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
-        <ClientSubmissionDetailsPanel tenderId={tender.id} canMutate={canMutate} />
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
 
