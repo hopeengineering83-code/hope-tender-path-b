@@ -131,7 +131,7 @@ export type AuditAction =
   | "TENDER_METADATA_OVERRIDE"
   // Admin maintenance/recovery operations from the Recovery Command Center
   // and admin maintenance routes.
-  | "ADMIN_RELEASE_STUCK_JOBS"
+  | "TENDER_EVIDENCE_SELECT" | "TENDER_EVIDENCE_CONFIRM" | "TENDER_EVIDENCE_NOT_APPLICABLE" | "ADMIN_RELEASE_STUCK_JOBS"
   | "ADMIN_REPAIR_EXECUTED"
   | "VALIDATE_DOCUMENTS";
 
