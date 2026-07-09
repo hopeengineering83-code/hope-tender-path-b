@@ -29,7 +29,7 @@ function actionHref(tenderId: string, action?: string): string {
 
 function buildActionLabel(action?: string): string {
   if (action === "EDIT_TENDER") return "Edit client name";
-  if (action === "EDIT_TENDER_METADATA") return "Fill missing metadata";
+  if (action === "EDIT_TENDER_METADATA") return "Fill missing Tender Details";
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Check extraction quality";
   if (action === "BUILD_SUBMISSION_PLAN") return "Build submission plan";
@@ -42,7 +42,7 @@ function buildActionLabel(action?: string): string {
   if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Retry AI Analyze or approve fallback";
   if (action === "RETRY_AI_ANALYZE") return "Retry AI Analyze";
   if (action === "REVIEW_ANALYSIS") return "Review analysis quality";
-  if (action === "REPAIR_OR_EDIT_TENDER") return "Repair or edit metadata";
+  if (action === "REPAIR_OR_EDIT_TENDER") return "Repair or edit Tender Details";
   if (action === "OPEN_SETTINGS") return "Open settings";
   if (action === "OPEN_TENDER_DETAIL") return "Open tender detail";
   return "Open tender";

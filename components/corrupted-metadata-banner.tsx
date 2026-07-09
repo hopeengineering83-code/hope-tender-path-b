@@ -1,4 +1,4 @@
-// Proactive banner — surfaces stored tender metadata that fails the
+// Proactive banner — surfaces stored tender details that fail the
 // canonical validators (corrupted from an extraction that pre-dates the
 // validator rules) and offers a one-click re-extract to clean them.
 //
@@ -35,7 +35,7 @@ import {
   isValidClientContact,
   containsMetadataPlaceholder,
 } from "../lib/engine/metadata-validators";
-import { CleanCorruptedMetadataButton } from "./clean-corrupted-metadata-button";
+import { RepairTenderFactsButton } from "./clean-corrupted-metadata-button";
 
 type TenderShape = {
   id: string;
@@ -99,7 +99,7 @@ function badFieldsFor(tender: TenderShape): Array<{ field: string; label: string
   return bad;
 }
 
-export function CorruptedMetadataBanner({ tender }: { tender: TenderShape }) {
+export function ClientEntityWarningBanner({ tender }: { tender: TenderShape }) {
   const bad = badFieldsFor(tender);
   if (bad.length === 0) return null;
 
@@ -127,8 +127,11 @@ export function CorruptedMetadataBanner({ tender }: { tender: TenderShape }) {
             ))}
           </ul>
         </div>
-        <CleanCorruptedMetadataButton tenderId={tender.id} badCount={bad.length} />
+        <RepairTenderFactsButton tenderId={tender.id} badCount={bad.length} />
       </div>
     </section>
   );
 }
+
+// Backward-compat alias — use ClientEntityWarningBanner in new code.
+export const CorruptedMetadataBanner = ClientEntityWarningBanner;

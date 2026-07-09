@@ -56,7 +56,7 @@ import { TenderSourceFilesPanel } from "../../../../components/tender-source-fil
 import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
-import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
+import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
 import { prisma as prismaClient } from "../../../../lib/prisma";
 
 function WorkflowStage({
@@ -171,7 +171,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   return (
     <main className="space-y-5" aria-label="Tender workflow workspace">
-      <CorruptedMetadataBanner tender={{
+      <ClientEntityWarningBanner tender={{
         id: tender.id,
         reference: tender.reference,
         clientName: tender.clientName,
@@ -194,7 +194,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         Work from Stage 1 through Stage 5. Each major action appears once and uses the canonical server-side readiness gates.
       </nav>
 
-      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical metadata." open>
+      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />

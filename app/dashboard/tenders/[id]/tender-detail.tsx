@@ -15,7 +15,7 @@ import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
-import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
+import { TenderDetailsPanel } from "../../../../components/metadata-completion-panel";
 import { CollapsiblePanel } from "../../../../components/collapsible-panel";
 import { SparklesIcon, BoltIcon, CheckIcon, ArrowRightIcon, DownloadIcon } from "../../../../components/icons";
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
@@ -2307,7 +2307,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
         isOpen={panels["metadata"]}
         onToggle={() => togglePanel("metadata")}
       >
-        <MetadataCompletionPanel tenderId={tender.id} />
+        <TenderDetailsPanel tenderId={tender.id} />
       </CollapsiblePanel>
 
       {(() => {

@@ -237,7 +237,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       const skipped: number = json.skipped ?? 0;
       const total: number = json.total ?? 0;
       if (total === 0) {
-        setActionMsg("Plan built — no submission files were derived from the tender requirements. Add exact file names in the tender metadata, or run AI Analyze to extract them.");
+        setActionMsg("Plan built — no submission files were derived from the tender requirements. Add exact file names in the Tender Details, or run AI Analyze to extract them.");
       } else if (created === 0 && skipped > 0) {
         setActionMsg(`Plan up to date — all ${skipped} planned file(s) already exist. No new rows created.`);
       } else {
