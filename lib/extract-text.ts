@@ -487,6 +487,148 @@ const PDF_OCR_MAX_PAGES_PER_CALL = (() => {
   return 50;
 })();
 
+// Maximum number of follow-up "continue" calls when Claude hits max_tokens
+// mid-document. Each continuation carries the prior tail as context so
+// Claude resumes from the right offset. 3 rounds × ~16K tokens ≈ 48K tokens
+// of output headroom — enough for a 60-page scanned PDF at typical density.
+const PDF_OCR_MAX_CONTINUATIONS = (() => {
+  const raw = Number(process.env.PDF_OCR_MAX_CONTINUATIONS);
+  if (Number.isFinite(raw) && raw >= 0 && raw <= 6) return raw;
+  return 3;
+})();
+
+// Split a PDF buffer into N-page chunk buffers using pdf-lib's copyPages API.
+// Returns an array of {startPage, buffer} where startPage is 1-indexed.
+// On any failure (corrupt PDF, pdf-lib incompat), returns [{startPage: 1, buffer}]
+// — i.e. the original buffer — so the caller still attempts a single-call OCR
+// rather than failing outright. This is the proper fix for the previous
+// behavior where an 80-page scanned PDF was sent in one shot and silently
+// truncated by Anthropic's per-request page cap.
+async function splitPdfIntoChunks(buffer: Buffer, chunkSize: number): Promise<Array<{ startPage: number; buffer: Buffer }>> {
+  if (chunkSize <= 0) return [{ startPage: 1, buffer }];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PDFDocument } = require("pdf-lib") as typeof import("pdf-lib");
+    const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+    const total = src.getPageCount();
+    if (total <= chunkSize) return [{ startPage: 1, buffer }];
+    const chunks: Array<{ startPage: number; buffer: Buffer }> = [];
+    for (let start = 0; start < total; start += chunkSize) {
+      const end = Math.min(start + chunkSize, total);
+      const dest = await PDFDocument.create();
+      const pages = await dest.copyPages(src, Array.from({ length: end - start }, (_, i) => start + i));
+      for (const p of pages) dest.addPage(p);
+      const bytes = await dest.save();
+      chunks.push({ startPage: start + 1, buffer: Buffer.from(bytes) });
+    }
+    return chunks;
+  } catch (err) {
+    logger.warn("[extract-text] splitPdfIntoChunks failed — falling back to single-call OCR:", { detail: err instanceof Error ? err.message : String(err) });
+    return [{ startPage: 1, buffer }];
+  }
+}
+
+// Renumber any [Page N] markers in `text` so they reflect the chunk's true
+// position in the source PDF. Claude is instructed to emit [Page N] but
+// for a chunk starting at page 21 it will emit [Page 1], [Page 2], ...
+// We rewrite each marker to [Page (startPage + n - 1)] so downstream
+// page-attribution (source evidence) points at the right physical page.
+function renumberPageMarkers(text: string, startPage: number): string {
+  if (startPage <= 1) return text;
+  let counter = 0;
+  return text.replace(/\[Page\s+(\d+)\]/gi, () => {
+    counter += 1;
+    return `[Page ${startPage + counter - 1}]`;
+  });
+}
+
+// If OCR output has NO [Page N] markers at all but we know the page count,
+// synthesize markers by splitting on blank-line boundaries. This keeps
+// downstream assessExtractionQualityPerPage out of DOCUMENT_LEVEL fallback
+// (which would report totalPages=null and block export). The split is
+// heuristic — a real per-page boundary is preferred — but better than
+// losing page-count attribution entirely.
+function synthesizePageMarkersIfMissing(text: string, knownPages: number): string {
+  if (knownPages <= 0) return text;
+  if (/\[Page\s+\d+\]/i.test(text)) return text;
+  const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  if (paragraphs.length === 0) return text;
+  // If we have at least as many paragraphs as pages, distribute one paragraph
+  // per page (extra paragraphs collapse into the last page). If fewer, just
+  // tag the whole text as page 1..N evenly.
+  if (paragraphs.length >= knownPages) {
+    const out: string[] = [];
+    const perPage = Math.ceil(paragraphs.length / knownPages);
+    for (let p = 0; p < knownPages; p++) {
+      const slice = paragraphs.slice(p * perPage, (p + 1) * perPage);
+      if (slice.length > 0) out.push(`[Page ${p + 1}]\n${slice.join("\n")}`);
+    }
+    return out.join("\n\n");
+  }
+  // Fewer paragraphs than pages — emit one marker per paragraph, numbered
+  // sequentially, then a final marker for the remaining pages.
+  const out: string[] = [];
+  for (let i = 0; i < paragraphs.length; i++) {
+    out.push(`[Page ${i + 1}]\n${paragraphs[i]}`);
+  }
+  for (let i = paragraphs.length; i < knownPages; i++) {
+    out.push(`[Page ${i + 1}]\n[page not parsed by OCR]`);
+  }
+  return out.join("\n\n");
+}
+
+// Single Anthropic messages.create call with timeout + abort. Returns the
+// raw response so the caller can inspect stop_reason and decide whether to
+// continue. Throws on auth/timeout/network errors (caller decides how to
+// surface them).
+async function claudeVisionOcrCall(
+  client: { messages: { create: (input: unknown, options?: { signal?: AbortSignal }) => Promise<{ content: Array<{ type: string; text?: string }>; stop_reason?: string }> } },
+  modelName: string,
+  base64Pdf: string,
+  ocrTimeoutMs: number,
+  continuationOf?: string,
+): Promise<{ text: string; stopReason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ocrTimeoutMs);
+  try {
+    const userText = continuationOf
+      ? `Continue extracting the PDF text EXACTLY from where the previous response stopped. The last text you emitted was:\n\n"""${continuationOf.slice(-2000)}"""\n\nResume from that exact point. Do NOT re-extract earlier content. Do NOT add commentary. Continue preserving [Page N] markers.`
+      : "Extract the complete text content of this PDF. Preserve paragraph and table structure. Include page breaks as [Page N].";
+
+    const messageContent: unknown[] = [
+      {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: base64Pdf },
+      },
+      { type: "text", text: userText },
+    ];
+
+    const messages: unknown[] = continuationOf
+      ? [
+          { role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Pdf } }, { type: "text", text: "Extract the complete text content of this PDF. Preserve paragraph and table structure. Include page breaks as [Page N]." }] },
+          { role: "assistant", content: [{ type: "text", text: continuationOf }] },
+          { role: "user", content: [{ type: "text", text: "Continue extracting EXACTLY from where you stopped. Resume from that exact point. Do NOT re-extract earlier content. Continue preserving [Page N] markers." }] },
+        ]
+      : [{ role: "user", content: messageContent }];
+
+    const response = await client.messages.create({
+      model: modelName,
+      max_tokens: 16_000,
+      system: "You are a precise OCR engine. Extract ALL visible text from the attached PDF document, preserving paragraph structure and table contents where possible. Output ONLY the extracted text — no commentary, no markdown fences, no preamble. If a section is unreadable, write [unreadable] inline. Preserve page breaks with the marker [Page N] at the start of each page's text.",
+      messages,
+    }, { signal: controller.signal });
+
+    const text = response.content
+      .filter((c) => c.type === "text")
+      .map((c) => c.text ?? "")
+      .join("\n")
+      .trim();
+    return { text, stopReason: response.stop_reason };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "unknown"): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return "";
@@ -500,17 +642,7 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
     return "";
   }
 
-  // If we know the page count and it exceeds the per-call cap, take only
-  // the first PDF_OCR_MAX_PAGES_PER_CALL pages. We trim the buffer by
-  // re-rendering with pdfjs in a follow-up patch; for now we send the
-  // whole document (Anthropic accepts up to ~100 pages per request).
-  // The cap above is enforced by the model itself on big files.
   const knownPages = typeof pageCount === "number" ? pageCount : null;
-  if (knownPages && knownPages > PDF_OCR_MAX_PAGES_PER_CALL) {
-    logger.warn(`[extract-text] PDF has ${knownPages} pages; OCR call may be slow / costly (cap is ${PDF_OCR_MAX_PAGES_PER_CALL} pages).`);
-  }
-
-  const base64Pdf = buffer.toString("base64");
 
   // Use the same canonical Claude model name normalization as lib/ai.ts
   // so user typos in the env var don't break OCR. The OCR-specific model
@@ -531,69 +663,114 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
     messages: { create: (input: unknown, options?: { signal?: AbortSignal }) => Promise<{ content: Array<{ type: string; text?: string }>; stop_reason?: string }> };
   })({ apiKey, timeout: ocrTimeoutMs });
 
-  // AbortController for hard timeout — the SDK's timeout option is a
-  // connection-level timeout; the AbortController ensures the request is
-  // aborted even if the connection is established but the response is slow.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ocrTimeoutMs);
-
-  try {
-    const response = await client.messages.create({
-      model: modelName,
-      max_tokens: 16_000, // raised from 8K — a 50-page PDF holds ~25-50K chars (~8-15K tokens)
-      system: "You are a precise OCR engine. Extract ALL visible text from the attached PDF document, preserving paragraph structure and table contents where possible. Output ONLY the extracted text — no commentary, no markdown fences, no preamble. If a section is unreadable, write [unreadable] inline. Preserve page breaks with the marker [Page N] at the start of each page's text.",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/pdf",
-                data: base64Pdf,
-              },
-            },
-            {
-              type: "text",
-              text: "Extract the complete text content of this PDF. Preserve paragraph and table structure. Include page breaks as [Page N].",
-            },
-          ],
-        },
-      ],
-    }, { signal: controller.signal });
-    const text = response.content
-      .filter((c) => c.type === "text")
-      .map((c) => c.text ?? "")
-      .join("\n")
-      .trim();
-    // Detect truncation — if stop_reason is "max_tokens", the output was
-    // cut mid-document. Log a warning so operators know the OCR was partial.
-    if (response.stop_reason === "max_tokens") {
-      logger.warn(`[extract-text] Claude vision OCR truncated at max_tokens (16K) — PDF may have more content. Consider splitting large PDFs or raising the limit. Model: ${modelName}, pages: ${pageCount}.`);
-    }
-    return text;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // Distinguish OCR error classes so the user gets actionable advice
-    // instead of the generic "upload a higher-resolution scan" message.
-    if (err instanceof Error && (err.name === "AbortError" || /abort/i.test(msg))) {
-      logger.warn(`[extract-text] Claude vision OCR timed out after ${ocrTimeoutMs}ms (model: ${modelName}, pages: ${pageCount}).`);
-      return "[OCR_TIMEOUT — the OCR call exceeded the time budget. Try uploading a smaller PDF or split into pages.]";
-    }
-    if (/401|403|invalid api key|authentication/i.test(msg)) {
-      logger.warn(`[extract-text] Claude vision OCR auth failed (model: ${modelName}):`, { detail: msg });
-      return "[OCR_AUTH_FAILED — ANTHROPIC_API_KEY is invalid or expired. Contact admin.]";
-    }
-    if (/429|rate.?limit|overloaded/i.test(msg)) {
-      logger.warn(`[extract-text] Claude vision OCR rate-limited (model: ${modelName}):`, { detail: msg });
-      return "[OCR_RATE_LIMITED — Anthropic rate limit hit. Retry in a few minutes.]";
-    }
-    logger.warn(`[extract-text] Claude vision OCR failed (${modelName}):`, { detail: msg });
-    return "";
-  } finally {
-    clearTimeout(timer);
+  // Chunk the PDF if it exceeds the per-call cap. This is the proper fix
+  // for the previous behavior where an 80-page scanned PDF was sent in one
+  // shot and silently truncated. Each chunk is OCR'd independently; results
+  // are concatenated with page markers renumbered to reflect the source PDF.
+  const chunkSize = knownPages && knownPages > PDF_OCR_MAX_PAGES_PER_CALL ? PDF_OCR_MAX_PAGES_PER_CALL : 0;
+  const chunks = chunkSize > 0 ? await splitPdfIntoChunks(buffer, chunkSize) : [{ startPage: 1, buffer }];
+  if (chunks.length > 1) {
+    logger.info(`[extract-text] Split ${knownPages}-page PDF into ${chunks.length} OCR chunks of ≤${chunkSize} pages each.`);
   }
+
+  const chunkTexts: string[] = [];
+  for (const chunk of chunks) {
+    const base64Pdf = chunk.buffer.toString("base64");
+    let accumulated = "";
+    let continuations = 0;
+    let lastStopReason: string | undefined;
+
+    // Primary call + continuation loop. Each iteration either makes the
+    // initial OCR call or asks Claude to continue from where it stopped.
+    // The loop exits when stop_reason !== "max_tokens", or when we hit
+    // PDF_OCR_MAX_CONTINUATIONS, or on a non-retryable error.
+    while (true) {
+      try {
+        const continuationOf = accumulated.length > 0 ? accumulated.slice(-8000) : undefined;
+        const { text, stopReason } = await claudeVisionOcrCall(client, modelName, base64Pdf, ocrTimeoutMs, continuationOf);
+        lastStopReason = stopReason;
+        if (text) {
+          accumulated = accumulated ? `${accumulated}\n${text}` : text;
+        }
+        if (stopReason !== "max_tokens") break;
+        if (continuations >= PDF_OCR_MAX_CONTINUATIONS) {
+          logger.warn(`[extract-text] Claude vision OCR hit max_tokens ${PDF_OCR_MAX_CONTINUATIONS + 1}× (chunk startPage=${chunk.startPage}); accepting partial result. Raise PDF_OCR_MAX_CONTINUATIONS to extract more.`);
+          break;
+        }
+        continuations += 1;
+        logger.info(`[extract-text] Claude vision OCR truncated at max_tokens — issuing continuation ${continuations}/${PDF_OCR_MAX_CONTINUATIONS} (chunk startPage=${chunk.startPage}).`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Distinguish OCR error classes so the user gets actionable advice
+        // instead of the generic "upload a higher-resolution scan" message.
+        if (err instanceof Error && (err.name === "AbortError" || /abort/i.test(msg))) {
+          logger.warn(`[extract-text] Claude vision OCR timed out after ${ocrTimeoutMs}ms (model: ${modelName}, chunk startPage=${chunk.startPage}).`);
+          // If we already have partial text from a previous continuation, return it
+          // rather than the timeout marker — partial OCR is better than none.
+          if (accumulated.length >= 20) {
+            chunkTexts.push(renumberPageMarkers(accumulated, chunk.startPage));
+            continue;
+          }
+          return "[OCR_TIMEOUT — the OCR call exceeded the time budget. Try uploading a smaller PDF or split into pages.]";
+        }
+        if (/401|403|invalid api key|authentication/i.test(msg)) {
+          logger.warn(`[extract-text] Claude vision OCR auth failed (model: ${modelName}):`, { detail: msg });
+          return "[OCR_AUTH_FAILED — ANTHROPIC_API_KEY is invalid or expired. Contact admin.]";
+        }
+        if (/529|overloaded/i.test(msg)) {
+          // Anthropic 529 overloaded — single retry with backoff. These are
+          // transient and the previous behavior of treating them as terminal
+          // meant a single overloaded window blocked all OCR for 5+ minutes
+          // (until the next upload).
+          if (continuations === 0 && !accumulated) {
+            logger.warn(`[extract-text] Claude vision OCR got 529 overloaded — retrying once after 2s (model: ${modelName}).`);
+            await new Promise((r) => setTimeout(r, 2000));
+            try {
+              const { text, stopReason } = await claudeVisionOcrCall(client, modelName, base64Pdf, ocrTimeoutMs);
+              lastStopReason = stopReason;
+              accumulated = text;
+              if (stopReason !== "max_tokens") break;
+            } catch (retryErr) {
+              const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              logger.warn(`[extract-text] Claude vision OCR retry also failed:`, { detail: retryMsg });
+              if (/529|overloaded/i.test(retryMsg)) {
+                return "[OCR_RATE_LIMITED — Anthropic is overloaded. Retry in a few minutes.]";
+              }
+              // Other retry errors fall through to the rate-limit branch below.
+            }
+          } else {
+            logger.warn(`[extract-text] Claude vision OCR got 529 overloaded mid-stream (model: ${modelName}, chunk startPage=${chunk.startPage}).`);
+            return "[OCR_RATE_LIMITED — Anthropic rate limit hit. Retry in a few minutes.]";
+          }
+        } else if (/429|rate.?limit/i.test(msg)) {
+          logger.warn(`[extract-text] Claude vision OCR rate-limited (model: ${modelName}):`, { detail: msg });
+          return "[OCR_RATE_LIMITED — Anthropic rate limit hit. Retry in a few minutes.]";
+        }
+        logger.warn(`[extract-text] Claude vision OCR failed (${modelName}, chunk startPage=${chunk.startPage}):`, { detail: msg });
+        // If we have partial text from a prior continuation, return it.
+        if (accumulated.length >= 20) break;
+        return "";
+      }
+    }
+
+    if (accumulated) {
+      chunkTexts.push(renumberPageMarkers(accumulated, chunk.startPage));
+    }
+    // lastStopReason is informational only; we've already handled max_tokens
+    // via the continuation loop above.
+    void lastStopReason;
+  }
+
+  const combined = chunkTexts.join("\n\n").trim();
+  if (!combined) return "";
+
+  // If Claude forgot to emit [Page N] markers but we know the page count,
+  // synthesize them so downstream page-coverage logic doesn't fall back to
+  // DOCUMENT_LEVEL (which reports totalPages=null and blocks export).
+  if (knownPages && knownPages > 0) {
+    return synthesizePageMarkersIfMissing(combined, knownPages);
+  }
+  return combined;
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
@@ -675,17 +852,43 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   // Determine OCR trigger reason:
   //   1. No text layer — traditional case (< 20 chars)
   //   2. Corrupted text — pdf2json / pdf-parse returned garbage characters
+  //   3. Sparse text layer — mixed scanned/digital PDF: text layer exists
+  //      (> 20 chars, not corrupted) but covers far fewer pages than the
+  //      PDF actually has. Common case: cover + TOC are digital, body is
+  //      scanned images. Without this detection the digital pages pass the
+  //      > 20-char gate, OCR never runs, and the scanned body contributes
+  //      zero text — silently producing a partial extraction that blocks
+  //      export (incomplete page coverage).
   const hasNoTextLayer = !best?.text || best.text.length < 20;
   const hasCorruptedText =
     !hasNoTextLayer &&
     best != null &&
     best.text.length > 20 &&
     isExtractionCorrupted(best.text);
+  // Sparse-text-layer detection: count [Page N] markers in the best text
+  // layer. If the PDF has a known page count and we recovered markers for
+  // less than half of them, treat the missing pages as scanned-image pages
+  // that the text-layer extractors can't see.
+  const knownPageCount = typeof pages === "number" ? pages : 0;
+  const markerCount = best?.text ? (best.text.match(/\[Page\s+\d+\]/gi) ?? []).length : 0;
+  const hasSparseTextLayer =
+    !hasNoTextLayer &&
+    !hasCorruptedText &&
+    best != null &&
+    knownPageCount > 1 &&
+    markerCount > 0 &&
+    markerCount < Math.ceil(knownPageCount / 2);
 
-  if ((hasNoTextLayer || hasCorruptedText) && ocrEnabled) {
-    const ocrReason = hasCorruptedText ? "CORRUPTED_TEXT" : "NO_TEXT_LAYER";
+  if ((hasNoTextLayer || hasCorruptedText || hasSparseTextLayer) && ocrEnabled) {
+    const ocrReason = hasCorruptedText
+      ? "CORRUPTED_TEXT"
+      : hasSparseTextLayer
+        ? "SPARSE_TEXT_LAYER"
+        : "NO_TEXT_LAYER";
     if (hasNoTextLayer) {
       logger.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
+    } else if (hasSparseTextLayer) {
+      logger.info(`[extract-text] PDF has sparse text layer (${markerCount} of ${knownPageCount} pages recovered) — running Claude vision OCR to recover scanned-image pages. ocrReason=${ocrReason}`);
     } else {
       logger.info(`[extract-text] PDF text layer detected as corrupted (${best!.text.length} chars, garbage content) — running Claude vision OCR fallback. ocrReason=${ocrReason}`);
     }
@@ -704,6 +907,12 @@ async function extractPdf(buffer: Buffer): Promise<string> {
       // OCR returned an error marker — log it and fall through to the
       // scanned-PDF placeholder. The marker text is NOT stored as extractedText.
       logger.warn(`[extract-text] Claude vision OCR returned error marker: ${ocrText.slice(0, 120)}`);
+    }
+    if (hasSparseTextLayer) {
+      // OCR failed but we have a (sparse) text layer — return it with a
+      // warning prefix so the quality panel can flag the missing pages.
+      logger.warn("[extract-text] Claude vision OCR returned empty for sparse text layer — returning partial text-layer extraction with warning.");
+      return normalizeExtractedText(`[PDF text layer partially extracted (${markerCount} of ${knownPageCount} pages) — ocrReason=${ocrReason} — OCR returned empty. Scanned-image pages not recovered. Review extraction quality before AI Analyze.]\n\n${best!.text}`);
     }
     if (hasCorruptedText) {
       logger.warn("[extract-text] Claude vision OCR returned empty for corrupted text — falling back to corrupted extraction.");
@@ -1026,25 +1235,175 @@ async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   return normalizeExtractedText(parts.join("\n\n"));
 }
 
+// ─── PPTX / ODP extraction ────────────────────────────────────────────────────
+//
+// Hardened for tender presentations:
+//   1. Preserves [Page N] markers (one per slide, including empty slides) so
+//      downstream assessExtractionQualityPerPage can derive totalPages the
+//      same way it does for PDFs. Without these markers PPTX files reported
+//      totalPages=null and silently blocked export — the same bug class that
+//      pdf-parse had before [Page N] markers were added.
+//   2. Extracts tables (<a:tbl>) with row/cell structure intact. A tender
+//      PPTX almost always carries an evaluation-criteria table, a pricing
+//      summary, or a BOQ. The old extractor flattened every <a:t> into a
+//      single space-joined string, destroying cell structure — BOQ rows
+//      became word soup. Now: each table becomes
+//        [Table: N rows]
+//        Row 1: cell | cell | cell
+//        Row 2: ...
+//      matching the format the DOCX/XLSX extractors already produce, so
+//      downstream table-extraction regex picks them up uniformly.
+//   3. Appends speaker notes ([Notes N]) which frequently hold submission
+//      clarifications / evaluation detail not present on the slide body.
+//   4. Handles merged cells (<a:hMerge>/<a:vMerge>) by inheriting the
+//      preceding cell's value, the same strategy used for XLSX BOQ files.
+//
+// The XML walking is intentionally regex-based (not a full DOM) because
+// ppt/slideN.xml is a flat, well-formed OpenXML stream and a DOM parse
+// (via xml2js or fast-xml-parser) adds ~2MB of dependency and ~50ms of
+// parse time per slide for no real-world correctness gain. The regexes
+// are anchored on OpenXML tag names that have been stable since the
+// ECMA-376 (2006) edition.
+
+function decodeXmlEntities(s: string): string {
+  return (s ?? "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+// Extract the text content of a single table cell XML fragment.
+// A cell looks like: <a:tc><a:txBody>...<a:p><a:r><a:t>Cell text</a:t></a:r></a:p>...</a:txBody></a:tc>
+// We gather every <a:t> run inside the fragment and join with spaces.
+function extractPptxCellText(cellXml: string): string {
+  //  after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
+  // — <a:t is a prefix of those tags and without \b the regex would capture
+  // their inner content as if it were a text run. This was the root cause of
+  // PPTX table cells returning raw XML instead of decoded text.
+  const runs = [...cellXml.matchAll(/<a:t\b[^>]*>([\s\S]*?)<\/a:t>/g)];
+  return runs.map((m) => decodeXmlEntities(m[1])).join(" ").replace(/\s+/g, " ").trim();
+}
+
+// Parse one <a:tbl>...</a:tbl> block into a [Table: N rows]\nRow k: ... string.
+// Handles horizontal merges (a:hMerge with continue) by inheriting the
+// previous cell's value in the same row.
+function extractPptxTable(tblXml: string): string {
+  const rows = [...tblXml.matchAll(/<a:tr\b[\s\S]*?<\/a:tr>/g)];
+  if (rows.length === 0) return "";
+  const tableLines: string[] = [];
+  let prevRowCells: string[] = [];
+  for (let r = 0; r < rows.length; r++) {
+    // Cells: <a:tc ...> ... </a:tc>. Use non-greedy [\s\S] to span children.
+    const cellMatches = [...rows[r][0].matchAll(/<a:tc\b[\s\S]*?<\/a:tc>/g)];
+    const cells: string[] = [];
+    for (let c = 0; c < cellMatches.length; c++) {
+      const cellXml = cellMatches[c][0];
+      const isHMergeContinue = /<a:hMerge\b/.test(cellXml) && /continue/.test(cellXml);
+      const text = extractPptxCellText(cellXml);
+      if (isHMergeContinue && cells.length > 0 && !text) {
+        cells.push(cells[cells.length - 1]);
+      } else {
+        cells.push(text);
+      }
+    }
+    // Vertical merge (a:vMerge continue) — inherit from the cell above.
+    if (/continue/.test(rows[r][0]) === false) {
+      // detect vMerge continue at row level is not how OpenXML encodes it;
+      // vMerge lives inside individual <a:tc>. Handle per-cell:
+      for (let c = 0; c < cells.length; c++) {
+        const cellXml = cellMatches[c]?.[0] ?? "";
+        if (/<a:vMerge\b/.test(cellXml) && /continue/.test(cellXml)) {
+          if (prevRowCells[c] !== undefined && !cells[c]) cells[c] = prevRowCells[c];
+        }
+      }
+    }
+    if (cells.some((c) => c)) tableLines.push(`Row ${r + 1}: ${cells.join(" | ")}`);
+    prevRowCells = cells;
+  }
+  if (tableLines.length === 0) return "";
+  return `[Table: ${tableLines.length} rows]\n${tableLines.join("\n")}`;
+}
+
+// Extract non-table text from a slide XML, EXCLUDING the <a:t> runs that
+// live inside <a:tbl> blocks (those are already emitted as table rows).
+// We split the slide XML on <a:tbl> boundaries and only collect <a:t> from
+// the non-table segments.
+function extractPptxSlideBodyText(slideXml: string): string {
+  const segments = slideXml.split(/<a:tbl\b/);
+  const out: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    // Odd indices start with a table block; strip up to the matching </a:tbl>.
+    if (i % 2 === 1) {
+      const endIdx = segments[i].indexOf("</a:tbl>");
+      if (endIdx >= 0) segments[i] = segments[i].slice(endIdx + "</a:tbl>".length);
+      else segments[i] = ""; // unterminated table — drop remainder
+    }
+    const runs = [...segments[i].matchAll(/<a:t\b[^>]*>([\s\S]*?)<\/a:t>/g)];
+    const text = runs.map((m) => decodeXmlEntities(m[1])).join(" ").replace(/\s+/g, " ").trim();
+    if (text) out.push(text);
+  }
+  return out.join("  ");
+}
+
 async function extractPptx(buffer: Buffer): Promise<string> {
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buffer);
-  const slideNames = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => {
-    const numA = parseInt(a.match(/\d+/)?.[0] ?? "0");
-    const numB = parseInt(b.match(/\d+/)?.[0] ?? "0");
-    return numA - numB;
-  });
+  const slideNames = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => {
+      const numA = parseInt(a.match(/\d+/)?.[0] ?? "0");
+      const numB = parseInt(b.match(/\d+/)?.[0] ?? "0");
+      return numA - numB;
+    });
   const isOdp = slideNames.length === 0 && Boolean(zip.files["content.xml"]);
   const files = slideNames.length > 0 ? slideNames : isOdp ? ["content.xml"] : [];
   if (files.length === 0) return "[No slide content found in presentation]";
-  const slideTexts: string[] = [];
-  for (const name of files) {
+
+  const slideBlocks: string[] = [];
+  for (let slideIdx = 0; slideIdx < files.length; slideIdx++) {
+    const name = files[slideIdx];
+    const slideNum = slideIdx + 1;
     const xml = await zip.files[name].async("string");
-    const matches = [...xml.matchAll(/<(?:a:t|text:span|text:p)[^>]*>([^<]+)<\//g)];
-    const text = matches.map((m) => m[1].trim()).filter(Boolean).join(" ");
-    if (text) slideTexts.push(text);
+
+    if (isOdp) {
+      // ODP content.xml — flat text extraction (no per-slide table parsing;
+      // ODP tender files are vanishingly rare vs PPTX). Still emit [Page N]
+      // markers so page-count derivation works downstream.
+      const matches = [...xml.matchAll(/<(?:text:span|text:p)[^>]*>([\s\S]*?)<\//g)];
+      const text = matches.map((m) => decodeXmlEntities(m[1])).join(" ").replace(/\s+/g, " ").trim();
+      slideBlocks.push(`[Page ${slideNum}]\n${text || "[empty slide]"}`);
+      continue;
+    }
+
+    // PPTX: extract tables first, then non-table body text.
+    const tableBlocks = [...xml.matchAll(/<a:tbl\b[\s\S]*?<\/a:tbl>/g)];
+    const tablesText = tableBlocks.map((m) => extractPptxTable(m[0])).filter(Boolean);
+    const bodyText = extractPptxSlideBodyText(xml);
+
+    // Speaker notes — ppt/notesSlides/notesSlideN.xml (1-indexed to match slide).
+    const notesName = `ppt/notesSlides/notesSlide${slideNum}.xml`;
+    let notesText = "";
+    if (zip.files[notesName]) {
+      try {
+        const notesXml = await zip.files[notesName].async("string");
+        const runs = [...notesXml.matchAll(/<a:t\b[^>]*>([\s\S]*?)<\/a:t>/g)];
+        notesText = runs.map((m) => decodeXmlEntities(m[1])).join(" ").replace(/\s+/g, " ").trim();
+      } catch {
+        // ignore — notes are best-effort
+      }
+    }
+
+    const parts: string[] = [`[Page ${slideNum}]`];
+    if (bodyText) parts.push(bodyText);
+    if (tablesText.length > 0) parts.push(tablesText.join("\n\n"));
+    if (notesText) parts.push(`[Notes ${slideNum}]\n${notesText}`);
+    if (parts.length === 1) parts.push("[empty slide]");
+    slideBlocks.push(parts.join("\n"));
   }
-  const result = slideTexts.join("\n");
+
+  const result = slideBlocks.join("\n\n");
   return result ? normalizeExtractedText(result) : "[Presentation has no extractable text]";
 }
 
