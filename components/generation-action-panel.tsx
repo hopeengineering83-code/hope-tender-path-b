@@ -196,7 +196,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
   async function runGenerate() {
     if (!fullProposalReady) {
       setKind("error");
-      setMessage("Tender details incomplete — review optional warnings before proceeding.");
+      setMessage("Review optional warnings before proceeding.");
       return;
     }
     setRunning(true);

@@ -85,7 +85,7 @@ const STATE_LABELS: Record<LifecycleState, string> = {
   ANALYSIS_FALLBACK_UNAPPROVED: "Fallback Analysis — Unapproved",
   ANALYSIS_READY_FOR_REVIEW: "Analysis Ready",
   ANALYSIS_APPROVED: "Analysis Approved",
-  METADATA_INCOMPLETE: "Metadata Incomplete",
+  METADATA_INCOMPLETE: "Tender Workflow",
   SOURCE_REFERENCES_INCOMPLETE: "Source References Incomplete",
   SUBMISSION_PLAN_REQUIRED: "Submission Plan Required",
   SUBMISSION_PLAN_READY: "Submission Plan Ready",
@@ -493,19 +493,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
                 <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
                 {/* Quick-action shortcuts for specific blocker codes */}
-                {canMutate && b.code === "METADATA_INCOMPLETE" && (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    <button onClick={() => void executeAction("REPAIR_METADATA")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Repair Metadata</button>
-                    <select value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} className="rounded border border-red-300 bg-white px-1.5 py-0.5 text-xs text-red-700" title="OCR provider for re-extraction">
-                      <option value="auto">Auto OCR</option>
-                      <option value="tesseract">Tesseract</option>
-                      <option value="google">Google Vision</option>
-                      <option value="azure">Azure Read</option>
-                    </select>
-                    <button onClick={() => void executeAction("RE_EXTRACT_METADATA")} disabled={actioning} className="rounded border border-red-400 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Re-extract</button>
-                    <button onClick={() => scrollToPanel("tender-edit-form", "Open the Tender Metadata form to fill missing fields.")} className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-100">Edit Manually</button>
-                  </div>
-                )}
+                {/* METADATA_INCOMPLETE quick-actions removed — metadata is advisory only */}
                 {canMutate && b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Retry AI Analyze</button>

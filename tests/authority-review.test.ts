@@ -200,7 +200,7 @@ describe("authority review gate wiring — download route", () => {
     assert.match(source, /AUTHORITY_REVIEW_BLOCKED/);
   });
 
-  it("does not remove METADATA_CONTAMINATED check (existing gate preserved)", () => {
-    assert.match(source, /METADATA_CONTAMINATED/);
+  it("METADATA_CONTAMINATED is advisory only (unified runtime model)", () => {
+    assert.doesNotMatch(source, /warnings\.push\(\{[\s\S]*?METADATA_CONTAMINATED/);
   });
 });

@@ -119,7 +119,7 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
             <span className={`ml-2 rounded-full px-2 py-0.5 text-xs font-bold ${tone.text} bg-white/70`}>{tone.label}</span>
           </div>
           <p className="mt-1 max-w-2xl text-xs text-slate-600">
-            Replaces the old DB-stored readiness percentage. This number is computed by the canonical readiness helper with hard caps applied (evidence=0 → ≤35, missing required docs → ≤50, regex fallback → ≤45, missing metadata → ≤60, quality-failed docs → ≤60, blocked export gate → ≤99).
+            Replaces the old DB-stored readiness percentage. This number is computed by the canonical readiness helper with hard caps applied (evidence=0 → ≤35, missing required docs → ≤50, regex fallback → ≤45, quality-failed docs → ≤60, blocked export gate → ≤99). Metadata gaps do NOT cap the score — they are advisory only.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 text-center text-xs">

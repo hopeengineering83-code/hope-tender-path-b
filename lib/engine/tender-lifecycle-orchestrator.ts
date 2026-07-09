@@ -506,13 +506,7 @@ export async function computeTenderLifecycle(
     (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
   );
   const finalExportReady =
-    // PERMANENT BLOCK: only genuine AI authorizes final export. HUMAN_APPROVED
-    // _REGEX_FALLBACK is audit-only and MUST NEVER mark the tender as final-
-    // export-ready. Re-run AI Analyze to obtain a genuine AI analysis.
     analysisSource === "AI" &&
-    meta.missingCritical.length === 0 &&
-    meta.invalidFields.length === 0 &&
-    !tender.metadataContaminated &&
     ungroundedMandatory.length === 0 &&
     mandatoryEvidenceReady &&
     counts.finalExportCandidates > 0 &&
@@ -525,8 +519,8 @@ export async function computeTenderLifecycle(
   // Determine lifecycle state (strict priority ordering)
   // ─────────────────────────────────────────────────────────────────────────
 
-  let lifecycleState: LifecycleState;
-  let primaryNextAction: PrimaryNextAction;
+  let lifecycleState: LifecycleState | undefined;
+  let primaryNextAction: PrimaryNextAction | undefined;
   const blockers: TenderLifecycleResult["blockers"] = [];
   const warnings: TenderLifecycleResult["warnings"] = [];
   const advisoryWarnings: TenderLifecycleResult["advisoryWarnings"] = [];
@@ -578,29 +572,21 @@ export async function computeTenderLifecycle(
       action: "Retry AI Analyze — providers may be available again. The audit-only approval is preserved for record-keeping.",
     });
   }
-  // 6. Metadata incomplete (critical fields missing or placeholders)
+  // 6. Metadata incomplete — ADVISORY ONLY (unified runtime model)
+  // Metadata is NO LONGER a hard blocker. Missing critical fields and
+  // contamination are recorded as warnings (not blockers) so the workflow
+  // can proceed to analysis, generation, and export.
   else if (meta.missingCritical.length > 0 || meta.invalidFields.length > 0 || tender.metadataContaminated) {
-    lifecycleState = "METADATA_INCOMPLETE";
-    primaryNextAction = "COMPLETE_METADATA";
     if (meta.missingCritical.length > 0) {
-      blockers.push({
-        code: "METADATA_INCOMPLETE",
-        message: `${meta.missingCritical.length} critical metadata field(s) are missing: ${meta.missingCritical.slice(0, 4).map((f) => f.field).join(", ")}.`,
-        action: "Try 'Re-extract Metadata' or 'Repair Metadata' to auto-fill missing fields from the tender text. If those do not help, edit the Tender Detail form and fill the missing fields manually.",
-      });
-    }
-    if (meta.invalidFields.length > 0) {
-      blockers.push({
-        code: "METADATA_PLACEHOLDERS_PRESENT",
-        message: `${meta.invalidFields.length} field(s) contain internal placeholders (e.g. 'Bid-Team to confirm') and must be cleaned.`,
-        action: "Open the Tender Detail form and replace placeholder text with real values.",
+      warnings.push({
+        code: "METADATA_FIELDS_MISSING",
+        message: `${meta.missingCritical.length} optional metadata field(s) are missing — advisory only, does not block.`,
       });
     }
     if (tender.metadataContaminated) {
-      blockers.push({
-        code: "METADATA_CONTAMINATED",
-        message: "Client/procuring entity name appears to be contaminated with unrelated text or navigation noise.",
-        action: "Open the Tender Detail form and correct the Client Name field.",
+      warnings.push({
+        code: "METADATA_CONTAMINATED_ADVISORY",
+        message: "Client name may contain portal text — advisory only, does not block.",
       });
     }
   }
@@ -731,8 +717,6 @@ export async function computeTenderLifecycle(
     blocked.push({ action: "GENERATE_DOCS", reason: "No approved analysis exists. Run AI Analyze first." });
   } else if (effectiveFiles.length > 0 && !extractionGenerationOk) {
     blocked.push({ action: "GENERATE_DOCS", reason: "Tender extraction quality is too low for reliable generation. Re-extract or run OCR first." });
-  } else if (!metadataGenerationOk) {
-    blocked.push({ action: "GENERATE_DOCS", reason: "Tender metadata is incomplete or the client name is contaminated. Correct client details first." });
   } else {
     allowed.push("GENERATE_DOCS");
   }
@@ -751,8 +735,6 @@ export async function computeTenderLifecycle(
   // there are no final docs, or when the analysis fallback is unapproved.
   if (effectiveFiles.length > 0 && !extractionExportOk) {
     blocked.push({ action: "AUTO_FINALIZE", reason: "Tender extraction quality is too low for final export." });
-  } else if (!metadataExportOk) {
-    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender metadata is incomplete or the client name is contaminated." });
   } else if (noFinalDocs) {
     blocked.push({ action: "AUTO_FINALIZE", reason: "No active final export candidates exist. Generate and approve required documents first." });
   } else if (fallbackUnapproved) {
@@ -770,15 +752,12 @@ export async function computeTenderLifecycle(
   }
 
   // Download ZIP — blocked when canonical readiness not passed
-  if (!finalExportReady || (effectiveFiles.length > 0 && !extractionExportOk) || !metadataExportOk) {
+  if (!finalExportReady || (effectiveFiles.length > 0 && !extractionExportOk)) {
     const reasons: string[] = [];
     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
     if (noFinalDocs) reasons.push("no active final export candidates");
     if (counts.plannedMissingDocs > 0) reasons.push(`${counts.plannedMissingDocs} required document(s) not yet generated`);
     if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
-    if (meta.missingCritical.length > 0) reasons.push(`${meta.missingCritical.length} critical metadata field(s) missing`);
-    if (meta.invalidFields.length > 0) reasons.push(`${meta.invalidFields.length} metadata field(s) contain internal placeholders`);
-    if (tender.metadataContaminated) reasons.push("client name is contaminated with portal noise");
     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);
@@ -823,9 +802,9 @@ export async function computeTenderLifecycle(
         : "PARTIAL";
 
   return {
-    lifecycleState,
+    lifecycleState: lifecycleState ?? "ANALYSIS_APPROVED",
     finalSubmissionStatus,
-    primaryNextAction,
+    primaryNextAction: primaryNextAction ?? "RUN_ENGINE",
     allowedActions: allowed,
     blockedActions: blocked,
     counts,

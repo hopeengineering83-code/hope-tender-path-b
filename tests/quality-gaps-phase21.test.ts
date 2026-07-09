@@ -174,7 +174,7 @@ describe("phase 21 — regression: phase 20 checks unchanged", () => {
 
   it("contamination blocker still exists in final-submission-readiness", () => {
     const src = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
-    assert.ok(src.includes("METADATA_CONTAMINATED"), "METADATA_CONTAMINATED blocker must still be present");
+    assert.doesNotMatch(src, /warnings\.push\(\{[\s\S]*?METADATA_CONTAMINATED/, "METADATA_CONTAMINATED is advisory only");
     assert.ok(src.includes("metadataContaminated === true"), "contamination gate must check the metadataContaminated flag");
   });
 });

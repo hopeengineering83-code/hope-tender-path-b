@@ -22,9 +22,13 @@ describe("PDF extraction — 80-page support", () => {
     const src = read("lib/extract-text.ts");
     // pdf-parse adds [Page N] markers (line ~160)
     assert.ok(src.includes("`[Page ${p?.num ?? i + 1}]\\n${body}`"), "pdf-parse must add [Page N] markers");
-    // pdf2json adds [Page N] markers (line ~187)
-    assert.ok(src.includes("`[Page ${index + 1}]\\n${raw}`"), "pdf2json must add [Page N] markers");
-    // pdfjs adds [Page N] markers (line ~216)
+    // pdf2json adds [Page N] markers — after table-quality PR the variable
+    // is `reconstructed` (positional table reconstruction) instead of `raw`.
+    assert.ok(
+      src.includes("`[Page ${index + 1}]\\n${reconstructed}`") || src.includes("`[Page ${index + 1}]\\n${raw}`"),
+      "pdf2json must add [Page N] markers",
+    );
+    // pdfjs adds [Page N] markers
     assert.ok(src.includes("`[Page ${pageNumber}]\\n${pageText}`"), "pdfjs must add [Page N] markers");
   });
 
@@ -72,21 +76,47 @@ describe("DOCX extraction — headings and tables", () => {
 
   it("DOCX extraction preserves headings as section markers", () => {
     const src = read("lib/extract-text.ts");
-    assert.ok(src.includes("headingMatch"), "must detect headings");
+    // After table-quality PR, headings are found via headingRegex (not headingMatch).
+    // The "#".repeat(level) prefix is still used to mark heading depth.
+    assert.ok(src.includes("headingRegex") || src.includes("headingMatch"), "must detect headings");
     assert.ok(src.includes('"#".repeat(level)'), "must add markdown-style heading prefix");
   });
 
   it("DOCX extraction preserves tables as structured text", () => {
     const src = read("lib/extract-text.ts");
-    assert.ok(src.includes("tableMatch"), "must detect tables");
+    // After table-quality PR, tables are parsed by parseDocxTableToText which
+    // emits [Table: N rows] and Row N: cell | cell markers.
+    assert.ok(src.includes("findTopLevelTables") || src.includes("tableMatch"), "must detect tables");
     assert.ok(src.includes("[Table:"), "must add table marker");
-    assert.ok(src.includes("rows.length"), "must include row count");
+    assert.ok(src.includes("tableLines.length") || src.includes("rows.length"), "must include row count");
   });
 
-  it("DOCX extraction splits by headings and tables to preserve order", () => {
+  it("DOCX extraction preserves document order of headings, tables, and body text", () => {
     const src = read("lib/extract-text.ts");
-    assert.ok(src.includes("html.split"), "must split HTML by headings and tables");
+    // After table-quality PR, the HTML is walked linearly with a cursor,
+    // collecting structural elements (headings + tables) in document order
+    // and emitting body text between them. This replaces the old html.split
+    // approach which broke on nested tables.
     assert.ok(src.includes("sections.push"), "must build sections array");
+    assert.ok(src.includes("findTopLevelTables"), "must use depth-aware table finder for nested tables");
+    assert.ok(src.includes("StructuralElement"), "must merge headings + tables into a sorted element list");
+  });
+
+  it("DOCX extraction expands colspan/rowspan merged cells (grid model)", () => {
+    const src = read("lib/extract-text.ts");
+    assert.ok(src.includes("colspan"), "must parse colspan attributes");
+    assert.ok(src.includes("rowspan"), "must parse rowspan attributes");
+    assert.ok(src.includes("grid"), "must use grid model for merged-cell expansion");
+  });
+
+  it("DOCX table rows use Row N: prefix (consistent with XLSX/PPTX)", () => {
+    const src = read("lib/extract-text.ts");
+    assert.ok(src.includes("`Row ${r + 1}: ${cells.join(\" | \")}`"), "must emit Row N: prefix for DOCX table rows");
+  });
+
+  it("DOCX extraction decodes HTML entities in cells and headings", () => {
+    const src = read("lib/extract-text.ts");
+    assert.ok(src.includes("decodeHtmlEntities"), "must decode HTML entities (&amp; &lt; &gt; &nbsp;)");
   });
 
   it("DOCX extraction falls back to raw text if HTML extraction fails", () => {

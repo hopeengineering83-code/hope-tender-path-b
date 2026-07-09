@@ -165,9 +165,7 @@ export function assessTenderAnalysisQuality(params: {
     score -= 15;
   }
   if (likelyMissingEvaluationCriteria) {
-    warnings.push("Evaluation/scoring methodology appears missing or weak.");
-    recommendations.push("Extract the evaluation matrix/criteria exactly before scoring and generation.");
-    score -= 25;
+    warnings.push("Evaluation/scoring methodology not stated in tender — advisory only, does not cap analysis quality.");
   }
   if (likelyMissingSubmissionRules) {
     warnings.push("Submission rules, exact file naming, or file order appear missing.");
@@ -199,20 +197,16 @@ export function assessTenderAnalysisQuality(params: {
   const contactProvided = (params.clientContactName ?? "").trim().length > 0;
 
   if (clientNameProvided && !isValidClientName(params.clientName)) {
-    metadataIssues.push("clientName extracted but invalid (TOC/section noise or placeholder)");
-    score -= 25;
+    metadataIssues.push("clientName extracted but invalid — advisory only");
   }
   if (referenceProvided && !isValidReferenceNumber(params.referenceNumber)) {
-    metadataIssues.push("referenceNumber extracted but invalid (no digit / stop-word)");
-    score -= 15;
+    metadataIssues.push("referenceNumber extracted but invalid — advisory only");
   }
   if (countryProvided && !isValidCountry(params.country)) {
-    metadataIssues.push("country value is not in the known country whitelist");
-    score -= 8;
+    metadataIssues.push("country value is not in the known country whitelist — advisory only");
   }
   if (contactProvided && !isValidClientContact(params.clientContactName)) {
-    metadataIssues.push("clientContactName extracted but appears to be a fragment, not a real name");
-    score -= 6;
+    metadataIssues.push("clientContactName extracted but appears to be a fragment — advisory only");
   }
   if (metadataIssues.length > 0) {
     warnings.push(`Metadata has ${metadataIssues.length} validation issue(s): ${metadataIssues.join("; ")}`);
@@ -300,19 +294,13 @@ export function assessTenderAnalysisQuality(params: {
       isUnsafe = true;
     }
     if (!isValidClientName(params.clientName)) {
-      warnings.push("No valid client/procuring entity is available for this multi-page tender.");
-      score = Math.min(score, 35);
-      isUnsafe = true;
+      warnings.push("Client/procuring entity not extracted — advisory only, does not cap analysis quality.");
     }
     if (!hasDeadline) {
-      warnings.push("Deadline is missing from extracted/manual metadata for this multi-page tender.");
-      score = Math.min(score, 40);
-      isUnsafe = true;
+      warnings.push("Deadline not extracted — advisory only, does not cap analysis quality.");
     }
     if (!hasSubmissionMethodOrEndpoint) {
-      warnings.push("Submission method or endpoint/address/email is missing for this multi-page tender.");
-      score = Math.min(score, 40);
-      isUnsafe = true;
+      warnings.push("Submission method/endpoint not extracted — advisory only, does not cap analysis quality.");
     }
     if (!hasEvaluationMethodology) {
       // RUNTIME METADATA DEBLOCKER: Missing evaluation weights should NOT cap
