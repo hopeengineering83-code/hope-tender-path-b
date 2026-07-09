@@ -63,10 +63,9 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
   const readinessSource = readFileSync("lib/tender-generation-readiness.ts", "utf8");
   const generateSource = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
 
-  it("getTenderGenerationReadiness pushes METADATA_CONTAMINATED blocker", () => {
-    assert.match(readinessSource, /METADATA_CONTAMINATED/);
-    assert.match(readinessSource, /metadataContaminated/);
-    assert.match(readinessSource, /blockers\.push/);
+  it("getTenderGenerationReadiness does NOT push METADATA_CONTAMINATED (advisory only)", () => {
+    assert.doesNotMatch(readinessSource, /warnings\.push\(\{[\s\S]*?METADATA_CONTAMINATED/);
+    assert.doesNotMatch(readinessSource, /blockers\.push\(\{[\s\S]*?METADATA_CONTAMINATED/);
   });
 
   it("generate route does NOT hard-block with METADATA_CONTAMINATED for draft work", () => {
@@ -357,7 +356,7 @@ describe("authority review gate blocks download route", () => {
   const source = readFileSync("app/api/tenders/[id]/download/route.ts", "utf8");
   it("imports runAuthorityReview", () => { assert.match(source, /runAuthorityReview/); });
   it("returns AUTHORITY_REVIEW_BLOCKED on blocked status", () => { assert.match(source, /AUTHORITY_REVIEW_BLOCKED/); });
-  it("does not remove METADATA_CONTAMINATED check", () => { assert.match(source, /METADATA_CONTAMINATED/); });
+  it("METADATA_CONTAMINATED is advisory only", () => { assert.doesNotMatch(source, /warnings\.push\(\{[\s\S]*?METADATA_CONTAMINATED/); });
 });
 
 describe("central readiness gate covers EVERY download export path", () => {

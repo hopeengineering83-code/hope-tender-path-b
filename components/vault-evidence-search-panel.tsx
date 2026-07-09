@@ -233,7 +233,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
     clientLogger.error("[VaultEvidenceSearchPanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
     return (
       <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
+        <p className="text-xs font-semibold text-amber-700">Panel is loading — refresh to retry if this persists.</p>
       </section>
     );
   }

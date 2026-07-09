@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 describe("readiness UI contradiction guardrails", () => {
   it("blocked generation button does not stay green or say Generate Docs", () => {
     const source = readFileSync(resolve(process.cwd(), "components/generation-action-panel.tsx"), "utf8");
-    assert.match(source, /Tender details incomplete|Resolve blockers|review optional warnings/);
+    assert.doesNotMatch(source, /Tender details incomplete/);
     assert.match(source, /cursor-not-allowed/);
   });
 

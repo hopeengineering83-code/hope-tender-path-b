@@ -268,33 +268,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     || tender.donorAgency
     || tender.implementingAgency;
   const clientNameStatus = getClientNameStatus(effectiveClientNameForReadiness);
-  if ((clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") && !overrideByField.has("clientName")) {
-    // Metadata is NOT a blocker for draft work — warning only.
-    warnings.push({
-      code: "CLIENT_NAME_REQUIRED",
-      message: "Tender details incomplete — optional information was omitted from draft output.",
-      nextAction: "EDIT_TENDER",
-    });
-  } else if (clientNameStatus === "GARBAGE" && !overrideByField.has("clientName")) {
-    warnings.push({
-      code: "CLIENT_NAME_INVALID",
-      message: "Tender details incomplete — optional information was omitted from draft output.",
-      nextAction: "EDIT_TENDER",
-    });
-  }
-
-  // Contaminated client name is NOT a blocker for draft work. It is
-  // treated as unavailable metadata — the contaminated value is omitted
-  // from generated output and replaced with neutral framing. Only Final
-  // Submission Check blocks on contaminated metadata.
-  // (Previously: hard blocker removed per metadata-optional policy)
-  if ((tender as { metadataContaminated?: boolean | null }).metadataContaminated && !overrideByField.has("clientName")) {
-    warnings.push({
-      code: "METADATA_CONTAMINATED",
-      message: "Tender details incomplete — optional information was omitted from draft output.",
-      nextAction: "EDIT_TENDER_METADATA",
-    });
-  }
+  // METADATA IS NO LONGER A BLOCKER OR WARNING (unified runtime model).
 
   if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
     blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
@@ -411,15 +385,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "OPEN_KNOWLEDGE_REVIEW",
     });
   }
-  if (clientNameStatus !== "VALID") {
-    fullProposalBlockers.push({
-      code: "FULL_PROPOSAL_CLIENT_INVALID",
-      message: clientNameStatus === "GARBAGE"
-        ? "Full proposal generation is blocked: client name is invalid (TOC/section fragment, not a real entity)."
-        : "Full proposal generation is blocked: client name is empty or a placeholder.",
-      nextAction: "EDIT_TENDER",
-    });
-  }
+  // METADATA IS NO LONGER A BLOCKER — clientNameStatus does NOT block full proposal generation.
   if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_ANALYSIS_POOR",
@@ -512,18 +478,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // informational report only. Only Final Submission Check blocks on
   // incomplete metadata (via blockingForExport).
   // (Previously: FULL_PROPOSAL_METADATA_INCOMPLETE blocker removed per metadata-optional policy)
-  if (metadataReport.blockingForExport) {
-    const missingCount = metadataReport.missingCritical.length;
-    const placeholderCount = metadataReport.invalidFields.length;
-    const parts: string[] = [];
-    if (missingCount > 0) parts.push(`${missingCount} critical metadata field(s) missing`);
-    if (placeholderCount > 0) parts.push(`${placeholderCount} field(s) contain placeholder language`);
-    warnings.push({
-      code: "FULL_PROPOSAL_METADATA_INCOMPLETE",
-      message: `Tender details incomplete — optional information was omitted from draft output.`,
-      nextAction: "REPAIR_OR_EDIT_TENDER",
-    });
-  }
+  // METADATA COMPLETENESS IS NO LONGER A WARNING OR BLOCKER (unified runtime model).
 
   // Block when all planned docs are unconfirmed derived-draft heuristics.
   if (derivedDraftCount > 0 && derivedDraftCount === totalPlannedCount && totalPlannedCount > 0) {
