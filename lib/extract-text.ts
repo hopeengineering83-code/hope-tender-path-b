@@ -504,7 +504,67 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   if (ext === "doc") return "[Legacy .doc file detected. Please save as .docx for reliable text extraction.]";
   const mammoth = await import("mammoth");
+  // Extract raw text for the main body
   const result = await mammoth.extractRawText({ buffer });
+  const parts: string[] = [];
+
+  // Try to extract HTML to get headings and tables (for structure preservation)
+  try {
+    const htmlResult = await mammoth.convertToHtml({ buffer });
+    const html = htmlResult.value ?? "";
+
+    // Extract headings (h1-h6) as section markers
+    const headingMatches = [...html.matchAll(/<h([1-6])[^>]*>(.*?)<\/h\1>/gis)];
+    if (headingMatches.length > 0) {
+      // If we have structured headings, use them to build a better text representation
+      // that preserves section order and hierarchy
+      const sections: string[] = [];
+      let currentSection = "";
+      let inTable = false;
+      let tableRows: string[] = [];
+
+      // Split HTML by headings and tables to preserve document structure
+      const htmlParts = html.split(/(<h[1-6][^>]*>.*?<\/h[1-6]>|<table[\s\S]*?<\/table>)/gis);
+      for (const part of htmlParts) {
+        if (!part.trim()) continue;
+        const headingMatch = part.match(/<h([1-6])[^>]*>(.*?)<\/h\1>/is);
+        const tableMatch = part.match(/<table[\s\S]*?<\/table>/is);
+
+        if (headingMatch) {
+          if (currentSection.trim()) sections.push(currentSection.trim());
+          const level = parseInt(headingMatch[1]);
+          const headingText = headingMatch[2].replace(/<[^>]+>/g, "").trim();
+          const prefix = "#".repeat(level);
+          currentSection = `${prefix} ${headingText}\n\n`;
+        } else if (tableMatch) {
+          // Extract table as structured text
+          const rows = [...tableMatch[0].matchAll(/<tr[\s\S]*?<\/tr>/gis)];
+          const tableLines: string[] = [];
+          for (const rowMatch of rows) {
+            const cells = [...rowMatch[0].matchAll(/<t[dh][\s\S]*?<\/t[dh]>/gis)];
+            const cellTexts = cells.map((c) => c[0].replace(/<[^>]+>/g, "").trim());
+            if (cellTexts.some((c) => c)) tableLines.push(cellTexts.join(" | "));
+          }
+          if (tableLines.length > 0) {
+            currentSection += `[Table: ${tableLines.length} rows]\n${tableLines.join("\n")}\n\n`;
+          }
+        } else {
+          // Regular paragraph text
+          const text = part.replace(/<[^>]+>/g, "").trim();
+          if (text) currentSection += text + "\n\n";
+        }
+      }
+      if (currentSection.trim()) sections.push(currentSection.trim());
+
+      if (sections.length > 0) {
+        return normalizeExtractedText(sections.join("\n\n---\n\n"));
+      }
+    }
+  } catch {
+    // HTML extraction failed — fall through to raw text
+  }
+
+  // Fallback: just use raw text
   return normalizeExtractedText(result.value ?? "");
 }
 
@@ -516,9 +576,25 @@ async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
-    const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
-    const cleaned = csv.split("\n").filter((row) => row.replace(/,/g, "").trim().length > 0).join("\n").trim();
-    if (cleaned) parts.push(`[Sheet: ${sheetName}]\n${cleaned}`);
+    // Use sheet_to_json with header:1 to get row arrays for better structure
+    const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", blankrows: false }) as string[][];
+    if (rows.length === 0) continue;
+
+    // Detect if this sheet looks like a BOQ / price schedule
+    const headerRow = rows[0]?.map((c: any) => String(c ?? "").toLowerCase()) ?? [];
+    const boqKeywords = ["item", "description", "unit", "quantity", "price", "rate", "amount", "total"];
+    const isBoq = headerRow.filter((h: string) => boqKeywords.some((kw) => h.includes(kw))).length >= 3;
+    const sheetType = isBoq ? " [BOQ/Price Schedule]" : "";
+
+    // Build structured text with row references
+    const lines: string[] = [`[Sheet: ${sheetName}${sheetType}]`];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i].map((c: any) => String(c ?? "").trim());
+      const lineText = row.filter((c: string) => c).join(" | ");
+      if (lineText) lines.push(`Row ${i + 1}: ${lineText}`);
+    }
+    const cleaned = lines.join("\n").trim();
+    if (cleaned) parts.push(cleaned);
   }
   if (parts.length === 0) return `[Empty spreadsheet: ${fileName}]`;
   return normalizeExtractedText(parts.join("\n\n"));
