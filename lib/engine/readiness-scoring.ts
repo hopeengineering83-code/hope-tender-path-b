@@ -179,8 +179,9 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
   if (input.analysisExtractionStatus === "OCR_REQUIRED") applicableCaps.push({ dimension: "analysisSource", capScore: 40, reason: "Tender requires OCR extraction before AI Analyze can be trusted." });
   if (input.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") applicableCaps.push({ dimension: "analysisSource", capScore: 50, reason: "AI analysis ran on partially extracted pages." });
   if ((input.mandatoryRequirementsCount ?? 0) > 0 && (input.mandatoryTracedCount ?? 0) === 0) applicableCaps.push({ dimension: "sourceReferenceCoverage", capScore: 60, reason: `Tender has ${input.mandatoryRequirementsCount} mandatory/critical requirement(s) but none have source traceability.` });
-  if (input.metadataContaminated) applicableCaps.push({ dimension: "metadataCompleteness", capScore: 50, reason: "Client/procuring entity name is contaminated by portal noise or unrelated text." });
-  if ((input.metadataCompletenessRatio ?? 0) < 0.6 || (input.metadataInvalidCount ?? 0) > 0) applicableCaps.push({ dimension: "metadataCompleteness", capScore: 60, reason: "Critical tender metadata is missing or invalid." });
+  // METADATA CAPS REMOVED — per the unified runtime model, metadata is advisory/diagnostic only.
+  // if (input.metadataContaminated) applicableCaps.push(...);
+  // if ((input.metadataCompletenessRatio ?? 0) < 0.6 ...) applicableCaps.push(...);
   if (docQuality.failedCount > 0) applicableCaps.push({ dimension: "generatedDocumentQuality", capScore: 60, reason: `${docQuality.failedCount} generated document(s) failed the quality gate.` });
   if (input.finalExportGateOk === false) applicableCaps.push({ dimension: "finalExportGate", capScore: 99, reason: "Final export gate is currently blocked." });
 

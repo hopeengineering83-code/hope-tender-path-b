@@ -42,14 +42,12 @@ describe("D — readiness helper mirrors the POST /generate metadata gate", () =
     }
   });
 
-  it("pushes a FULL_PROPOSAL_METADATA_INCOMPLETE warning when blockingForExport", () => {
-    assert.match(source, /if \(metadataReport\.blockingForExport\)/);
-    assert.match(source, /code: "FULL_PROPOSAL_METADATA_INCOMPLETE"/);
-    assert.match(source, /nextAction: "REPAIR_OR_EDIT_TENDER"/);
+  it("does NOT push FULL_PROPOSAL_METADATA_INCOMPLETE (advisory only)", () => {
+    assert.doesNotMatch(source, /code: "FULL_PROPOSAL_METADATA_INCOMPLETE"/);
   });
 
-  it("warning message is compact and non-blocking", () => {
-    assert.match(source, /Tender details incomplete/);
+  it("metadata warning text removed", () => {
+    assert.doesNotMatch(source, /Tender details incomplete/);
   });
 });
 
