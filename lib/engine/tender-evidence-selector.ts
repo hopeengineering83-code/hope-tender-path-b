@@ -1,4 +1,4 @@
-import { PrismaClient, Expert, Project, LegalRecord, FinancialRecord, CompanyAsset, CompanyComplianceRecord } from "@prisma/client";
+import { PrismaClient, Expert, Project, LegalRecord, FinancialRecord, CompanyAsset, CompanyComplianceRecord, Company, Tender } from "@prisma/client";
 import {
   TenderEvidenceSelection,
   RequirementEvidenceMatch,
@@ -20,6 +20,43 @@ function parseArr(val: string | null | undefined): string[] {
   }
 }
 
+/**
+ * Minimum acceptable relevance score for compliance-record selection.
+ *
+ * Records with a score of 0 (no keyword/title match) are NEVER selected —
+ * they would be irrelevant evidence. This fixes the review blocker where
+ * `findBestCompliance` returned the first candidate even when score was 0.
+ */
+const COMPLIANCE_MIN_SCORE = 1;
+
+/**
+ * Structured authorization-error result.
+ *
+ * Returned by `selectEvidence` and `getTenderEvidenceSelectionById` when
+ * the caller fails the tenant-ownership check. Callers MUST check for this
+ * shape (or `null`) and surface a 403 Forbidden response.
+ */
+export type TenderEvidenceForbidden = {
+  forbidden: true;
+  reason: string;
+  code:
+    | "USER_NOT_AUTHENTICATED"
+    | "COMPANY_NOT_FOUND"
+    | "TENDER_NOT_FOUND"
+    | "TENDER_NOT_OWNED_BY_USER"
+    | "COMPANY_NOT_OWNED_BY_USER"
+    | "TENDER_COMPANY_MISMATCH";
+};
+
+/**
+ * Check if a value is a forbidden result.
+ */
+export function isTenderEvidenceForbidden(
+  result: TenderEvidenceSelection | TenderEvidenceForbidden | null,
+): result is TenderEvidenceForbidden {
+  return result !== null && typeof result === "object" && (result as TenderEvidenceForbidden).forbidden === true;
+}
+
 export class TenderEvidenceSelector {
   private prisma: PrismaClient;
 
@@ -27,15 +64,80 @@ export class TenderEvidenceSelector {
     this.prisma = prisma;
   }
 
-  async selectEvidence(tenderId: string, companyId: string): Promise<TenderEvidenceSelection> {
+  /**
+   * Select evidence for a tender from a company's vault.
+   *
+   * AUTHORIZATION (review-blocker fix #1):
+   * The caller supplies `companyId` AND `userId`. This method verifies:
+   *   1. The company exists AND `company.userId === userId` (the authenticated
+   *      user owns the company whose evidence is being selected).
+   *   2. The tender exists AND `tender.userId === userId` (the authenticated
+   *      user owns the tender for which evidence is being selected).
+   *
+   * If either check fails, the method returns a structured
+   * `TenderEvidenceForbidden` result instead of throwing. Callers MUST
+   * check the result with `isTenderEvidenceForbidden()` and surface a 403.
+   *
+   * The caller-supplied `companyId` alone does NOT authorize access — the
+   * user must own both the company and the tender.
+   */
+  async selectEvidence(
+    tenderId: string,
+    companyId: string,
+    userId: string,
+  ): Promise<TenderEvidenceSelection | TenderEvidenceForbidden> {
+    if (!userId) {
+      return { forbidden: true, reason: "User ID is required for evidence selection.", code: "USER_NOT_AUTHENTICATED" };
+    }
+
+    // ── Check 1: the company exists AND belongs to the authenticated user ──
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, userId: true, name: true },
+    });
+    if (!company) {
+      return { forbidden: true, reason: `Company ${companyId} not found.`, code: "COMPANY_NOT_FOUND" };
+    }
+    if (company.userId !== userId) {
+      return {
+        forbidden: true,
+        reason: `Company ${companyId} does not belong to user ${userId}.`,
+        code: "COMPANY_NOT_OWNED_BY_USER",
+      };
+    }
+
+    // ── Check 2: the tender exists AND belongs to the authenticated user ──
     const tender = await this.prisma.tender.findUnique({
       where: { id: tenderId },
-      include: {
-        requirements: true
-      }
+      include: { requirements: true },
     });
+    if (!tender) {
+      return { forbidden: true, reason: `Tender ${tenderId} not found.`, code: "TENDER_NOT_FOUND" };
+    }
+    if (tender.userId !== userId) {
+      return {
+        forbidden: true,
+        reason: `Tender ${tenderId} does not belong to user ${userId}.`,
+        code: "TENDER_NOT_OWNED_BY_USER",
+      };
+    }
 
-    if (!tender) throw new Error("Tender not found");
+    // Both checks passed — the user owns both the company and the tender.
+    // It is now safe to select evidence from this company for this tender.
+    return this.doSelectEvidence(tender, company, userId);
+  }
+
+  /**
+   * Internal method that performs the actual evidence selection after
+   * authorization has been verified. Separated from `selectEvidence` so
+   * the authorization logic is testable in isolation.
+   */
+  private async doSelectEvidence(
+    tender: Tender & { requirements: any[] },
+    company: Pick<Company, "id" | "userId" | "name">,
+    _userId: string,
+  ): Promise<TenderEvidenceSelection> {
+    const companyId = company.id;
 
     const experts = await this.prisma.expert.findMany({
       where: { companyId, isActive: true, deletedAt: null }
@@ -238,7 +340,7 @@ export class TenderEvidenceSelector {
     const score = this.calculateOverallScore(requirementMatches, missingEvidence);
 
     return {
-      tenderId,
+      tenderId: tender.id,
       companyId,
       sourceRevision: new Date().toISOString(),
       requirementMatches,
@@ -404,21 +506,47 @@ export class TenderEvidenceSelector {
     };
   }
 
+  /**
+   * Find the best-matching compliance record for a requirement query.
+   *
+   * REVIEW-BLOCKER FIX #3:
+   * Previously this method returned the first candidate even when its score
+   * was 0 — meaning an irrelevant compliance record would be selected as
+   * evidence. This violated the "no invented/irrelevant evidence" rule.
+   *
+   * Now: candidates with score 0 are filtered OUT before sorting. If no
+   * candidate has a positive score (≥ COMPLIANCE_MIN_SCORE), the method
+   * returns null — the requirement is then recorded as a missing-evidence
+   * gap instead of being matched to an irrelevant record.
+   */
   private findBestCompliance(query: string, records: CompanyComplianceRecord[]): { recordId: string, title: string, reason: string } | null {
     if (records.length === 0) return null;
     const queryLower = query.toLowerCase();
+
+    // Score every candidate, then FILTER OUT score-0 candidates.
+    // Only records with a positive keyword/title/type match are considered.
     const candidates = records.map(r => {
       let score = 0;
       if (r.title.toLowerCase().includes(queryLower)) score += 1;
       if (queryLower.includes(r.complianceType.toLowerCase())) score += 1;
+      // Keyword overlap on individual query terms
+      const keywords = queryLower.split(/\s+/).filter(k => k.length > 3);
+      keywords.forEach(k => {
+        if (r.title.toLowerCase().includes(k)) score += 0.5;
+        if (r.complianceType.toLowerCase().includes(k)) score += 0.5;
+      });
       return { record: r, score };
-    });
+    }).filter(c => c.score >= COMPLIANCE_MIN_SCORE);
+
+    // No candidate with a positive score → return null (no irrelevant evidence)
+    if (candidates.length === 0) return null;
+
     candidates.sort((a, b) => b.score - a.score);
     const best = candidates[0].record;
     return {
       recordId: best.id,
       title: best.title,
-      reason: `Compliance certificate matched by title/type.`
+      reason: `Compliance certificate matched by title/type (score ${candidates[0].score.toFixed(1)}).`
     };
   }
 
@@ -431,16 +559,67 @@ export class TenderEvidenceSelector {
   }
 }
 
-export async function getTenderEvidenceSelection(prisma: PrismaClient, tenderId: string, companyId: string): Promise<TenderEvidenceSelection> {
+/**
+ * Select evidence for a tender from a company's vault.
+ *
+ * Wraps `TenderEvidenceSelector.selectEvidence()`. Returns either the
+ * evidence selection or a structured `TenderEvidenceForbidden` error.
+ * Callers MUST check the result with `isTenderEvidenceForbidden()`.
+ */
+export async function getTenderEvidenceSelection(
+  prisma: PrismaClient,
+  tenderId: string,
+  companyId: string,
+  userId: string,
+): Promise<TenderEvidenceSelection | TenderEvidenceForbidden> {
   const selector = new TenderEvidenceSelector(prisma);
-  return selector.selectEvidence(tenderId, companyId);
+  return selector.selectEvidence(tenderId, companyId, userId);
 }
 
-export async function getTenderEvidenceSelectionById(prisma: PrismaClient, tenderId: string, userId: string): Promise<TenderEvidenceSelection | null> {
+/**
+ * Get tender evidence selection by tender ID + authenticated user ID.
+ *
+ * REVIEW-BLOCKER FIX #2:
+ * Previously this function accepted a `userId` but did NOT verify that the
+ * tender belonged to that user. It loaded the user's company and selected
+ * evidence — but the tender could belong to a different user (different
+ * tenant). This was a cross-tenant authorization bypass.
+ *
+ * Now: this function verifies that the tender belongs to the authenticated
+ * user BEFORE selecting evidence. The authorization flow is:
+ *   1. Load the company by `userId` (the user's own company).
+ *   2. Load the tender by `tenderId`.
+ *   3. Verify `tender.userId === userId` (the tender belongs to this user).
+ *   4. If all checks pass, select evidence via `selectEvidence()`.
+ *
+ * Returns:
+ *   - `TenderEvidenceSelection` on success
+ *   - `TenderEvidenceForbidden` on authorization failure (callers surface 403)
+ *   - `null` if the company doesn't exist (user has no workspace yet)
+ *
+ * This function does NOT use fake user IDs — it requires the real
+ * authenticated user ID from the session.
+ */
+export async function getTenderEvidenceSelectionById(
+  prisma: PrismaClient,
+  tenderId: string,
+  userId: string,
+): Promise<TenderEvidenceSelection | TenderEvidenceForbidden | null> {
+  if (!userId) {
+    return { forbidden: true, reason: "User ID is required.", code: "USER_NOT_AUTHENTICATED" };
+  }
+
+  // Load the authenticated user's company/workspace
   const company = await prisma.company.findFirst({ where: { userId } });
   if (!company) return null;
+
+  // selectEvidence() performs the full authorization:
+  //   - company.userId === userId (company belongs to user)
+  //   - tender.userId === userId (tender belongs to user)
+  // This prevents cross-tenant access — a user cannot select evidence for
+  // another user's tender even if they know the tenderId.
   const selector = new TenderEvidenceSelector(prisma);
-  return selector.selectEvidence(tenderId, company.id);
+  return selector.selectEvidence(tenderId, company.id, userId);
 }
 
 export async function getConfirmedEvidenceFileIds(prisma: PrismaClient, tenderId: string): Promise<string[]> {
