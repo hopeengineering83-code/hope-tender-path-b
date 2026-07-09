@@ -99,11 +99,17 @@ describe("hardened gate — legacy-analysis (no promoted job) is blocked", () =>
 // ─── Critical metadata gate ───────────────────────────────────────────────────
 
 describe("hardened gate — critical metadata gate (G)", () => {
-  it("blocks when criticalMetadataOk is false", () => {
-    const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false }));
+  it("blocks export when criticalMetadataOk is false", () => {
+    const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "export" }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
     assert.ok(r.blockerDetail?.includes("critical metadata"), `got: ${r.blockerDetail}`);
+  });
+
+  it("does NOT block draft generation when criticalMetadataOk is false", () => {
+    const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "generate" }));
+    // Draft: metadata is advisory, not blocking
+    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "draft should not hard-block on metadata");
   });
 
   it("allows when criticalMetadataOk is true", () => {
@@ -114,6 +120,7 @@ describe("hardened gate — critical metadata gate (G)", () => {
   it("metadata gate fires before requirement gate when both fail", () => {
     const r = evaluateGenerationReadiness(goodInput({
       criticalMetadataOk: false,
+      purpose: "export",
       requirementCount: 0,
     }));
     assert.equal(r.ok, false);

@@ -315,14 +315,15 @@ export function assessTenderAnalysisQuality(params: {
       isUnsafe = true;
     }
     if (!hasEvaluationMethodology) {
-      warnings.push("Evaluation criteria/weights are missing for this multi-page tender.");
-      score = Math.min(score, 40);
-      isUnsafe = true;
+      // RUNTIME METADATA DEBLOCKER: Missing evaluation weights should NOT cap
+      // the score at 40/UNSAFE. Many tenders do not provide evaluation weights
+      // — this is "not stated", not an extraction failure. Only warn.
+      warnings.push("Evaluation criteria/weights are not stated in the tender source. Treat as not stated, not extraction failure.");
+      score -= 5; // Minor deduction, not a hard cap
     }
     if (!hasRequiredDocumentsOrForms) {
       warnings.push("Required documents/forms are not known from exact file names or extracted requirements.");
-      score = Math.min(score, 40);
-      isUnsafe = true;
+      score -= 5; // Minor deduction, not a hard cap
     }
   }
   if (extractionUnsafe) {

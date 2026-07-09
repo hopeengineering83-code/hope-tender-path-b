@@ -208,7 +208,13 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       return;
     }
     if (!sourceFileId || !activeFileIds.has(sourceFileId as string)) {
-      blockers.push(`Critical metadata field ${label} has no active TenderFile source evidence.`);
+      // RUNTIME METADATA DEBLOCKER: In draft mode, missing source evidence is
+      // advisory, not a hard block. The value may be resolved from parser/
+      // effective facts without active TenderFile source evidence.
+      // Final mode still requires source grounding.
+      if (!isDraft) {
+        blockers.push(`Critical metadata field ${label} has no active TenderFile source evidence.`);
+      }
       return;
     }
     if (typeof sourcePage !== "number" || sourcePage < 1) {

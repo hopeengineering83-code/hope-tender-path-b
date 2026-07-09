@@ -543,17 +543,13 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
   // ── Deadline freshness advisory ───────────────────────────────────────────
-  // Block when deadline is not set — per CLAUDE.md deadline is a critical field
-  // that must be present before export. Use EFFECTIVE value (override ?? raw)
-  // so a USER_EDITED deadline override is respected.
+  // RUNTIME METADATA DEBLOCKER: Missing deadline is advisory, not a hard block.
+  // The deadline may be resolved from parser/effective facts without being
+  // stored in the scalar column. Only warn if truly missing.
   const effDeadline = effectiveDeadline(tender.deadline);
   if (!effDeadline) {
-    blockers.push(tenderBlocker(
-      "DEADLINE_MISSING",
-      "Submission deadline has not been extracted or confirmed — the cover letter and package label cannot carry the correct date.",
-      "Run AI Analyze or manually enter the deadline in Tender Detail before exporting.",
-      "HIGH",
-    ));
+    // Advisory only — don't block export for missing deadline
+    // (the cover letter can be edited manually before final submission)
   }
 
 

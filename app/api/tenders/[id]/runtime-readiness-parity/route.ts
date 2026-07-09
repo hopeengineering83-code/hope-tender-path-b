@@ -78,6 +78,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       ok: true,
       tenderId,
+      deployment: {
+        commitSha: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
+        deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
+        deploymentUrl: process.env.VERCEL_URL || "unknown",
+        environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown",
+        buildTime: new Date().toISOString(),
+      },
       facts: {
         deadline: sanitizeFact(facts.metadata.deadline),
         submissionMethod: sanitizeFact(facts.metadata.submissionMethod),
