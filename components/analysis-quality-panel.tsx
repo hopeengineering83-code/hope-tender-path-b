@@ -7,6 +7,7 @@ import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 import { inferSector } from "../lib/engine/proposal-intelligence";
+import { getEffectiveTenderFacts } from "../lib/engine/effective-tender-facts";
 import { statusToSeverity, severityBadgeClasses, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
@@ -63,24 +64,35 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
 
   const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
 
+  // ── Effective tender facts — use parser/ledger facts, not raw scalars ──
+  // This fixes the contradiction where Tender Detail shows a parsed deadline
+  // but Analysis Quality says "deadline missing" because tender.deadline is null.
+  // The effective facts combine ledger → parser → scalar fallback.
+  const effectiveFacts = await getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null);
+
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
-    evaluationMethodology: tender.evaluationMethodology,
+    evaluationMethodology: effectiveFacts?.evaluationMethodology ?? tender.evaluationMethodology,
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
-    referenceNumber: tender.reference,
-    country: tender.country,
+    clientName: effectiveFacts?.clientOrProcuringEntity ?? (tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined),
+    referenceNumber: effectiveFacts?.referenceNumber ?? tender.reference,
+    country: effectiveFacts?.country ?? tender.country,
     clientContactName: tender.clientContactName,
     matchingScore: matchingQuality.score,
     extractedTextLength: extractedChars,
     totalPageCount,
-    deadline: tender.deadline,
-    submissionMethod: tender.submissionMethod,
-    submissionAddress: tender.submissionAddress,
-    submissionEmails: tender.submissionEmails,
+    // Use effective deadline/method/emails/address from parser/ledger when available
+    deadline: effectiveFacts?.deadlineIso ?? effectiveFacts?.deadlineDisplay ?? tender.deadline,
+    submissionMethod: effectiveFacts?.submissionMethod && effectiveFacts.submissionMethod !== "Unknown"
+      ? effectiveFacts.submissionMethod
+      : tender.submissionMethod,
+    submissionAddress: effectiveFacts?.submissionAddress ?? tender.submissionAddress,
+    submissionEmails: effectiveFacts?.submissionEmails.length
+      ? effectiveFacts.submissionEmails.join(", ")
+      : tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
     analysisSource: rawSource,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
