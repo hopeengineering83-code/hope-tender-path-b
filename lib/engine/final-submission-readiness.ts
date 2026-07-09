@@ -1138,7 +1138,7 @@ export async function getFinalSubmissionReadiness(
     readinessCapDimension: readinessScoreResult.appliedCap?.dimension ?? null,
     readinessCapScore: readinessScoreResult.appliedCap?.capScore ?? null,
     ungeneratedPlannedRequired: generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length,
-    missingCriticalMetadataFields: metadata.missingCritical.map((f) => f.field),
+    missingCriticalMetadataFields: [], // METADATA IS ADVISORY ONLY — do not populate missingCriticalMetadataFields
   };
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;

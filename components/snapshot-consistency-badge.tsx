@@ -79,7 +79,7 @@ export function SnapshotConsistencyBadge({
         }`}
         title="Authoritative release snapshot (single source of truth)"
       >
-        snapshot · {verdictLabel}: {eligible ? "eligible" : "blocked"}
+        snapshot · {verdictLabel}: {eligible ? "ready" : "pending"}
         <span className="ml-1 font-mono text-slate-400">rev {snapshot.snapshotRevision.slice(0, 8)}</span>
       </span>
       {disagree && (
