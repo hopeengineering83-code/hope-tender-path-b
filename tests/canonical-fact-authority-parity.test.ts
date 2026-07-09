@@ -256,3 +256,105 @@ describe("runtime parity guarantee", () => {
     assert.ok(src.includes("score = Math.min(score, 40)"), "cap exists but only triggers when hasDeadline is false");
   });
 });
+
+// ─── 8. Fix area 1: Tender Detail missing-facts uses intelligence (not scalar-only) ──
+
+describe("fix area 1 — Tender Detail missing-facts uses intelligence", () => {
+  it("intake panel builds effectiveMissingFacts from intelligence (not sourceDetail)", () => {
+    const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
+    assert.ok(src.includes("effectiveMissingFacts"), "must build effectiveMissingFacts");
+    assert.ok(src.includes("intelligence"), "must use intelligence for missing-facts");
+    assert.ok(src.includes("!si.deadlineDisplay && !tender.deadline"), "deadline missing only when both parser and scalar are null");
+    assert.ok(src.includes("!si.method || si.method === \"Unknown\""), "method missing only when parser says Unknown and scalar is null");
+  });
+
+  it("intake panel displays effectiveMissingCount (not sourceDetail.missingRelevantCount)", () => {
+    const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
+    assert.ok(src.includes("effectiveMissingCount"), "must use effectiveMissingCount for display");
+    assert.ok(!src.includes("{sourceDetail.missingRelevantCount > 0"), "must NOT use sourceDetail.missingRelevantCount for the missing-facts condition");
+  });
+
+  it("intake panel does not list deadline as missing when parser found it", () => {
+    const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
+    // The condition for deadline missing is: !si.deadlineDisplay && !tender.deadline
+    // If the parser found the deadline (si.deadlineDisplay is truthy), the condition is false
+    // → deadline is NOT pushed to effectiveMissingFacts → NOT shown as missing
+    assert.ok(src.includes("!si.deadlineDisplay && !tender.deadline"), "deadline missing requires BOTH parser AND scalar to be null");
+  });
+
+  it("intake panel does not list submissionMethod as missing when parser found it", () => {
+    const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
+    // Same pattern: method missing requires parser Unknown AND scalar null
+    assert.ok(src.includes('!si.method || si.method === "Unknown"'), "method missing requires parser Unknown AND scalar null");
+  });
+});
+
+// ─── 9. Fix area 6: metadata-validators containsMetadataPlaceholder handles NBSP ──
+
+describe("fix area 6 — metadata-validators handles NBSP and all placeholders", () => {
+  it("containsMetadataPlaceholder normalizes NBSP (\\u00A0)", () => {
+    const src = read("lib/engine/metadata-validators.ts");
+    assert.ok(src.includes("\\u00A0"), "must normalize NBSP");
+    assert.ok(src.includes("\\u200B"), "must normalize zero-width space");
+  });
+
+  it("containsMetadataPlaceholder has explicit EXPLICIT_PLACEHOLDERS set", () => {
+    const src = read("lib/engine/metadata-validators.ts");
+    assert.ok(src.includes("EXPLICIT_PLACEHOLDERS"), "must have explicit placeholder set");
+    assert.ok(src.includes('"not"'), "must include 'not'");
+    assert.ok(src.includes('"not extracted"'), "must include 'not extracted'");
+    assert.ok(src.includes('"not mentioned"'), "must include 'not mentioned'");
+    assert.ok(src.includes('"not applicable"'), "must include 'not applicable'");
+  });
+
+  it("containsMetadataPlaceholder rejects all spec-required placeholders", async () => {
+    const { containsMetadataPlaceholder } = await import("../lib/engine/metadata-validators");
+    const placeholders = [
+      "Not", "NOT", "not", "Not ", " Not", "Not\n", "Not\u00A0",
+      "Not extracted", "Not mentioned", "Not stated", "Not provided",
+      "Not specified", "Not applicable", "N/A", "NA", "Unknown",
+      "TBD", "TBC", "Pending", "Blank", "Nil",
+    ];
+    for (const p of placeholders) {
+      assert.equal(containsMetadataPlaceholder(p), true, `"${p}" must be detected as placeholder`);
+    }
+  });
+});
+
+// ─── 10. Fix area 7: re-extract route writes null for placeholder values ────
+
+describe("fix area 7 — re-extract writes null for placeholder values", () => {
+  it("re-extract route has else-if branch for clearing placeholder values", () => {
+    const src = read("app/api/tenders/[id]/re-extract-metadata/route.ts");
+    assert.ok(src.includes("storedIsOverridable && isEmpty(extracted) && !isEmpty(stored)"), "must have branch for clearing placeholders");
+    assert.ok(src.includes("update[key as string] = null"), "must write null to clear placeholder");
+    assert.ok(src.includes("do NOT keep"), "must document the rationale");
+  });
+});
+
+// ─── 11. Fix area 8: syncEffectiveFactsToLedger exists ─────────────────────
+
+describe("fix area 8 — syncEffectiveFactsToLedger", () => {
+  it("tender-facts-ledger-service exports syncEffectiveFactsToLedger", () => {
+    const src = read("lib/engine/tender-facts-ledger-service.ts");
+    assert.ok(src.includes("export async function syncEffectiveFactsToLedger"), "must export syncEffectiveFactsToLedger");
+  });
+
+  it("sync function does not overwrite USER_CONFIRMED/USER_EDITED/NOT_APPLICABLE", () => {
+    const src = read("lib/engine/tender-facts-ledger-service.ts");
+    assert.ok(src.includes("HUMAN_CONFIRMED_OPERATIONAL"), "checks for HUMAN_CONFIRMED_OPERATIONAL");
+    assert.ok(src.includes("AUTHORITY_STATE.NOT_APPLICABLE"), "checks for NOT_APPLICABLE");
+    assert.ok(src.includes("skipped++"), "skips user-confirmed/NA facts");
+  });
+
+  it("sync function writes CANDIDATE_NEEDS_REVIEW when no evidence", () => {
+    const src = read("lib/engine/tender-facts-ledger-service.ts");
+    assert.ok(src.includes("CANDIDATE_NEEDS_REVIEW"), "writes CANDIDATE_NEEDS_REVIEW for parser facts without evidence");
+    assert.ok(src.includes("SOURCE_GROUNDED_CONFIRMED"), "writes SOURCE_GROUNDED_CONFIRMED when evidence exists");
+  });
+
+  it("sync function is idempotent (upsert by tenderId + semanticKey)", () => {
+    const src = read("lib/engine/tender-facts-ledger-service.ts");
+    assert.ok(src.includes("tenderId_semanticKey"), "uses upsert by tenderId + semanticKey");
+  });
+});

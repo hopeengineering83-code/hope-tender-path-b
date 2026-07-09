@@ -199,6 +199,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           }
         }
       }
+    } else if (storedIsOverridable && isEmpty(extracted) && !isEmpty(stored)) {
+      // The stored value is a placeholder/invalid AND the extractor found no
+      // replacement value. Write null to clear the placeholder — do NOT keep
+      // "Not", "N/A", "Unknown", etc. as stored values. This prevents the
+      // corrupted-metadata banner from firing on placeholder values and
+      // prevents readiness panels from seeing a non-null-but-invalid value.
+      update[key as string] = null;
+      fieldsAfter[key as string] = null;
+      overwrittenInvalid.push(key as string);
+      // Also clear stale evidence for the placeholder value
+      const cleared = clearEvidenceForField(key as string);
+      for (const [col, val] of Object.entries(cleared)) {
+        (update as Record<string, unknown>)[col] = val;
+      }
     } else {
       fieldsAfter[key as string] = stored;
     }

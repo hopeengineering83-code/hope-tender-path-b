@@ -995,5 +995,120 @@ async function auditLedgerMutation(
   }
 }
 
+// ─── Sync effective facts to ledger ──────────────────────────────────────────
+
+export type SyncEffectiveFactsOptions = {
+  /** When true, overwrite existing CANDIDATE_NEEDS_REVIEW facts. Default false. */
+  overwriteCandidates?: boolean;
+  /** User ID for audit logging */
+  userId: string;
+};
+
+export type SyncEffectiveFactsResult = {
+  synced: number;
+  skipped: number;
+  errors: string[];
+};
+
+/**
+ * Sync parser-derived effective facts to the TenderFactsLedger.
+ *
+ * Rules:
+ *   • Do NOT overwrite USER_CONFIRMED / USER_EDITED / NOT_APPLICABLE facts
+ *   • Do NOT write placeholder values
+ *   • Write parser-derived facts as CANDIDATE_NEEDS_REVIEW if no evidence
+ *   • Write parser-derived facts as SOURCE_GROUNDED_CONFIRMED only when
+ *     source file + page + quote evidence exists
+ *   • Idempotent: upsert by (tenderId, semanticKey)
+ */
+export async function syncEffectiveFactsToLedger(
+  prismaClient: PrismaClient,
+  tenderId: string,
+  effectiveFacts: { facts: Array<{ key: string; label: string; value: string | string[] | null; status: string; source: string; sourcePage?: number | null; sourceQuote?: string | null; }> },
+  options: SyncEffectiveFactsOptions,
+): Promise<SyncEffectiveFactsResult> {
+  const { overwriteCandidates = false, userId } = options;
+  let synced = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const fact of effectiveFacts.facts) {
+    // Only sync facts resolved from source text (parser)
+    if (fact.source !== "parser" && fact.source !== "ledger") continue;
+    if (fact.status !== "resolved_from_source_text" && fact.status !== "resolved_from_ledger") continue;
+
+    const value = Array.isArray(fact.value) ? fact.value.join(", ") : fact.value;
+    if (!value || typeof value !== "string") {
+      skipped++;
+      continue;
+    }
+
+    // Check existing ledger entry — skip if user-confirmed/edited/NA
+    try {
+      const existing = await (prismaClient as any).tenderFactsLedger.findUnique({
+        where: { tenderId_semanticKey: { tenderId, semanticKey: fact.key } },
+        select: { authorityState: true },
+      });
+
+      if (existing) {
+        const ls = String(existing.authorityState).toUpperCase();
+        // Never overwrite user-confirmed, user-edited, or not-applicable
+        if (ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === AUTHORITY_STATE.NOT_APPLICABLE) {
+          skipped++;
+          continue;
+        }
+        // Skip existing CANDIDATE_NEEDS_REVIEW unless overwrite is requested
+        if (ls === AUTHORITY_STATE.CANDIDATE_NEEDS_REVIEW && !overwriteCandidates) {
+          skipped++;
+          continue;
+        }
+      }
+
+      // Determine authority state: SOURCE_GROUNDED_CONFIRMED if evidence exists,
+      // otherwise CANDIDATE_NEEDS_REVIEW
+      const hasEvidence = !!(fact.sourcePage !== null && fact.sourcePage !== undefined && fact.sourceQuote);
+      const authorityState = hasEvidence
+        ? AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED
+        : AUTHORITY_STATE.CANDIDATE_NEEDS_REVIEW;
+
+      await (prismaClient as any).tenderFactsLedger.upsert({
+        where: { tenderId_semanticKey: { tenderId, semanticKey: fact.key } },
+        create: {
+          tenderId,
+          semanticKey: fact.key,
+          displayLabel: fact.label,
+          category: "procuring-entity", // Default; can be refined
+          valueType: "TEXT",
+          normalizedValue: value,
+          rawSourceValue: value,
+          authorityState,
+          confidence: hasEvidence ? 0.9 : 0.5,
+          relevance: "informational",
+          applicability: "applies",
+          sourcePage: fact.sourcePage ?? null,
+          sourceQuote: fact.sourceQuote ?? null,
+          reviewState: "pending",
+          manuallyEntered: false,
+          createdBy: userId,
+        },
+        update: {
+          normalizedValue: value,
+          rawSourceValue: value,
+          authorityState,
+          confidence: hasEvidence ? 0.9 : 0.5,
+          ...(fact.sourcePage !== null && fact.sourcePage !== undefined ? { sourcePage: fact.sourcePage } : {}),
+          ...(fact.sourceQuote ? { sourceQuote: fact.sourceQuote } : {}),
+        },
+      });
+
+      synced++;
+    } catch (err) {
+      errors.push(`Failed to sync ${fact.key}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { synced, skipped, errors };
+}
+
 // Re-export for convenience
 export { prisma, prismaReady };

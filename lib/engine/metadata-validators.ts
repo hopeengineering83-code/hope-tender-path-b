@@ -56,9 +56,23 @@ export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to
 
 export function containsMetadataPlaceholder(value: string | null | undefined): boolean {
   if (!value || typeof value !== "string") return false;
-  const text = value.trim();
+  // Normalize whitespace: replace NBSP (\u00A0) and other Unicode spaces with
+  // regular space, then trim. This handles "Not\u00A0" and "Not\n" variants
+  // that would otherwise bypass the placeholder patterns.
+  const text = value.replace(/[\u00A0\u200B\u200C\u200D\uFEFF]/g, " ").trim();
   if (text.length === 0) return false;
-  return ANYWHERE_PLACEHOLDER_PATTERN.test(text) || PLACEHOLDER_CLIENT_PATTERN.test(text);
+  // Check comprehensive placeholder patterns
+  if (ANYWHERE_PLACEHOLDER_PATTERN.test(text) || PLACEHOLDER_CLIENT_PATTERN.test(text)) return true;
+  // Additional explicit placeholder strings (case-insensitive)
+  const lower = text.toLowerCase();
+  const EXPLICIT_PLACEHOLDERS = new Set([
+    "not", "not extracted", "not mentioned", "not stated", "not provided",
+    "not specified", "not applicable", "n/a", "na", "tbd", "tbc", "tba",
+    "unknown", "none", "null", "nil", "blank", "pending", "placeholder",
+    "to be determined", "to be confirmed", "to be advised",
+  ]);
+  if (EXPLICIT_PLACEHOLDERS.has(lower)) return true;
+  return false;
 }
 
 // ─── Generic field-label / heading detection ─────────────────────────────────
