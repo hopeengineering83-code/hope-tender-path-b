@@ -61,7 +61,7 @@ export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { ten
       startTransition(() => router.refresh());
     } catch (error) {
       setOk(false);
-      setMessage(error instanceof Error ? `Missing-file generation failed: ${error.message}` : "Missing-file generation failed due to a network/runtime error.");
+      setMessage("Missing-file generation failed due to a network/runtime error.");
     } finally {
       setRunning(false);
     }

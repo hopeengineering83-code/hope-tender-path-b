@@ -110,7 +110,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
   } catch (error) {
     logger.error("Export readiness route failed", { detail: error });
-    return jsonError("Export-readiness route failed.", 500, {
+    return jsonError("Export readiness check failed. Refresh to retry.", 500, {
       code: "EXPORT_READINESS_RUNTIME_ERROR",
     });
   }

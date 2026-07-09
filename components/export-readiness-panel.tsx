@@ -133,7 +133,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       // RUNTIME METADATA DEBLOCKER: Never expose raw Prisma error text to UI.
       // Use safe generic message with diagnostic context.
       const isPrismaError = err instanceof Error && (err.message.includes("prisma") || err.message.includes("Prisma") || err.message.includes("Invalid"));
-      setError(isPrismaError ? "Readiness check failed. Retry or contact admin." : (err instanceof Error ? err.message : "Export readiness failed"));
+      setError("Export readiness check failed. Refresh to retry. If the problem persists, contact admin.");
     } finally {
       setLoading(false);
     }
@@ -151,7 +151,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Generated ${total} planned document placeholder(s). Re-checking readiness.`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Generate missing planned files failed");
+      setError("Generate missing planned files failed. Refresh to retry.");
     } finally {
       setGeneratingMissing(false);
     }
@@ -172,7 +172,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Repair completed: ${data.repaired ?? 0} generated document(s) repaired, ${data.skipped ?? 0} already safe/skipped.${manualText} Remaining blockers: ${remainingDocs + remainingTender}.`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Export repair failed");
+      setError("Export repair failed. Refresh to retry.");
     } finally {
       setRepairing(false);
     }
@@ -191,7 +191,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${remaining}. ${data.readinessOk ? "Export gate passed ✓" : remaining > 0 ? `${remaining} doc(s) still need finalization — click Auto-finalize again.` : "Re-check to refresh the gate."}`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Auto-finalize failed");
+      setError("Auto-finalize failed. Refresh to retry.");
     } finally {
       setAutoFinalizing(false);
     }
@@ -212,7 +212,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, " ")}. Re-checking readiness.`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Advisory resolution failed");
+      setError("Advisory resolution failed. Refresh to retry.");
     } finally {
       setResolvingAdvisory(null);
     }
@@ -232,7 +232,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Official original attached for ${blocker.fileName}. Re-checking export readiness.`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Attach original failed");
+      setError("Attach original failed. Refresh to retry.");
     } finally {
       setAttachingDocId(null);
       const input = fileInputs.current[blocker.documentId];
@@ -260,7 +260,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
         await refresh();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Vault evidence linking failed");
+      setError("Vault evidence linking failed. Refresh to retry.");
     } finally {
       setLinkingVault(false);
     }
@@ -285,7 +285,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setVaultCandidates([]);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Applying vault evidence failed");
+      setError("Applying vault evidence failed. Refresh to retry.");
     } finally {
       setLinkingVault(false);
     }
@@ -302,7 +302,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Superseded ${data.superseded ?? 0} outside-plan document(s).`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Supersede outside-plan failed");
+      setError("Supersede outside-plan failed. Refresh to retry.");
     } finally {
       setSupersedingOutsidePlan(false);
     }

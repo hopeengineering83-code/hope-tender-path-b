@@ -80,8 +80,8 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
     clientLogger.error("[AIAnalyzeRecoveryPanel] render error", {
       tenderId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
+      message: "AI recovery state check failed (internal error).", // sanitized — never expose raw Prisma errors
     });
-    return <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">AI recovery state failed to load. Analysis-dependent actions remain blocked.</section>;
+    return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">AI recovery state is loading. Refresh to retry.</section>;
   }
 }

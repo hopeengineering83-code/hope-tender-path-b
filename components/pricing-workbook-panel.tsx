@@ -73,7 +73,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       if (!res.ok) throw new Error(data.error ?? `Failed to load pricing workbook (${res.status})`);
       setWorkbook(data.workbook);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pricing workbook");
+      setError("Failed to load pricing workbook".replace("failed", "failed. Refresh to retry."));
     } finally {
       setLoading(false);
     }
@@ -94,7 +94,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       setWorkbook(data.workbook);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save pricing workbook");
+      setError("Failed to save pricing workbook".replace("failed", "failed. Refresh to retry."));
     } finally {
       setSaving(false);
     }
@@ -126,7 +126,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       await load();
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add cost line");
+      setError("Failed to add cost line".replace("failed", "failed. Refresh to retry."));
     } finally {
       setSaving(false);
     }
@@ -142,7 +142,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       await load();
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete cost line");
+      setError("Failed to delete cost line".replace("failed", "failed. Refresh to retry."));
     } finally {
       setSaving(false);
     }
