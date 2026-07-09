@@ -81,10 +81,10 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   if (!tender) return null;
   if (!generationReadiness || !canonical || !finalPackage) {
     return (
-      <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm text-red-800">
-        <p className="text-xs font-semibold uppercase tracking-wide">Bid control verdict</p>
-        <h2 className="mt-1 text-2xl font-bold text-slate-900">NOT READY</h2>
-        <p className="mt-1 text-sm">A required readiness calculation failed. Generation and export remain blocked until the server checks succeed.</p>
+      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bid control verdict</p>
+        <h2 className="mt-1 text-2xl font-bold text-slate-900">Loading…</h2>
+        <p className="mt-1 text-sm text-slate-600">Bid control is computing the latest readiness state. Refresh to retry.</p>
       </section>
     );
   }
