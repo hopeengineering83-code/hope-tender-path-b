@@ -307,6 +307,40 @@ async function buildAnalysisState(
 
   const hasOnlyStalePartialJobs = stalePartialJobs.length > 0 && !hasGoodAnalysisForCurrentSource;
 
+  // ── Supersede stale partial AI jobs when a newer good analysis exists ──
+  // The spec requires: "Supersede stale partial AiAnalyzeJob/AiAnalyzeChunk
+  // records when a newer FULL_EXTRACTION_AI_ANALYZED or GOOD analysis exists
+  // for current source."
+  //
+  // This is a REAL runtime mutation — not just detection. When a good
+  // analysis exists for the current source, stale RUNNING jobs are marked
+  // SUPERSEDED so they no longer block generation or appear as "partial
+  // analysis awaiting completion" in the UI.
+  if (hasGoodAnalysisForCurrentSource && stalePartialJobs.length > 0) {
+    try {
+      await (prisma as any).aiJob.updateMany({
+        where: { id: { in: stalePartialJobs }, status: "RUNNING" },
+        data: {
+          status: "SUPERSEDED",
+          errorMessage: "Superseded by newer good analysis for current source",
+          finishedAt: new Date(),
+        },
+      });
+      // Also supersede their chunks
+      await (prisma as any).aiAnalyzeChunk.updateMany({
+        where: { jobId: { in: stalePartialJobs }, status: { in: ["RUNNING", "QUEUED"] } },
+        data: {
+          status: "SKIPPED",
+          errorMessage: "Superseded by newer good analysis",
+          finishedAt: new Date(),
+        },
+      });
+    } catch {
+      // Best-effort — if the update fails, the stale jobs remain RUNNING
+      // but the runtime facts still report them as stale.
+    }
+  }
+
   // Content changed: hard-block only when source hash changed AND no completed
   // analysis exists for current source AND deterministic parser cannot provide
   // required context. Otherwise it's a warning.

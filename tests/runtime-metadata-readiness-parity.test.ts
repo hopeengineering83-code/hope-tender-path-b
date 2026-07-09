@@ -182,6 +182,14 @@ describe("stale partial AI jobs", () => {
     assert.ok(src.includes("contentChangedWarningOnly"), "must compute contentChangedWarningOnly");
     assert.ok(src.includes("hasGoodAnalysisForCurrentSource || !!latestJob"), "warning when good analysis or latest job exists");
   });
+
+  it("stale partial AI jobs are SUPERSEDED (not just detected) when good analysis exists", () => {
+    const src = read("lib/engine/runtime-readiness-facts.ts");
+    assert.ok(src.includes("SUPERSEDED"), "must supersede stale jobs (status mutation, not just detection)");
+    assert.ok(src.includes("aiJob.updateMany"), "must call prisma.aiJob.updateMany to supersede");
+    assert.ok(src.includes("aiAnalyzeChunk.updateMany"), "must also supersede stale chunks");
+    assert.ok(src.includes("hasGoodAnalysisForCurrentSource && stalePartialJobs.length > 0"), "supersede only when good analysis exists AND stale jobs exist");
+  });
 });
 
 // ─── 7. Runtime-readiness-parity endpoint ───────────────────────────────────
