@@ -252,11 +252,27 @@ export function evaluateGenerationReadiness(
   // C — Current content hash must equal the eligible job's analysisInputHash.
   //     Any change to active tender-file content or analyzed inputs invalidates
   //     the prior analysis (and, by extension, any prior fallback approval).
+  //
+  //     RUNTIME PARITY FIX (PR #fix/runtime-metadata-readiness-parity-final):
+  //     For DRAFT generation, content-changed is a WARNING, not a hard block.
+  //     The generation can proceed using the existing analysis + deterministic
+  //     parser facts. Only FINAL export requires hash match.
+  //     Hard-block only when: source hash changed AND no completed analysis
+  //     exists AND deterministic parser cannot provide required context.
   if (!input.latestJobHash) {
-    return fail("ANALYSIS_HASH_MISMATCH", "The eligible AI Analyze job has no recorded content hash; analysis cannot be trusted for generation/export.");
-  }
-  if (input.latestJobHash !== input.currentContentHash) {
-    return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender.");
+    // No hash recorded — for draft, warn but allow. For final, block.
+    if (input.purpose === "export" || input.purpose === "final-zip") {
+      return fail("ANALYSIS_HASH_MISMATCH", "The eligible AI Analyze job has no recorded content hash; analysis cannot be trusted for final export.");
+    }
+    // Draft: warning only
+  } else if (input.latestJobHash !== input.currentContentHash) {
+    // Hash mismatch — content changed since last analysis
+    if (input.purpose === "export" || input.purpose === "final-zip") {
+      return fail("ANALYSIS_HASH_MISMATCH", "Tender content or analyzed inputs changed since the last analysis. Re-run AI Analyze so the analysis matches the current tender before final export.");
+    }
+    // Draft: warning only — generation can proceed using existing analysis +
+    // deterministic parser facts. The content-changed warning is surfaced
+    // via runtime-readiness-facts.analysis.contentChangedWarningOnly.
   }
 
   // E — Chunk integrity for the current content hash. Zero chunk rows is a valid

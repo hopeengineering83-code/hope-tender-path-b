@@ -84,9 +84,10 @@ test("6. SUPERSEDED analysis blocks generation", () => {
   assert.equal(r.blockerCode, "ANALYSIS_NOT_READY");
 });
 
-// 7. Current hash mismatch blocks generation.
-test("7. content-hash mismatch blocks generation", () => {
-  const r = evaluateGenerationReadiness(ready({ latestJobHash: "hash-old", currentContentHash: "hash-new" }));
+// 7. Current hash mismatch blocks generation (for export/final-zip only).
+//    Draft generation does NOT hard-block on hash mismatch — it's a warning.
+test("7. content-hash mismatch blocks export (not draft)", () => {
+  const r = evaluateGenerationReadiness(ready({ latestJobHash: "hash-old", currentContentHash: "hash-new", purpose: "export" }));
   assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
 });
 

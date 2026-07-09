@@ -271,12 +271,13 @@ describe("Gate safety — legacy analysis blocks", () => {
 
 // ─── Hash mismatch blocks ──────────────────────────────────────────────────
 
-describe("Gate safety — content hash mismatch blocks", () => {
+describe("Gate safety — content hash mismatch blocks (for export/final-zip)", () => {
 
-  it("blocks when currentContentHash differs from latestJobHash", () => {
+  it("blocks when currentContentHash differs from latestJobHash (export purpose)", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       latestJobHash: "hash-abc",
       currentContentHash: "hash-xyz",
+      purpose: "export",
     }));
     assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "ANALYSIS_HASH_MISMATCH");
