@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { checkFullExportReadiness } from "../../../../../lib/engine/export-readiness";
+import { checkFullExportReadiness, checkFullExportReadinessWithQualityGate } from "../../../../../lib/engine/export-readiness";
+import { buildTenderDocumentContext } from "../../../../../lib/document-generation/tender-document-context";
 import { logAction } from "../../../../../lib/audit";
 import { childLogger } from "../../../../../lib/observability";
 
@@ -36,6 +37,7 @@ export async function POST(
       where: { id },
       include: {
         files: true,
+        requirements: { select: { title: true, description: true, priority: true, requirementType: true, sectionReference: true } },
         generatedDocuments: {
           where: { generationStatus: { not: "SUPERSEDED" } },
         },
@@ -69,10 +71,42 @@ export async function POST(
       storagePath: doc.storagePath,
     }));
 
-    const readiness = await checkFullExportReadiness({
+    // Build the tender document generation context (for tender-type-aware
+    // quality-gate checks). This is the same context used by the document
+    // composer and the document-quality-check route.
+    const ctx = buildTenderDocumentContext(
+      {
+        id: tender.id,
+        title: tender.title,
+        clientName: tender.clientName,
+        reference: tender.reference,
+        submissionMethod: tender.submissionMethod,
+        deadline: tender.deadline,
+        description: tender.description,
+        intakeSummary: tender.intakeSummary,
+        category: tender.category,
+        country: tender.country,
+      },
+      tender.files,
+      tender.requirements,
+      [], // selectedExperts — not needed for quality-gate (only used for invented-evidence checks)
+      [], // selectedProjects
+      [], // selectedLegalDocuments
+      [], // selectedCompanyAssets
+      { name: "—", description: null, country: null, website: null, serviceLines: [], establishedYear: null },
+    );
+
+    // Use the quality-gate version: runs the standard export readiness
+    // checks PLUS validateGeneratedDocumentQuality().okForFinal as a
+    // final-approval blocker.
+    const readiness = await checkFullExportReadinessWithQualityGate({
       tenderId: id,
       docs,
       requireFileContent: false,
+      ctx,
+    }).catch((err) => {
+      logger.warn(`quality-gate check failed, falling back to base readiness: ${err instanceof Error ? err.message : String(err)}`);
+      return checkFullExportReadiness({ tenderId: id, docs, requireFileContent: false });
     });
 
     const validationResults = {
