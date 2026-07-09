@@ -60,9 +60,18 @@ describe("extraction quality — OCR timeout + error classes (round 8)", () => {
   });
 
   it("distinguishes OCR rate-limit errors with a specific marker", () => {
+    // After PR #998, the rate-limit detection was split into two branches:
+    //   - /529|overloaded/i  → retried once with 2s backoff (transient)
+    //   - /429|rate.?limit/i → terminal [OCR_RATE_LIMITED] marker
+    // Both 429 and 529 are still detected and both produce the
+    // [OCR_RATE_LIMITED] marker (529 only if the retry also fails).
     assert.ok(
-      src.includes("/429|rate.?limit|overloaded/i"),
-      "must detect rate-limit errors",
+      src.includes("/429|rate.?limit/i") || src.includes("/429|rate.?limit|overloaded/i"),
+      "must detect 429/rate-limit errors",
+    );
+    assert.ok(
+      src.includes("/529|overloaded/i"),
+      "must detect 529/overloaded errors (retryable)",
     );
     assert.ok(
       src.includes("[OCR_RATE_LIMITED"),
@@ -82,9 +91,15 @@ describe("extraction quality — OCR timeout + error classes (round 8)", () => {
   });
 
   it("detects OCR truncation via stop_reason === max_tokens", () => {
+    // After PR #998 (chunked OCR + continuation loop), the stop_reason check
+    // moved into the claudeVisionOcrCall helper which returns { text, stopReason },
+    // and the caller loops while stopReason === "max_tokens" to continue
+    // extraction. The behavior (detect truncation, log warning) is preserved;
+    // the literal string changed from `===` to `!==` because the loop
+    // condition is inverted (continue WHILE max_tokens, break when NOT).
     assert.ok(
-      src.includes('stop_reason === "max_tokens"'),
-      "must detect truncation via stop_reason",
+      src.includes('stopReason !== "max_tokens"') || src.includes('stop_reason === "max_tokens"'),
+      "must detect truncation via stop_reason (loop break condition or direct check)",
     );
     assert.ok(
       src.includes("OCR truncated at max_tokens"),
