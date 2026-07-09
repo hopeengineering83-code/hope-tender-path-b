@@ -107,7 +107,7 @@ export function CorruptedMetadataBanner({ tender }: { tender: TenderShape }) {
     <section className="mb-4 rounded-2xl border border-red-300 bg-red-50 p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Corrupted metadata detected</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Corrupted Tender Details detected</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">
             {bad.length} tender field{bad.length === 1 ? "" : "s"} stored an invalid value
           </h2>

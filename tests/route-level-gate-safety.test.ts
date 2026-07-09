@@ -158,8 +158,9 @@ describe("Route-level gate safety — PLANNED/SUPERSEDED never count as export-r
 describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock with exact-match grounded evidence", () => {
 
   it("gate does NOT block draft when criticalMetadataOk is false (USER_EDITED without grounded evidence)", () => {
-    // RUNTIME METADATA DEBLOCKER: In draft mode, metadata is advisory.
-    // Only export/final-zip blocks on criticalMetadataOk=false.
+    // TENDER FACTS MODEL: In draft mode, tender facts are advisory.
+    // Only export/final-zip blocks on criticalMetadataOk=false with
+    // TENDER_FACTS_INVALID (renamed from METADATA_CRITICAL_FIELD_INVALID).
     const input: GenerationReadinessInput = {
       purpose: "generate",
       tenderExistsAndOwned: true,
@@ -176,16 +177,22 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
         { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true, sourceFileExtractedText: "meaningful quote text here", sourceFileTotalPages: 5 },
       ],
       criticalMetadataOk: false, // USER_EDITED without grounded evidence
+      recordedBuildPlanState: "VALID",
+      hasCurrentConfirmedBuildPlan: true,
+      confirmedPlanDocumentsOk: true,
+      confirmedBuildPlanItemsValid: true,
       exportReadyDocumentCount: 3,
     };
     const result = evaluateGenerationReadiness(input);
-    // Draft: metadata is advisory, not blocking
-    assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "draft should not hard-block on metadata");
+    // Draft: tender facts are advisory, not blocking
+    assert.equal(result.ok, true, "draft generation must NOT be blocked by missing optional tender details");
+    assert.notEqual(result.blockerCode, "TENDER_FACTS_INVALID");
   });
 
-  it("gate does NOT block EXPORT when criticalMetadataOk is false (metadata is advisory)", () => {
-    // PR #1002 removed metadata as a hard blocker. Export no longer blocks
-    // on criticalMetadataOk=false — metadata is advisory/diagnostic only.
+  it("gate BLOCKS EXPORT with TENDER_FACTS_INVALID when criticalMetadataOk is false (fail-closed)", () => {
+    // PR #1004 weakened this by making metadata fully advisory. The
+    // restoration re-enables the gate for export/final-zip — fail-closed on
+    // unsafe tender facts. Blocker code renamed to TENDER_FACTS_INVALID.
     const input: GenerationReadinessInput = {
       purpose: "export",
       tenderExistsAndOwned: true,
@@ -205,12 +212,14 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
       exportReadyDocumentCount: 3,
     };
     const result = evaluateGenerationReadiness(input);
-    assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
+    assert.equal(result.ok, false, "export MUST be blocked when criticalMetadataOk=false (fail-closed)");
+    assert.equal(result.blockerCode, "TENDER_FACTS_INVALID");
   });
 
   it("gate allows when criticalMetadataOk is true (USER_CONFIRMED with exact-match grounded evidence)", () => {
     // If a user confirms a critical field AND the value matches active tender-source
     // evidence (valid page + meaningful quote), criticalMetadataOk is true → allowed
+    // for BOTH draft generation AND final export (no TENDER_FACTS_INVALID blocker).
     const input: GenerationReadinessInput = {
       purpose: "generate",
       tenderExistsAndOwned: true,

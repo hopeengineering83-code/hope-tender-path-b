@@ -31,7 +31,7 @@
 // recorded against it in the audit log and the panel can dedupe.
 
 export type ControlSuggestionCode =
-  | "METADATA_INCOMPLETE"
+  | "TENDER_FACTS_INCOMPLETE"
   | "ANALYSIS_NOT_RUN"
   | "REGEX_FALLBACK_UNAPPROVED"
   | "SOURCE_REFS_MISSING"
@@ -177,9 +177,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
   if (input.metadataStatus.criticalMissing.length > 0) {
     const fieldsList = input.metadataStatus.criticalMissing.slice(0, 4).join(", ");
     out.push(mkSuggestion({
-      code: "METADATA_INCOMPLETE",
+      code: "TENDER_FACTS_INCOMPLETE",
       type: "TASK",
-      title: "Complete critical tender metadata",
+      title: "Complete critical Tender Details",
       description: `${input.metadataStatus.criticalMissing.length} critical field(s) missing (${fieldsList}). The Repair-all button will populate any value that is in the uploaded tender source; the rest must be confirmed manually.`,
       severity: "HIGH",
       nextAction: "Click 'Repair all empty fields from source' on the Generation panel, then edit any field still empty.",
@@ -347,7 +347,7 @@ export function isHighConfidenceSuggestion(s: SuggestedControl): boolean {
     "AI_PROVIDERS_NOT_CONFIGURED",
     "ANALYSIS_NOT_RUN",
     "REGEX_FALLBACK_UNAPPROVED",
-    "METADATA_INCOMPLETE",
+    "TENDER_FACTS_INCOMPLETE",
     "MANDATORY_COVERAGE_ZERO",
     "NO_ACTIVE_EXPORT_CANDIDATES",
     "MISSING_OFFICIAL_ORIGINALS",

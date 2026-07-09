@@ -191,12 +191,12 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
     : notApplicableNames.length > 0 ? `${Math.round(meta.overallRatio * 100)}% filled; ignored/not applicable: ${notApplicableNames.slice(0, 2).join(", ")}${notApplicableNames.length > 2 ? " …" : ""}`
     : `${Math.round(meta.overallRatio * 100)}% filled`;
   dimensions.push({
-    label: "Metadata",
+    label: "Tender Details",
     score: metaScore,
     max: 15,
     detail: metaDetail,
     status: metaStatusLabel,
-    ...(metaStatusLabel !== "PASS" ? { actionLabel: "Edit metadata", actionHref: "#tender-edit-form" } : {}),
+    ...(metaStatusLabel !== "PASS" ? { actionLabel: "Edit Tender Details", actionHref: "#tender-edit-form" } : {}),
   });
 
   // ── 4. Requirements (15 pts) ─────────────────────────────────────────────

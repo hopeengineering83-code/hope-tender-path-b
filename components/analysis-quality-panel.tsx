@@ -205,7 +205,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
 
       {quality.metadataIssues.length > 0 && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-semibold text-amber-800 mb-1">Metadata issues ({quality.metadataIssues.length})</p>
+          <p className="text-xs font-semibold text-amber-800 mb-1">Tender Details issues ({quality.metadataIssues.length})</p>
           <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-700">
             {quality.metadataIssues.map((issue) => <li key={issue}>{issue}</li>)}
           </ul>

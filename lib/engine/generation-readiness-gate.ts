@@ -96,7 +96,8 @@ export type GenerationBlockerCode =
   | "REQUIREMENTS_MISSING"
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "REQUIREMENT_QUOTE_NOT_IN_FILE"
-  | "METADATA_CRITICAL_FIELD_INVALID"
+  | "TENDER_FACTS_INVALID"
+  | "METADATA_CRITICAL_FIELD_INVALID" // deprecated alias — kept for backward compat, same as TENDER_FACTS_INVALID
   | "BUILD_PLAN_MISSING"
   | "BUILD_PLAN_STALE"
   | "BUILD_PLAN_ITEMS_INVALID"
@@ -289,8 +290,32 @@ export function evaluateGenerationReadiness(
     }
   }
 
-  // G — Critical metadata: REMOVED AS A HARD BLOCKER (unified runtime model).
-  // Metadata is advisory/diagnostic only and cannot block generation or export.
+  // G — Tender Facts safety gate (source-grounded, final-output fail-closed).
+  //
+  // PR #1002 removed this check entirely, weakening final-output safety. This
+  // restoration re-enables the gate for FINAL purposes (export, final-zip) only.
+  // Draft generation remains unblocked — missing optional tender details are
+  // advisory during draft work.
+  //
+  // The `criticalMetadataOk` input is computed upstream using:
+  //   - DRAFT purposes: !fieldStates.hasGenerationBlocker (manual values OK)
+  //   - FINAL purposes:  !fieldStates.hasExportBlocker (manual values need audit)
+  //     AND the BuildPlan source-evidence validator
+  //
+  // Blocker code renamed from METADATA_CRITICAL_FIELD_INVALID to
+  // TENDER_FACTS_INVALID per the unified tender-facts model. The app no longer
+  // exposes "metadata" as a user-facing concept; these are Tender Details /
+  // Submission Facts / Final Package Facts.
+  if (!input.criticalMetadataOk) {
+    if (input.purpose === "export" || input.purpose === "final-zip") {
+      return fail(
+        "TENDER_FACTS_INVALID",
+        "One or more required Tender Details / Submission Facts are missing, invalid, or not source-grounded with active tender file evidence (page + quote + containment). Resolve all required fields — client/procuring entity, deadline, submission method/email/address — before final export.",
+      );
+    }
+    // Draft/support/review: tender facts are advisory, not blocking. Missing
+    // optional details do not prevent draft generation.
+  }
 
   // F — Requirement and source grounding.
   if (input.requirementCount < 1) {

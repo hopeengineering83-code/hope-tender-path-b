@@ -156,12 +156,15 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       assert.ok(result.score <= 99, "Readiness score should be capped if export gate is not OK");
     });
 
-    it("should NOT cap score when metadata is missing (caps removed per unified runtime model)", () => {
-      // PR #999 removed metadata caps from readiness-scoring.ts. Metadata is
-      // advisory/diagnostic only and cannot cap the readiness score.
+    it("should cap score at 60 when tender metadata is missing/invalid (tenderFacts cap restored)", () => {
+      // PR #1004 weakened this by removing the caps. The restoration re-enables
+      // the tender-facts caps so the dashboard cannot show 100% readiness when
+      // required tender facts are unsafe. Dimension is "tenderFacts" (renamed
+      // from "metadataCompleteness"). Draft generation is NOT blocked by this —
+      // it only affects the readiness score, which gates final export.
       const result = computeReadinessScore({
         analysisSource: "AI",
-        metadataCompletenessRatio: 0.2, // Poor metadata
+        metadataCompletenessRatio: 0.2, // Poor metadata (< 0.6 triggers cap)
         metadataInvalidCount: 1,
         sourceReferenceCoverage: 1.0,
         evidenceCoverage: 1.0,
@@ -173,8 +176,10 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
         readyForExportCount: 5,
         finalExportGateOk: true
       });
-      assert.ok(result.score > 60, `Readiness score should NOT be capped for missing metadata (expected >60, got ${result.score})`);
-      assert.notEqual(result.appliedCap?.dimension, "metadataCompleteness");
+      assert.ok(result.score <= 60, `Readiness score MUST be capped at 60 for missing/invalid tender facts (expected ≤60, got ${result.score})`);
+      const cap = result.applicableCaps.find((c) => c.dimension === "tenderFacts");
+      assert.ok(cap, "expected a tenderFacts cap for missing/invalid tender facts");
+      assert.equal(cap?.capScore, 60);
     });
   });
 

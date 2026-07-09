@@ -12,7 +12,7 @@
 // Lifecycle states (strict ordered progression):
 //   UPLOADED → EXTRACTED → AI_ANALYSIS_REQUIRED → AI_ANALYSIS_FAILED
 //   → ANALYSIS_FALLBACK_UNAPPROVED → ANALYSIS_READY_FOR_REVIEW
-//   → ANALYSIS_APPROVED → METADATA_INCOMPLETE
+//   → ANALYSIS_APPROVED → TENDER_FACTS_INCOMPLETE
 //   → SOURCE_REFERENCES_INCOMPLETE → SUBMISSION_PLAN_REQUIRED
 //   → SUBMISSION_PLAN_READY → EVIDENCE_MATCHING_REQUIRED
 //   → EVIDENCE_MATCHED → DOCUMENT_GENERATION_REQUIRED
@@ -62,7 +62,7 @@ export type LifecycleState =
   | "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY"
   | "ANALYSIS_READY_FOR_REVIEW"
   | "ANALYSIS_APPROVED"
-  | "METADATA_INCOMPLETE"
+  | "TENDER_FACTS_INCOMPLETE"
   | "SOURCE_REFERENCES_INCOMPLETE"
   | "SUBMISSION_PLAN_REQUIRED"
   | "SUBMISSION_PLAN_READY"
@@ -585,7 +585,7 @@ export async function computeTenderLifecycle(
     }
     if (tender.metadataContaminated) {
       warnings.push({
-        code: "METADATA_CONTAMINATED_ADVISORY",
+        code: "CLIENT_ENTITY_CONTAMINATED_ADVISORY",
         message: "Client name may contain portal text — advisory only, does not block.",
       });
     }

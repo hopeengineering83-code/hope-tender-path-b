@@ -3,7 +3,8 @@ export type ReadinessScoreSeverity = "READY" | "PARTIAL" | "BLOCKED";
 export type ReadinessScoreDimension =
   | "analysisQuality"
   | "analysisSource"
-  | "metadataCompleteness"
+  | "tenderFacts"
+  | "metadataCompleteness" // deprecated alias — same as tenderFacts
   | "sourceReferenceCoverage"
   | "evidenceCoverage"
   | "matchingQuality"
@@ -45,7 +46,8 @@ export type ReadinessScoreInput = {
 const DIMENSION_WEIGHTS: Record<ReadinessScoreDimension, number> = {
   analysisQuality: 8,
   analysisSource: 6,
-  metadataCompleteness: 8,
+  tenderFacts: 8,
+  metadataCompleteness: 8, // deprecated alias — same weight as tenderFacts
   sourceReferenceCoverage: 6,
   evidenceCoverage: 12,
   matchingQuality: 8,
@@ -179,9 +181,14 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
   if (input.analysisExtractionStatus === "OCR_REQUIRED") applicableCaps.push({ dimension: "analysisSource", capScore: 40, reason: "Tender requires OCR extraction before AI Analyze can be trusted." });
   if (input.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") applicableCaps.push({ dimension: "analysisSource", capScore: 50, reason: "AI analysis ran on partially extracted pages." });
   if ((input.mandatoryRequirementsCount ?? 0) > 0 && (input.mandatoryTracedCount ?? 0) === 0) applicableCaps.push({ dimension: "sourceReferenceCoverage", capScore: 60, reason: `Tender has ${input.mandatoryRequirementsCount} mandatory/critical requirement(s) but none have source traceability.` });
-  // METADATA CAPS REMOVED — per the unified runtime model, metadata is advisory/diagnostic only.
-  // if (input.metadataContaminated) applicableCaps.push(...);
-  // if ((input.metadataCompletenessRatio ?? 0) < 0.6 ...) applicableCaps.push(...);
+  // TENDER FACTS CAPS — restored for final-output safety.
+  // These cap the readiness score when required tender facts (client entity,
+  // deadline, submission instructions) are unsafe. The caps use the
+  // `tenderFacts` dimension (renamed from `metadataCompleteness`) per the
+  // unified tender-facts model. Draft generation is NOT blocked by these —
+  // they only affect the readiness score, which gates final export.
+  if (input.metadataContaminated) applicableCaps.push({ dimension: "tenderFacts", capScore: 50, reason: "Client/procuring entity name is contaminated by portal noise or unrelated text." });
+  if ((input.metadataCompletenessRatio ?? 0) < 0.6 || (input.metadataInvalidCount ?? 0) > 0) applicableCaps.push({ dimension: "tenderFacts", capScore: 60, reason: "Required Tender Details / Submission Facts are missing or invalid." });
   if (docQuality.failedCount > 0) applicableCaps.push({ dimension: "generatedDocumentQuality", capScore: 60, reason: `${docQuality.failedCount} generated document(s) failed the quality gate.` });
   if (input.finalExportGateOk === false) applicableCaps.push({ dimension: "finalExportGate", capScore: 99, reason: "Final export gate is currently blocked." });
 

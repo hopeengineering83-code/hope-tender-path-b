@@ -23,7 +23,8 @@ import { extractRequestId } from "../../../../../../../lib/request-id";
 export const dynamic = "force-dynamic";
 
 const KNOWN_CODES = new Set([
-  "METADATA_INCOMPLETE",
+  "TENDER_FACTS_INCOMPLETE",
+  "METADATA_INCOMPLETE", // deprecated alias — accept for backward compat
   "REGEX_FALLBACK_UNAPPROVED",
   "SOURCE_REFS_MISSING",
   "MANDATORY_COVERAGE_ZERO",

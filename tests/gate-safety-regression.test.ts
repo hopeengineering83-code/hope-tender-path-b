@@ -185,17 +185,38 @@ describe("Gate safety — ownership check blocks", () => {
   });
 });
 
-// ─── Metadata contamination is advisory (caps removed per unified runtime model) ─
+// ─── Tender Facts safety gate (draft advisory, final fail-closed) ───────────
 
-describe("Gate safety — critical metadata is advisory (does NOT block)", () => {
-  // PR #1002 removed metadata as a hard blocker. Metadata cannot block
-  // generation or export — it is advisory/diagnostic only.
-  it("does NOT block export when criticalMetadataOk is false", () => {
+describe("Gate safety — tender facts block final export but not draft", () => {
+  // PR #1004 weakened final-output safety by making metadata fully advisory.
+  // This restoration re-enables the gate for FINAL purposes (export, final-zip)
+  // only — draft generation remains unblocked. Blocker code is renamed from
+  // METADATA_CRITICAL_FIELD_INVALID to TENDER_FACTS_INVALID.
+  it("does NOT block draft when criticalMetadataOk is false (advisory for draft)", () => {
+    const result = evaluateGenerationReadiness(makeBaseInput({
+      criticalMetadataOk: false,
+      purpose: "generate",
+    }));
+    assert.equal(result.ok, true, "draft generation must NOT be blocked by missing optional tender details");
+    assert.notEqual(result.blockerCode, "TENDER_FACTS_INVALID");
+  });
+
+  it("BLOCKS export with TENDER_FACTS_INVALID when criticalMetadataOk is false", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       criticalMetadataOk: false,
       purpose: "export",
     }));
-    assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
+    assert.equal(result.ok, false, "export MUST be blocked when criticalMetadataOk=false (fail-closed)");
+    assert.equal(result.blockerCode, "TENDER_FACTS_INVALID");
+  });
+
+  it("BLOCKS final-zip with TENDER_FACTS_INVALID when criticalMetadataOk is false", () => {
+    const result = evaluateGenerationReadiness(makeBaseInput({
+      criticalMetadataOk: false,
+      purpose: "final-zip",
+    }));
+    assert.equal(result.ok, false, "final-zip MUST be blocked when criticalMetadataOk=false (fail-closed)");
+    assert.equal(result.blockerCode, "TENDER_FACTS_INVALID");
   });
 });
 

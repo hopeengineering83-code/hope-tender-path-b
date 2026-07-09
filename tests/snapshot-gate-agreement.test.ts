@@ -12,7 +12,8 @@
  *   1. Input-shape parity — both call resolveCanonicalFieldState with the same
  *      critical source-evidence columns + activeTenderFileIds filtered to ACTIVE.
  *   2. Decision-function parity — the snapshot's metadata blocker agrees with
- *      the gate's METADATA_CRITICAL_FIELD_INVALID for a missing critical field.
+ *      the gate's TENDER_FACTS_INVALID (renamed from METADATA_CRITICAL_FIELD_INVALID)
+ *      for a missing critical field on final export.
  *   3. Known divergences — documents (as regression sentinels) that the
  *      snapshot's buildPlan.valid uses a count check while the gate uses a
  *      6-condition strict check, and that the snapshot's requirements grounding
@@ -183,11 +184,14 @@ describe("Snapshot ↔ Gate buildPlan + metadata alignment (Tier A)", () => {
 // ─── Tier B: Decision-function parity ───────────────────────────────────────
 
 describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
-  it("resolver reports hasExportBlocker=true (advisory) but gate no longer blocks on metadata", () => {
-    // After PR #1002: metadata is advisory/diagnostic only. The resolver still
-    // computes hasExportBlocker=true for missing critical fields (for UI display),
-    // but the gate no longer blocks generation or export on criticalMetadataOk=false.
-    // This is an INTENTIONAL divergence: resolver = advisory, gate = authoritative.
+  it("resolver reports hasExportBlocker=true AND gate BLOCKS export with TENDER_FACTS_INVALID", () => {
+    // After the tender-facts restoration: the resolver still computes
+    // hasExportBlocker=true for missing critical fields (advisory signal for
+    // UI display), AND the gate now FAIL-CLOSES final export on
+    // criticalMetadataOk=false with TENDER_FACTS_INVALID (renamed from
+    // METADATA_CRITICAL_FIELD_INVALID). The resolver and gate AGREE that
+    // unsafe tender facts block final output — only draft generation is
+    // advisory.
     const resolverResult = resolveCanonicalFieldState({
       tender: {
         id: "tender-1",
@@ -213,9 +217,10 @@ describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
     });
     // Resolver still reports the advisory blocker state for UI display.
     assert.equal(resolverResult.hasGenerationBlocker, false, "draft must NOT be blocked by missing deadline (authority model)");
-    assert.equal(resolverResult.hasExportBlocker, true, "resolver still reports hasExportBlocker=true (advisory for UI)");
+    assert.equal(resolverResult.hasExportBlocker, true, "resolver reports hasExportBlocker=true for missing critical field");
 
-    // Gate no longer blocks on metadata — criticalMetadataOk=false is advisory.
+    // Gate FAIL-CLOSES final export on criticalMetadataOk=false with
+    // TENDER_FACTS_INVALID (renamed from METADATA_CRITICAL_FIELD_INVALID).
     const gateResultExport = evaluateGenerationReadiness({
       purpose: "export",
       tenderExistsAndOwned: true,
@@ -237,13 +242,14 @@ describe("Snapshot ↔ Gate decision-function parity (Tier B)", () => {
         sourceFileExtractedText: "A meaningful requirement quote that is long enough.",
         sourceFileTotalPages: 5,
       }],
-      criticalMetadataOk: false, // advisory only — gate does NOT block
+      criticalMetadataOk: false, // export MUST fail-closed on unsafe tender facts
       recordedBuildPlanState: "VALID",
       hasCurrentConfirmedBuildPlan: true,
       confirmedBuildPlanItemsValid: true,
       exportReadyDocumentCount: 1,
     });
-    assert.ok(gateResultExport.ok || gateResultExport.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export gate must NOT block on metadata (advisory only)");
+    assert.equal(gateResultExport.ok, false, "export gate MUST block on criticalMetadataOk=false (fail-closed)");
+    assert.equal(gateResultExport.blockerCode, "TENDER_FACTS_INVALID");
   });
 
   it("resolver says hasGenerationBlocker=false → gate can still block on OTHER conditions", () => {

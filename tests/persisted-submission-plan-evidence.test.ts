@@ -203,14 +203,28 @@ describe("Controlled flow — one success + multiple blocked", () => {
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
-  it("NOT BLOCKED: metadata contamination (advisory only)", () => {
-    // PR #1002 removed metadata as a hard blocker. Metadata is advisory/diagnostic
-    // only and cannot block generation or export.
+  it("NOT BLOCKED: tender facts (advisory for draft generation)", () => {
+    // Tender-facts model: draft generation is NOT blocked by missing optional
+    // tender details. Only export/final-zip fail-closes on criticalMetadataOk=false.
+    const r = evaluateGenerationReadiness(makePassingInput({
+      criticalMetadataOk: false,
+      purpose: "generate",
+    }));
+    assert.equal(r.ok, true, "draft generation must NOT be blocked by missing optional tender details");
+    assert.notEqual(r.blockerCode, "TENDER_FACTS_INVALID");
+  });
+
+  it("BLOCKED: unsafe tender facts on final export (TENDER_FACTS_INVALID)", () => {
+    // PR #1004 weakened this by making metadata fully advisory. The
+    // restoration re-enables fail-closed behavior for export/final-zip.
+    // Blocker code renamed from METADATA_CRITICAL_FIELD_INVALID to
+    // TENDER_FACTS_INVALID per the unified tender-facts model.
     const r = evaluateGenerationReadiness(makePassingInput({
       criticalMetadataOk: false,
       purpose: "export",
     }));
-    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
+    assert.equal(r.ok, false, "export MUST be blocked when criticalMetadataOk=false (fail-closed)");
+    assert.equal(r.blockerCode, "TENDER_FACTS_INVALID");
   });
 
   it("BLOCKED: stale hash (for export/final-zip)", () => {

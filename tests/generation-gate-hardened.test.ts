@@ -96,38 +96,44 @@ describe("hardened gate — legacy-analysis (no promoted job) is blocked", () =>
   });
 });
 
-// ─── Critical metadata gate (removed per unified runtime model) ──────────────
+// ─── Tender Facts safety gate (G — restored for final-output safety) ────────
 
-describe("hardened gate — critical metadata is advisory (G removed)", () => {
-  // PR #1002 removed metadata as a hard blocker entirely. Metadata cannot
-  // block generation or export — it is advisory/diagnostic only.
-  it("does NOT block export when criticalMetadataOk is false", () => {
+describe("hardened gate — Tender Facts safety (draft advisory, final fail-closed)", () => {
+  // The gate enforces a draft/final distinction:
+  //   - DRAFT (generate): missing optional tender details are advisory — NOT blocked
+  //   - FINAL (export, final-zip): unsafe tender facts ARE blocked — fail-closed
+  //
+  // This restores the safety that PR #1002 removed. The blocker code is
+  // renamed from METADATA_CRITICAL_FIELD_INVALID to TENDER_FACTS_INVALID per
+  // the unified tender-facts model.
+
+  it("BLOCKS export when criticalMetadataOk is false (final-output fail-closed)", () => {
     const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "export" }));
-    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
+    assert.equal(r.ok, false, "export MUST be blocked when tender facts are unsafe");
+    assert.equal(r.blockerCode, "TENDER_FACTS_INVALID", "blocker code must be TENDER_FACTS_INVALID (renamed from METADATA_CRITICAL_FIELD_INVALID)");
   });
 
-  it("does NOT block draft generation when criticalMetadataOk is false", () => {
+  it("BLOCKS final-zip when criticalMetadataOk is false (final-output fail-closed)", () => {
+    const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "final-zip" }));
+    assert.equal(r.ok, false, "final-zip MUST be blocked when tender facts are unsafe");
+    assert.equal(r.blockerCode, "TENDER_FACTS_INVALID");
+  });
+
+  it("does NOT block draft generation when criticalMetadataOk is false (draft advisory)", () => {
     const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "generate" }));
-    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "draft should not hard-block on metadata");
+    assert.ok(r.ok || r.blockerCode !== "TENDER_FACTS_INVALID", "draft should NOT be blocked by missing optional tender details (advisory only)");
   });
 
-  it("allows when criticalMetadataOk is true", () => {
+  it("allows when criticalMetadataOk is true (all purposes)", () => {
     const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: true }));
     assert.equal(r.ok, true);
   });
 
-  it("requirement gate fires when metadata is false but requirements also fail", () => {
-    // With metadata gate removed, the requirement gate (F) is the one that
-    // fires when requirementCount=0, NOT the metadata gate (G).
-    const r = evaluateGenerationReadiness(goodInput({
-      criticalMetadataOk: false,
-      purpose: "export",
-      requirementCount: 0,
-      requirements: [],
-    }));
-    assert.equal(r.ok, false);
-    // Requirement gate fires (F), NOT metadata gate (G — removed)
-    assert.notEqual(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+  it("does not expose METADATA_CRITICAL_FIELD_INVALID as the blocker code (renamed)", () => {
+    // The old METADATA_* code must NOT be returned — it's renamed to TENDER_FACTS_INVALID.
+    const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "export" }));
+    assert.notEqual(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID", "old METADATA_ code must not be used (renamed to TENDER_FACTS_INVALID)");
+    assert.equal(r.blockerCode, "TENDER_FACTS_INVALID");
   });
 });
 

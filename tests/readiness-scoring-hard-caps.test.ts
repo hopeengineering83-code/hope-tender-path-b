@@ -106,24 +106,34 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
   });
 });
 
-describe("readiness scoring — metadata is advisory (caps removed per unified runtime model)", () => {
-  // PR #999 removed metadata caps from readiness-scoring.ts. Metadata is now
-  // advisory/diagnostic only — it cannot cap the readiness score. The tests
-  // below verify the NEW behavior: metadata issues do NOT reduce the score.
-  it("does NOT cap when metadata completeness < 60%", () => {
+describe("readiness scoring — HARD CAP: tender facts unsafe (caps restored for final-output safety)", () => {
+  // PR #1004 weakened final-output safety by making metadata fully advisory.
+  // This restoration re-enables the tender-facts caps in readiness-scoring.ts
+  // so the dashboard cannot show 100% readiness when required tender facts
+  // (client/procuring entity, deadline, submission instructions) are unsafe.
+  // The dimension is named "tenderFacts" (renamed from "metadataCompleteness").
+  // Draft generation is NOT blocked by these — they only affect the readiness
+  // score, which gates final export.
+  it("caps at 60 when tender metadata completeness < 60%", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), metadataCompletenessRatio: 0.3125 /* 5/16 */ });
-    assert.ok(r.score > 60, `expected >60 (no metadata cap), got ${r.score}`);
-    assert.notEqual(r.appliedCap?.dimension, "metadataCompleteness");
+    assert.ok(r.score <= 60, `expected ≤60 (tenderFacts cap), got ${r.score}`);
+    const cap = r.applicableCaps.find((c) => c.dimension === "tenderFacts");
+    assert.ok(cap, "expected a tenderFacts cap for metadataCompletenessRatio < 0.6");
+    assert.equal(cap?.capScore, 60);
   });
-  it("does NOT cap when metadata has invalid placeholder fields", () => {
+  it("caps at 60 when tender metadata has invalid placeholder fields", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), metadataInvalidCount: 3 });
-    assert.ok(r.score > 60, `expected >60 (no metadata cap), got ${r.score}`);
-    assert.notEqual(r.appliedCap?.dimension, "metadataCompleteness");
+    assert.ok(r.score <= 60, `expected ≤60 (tenderFacts cap), got ${r.score}`);
+    const cap = r.applicableCaps.find((c) => c.dimension === "tenderFacts");
+    assert.ok(cap, "expected a tenderFacts cap for metadataInvalidCount > 0");
+    assert.equal(cap?.capScore, 60);
   });
-  it("does NOT cap when metadataContaminated is true", () => {
+  it("caps at 50 when metadataContaminated is true", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), metadataContaminated: true });
-    assert.ok(r.score > 60, `expected >60 (no metadata cap), got ${r.score}`);
-    assert.notEqual(r.appliedCap?.dimension, "metadataCompleteness");
+    assert.ok(r.score <= 50, `expected ≤50 (tenderFacts contaminated cap), got ${r.score}`);
+    const cap = r.applicableCaps.find((c) => c.dimension === "tenderFacts");
+    assert.ok(cap, "expected a tenderFacts cap for metadataContaminated=true");
+    assert.equal(cap?.capScore, 50);
   });
 });
 
