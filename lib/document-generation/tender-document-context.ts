@@ -191,8 +191,17 @@ export function buildTenderDocumentContext(
 
 /**
  * Detect whether a financial proposal is required based on tender text.
+ *
+ * Returns false when the tender explicitly states "financial proposal not
+ * required", "technical proposal only", or similar. Returns true when the
+ * tender uses two-envelope language (financial IS required, just separate).
+ * Default is true (financial is required for RFP/RFQ unless stated otherwise).
+ *
+ * This function is exported so the existing generation pipeline
+ * (lib/engine/proposal-intelligence.ts) can use it instead of maintaining
+ * a parallel regex.
  */
-function detectFinancialProposalRequired(text: string): boolean {
+export function detectFinancialProposalRequired(text: string): boolean {
   const sample = text.slice(0, 100_000).toLowerCase();
   // Explicit "not required" signals
   if (/financial\s+proposal\s+not\s+required/i.test(sample)) return false;
