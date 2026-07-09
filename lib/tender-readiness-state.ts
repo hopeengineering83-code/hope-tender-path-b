@@ -91,7 +91,7 @@ export function computeTenderReadinessState(input: TenderReadinessInput): Tender
   const clientOk = ((input.clientName ?? "").trim() || (input.procuringEntityName ?? "").trim()).length > 0;
   const referenceOk = (input.reference ?? "").trim().length > 0;
   const metadataTrusted = titleOk && clientOk && referenceOk && input.metadataContaminated !== true;
-  if (!metadataTrusted) blockers.push("Tender metadata is incomplete or contaminated.");
+  if (!metadataTrusted) warnings.push("Tender metadata has gaps — advisory only, does not block.");
 
   const submissionPlanBuilt = Boolean((input.exactFileNaming ?? "").trim() && input.exactFileNaming !== "[]") || Boolean((input.exactFileOrder ?? "").trim() && input.exactFileOrder !== "[]") || reqs.some((r) => Boolean((r.exactFileName ?? "").trim()));
   if (!submissionPlanBuilt) warnings.push("Submission plan is not built.");
@@ -104,9 +104,9 @@ export function computeTenderReadinessState(input: TenderReadinessInput): Tender
   const unresolvedCriticalGaps = gaps.filter(g => !g.isResolved && g.severity === "CRITICAL").length;
   if (unresolvedCriticalGaps > 0) blockers.push(`${unresolvedCriticalGaps} unresolved CRITICAL compliance gap(s).`);
 
-  const complianceCurrent = requirementsTrusted && analysisTrusted && extractionTrusted && metadataTrusted && unresolvedCriticalGaps === 0;
+  const complianceCurrent = requirementsTrusted && analysisTrusted && extractionTrusted && unresolvedCriticalGaps === 0;
   const documentsCurrent = activeDocs.length > 0 && submissionPlanBuilt && requirementsTrusted && analysisTrusted && docsGeneratedFromCurrentAnalysis;
-  const exportAllowed = extractionTrusted && analysisTrusted && requirementsTrusted && metadataTrusted && submissionPlanBuilt && documentsCurrent && unresolvedCriticalGaps === 0;
+  const exportAllowed = extractionTrusted && analysisTrusted && requirementsTrusted && submissionPlanBuilt && documentsCurrent && unresolvedCriticalGaps === 0;
 
   return { extractionTrusted, analysisTrusted, requirementsTrusted, metadataTrusted, submissionPlanBuilt, complianceCurrent, documentsCurrent, exportAllowed, rawRequirementsCount, trustedRequirementsCount, sourceTracedRequirementsCount, mandatoryRequirementsCount, mandatoryTracedCount, currentAnalysisHash, docsGeneratedFromCurrentAnalysis, blockers, warnings };
 }
