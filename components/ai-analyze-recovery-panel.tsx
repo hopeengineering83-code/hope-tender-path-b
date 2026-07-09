@@ -33,7 +33,7 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
   try {
     await prismaReady;
     let tender: { analysisSummary: string | null; analysisExtractionStatus: string | null } | null = null;
-    let job: { id: string; status: string; stagedMergedResult: unknown } | null = null;
+    let job: { id: string; status: string; stagedMergedResult: string | null } | null = null;
     try {
       [tender, job] = await Promise.all([
         prisma.tender.findFirst({

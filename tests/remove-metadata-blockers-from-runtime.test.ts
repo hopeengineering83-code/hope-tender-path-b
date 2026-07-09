@@ -133,11 +133,11 @@ describe("metadata deblocker — raw Prisma error hidden", () => {
   it("export-readiness-panel.tsx catches Prisma errors safely", () => {
     const src = read("components/export-readiness-panel.tsx");
     assert.ok(src.length > 0, "export-readiness-panel.tsx must be readable");
-    // isPrismaError detection is the key guard — the safe message is also
-    // present but we don't assert on the exact string to avoid CI-specific
-    // file-read encoding issues.
-    assert.ok(src.includes("isPrismaError"), "must detect Prisma errors");
+    // The panel must catch errors and show a safe message — never raw Prisma text.
     assert.ok(src.includes("catch"), "must catch errors");
+    assert.ok(src.includes("Export readiness check failed"), "must show safe error message");
+    // Must NOT include raw Prisma error rendering
+    assert.ok(!src.includes("err.message"), "must not render raw error messages");
   });
 });
 

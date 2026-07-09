@@ -134,7 +134,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       // Use safe generic message with diagnostic context.
       setError(err instanceof Error && err.message.includes("Diagnostic ID")
         ? err.message
-        : "Export readiness check failed. Refresh to retry.");
+        : "Export readiness check failed. Refresh to retry. If the problem persists, contact admin.");
     } finally {
       setLoading(false);
     }
