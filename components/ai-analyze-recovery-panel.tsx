@@ -52,7 +52,7 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
     }
     if (!tender) return null;
 
-    const staged = stagedView(job?.stagedMergedResult ?? null);
+    const staged = stagedView(job?.stagedMergedResult != null ? String(job.stagedMergedResult) : null);
     const status = tender.analysisExtractionStatus;
     const hasCanonical = Boolean(tender.analysisSummary);
     if (!staged && hasCanonical && (!status || !PROBLEM_STATES.has(status))) return null;

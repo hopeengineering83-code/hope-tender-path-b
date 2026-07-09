@@ -130,11 +130,11 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       if (r?.ok || (r?.summary?.documentBlockers ?? 0) === 0) setAutoFinalizeRemaining(null);
       router.refresh();
     } catch (err) {
-      // RUNTIME METADATA DEBLOCKER: Never expose raw Prisma error text to UI.
+      // Never expose raw Prisma error text to UI.
       // Use safe generic message with diagnostic context.
-      const isPrismaError = err instanceof Error && (err.message.includes("prisma") || err.message.includes("Prisma") || err.message.includes("Invalid"));
-      const body = await res.json().catch(() => ({}));
-      setError(body?.diagnosticId ? `Export readiness check failed. Diagnostic ID: ${body.diagnosticId}` : "Export readiness check failed. Refresh to retry.");
+      setError(err instanceof Error && err.message.includes("Diagnostic ID")
+        ? err.message
+        : "Export readiness check failed. Refresh to retry.");
     } finally {
       setLoading(false);
     }
