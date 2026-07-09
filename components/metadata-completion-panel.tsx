@@ -5,7 +5,7 @@ import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapsho
 import type { CanonicalFieldStatus } from "../lib/engine/canonical-field-state";
 import { CANONICAL_FIELD_STATUS_BADGE as STATUS_BADGE } from "./canonical-field-status-badge";
 
-export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
+export function TenderDetailsPanel({ tenderId }: { tenderId: string }) {
   const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -68,7 +68,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   if (fieldsNeedingAction.length === 0 && !metadata.hasExportBlocker) {
     return (
       <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
-        All critical metadata is present and valid. No additional resolution required.
+        All critical Tender Details are present and valid. No additional resolution required.
       </section>
     );
   }
@@ -133,3 +133,6 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
     </section>
   );
 }
+
+// Backward-compat alias — use TenderDetailsPanel in new code.
+export const MetadataCompletionPanel = TenderDetailsPanel;

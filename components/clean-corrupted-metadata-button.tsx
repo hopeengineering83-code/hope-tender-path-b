@@ -16,7 +16,7 @@ type ReExtractResponse = {
   error?: string;
 };
 
-export function CleanCorruptedMetadataButton({ tenderId, badCount }: { tenderId: string; badCount: number }) {
+export function RepairTenderFactsButton({ tenderId, badCount }: { tenderId: string; badCount: number }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
@@ -72,3 +72,6 @@ export function CleanCorruptedMetadataButton({ tenderId, badCount }: { tenderId:
     </div>
   );
 }
+
+// Backward-compat alias — use RepairTenderFactsButton in new code.
+export const CleanCorruptedMetadataButton = RepairTenderFactsButton;

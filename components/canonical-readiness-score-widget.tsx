@@ -92,15 +92,34 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
 
   if (loading) {
     return (
-      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-        Loading canonical readiness score…
+      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-busy="true">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 animate-pulse rounded-full bg-slate-200" />
+          <div className="flex-1 space-y-2">
+            <div className="h-3 w-40 animate-pulse rounded bg-slate-200" />
+            <div className="h-5 w-24 animate-pulse rounded bg-slate-200" />
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />
+          ))}
+        </div>
       </section>
     );
   }
   if (error || !data) {
     return (
-      <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-        Could not load canonical readiness score: {error ?? "no data"}
+      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+        <p className="font-semibold">Readiness check unavailable</p>
+        <p className="mt-1 text-xs">Refresh to retry. If the problem persists, contact admin.</p>
+        <button
+          type="button"
+          onClick={() => { setError(null); setLoading(true); }}
+          className="mt-2 rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
+        >
+          Retry
+        </button>
       </section>
     );
   }
@@ -128,13 +147,6 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
             <p className={`font-semibold ${analysisTone.tone === "ok" ? "text-emerald-700" : analysisTone.tone === "warn" ? "text-amber-700" : "text-red-700"}`}>{analysisTone.label}</p>
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
-            <p className="text-slate-500">Tender Details</p>
-            <p className={`font-semibold ${data.summary.metadataCompletenessRatio >= 0.6 && data.summary.metadataPlaceholderCount === 0 ? "text-emerald-700" : "text-amber-700"}`}>
-              {Math.round(data.summary.metadataCompletenessRatio * 100)}%
-              {data.summary.metadataPlaceholderCount > 0 && <span className="ml-1 text-red-700">· {data.summary.metadataPlaceholderCount} TBC</span>}
-            </p>
-          </div>
-          <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Required docs</p>
             <p className={`font-semibold ${data.summary.missingRequiredDocuments === 0 && (data.summary.ungeneratedPlannedRequired ?? 0) === 0 ? "text-emerald-700" : "text-red-700"}`}>
               {data.summary.finalExportCandidates}/{data.summary.finalExportCandidates + data.summary.missingRequiredDocuments}
@@ -150,6 +162,12 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
             <p className="text-slate-500">Quality</p>
             <p className={`font-semibold ${data.summary.qualityFailedDocuments === 0 ? "text-emerald-700" : "text-red-700"}`}>
               {data.summary.qualityFailedDocuments === 0 ? "OK" : `${data.summary.qualityFailedDocuments} failed`}
+            </p>
+          </div>
+          <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+            <p className="text-slate-500">Export blockers</p>
+            <p className={`font-semibold ${data.summary.documentBlockers > 0 || data.summary.tenderLevelBlockers > 0 ? "text-red-700" : "text-emerald-700"}`}>
+              {data.summary.documentBlockers + data.summary.tenderLevelBlockers > 0 ? `${data.summary.documentBlockers + data.summary.tenderLevelBlockers} blocker(s)` : "Clear"}
             </p>
           </div>
         </div>

@@ -147,11 +147,11 @@ describe("export-readiness route policy mappings", () => {
     );
   });
 
-  it("export-readiness blocks when critical metadata fields contain placeholder strings", async () => {
+  it("export-readiness blocks when critical tender facts contain placeholder strings", async () => {
     const src = await readFile("lib/engine/export-readiness.ts", "utf8");
     assert.ok(
-      src.includes("METADATA_PLACEHOLDER_IN_CRITICAL_FIELD"),
-      "export-readiness must use METADATA_PLACEHOLDER_IN_CRITICAL_FIELD blocker when clientName/procuringEntityName/submissionMethod contain placeholder text",
+      src.includes("TENDER_FACTS_PLACEHOLDER_IN_CRITICAL_FIELD"),
+      "export-readiness must use TENDER_FACTS_PLACEHOLDER_IN_CRITICAL_FIELD blocker when clientName/procuringEntityName/submissionMethod contain placeholder text",
     );
     assert.ok(
       src.includes("containsMetadataPlaceholder"),

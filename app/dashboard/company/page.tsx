@@ -520,7 +520,7 @@ export default function CompanyPage() {
           <input value={sectorsTxt} onChange={e=>setSectorsTxt(e.target.value)} placeholder="Sectors (comma-separated)" className="w-full rounded-lg border px-3 py-2 text-sm" />
 
           <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Authorising representative & institutional metadata</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Authorising representative & institutional details</h3>
             <p className="mb-3 text-xs text-slate-500">Used in the proposal&apos;s D.4 Declaration of Eligibility, Cover Page Submitted-by block, A.1 Company Background, and A.2 Corporate Information.</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <input value={company.gmName ?? ""} onChange={e=>setCompany({...company,gmName:e.target.value})} placeholder="GM / authorising representative name (e.g., Eng. Ahmed Kebede Tekaw)" className="rounded-lg border px-3 py-2 text-sm" />

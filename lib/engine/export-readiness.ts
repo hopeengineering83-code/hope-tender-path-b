@@ -435,7 +435,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   for (const [label, value] of criticalMetadataFields) {
     if (value && containsMetadataPlaceholder(value)) {
       blockers.push(tenderBlocker(
-        "METADATA_PLACEHOLDER_IN_CRITICAL_FIELD",
+        "TENDER_FACTS_PLACEHOLDER_IN_CRITICAL_FIELD",
         `${label} contains a placeholder value ("${value.slice(0, 60)}"). Replace with the actual value before exporting.`,
         "Edit Tender Detail and replace the placeholder with the correct value.",
         "HIGH",

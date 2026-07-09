@@ -146,7 +146,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
           const label: Record<string, string> = {
             extractionQuality: "Extraction",
             requirementExtraction: "Requirements",
-            metadataQuality: "Metadata",
+            metadataQuality: "Tender Details",
             submissionPlanQuality: "Submission",
             matchingReadiness: "Matching",
             sourceGrounding: "Grounding",

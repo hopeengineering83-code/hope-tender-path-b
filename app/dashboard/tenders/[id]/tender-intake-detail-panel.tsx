@@ -1,5 +1,5 @@
 // Compact auto-extracted tender detail panel.
-// Shows submission-critical metadata first and hides secondary/long details behind
+// Shows submission-critical tender facts first and hides secondary/long details behind
 // dropdowns so the tender workspace stays short.
 //
 // Source-driven model: each fact shows user actions (Ignore / Edit / Re-extract)
@@ -444,7 +444,11 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
                     <div className="flex-1">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">{fact.label}</div>
                       <div className="text-xs text-slate-500 mt-0.5">
-                        Required for: <span className="font-medium">{fact.requiredFor === "final_submission" ? "Final submission" : "Draft context"}</span>
+                        {fact.requiredFor === "final_submission" ? (
+                          <span className="font-medium text-red-700">Required before export</span>
+                        ) : (
+                          <span>Advisory for draft</span>
+                        )}
                         {fact.status === "rejected_invalid" && (
                           <span className="ml-2 inline-flex rounded-full bg-red-50 px-2 py-0.5 text-xs italic text-red-700">
                             {fact.reason ?? "Invalid value"}
