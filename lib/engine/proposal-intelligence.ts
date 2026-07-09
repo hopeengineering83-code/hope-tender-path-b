@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
@@ -36,6 +37,14 @@ export type ProposalIntelligence = {
   noFinancialProposal: boolean;
   exactEmails: string[];
   exactSubjectLine: string | null;
+  /**
+   * Tender-type-aware document advisory produced by the new
+   * lib/document-generation/ modules. Provides the detected tender
+   * type (EOI / RFQ / RFP / etc.), a suggested document title, and
+   * advisory notes for the generation pipeline. Non-binding — callers
+   * log and use it to tweak document title / cover-letter language.
+   */
+  documentTypeAdvisory: TenderDocumentTypeAdvisory;
 };
 
 export const BENCHMARK_CONTEXT_LINES: string[] = [
@@ -1260,7 +1269,15 @@ export function buildProposalIntelligence(params: {
 
   const exactEmails = detectExactEmails(tenderText);
   const exactSubjectLine = detectExactSubjectLine(tenderText);
-  const noFinancialProposal = /financial proposal.*not|technical proposal only|no financial proposal|financial.*not.*required/i.test(tenderText);
+  // Use the canonical detectFinancialProposalRequiredFromText() from
+  // lib/document-generation/generation-integration.ts — single source of
+  // truth for "should this tender have a financial proposal?". Supersedes
+  // the inline regex that lived here before PR fix/generated-document-content-quality.
+  const noFinancialProposal = !detectFinancialProposalRequiredFromText(tenderText);
+  const documentTypeAdvisory = buildTenderDocumentTypeAdvisory(tenderText);
+  if (documentTypeAdvisory.notes.length > 0) {
+    logger.info(`[proposal-intelligence] document-type advisory (type=${documentTypeAdvisory.tenderType}, financial=${documentTypeAdvisory.financialProposalRequired}): ${documentTypeAdvisory.notes.join(" | ")}`);
+  }
 
   // Sanitize the tender title and client name. When the intake stage extracts
   // garbage from the tender PDF (multi-line body text containing markers
@@ -1305,6 +1322,7 @@ export function buildProposalIntelligence(params: {
     noFinancialProposal,
     exactEmails,
     exactSubjectLine,
+    documentTypeAdvisory,
   };
 }
 
