@@ -77,6 +77,23 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-09 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** prompt recheck + additional dashboard/export parity pass.
+- **Branch / PR:** `fix/final-package-evidence-document-readiness` / draft PR update.
+- **Scope:**
+  - Wired `app/api/tenders/[id]/export-readiness/route.ts` to compute summary document/workspace/export/missing-required counts from `FinalPackageReadinessModel` and include the model payload for clients that need detailed parity.
+  - Wired `components/tender-health-score-panel.tsx` requirements/submission-plan/document dimensions to `FinalPackageReadinessModel` instead of separate exactFileNaming/generatedDocument calculations.
+  - Added a parity regression test asserting export-readiness, Health Score, and Final Package Manifest consume final-package readiness.
+- **Tests actually run:**
+  - `npx tsx --test tests/final-package-readiness-model.test.ts` — PASS (11/11).
+  - `npm run typecheck` — PASS.
+  - `npm run lint` — PASS.
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` — PASS (warnings only for missing optional provider/cron/Sentry/OCR envs).
+- **Known risks / assumptions:** `RUN_DB_INTEGRATION=true npm test` and Playwright with real browser+DB remain required before merge. This pass did not touch active canonical-fact-authority files.
+- **Next action:** run full DB-backed CI and browser E2E in an environment with PostgreSQL and Playwright browsers installed.
+- **Merge status:** not reviewed — do not merge until full CI passes.
+
+### 2026-07-09 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** final-package evidence/document readiness alignment.
 - **Branch / PR:** `fix/final-package-evidence-document-readiness` / draft PR pending tool availability.
 - **Scope:**

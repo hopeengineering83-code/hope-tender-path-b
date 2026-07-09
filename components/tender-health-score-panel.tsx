@@ -11,12 +11,12 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
-import { safeParseJsonArray } from "../lib/safe-json";
 import { CanonicalStatusBadge, CanonicalStatusIcon } from "./canonical-status-badge";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleKey } from "../lib/engine/canonical-readiness-state";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
 
 type Dimension = {
   label: string;
@@ -120,6 +120,8 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
 
   if (!tender) return null;
 
+  const finalPackage = await getFinalPackageReadinessModel(prisma, tenderId, userId);
+
   const dimensions: Dimension[] = [];
 
   // ── 1. Extraction quality (20 pts) ───────────────────────────────────────
@@ -198,23 +200,19 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
   });
 
   // ── 4. Requirements (15 pts) ─────────────────────────────────────────────
-  // Count MANDATORY and CRITICAL together as mandatory-type requirements.
-  const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
-  const tracedReqs = mandatoryReqs.filter(
-    (r) => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0,
-  );
-  // Block the requirements dimension when analysis is untrusted (regex fallback / corrupted).
   const analysisIsTrusted = analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" || analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED";
   const reqScore = !hasAnalysis ? 0
     : !analysisIsTrusted ? 0
-    : tender.requirements.length === 0 ? 0
-    : mandatoryReqs.length === 0 ? 10
-    : Math.round((tracedReqs.length / mandatoryReqs.length) * 15);
-  const reqStatusLabel: Dimension["status"] = reqScore >= 12 ? "PASS" : reqScore >= 7 ? "WARN" : "FAIL";
+    : finalPackage.requirements.total === 0 ? 0
+    : finalPackage.requirements.mandatory === 0 ? 10
+    : Math.round(finalPackage.requirements.coverageRatio * 15);
+  const reqStatusLabel: Dimension["status"] = finalPackage.requirements.blockers.length > 0 ? "FAIL" : reqScore >= 12 ? "PASS" : reqScore >= 7 ? "WARN" : "FAIL";
+  const firstReqBlocker = finalPackage.requirements.blockers[0];
   const reqDetail = !hasAnalysis ? "Analysis not run"
     : !analysisIsTrusted ? "Analysis untrusted — re-run AI Analyze"
-    : tender.requirements.length === 0 ? "None extracted"
-    : `${tracedReqs.length}/${mandatoryReqs.length} mandatory/critical traced`;
+    : finalPackage.requirements.total === 0 ? "None extracted"
+    : firstReqBlocker ? `${finalPackage.requirements.mandatoryTraced}/${finalPackage.requirements.mandatory} mandatory traced — ${firstReqBlocker.title}`
+    : `${finalPackage.requirements.mandatoryTraced}/${finalPackage.requirements.mandatory} mandatory/critical trusted traced`;
   dimensions.push({
     label: "Requirements",
     score: reqScore,
@@ -225,41 +223,37 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
   });
 
   // ── 5. Submission plan (10 pts) ──────────────────────────────────────────
-  const planFiles = safeParseJsonArray(tender.exactFileNaming);
-  const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
+  const plannedDocs = finalPackage.documents.planned;
+  const requiredDocs = finalPackage.documents.required;
+  const hasPlan = plannedDocs.length > 0;
   dimensions.push({
     label: "Submission Plan",
     score: hasPlan ? 10 : 0,
     max: 10,
-    detail: hasPlan ? `${planFiles.length} files planned` : "Not built",
+    detail: hasPlan ? `${requiredDocs.length}/${plannedDocs.length} required/planned package docs` : "Not built",
     status: hasPlan ? "PASS" : "FAIL",
     ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#ai-analyze-section" } : {}),
   });
 
   // ── 6. Document readiness (15 pts) ──────────────────────────────────────
-  // Documents are only trustworthy when the submission plan is also built
-  // (so file names/order are confirmed) and analysis is trusted.
-  const activeDocs = tender.generatedDocuments;
-  const generatedDocs = activeDocs.filter((d) => d.generationStatus === "GENERATED");
-  const validatedDocs = generatedDocs.filter((d) =>
-    d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED",
-  );
-  const hasPlanForDocs = hasPlan;
-  const docScore = activeDocs.length === 0 ? 0
-    : !hasPlanForDocs ? 2
-    : generatedDocs.length === 0 ? 2
-    : Math.round((validatedDocs.length / Math.max(generatedDocs.length, 1)) * 15);
-  const docStatusLabel: Dimension["status"] = docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL";
-  const docDetail = activeDocs.length === 0 ? "Not generated"
-    : !hasPlanForDocs ? "Build submission plan before generating docs"
-    : `${validatedDocs.length}/${generatedDocs.length} validated`;
+  const activeDocs = finalPackage.documents.generated;
+  const exportReadyDocs = finalPackage.documents.exportReady;
+  const missingDocs = finalPackage.documents.missingRequired;
+  const docBlockers = finalPackage.documents.blockers;
+  const docScore = requiredDocs.length === 0 ? 0
+    : Math.round((exportReadyDocs.length / Math.max(requiredDocs.length, 1)) * 15);
+  const docStatusLabel: Dimension["status"] = missingDocs.length > 0 || docBlockers.length > 0 ? "FAIL" : docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL";
+  const firstDocBlocker = docBlockers[0];
+  const docDetail = requiredDocs.length === 0 ? "No package plan documents"
+    : firstDocBlocker ? `${exportReadyDocs.length}/${requiredDocs.length} export-ready — ${firstDocBlocker.documentName ?? firstDocBlocker.title}`
+    : `${exportReadyDocs.length}/${requiredDocs.length} export-ready`;
   dimensions.push({
     label: "Documents",
     score: docScore,
     max: 15,
     detail: docDetail,
     status: docStatusLabel,
-    ...(docStatusLabel !== "PASS" ? { actionLabel: activeDocs.length === 0 ? "Generate documents" : !hasPlanForDocs ? "Build submission plan" : "View documents", actionHref: activeDocs.length === 0 ? "#generated-documents" : !hasPlanForDocs ? "#ai-analyze-section" : "#generated-documents" } : {}),
+    ...(docStatusLabel !== "PASS" ? { actionLabel: activeDocs.length === 0 || missingDocs.length > 0 ? "Generate documents" : "View documents", actionHref: activeDocs.length === 0 || missingDocs.length > 0 ? "#generated-documents" : "#generated-documents" } : {}),
   });
 
   // ── 7. Compliance gaps (10 pts) ──────────────────────────────────────────

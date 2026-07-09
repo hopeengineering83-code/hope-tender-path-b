@@ -85,3 +85,17 @@ test("final ZIP manifest rejects missing, wrong format, unapproved, duplicate an
   assert.equal(manifest.ready, false);
   assert.equal(manifest.extraFilesExcluded.length, 1);
 });
+
+import { readFileSync } from "node:fs";
+
+test("dashboard/export parity surfaces consume final-package readiness model", () => {
+  const exportRoute = readFileSync("app/api/tenders/[id]/export-readiness/route.ts", "utf8");
+  const healthPanel = readFileSync("components/tender-health-score-panel.tsx", "utf8");
+  const manifestPanel = readFileSync("components/final-package-manifest-panel.tsx", "utf8");
+  assert.match(exportRoute, /getFinalPackageReadinessModel/);
+  assert.match(exportRoute, /finalPackage\.export\.exportCandidateCount/);
+  assert.match(healthPanel, /finalPackage\.documents\.exportReady/);
+  assert.match(healthPanel, /finalPackage\.requirements\.coverageRatio/);
+  assert.match(manifestPanel, /generatedById/);
+  assert.match(manifestPanel, /modelDoc\?\.exclusionReason/);
+});
