@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +41,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     await prismaReady;
     const { id } = await params;
-    const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id, requireFileContent: false });
+    const [readiness, finalPackage] = await Promise.all([
+      getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id, requireFileContent: false }),
+      getFinalPackageReadinessModel(prisma, id, actor.id),
+    ]);
     if (!readiness) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     // Reconcile the export blocker with the same normalized support-level logic
@@ -52,7 +56,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const reconciledTenderBlockers = readiness.tenderLevelBlockers.filter((blocker) =>
       !(blocker.category === "MANDATORY_EVIDENCE_INCOMPLETE" && evidenceStats.total > 0 && evidenceStats.percent >= 50),
     );
-    const reconciledOk = readiness.ok && readiness.documentBlockers.length === 0 && reconciledTenderBlockers.length === 0;
+    const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + finalPackage.export.blockers.length;
+    const reconciledOk = readiness.ok && finalPackageDocumentBlockers === 0 && reconciledTenderBlockers.length === 0 && finalPackage.export.zipReady;
 
     // Canonical upstream trust flags for UI components that need to check
     // whether docs are stale or whether the submission plan is built.
@@ -69,15 +74,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         ok: reconciledOk,
         tender: readiness.tender,
         summary: {
-          activeDocuments: readiness.summary.finalExportCandidates,
-          workspaceDocuments: readiness.summary.workspaceDocuments,
-          excludedInternalDrafts: readiness.summary.excludedInternalRows,
-          documentBlockers: readiness.summary.documentBlockers,
+          activeDocuments: finalPackage.export.exportCandidateCount,
+          workspaceDocuments: finalPackage.export.workspaceCount,
+          excludedInternalDrafts: finalPackage.documents.extraGeneratedOutsidePlan.length,
+          documentBlockers: finalPackageDocumentBlockers,
           tenderLevelBlockers: reconciledTenderBlockers.length,
           advisoryWarnings: readiness.summary.advisoryWarnings,
-          totalBlockers: readiness.summary.documentBlockers + reconciledTenderBlockers.length,
-          finalExportCandidates: readiness.summary.finalExportCandidates,
-          excludedInternalRows: readiness.summary.excludedInternalRows,
+          totalBlockers: finalPackageDocumentBlockers + reconciledTenderBlockers.length,
+          finalExportCandidates: finalPackage.export.exportCandidateCount,
+          excludedInternalRows: finalPackage.documents.extraGeneratedOutsidePlan.length,
           missingContentCount: readiness.summary.missingContentCount,
           invalidSignatureCount: readiness.summary.invalidSignatureCount,
           hygieneIssueCount: readiness.summary.hygieneIssueCount,
@@ -88,12 +93,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           planStatus: readiness.summary.planStatus,
           analysisSource: readiness.summary.analysisSource,
           readinessScore: readiness.summary.readinessScore,
-          missingRequiredDocuments: readiness.summary.missingRequiredDocuments,
-          ungeneratedPlannedRequired: readiness.summary.ungeneratedPlannedRequired,
+          missingRequiredDocuments: finalPackage.documents.missingRequired.length,
+          ungeneratedPlannedRequired: finalPackage.documents.missingRequired.length,
           qualityFailedDocuments: readiness.summary.qualityFailedDocuments,
           mandatoryEvidence: evidenceStats,
         },
         documentBlockers: readiness.documentBlockers,
+        finalPackageReadiness: finalPackage,
         tenderLevelBlockers: reconciledTenderBlockers,
         advisoryWarnings: readiness.advisoryWarnings,
         message: readiness.message,
