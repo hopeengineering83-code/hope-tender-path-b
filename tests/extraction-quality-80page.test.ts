@@ -91,8 +91,8 @@ describe("DOCX extraction — headings and tables", () => {
 
   it("DOCX extraction falls back to raw text if HTML extraction fails", () => {
     const src = read("lib/extract-text.ts");
-    assert.ok(src.includes("HTML extraction failed"), "must have fallback comment");
-    assert.ok(src.includes("result.value"), "must fall back to raw text");
+    assert.ok(src.includes("convertToHtml failed"), "must have fallback comment");
+    assert.ok(src.includes("extractRawText"), "must fall back to extractRawText");
   });
 });
 
