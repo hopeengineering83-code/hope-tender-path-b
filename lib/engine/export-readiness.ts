@@ -355,7 +355,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
   // Use EFFECTIVE values (override ?? raw) so a USER_EDITED clientName override is respected.
   const effectiveExportClientName = effectiveValue("clientName", tender.clientName) || effectiveValue("procuringEntityName", tender.procuringEntityName);
-  if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
+  if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid. Edit Tender Details to enter the exact official procuring entity name.", "Edit Tender Detail and enter the exact official procuring entity name."));
 
   // ── Extraction quality blocker ────────────────────────────────────────────
   if (tender.files && tender.files.some(f => (f as { extractionScore?: number | null }).extractionScore !== null && ((f as { extractionScore: number }).extractionScore) < 20)) {
