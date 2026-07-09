@@ -156,7 +156,9 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       assert.ok(result.score <= 99, "Readiness score should be capped if export gate is not OK");
     });
 
-    it("should cap score significantly if metadata is missing", () => {
+    it("should NOT cap score when metadata is missing (caps removed per unified runtime model)", () => {
+      // PR #999 removed metadata caps from readiness-scoring.ts. Metadata is
+      // advisory/diagnostic only and cannot cap the readiness score.
       const result = computeReadinessScore({
         analysisSource: "AI",
         metadataCompletenessRatio: 0.2, // Poor metadata
@@ -171,8 +173,8 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
         readyForExportCount: 5,
         finalExportGateOk: true
       });
-      assert.ok(result.score <= 60, "Readiness score should be capped at 60 for missing/invalid metadata");
-      assert.equal(result.appliedCap?.dimension, "metadataCompleteness");
+      assert.ok(result.score > 60, `Readiness score should NOT be capped for missing metadata (expected >60, got ${result.score})`);
+      assert.notEqual(result.appliedCap?.dimension, "metadataCompleteness");
     });
   });
 

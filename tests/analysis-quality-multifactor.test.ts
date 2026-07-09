@@ -32,8 +32,11 @@ describe("analysis-quality — base behaviour (legacy callers, no metadata param
   });
 });
 
-describe("analysis-quality — Gap 4: metadata penalties", () => {
-  it("penalises when clientName is the corrupted TOC fragment", () => {
+describe("analysis-quality — Gap 4: metadata issues are advisory (penalties removed per unified runtime model)", () => {
+  // PR #1002 removed metadata score penalties from analysis-quality.ts.
+  // Metadata issues are still REPORTED (in the metadataIssues array) but
+  // they no longer reduce the analysis quality score. Metadata is advisory.
+  it("reports metadata issue when clientName is the corrupted TOC fragment (no score penalty)", () => {
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(10),
       evaluationMethodology: "Technical 70%, Financial 30% — scoring matrix attached.",
@@ -41,10 +44,11 @@ describe("analysis-quality — Gap 4: metadata penalties", () => {
       clientName: "references (where available) Photos or drawings of completed projects",
     });
     assert.ok(report.metadataIssues.length >= 1, `Expected metadataIssues populated, got: ${JSON.stringify(report.metadataIssues)}`);
-    assert.ok(report.score < 100, `Expected score < 100 with corrupted client name, got ${report.score}`);
+    // Score is NOT penalized — metadata is advisory only.
+    assert.ok(report.score >= 90, `Expected score >= 90 (no metadata penalty), got ${report.score}`);
   });
 
-  it("penalises when reference is the literal 'only'", () => {
+  it("reports metadata issue when reference is the literal 'only' (no score penalty)", () => {
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(10),
       evaluationMethodology: "Technical 70%, Financial 30%",
@@ -52,10 +56,11 @@ describe("analysis-quality — Gap 4: metadata penalties", () => {
       referenceNumber: "only",
     });
     assert.ok(report.metadataIssues.some((m) => /reference/i.test(m)), `Expected reference metadata issue, got: ${JSON.stringify(report.metadataIssues)}`);
-    assert.ok(report.score < 100);
+    // Score is NOT penalized — metadata is advisory only.
+    assert.ok(report.score >= 90, `Expected score >= 90 (no metadata penalty), got ${report.score}`);
   });
 
-  it("penalises invalid country", () => {
+  it("reports metadata issue for invalid country (no score penalty)", () => {
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(10),
       evaluationMethodology: "Technical 70%, Financial 30%",
@@ -63,9 +68,11 @@ describe("analysis-quality — Gap 4: metadata penalties", () => {
       country: "A ddis Ababa",
     });
     assert.ok(report.metadataIssues.some((m) => /country/i.test(m)));
+    // Score is NOT penalized — metadata is advisory only.
+    assert.ok(report.score >= 90, `Expected score >= 90 (no metadata penalty), got ${report.score}`);
   });
 
-  it("does NOT penalise when metadata fields are simply absent (legacy mode)", () => {
+  it("does NOT report metadata issues when metadata fields are simply absent (legacy mode)", () => {
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(10),
       evaluationMethodology: "Technical 70%, Financial 30%",
@@ -97,6 +104,16 @@ describe("analysis-quality — Gap 4: matching readiness sub-score", () => {
     // This is the canonical regression: pre-fix the report claimed 100/100
     // "Tender analysis appears usable" while matching was 0 and client
     // metadata was a TOC fragment.
+    //
+    // After PR #1002: metadata penalties were removed (metadata is advisory),
+    // so the score drop now comes from matching=0, not from metadata issues.
+    // The test still verifies:
+    //   - score < 100 (matching=0 reduces the score)
+    //   - metadata issues are still REPORTED (just not penalized)
+    //   - matchingReadiness sub-score is 0
+    // Severity may still be GOOD if matching=0 alone doesn't drop below the
+    // GOOD threshold — that's acceptable per the unified runtime model where
+    // metadata is advisory.
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(10),
       evaluationMethodology: "Technical 70%, Financial 30%",
@@ -107,9 +124,9 @@ describe("analysis-quality — Gap 4: matching readiness sub-score", () => {
       clientContactName: "s Contact Person",
       matchingScore: 0,
     });
-    assert.ok(report.score < 75, `Expected score < 75 with broken metadata and 0 matching, got ${report.score}`);
-    assert.notEqual(report.severity, "GOOD");
-    assert.ok(report.metadataIssues.length >= 3, `Expected 3+ metadata issues, got: ${JSON.stringify(report.metadataIssues)}`);
+    assert.ok(report.score < 100, `Expected score < 100 with 0 matching, got ${report.score}`);
+    assert.ok(report.metadataIssues.length >= 3, `Expected 3+ metadata issues reported, got: ${JSON.stringify(report.metadataIssues)}`);
+    assert.equal(report.subScores.matchingReadiness, 0, "matchingReadiness sub-score must be 0");
   });
 });
 
@@ -197,6 +214,10 @@ describe("analysis-quality — regex fallback score cap", () => {
 
 describe("analysis-quality — production hard unsafe gates", () => {
   it("marks multi-page analysis unsafe when critical tender facts are missing", () => {
+    // After PR #1002: clientName/deadline/submissionMethod are advisory
+    // (warnings only, no isUnsafe). The unsafe flag is still triggered by
+    // fewer-than-3 requirements on a multi-page tender. This test uses
+    // goodRequirements(2) to trigger that gate.
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(2),
       evaluationMethodology: "",
@@ -207,8 +228,9 @@ describe("analysis-quality — production hard unsafe gates", () => {
     });
     assert.equal(report.severity, "UNSAFE");
     assert.ok(report.warnings.some((w) => /fewer than 3 requirements/i.test(w)));
-    assert.ok(report.warnings.some((w) => /deadline is missing/i.test(w)));
-    assert.ok(report.warnings.some((w) => /submission method/i.test(w)));
+    // Metadata warnings are now advisory but still present.
+    assert.ok(report.warnings.some((w) => /deadline/i.test(w)), `Expected deadline advisory warning, got: ${JSON.stringify(report.warnings)}`);
+    assert.ok(report.warnings.some((w) => /submission/i.test(w)), `Expected submission advisory warning, got: ${JSON.stringify(report.warnings)}`);
   });
 
   it("marks unapproved regex fallback as unsafe even when the requirement list looks strong", () => {

@@ -96,19 +96,18 @@ describe("hardened gate — legacy-analysis (no promoted job) is blocked", () =>
   });
 });
 
-// ─── Critical metadata gate ───────────────────────────────────────────────────
+// ─── Critical metadata gate (removed per unified runtime model) ──────────────
 
-describe("hardened gate — critical metadata gate (G)", () => {
-  it("blocks export when criticalMetadataOk is false", () => {
+describe("hardened gate — critical metadata is advisory (G removed)", () => {
+  // PR #1002 removed metadata as a hard blocker entirely. Metadata cannot
+  // block generation or export — it is advisory/diagnostic only.
+  it("does NOT block export when criticalMetadataOk is false", () => {
     const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "export" }));
-    assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
-    assert.ok(r.blockerDetail?.includes("critical metadata"), `got: ${r.blockerDetail}`);
+    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
   });
 
   it("does NOT block draft generation when criticalMetadataOk is false", () => {
     const r = evaluateGenerationReadiness(goodInput({ criticalMetadataOk: false, purpose: "generate" }));
-    // Draft: metadata is advisory, not blocking
     assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "draft should not hard-block on metadata");
   });
 
@@ -117,15 +116,18 @@ describe("hardened gate — critical metadata gate (G)", () => {
     assert.equal(r.ok, true);
   });
 
-  it("metadata gate fires before requirement gate when both fail", () => {
+  it("requirement gate fires when metadata is false but requirements also fail", () => {
+    // With metadata gate removed, the requirement gate (F) is the one that
+    // fires when requirementCount=0, NOT the metadata gate (G).
     const r = evaluateGenerationReadiness(goodInput({
       criticalMetadataOk: false,
       purpose: "export",
       requirementCount: 0,
+      requirements: [],
     }));
     assert.equal(r.ok, false);
-    // Metadata check (G) fires BEFORE requirements (F)
-    assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+    // Requirement gate fires (F), NOT metadata gate (G — removed)
+    assert.notEqual(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
   });
 });
 

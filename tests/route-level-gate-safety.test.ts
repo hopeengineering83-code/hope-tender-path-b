@@ -183,7 +183,9 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
     assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "draft should not hard-block on metadata");
   });
 
-  it("gate blocks EXPORT when criticalMetadataOk is false (USER_EDITED without grounded evidence)", () => {
+  it("gate does NOT block EXPORT when criticalMetadataOk is false (metadata is advisory)", () => {
+    // PR #1002 removed metadata as a hard blocker. Export no longer blocks
+    // on criticalMetadataOk=false — metadata is advisory/diagnostic only.
     const input: GenerationReadinessInput = {
       purpose: "export",
       tenderExistsAndOwned: true,
@@ -203,8 +205,7 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
       exportReadyDocumentCount: 3,
     };
     const result = evaluateGenerationReadiness(input);
-    assert.equal(result.ok, false);
-    assert.equal(result.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+    assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
   });
 
   it("gate allows when criticalMetadataOk is true (USER_CONFIRMED with exact-match grounded evidence)", () => {

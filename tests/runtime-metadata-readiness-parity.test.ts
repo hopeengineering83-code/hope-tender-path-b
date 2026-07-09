@@ -287,7 +287,9 @@ describe("no raw Prisma error in UI", () => {
 
   it("health score panel catches errors safely", () => {
     const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.includes("Panel failed to load"), "must show safe message on error");
+    // PR #999 changed the safe-error string from "Panel failed to load" to
+    // "Panel is loading — refresh to retry if this persists."
+    assert.ok(src.includes("Panel is loading — refresh to retry if this persists."), "must show safe message on error");
     assert.ok(src.includes("catch"), "must catch errors");
   });
 

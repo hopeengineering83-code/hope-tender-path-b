@@ -248,12 +248,13 @@ describe("runtime parity guarantee", () => {
     assert.ok(effectiveCallIdx < assessCallIdx, "effective facts must be loaded BEFORE quality assessment");
   });
 
-  it("analysis quality does not cap score at 40 for parsed deadline (source-level)", () => {
+  it("analysis quality no longer caps score at 40 for missing deadline (advisory only)", () => {
+    // PR #1002 removed the deadline cap (Math.min(score, 40)) entirely.
+    // Missing deadline is now advisory-only — it pushes a warning but does
+    // NOT cap the score or mark the analysis unsafe.
     const src = read("lib/analysis-quality.ts");
-    // The cap at 40 is for hasDeadline — the caller now passes effective deadline
-    // so hasDeadline will be true when parser extracted the deadline.
-    assert.ok(src.includes("!hasDeadline"), "still checks hasDeadline (but caller passes effective)");
-    assert.ok(src.includes("score = Math.min(score, 40)"), "cap exists but only triggers when hasDeadline is false");
+    assert.ok(src.includes("!hasDeadline"), "still checks hasDeadline (for advisory warning)");
+    assert.ok(!src.includes("score = Math.min(score, 40)"), "deadline cap at 40 was removed — metadata is advisory only");
   });
 });
 

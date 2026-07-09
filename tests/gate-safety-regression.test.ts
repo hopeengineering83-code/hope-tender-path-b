@@ -185,17 +185,17 @@ describe("Gate safety — ownership check blocks", () => {
   });
 });
 
-// ─── Metadata contamination blocks ────────────────────────────────────────
+// ─── Metadata contamination is advisory (caps removed per unified runtime model) ─
 
-describe("Gate safety — critical metadata contamination blocks", () => {
-
-  it("blocks when criticalMetadataOk is false", () => {
+describe("Gate safety — critical metadata is advisory (does NOT block)", () => {
+  // PR #1002 removed metadata as a hard blocker. Metadata cannot block
+  // generation or export — it is advisory/diagnostic only.
+  it("does NOT block export when criticalMetadataOk is false", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       criticalMetadataOk: false,
       purpose: "export",
     }));
-    assert.equal(result.ok, false);
-    assert.equal(result.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+    assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
   });
 });
 

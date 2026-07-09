@@ -24,10 +24,12 @@ import { assessMatchingQuality } from "../lib/matching-quality";
 
 describe("panel-route-parity — analysis-quality with new params", () => {
   it("score with corrupted metadata + zero matching is NOT 100/100", () => {
-    // Mirror the screenshot scenario: 10 requirements extracted, 5
-    // mandatory, eval methodology present, source refs present — exactly
-    // the shape that would make the legacy 'requirements-only' score
-    // hit 100/100. Then add the corrupted metadata + zero matching.
+    // After PR #1002: metadata penalties were removed (metadata is advisory).
+    // The score drop now comes from matching=0 only, not from metadata issues.
+    // The test still verifies:
+    //   - score < 100 (matching=0 reduces the score)
+    //   - metadata issues are still REPORTED (just not penalized)
+    //   - matchingReadiness sub-score is 0
     const requirements = Array.from({ length: 10 }, (_, i) => ({
       title: `Requirement ${i + 1}`,
       description: "Description with evaluation scoring criteria.",
@@ -49,9 +51,9 @@ describe("panel-route-parity — analysis-quality with new params", () => {
       extractedTextLength: 14425,
     });
 
-    assert.ok(report.score < 75, `Expected score < 75 with all four metadata fields invalid + matching=0, got ${report.score}`);
-    assert.notEqual(report.severity, "GOOD", "Severity must NOT be GOOD when metadata is broken");
-    assert.ok(report.metadataIssues.length >= 4, `Expected ≥4 metadata issues, got: ${JSON.stringify(report.metadataIssues)}`);
+    assert.ok(report.score < 100, `Expected score < 100 with matching=0, got ${report.score}`);
+    assert.ok(report.metadataIssues.length >= 4, `Expected ≥4 metadata issues reported, got: ${JSON.stringify(report.metadataIssues)}`);
+    assert.equal(report.subScores.matchingReadiness, 0, "matchingReadiness sub-score must be 0");
   });
 
   it("the route that doesn't pass metadata params still works (back-compat)", () => {

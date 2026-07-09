@@ -73,12 +73,25 @@ describe("generate route — metadata is non-blocking for draft work", () => {
   });
 });
 
-describe("readiness helper — FULL_PROPOSAL_METADATA_INCOMPLETE blocker mirrors the new copy", () => {
+describe("readiness helper — FULL_PROPOSAL_METADATA_INCOMPLETE blocker removed (unified runtime model)", () => {
+  // PR #999/#1002 removed the FULL_PROPOSAL_METADATA_INCOMPLETE blocker entirely.
+  // Metadata completeness is advisory/diagnostic only — it cannot block generation.
   const src = readFileSync("lib/tender-generation-readiness.ts", "utf8");
-  it("the warning message mentions repair (not a hard blocker)", () => {
-    assert.doesNotMatch(src, /Tender details incomplete/);
+  it("does NOT push the FULL_PROPOSAL_METADATA_INCOMPLETE blocker", () => {
+    // The blocker code must not appear in any push({ code: "..." }) call.
+    // Check that no push statement uses this specific code value.
+    assert.ok(!/code:\s*"FULL_PROPOSAL_METADATA_INCOMPLETE"/.test(src), "blocker code must not be pushed (metadata is advisory)");
   });
-  it("nextAction is REPAIR_OR_EDIT_TENDER", () => {
-    assert.match(src, /nextAction:\s*"REPAIR_OR_EDIT_TENDER"/);
+  it("does NOT push a CLIENT_NAME_REQUIRED warning", () => {
+    assert.ok(!/code:\s*"CLIENT_NAME_REQUIRED"/.test(src), "CLIENT_NAME_REQUIRED warning must be removed");
+  });
+  it("does NOT push a CLIENT_NAME_INVALID warning", () => {
+    assert.ok(!/code:\s*"CLIENT_NAME_INVALID"/.test(src), "CLIENT_NAME_INVALID warning must be removed");
+  });
+  it("does NOT push a METADATA_CONTAMINATED warning", () => {
+    assert.ok(!/code:\s*"METADATA_CONTAMINATED"/.test(src), "METADATA_CONTAMINATED warning must be removed");
+  });
+  it("does NOT push a FULL_PROPOSAL_CLIENT_INVALID blocker", () => {
+    assert.ok(!/code:\s*"FULL_PROPOSAL_CLIENT_INVALID"/.test(src), "FULL_PROPOSAL_CLIENT_INVALID blocker must be removed");
   });
 });
