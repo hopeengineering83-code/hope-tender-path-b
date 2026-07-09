@@ -211,10 +211,11 @@ describe("Controlled flow — one success + multiple blocked", () => {
     assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
   });
 
-  it("BLOCKED: stale hash", () => {
+  it("BLOCKED: stale hash (for export/final-zip)", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       latestJobHash: "hash-abc",
       currentContentHash: "hash-xyz",
+      purpose: "export",
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");

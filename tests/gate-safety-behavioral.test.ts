@@ -168,14 +168,25 @@ describe("Gate blocks ungrounded mandatory requirements", () => {
   });
 });
 
-describe("Gate blocks stale analysis hash", () => {
-  it("blocks when currentContentHash differs from latestJobHash", () => {
+describe("Gate blocks stale analysis hash (for export/final-zip)", () => {
+  it("blocks when currentContentHash differs from latestJobHash (export purpose)", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       latestJobHash: "hash-abc",
       currentContentHash: "hash-xyz",
+      purpose: "export",
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
+  });
+
+  it("does NOT block draft generation when content hash differs", () => {
+    const r = evaluateGenerationReadiness(makePassingInput({
+      latestJobHash: "hash-abc",
+      currentContentHash: "hash-xyz",
+      purpose: "generate",
+    }));
+    // Draft: content-changed is a warning, not a hard block
+    assert.ok(r.ok || r.blockerCode !== "ANALYSIS_HASH_MISMATCH", "draft should not hard-block on hash mismatch");
   });
 });
 
