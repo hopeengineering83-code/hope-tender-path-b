@@ -77,6 +77,27 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-09 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** deep follow-up on final-package readiness gaps after review feedback.
+- **Branch / PR:** `fix/final-package-evidence-document-readiness` / draft PR update.
+- **Scope:**
+  - Reworked `lib/engine/final-package-readiness-model.ts` from a compact draft into a typed, explicit shared model that uses `document-output-state` for candidate/readiness/blocker semantics, chooses the best matching generated row per planned document, exposes workspace exclusion reasons, separates outside-plan rows from not-approved/wrong-format rows, and keeps PDF manual-upload fallback honest (no fake conversion).
+  - Wired `components/final-package-manifest-panel.tsx` to the shared final-package model so Final Package Manifest rows use the same planned/export/excluded reasons as Bid Control and the diagnostics endpoint.
+  - Expanded `tests/final-package-readiness-model.test.ts` to cover fake-Prisma full-model project summary, best-row selection/idempotency preservation, outside-plan reasons, PDF fallback, duplicate filename rejection, and manifest/workspace exclusion behavior.
+- **Tests actually run:**
+  - `npx tsx --test tests/final-package-readiness-model.test.ts` — PASS (10/10).
+  - `npm run typecheck` — PASS.
+  - `npm run lint` — PASS.
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' npx prisma validate` — PASS.
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' npx prisma generate` — PASS.
+  - `node scripts/audit-release-integrity.mjs` — PASS.
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` — PASS (warnings only for missing optional provider/cron/Sentry/OCR envs).
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-e2e' npm run test:e2e` — FAIL/WARN due environment: Playwright browsers are not installed and placeholder DB cannot connect (`/api/health` 503); 8 source-inspection/API-protection tests passed, 12 skipped, 68 failed from environment/browser/DB setup.
+- **Known risks / assumptions:** final ZIP byte-level verification remains in download/export routes; the readiness model treats storage-backed files as non-zero without reading private blob bytes. Full DB integration was not run because no reachable PostgreSQL service/production-safe test DB is configured here.
+- **Next action:** run DB-backed integration and Playwright with installed browsers against a real local test database before marking ready.
+- **Merge status:** not reviewed — do not merge until full CI passes.
+
+### 2026-07-09 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** final-package evidence/document readiness alignment.
 - **Branch / PR:** `fix/final-package-evidence-document-readiness` / draft PR pending tool availability.
 - **Scope:**
