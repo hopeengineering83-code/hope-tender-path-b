@@ -71,8 +71,8 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     if (tender.metadataContaminated || !(tender.clientName || (tender as Record<string, unknown>).procuringEntityName) || !tender.country || !tender.deadline) {
       suggestions.push({
         icon: "📋",
-        title: "Complete missing metadata",
-        detail: "Client name, country, or deadline is missing or contaminated. Fill these before building the submission plan.",
+        title: "Optional: review extracted details",
+        detail: "Some optional details were not extracted. This does not block the workflow — you can review them in Tender Detail.",
         priority: "HIGH",
       });
     }
@@ -89,9 +89,9 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
           icon: "📤",
           title: "Add missing submission details",
           detail: noMethod
-            ? "Submission method not set — this blocks the final export. Run Repair Metadata or enter it manually."
+            ? "Submission method not extracted — advisory only, does not block."
             : emailMissing
-            ? "Submission email is missing for email-based submission — the package cannot be sent. Use Repair Metadata to extract it."
+            ? "Submission email not extracted — advisory only, does not block."
             : "Submission address is missing for physical submission — required before export.",
           priority: "HIGH",
         });
