@@ -157,9 +157,9 @@ describe("Route-level gate safety — PLANNED/SUPERSEDED never count as export-r
 
 describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock with exact-match grounded evidence", () => {
 
-  it("gate blocks when criticalMetadataOk is false (USER_EDITED without grounded evidence)", () => {
-    // If a user edits a critical field but the value doesn't match active tender-source
-    // evidence, criticalMetadataOk is false → blocked
+  it("gate does NOT block draft when criticalMetadataOk is false (USER_EDITED without grounded evidence)", () => {
+    // RUNTIME METADATA DEBLOCKER: In draft mode, metadata is advisory.
+    // Only export/final-zip blocks on criticalMetadataOk=false.
     const input: GenerationReadinessInput = {
       purpose: "generate",
       tenderExistsAndOwned: true,
@@ -176,6 +176,30 @@ describe("Route-level gate safety — USER_EDITED/USER_CONFIRMED only unblock wi
         { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true, sourceFileExtractedText: "meaningful quote text here", sourceFileTotalPages: 5 },
       ],
       criticalMetadataOk: false, // USER_EDITED without grounded evidence
+      exportReadyDocumentCount: 3,
+    };
+    const result = evaluateGenerationReadiness(input);
+    // Draft: metadata is advisory, not blocking
+    assert.ok(result.ok || result.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "draft should not hard-block on metadata");
+  });
+
+  it("gate blocks EXPORT when criticalMetadataOk is false (USER_EDITED without grounded evidence)", () => {
+    const input: GenerationReadinessInput = {
+      purpose: "export",
+      tenderExistsAndOwned: true,
+      activeFileCount: 1,
+      extractionFiles: [{ fileId: "f1", corrupted: false, weak: false, hasOverride: false }],
+      analysisState: "AI_SUCCEEDED",
+      canonicalJobId: "job-1",
+      latestJobHash: "hash-abc",
+      currentContentHash: "hash-abc",
+      fallbackApprovalBound: false,
+      currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
+      requirementCount: 5,
+      requirements: [
+        { priority: "MANDATORY", sourceTenderFileId: "f1", sourcePageNumber: 1, sourceExactQuote: "meaningful quote text here", sourceFileActiveInTender: true, sourceFileExtractedText: "meaningful quote text here", sourceFileTotalPages: 5 },
+      ],
+      criticalMetadataOk: false,
       exportReadyDocumentCount: 3,
     };
     const result = evaluateGenerationReadiness(input);

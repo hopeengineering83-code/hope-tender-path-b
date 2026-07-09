@@ -124,7 +124,7 @@ describe("Gate blocks ownership violations", () => {
 
 describe("Gate blocks metadata contamination", () => {
   it("blocks when criticalMetadataOk is false", () => {
-    const r = evaluateGenerationReadiness(makePassingInput({ criticalMetadataOk: false }));
+    const r = evaluateGenerationReadiness(makePassingInput({ criticalMetadataOk: false, purpose: "export" }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
   });

@@ -192,6 +192,7 @@ describe("Gate safety — critical metadata contamination blocks", () => {
   it("blocks when criticalMetadataOk is false", () => {
     const result = evaluateGenerationReadiness(makeBaseInput({
       criticalMetadataOk: false,
+      purpose: "export",
     }));
     assert.equal(result.ok, false);
     assert.equal(result.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");

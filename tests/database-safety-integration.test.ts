@@ -187,7 +187,9 @@ dbDescribe("database-backed analysis and export safeguards", () => {
     const result = await checkTenderLevelExportBlockers(exportTender.id, []);
     const categories = new Set(result.blockers.map((blocker) => blocker.category));
     assert.ok(categories.has("NO_ACTIVE_GENERATED_DOCUMENTS"));
-    assert.ok(categories.has("SUBMISSION_METHOD_MISSING"));
-    assert.ok(categories.has("DEADLINE_MISSING"));
+    // RUNTIME METADATA DEBLOCKER: DEADLINE_MISSING and SUBMISSION_METHOD_MISSING
+    // are no longer hard blockers — they are advisory. Only NO_ACTIVE_GENERATED_DOCUMENTS
+    // should be a hard blocker for export without generated documents.
+    assert.ok(!categories.has("DEADLINE_MISSING"), "DEADLINE_MISSING must NOT be a hard blocker (advisory only)");
   });
 });

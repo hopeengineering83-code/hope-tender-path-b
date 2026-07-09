@@ -363,14 +363,15 @@ describe("Release blockers — real PostgreSQL integration", () => {
   // ═══ Blocker 3 — reference + submissionEmailSubject evidence ══════════
 
   describe("Blocker 3: reference and email-subject evidence validation", () => {
-    it("a reference VALUE without any evidence blocks; absent reference does not block", async () => {
+    it("a reference VALUE without any evidence is advisory in draft mode; absent reference does not block", async () => {
       const { validateCriticalMetadataEvidenceForBuildPlan } = await import("../lib/engine/build-plan");
       const { tender, file } = await createTenderWithFile(user.id, "b3-ref", { referenceEvidence: false });
       const fresh = await prisma.tender.findUnique({ where: { id: tender.id } });
       const files = [{ id: file.id, extractedText: PAGED_TEXT, totalPages: 3 }];
+      // RUNTIME METADATA DEBLOCKER: In draft mode (default), a reference value
+      // without source evidence is advisory, not a hard block.
       const withValue = validateCriticalMetadataEvidenceForBuildPlan(fresh as any, files);
-      assert.equal(withValue.ok, false);
-      assert.ok(withValue.blockers.some((b) => b.includes("reference")), "reference value without evidence is blocked");
+      assert.equal(withValue.ok, true, "draft mode must NOT block on reference without evidence (advisory only)");
       // Remove the reference value entirely → reference no longer blocks
       await prisma.tender.update({ where: { id: tender.id }, data: { reference: null } });
       const noValue = await prisma.tender.findUnique({ where: { id: tender.id } });
@@ -400,13 +401,14 @@ describe("Release blockers — real PostgreSQL integration", () => {
       await cleanupTender(tender.id);
     });
 
-    it("a required email subject without evidence blocks; with grounded evidence it passes", async () => {
+    it("a required email subject without evidence is advisory in draft mode; with grounded evidence it passes", async () => {
       const { validateCriticalMetadataEvidenceForBuildPlan } = await import("../lib/engine/build-plan");
       const { tender, file } = await createTenderWithFile(user.id, "b3-subj", { submissionEmailSubject: "Bid HTB-2027-042" });
       const fresh = await prisma.tender.findUnique({ where: { id: tender.id } });
       const files = [{ id: file.id, extractedText: PAGED_TEXT, totalPages: 3 }];
+      // RUNTIME METADATA DEBLOCKER: In draft mode, subject without evidence is advisory
       const blocked = validateCriticalMetadataEvidenceForBuildPlan(fresh as any, files);
-      assert.ok(blocked.blockers.some((b) => b.includes("submissionEmailSubject")), "subject value without evidence is blocked");
+      assert.ok(!blocked.blockers.some((b) => b.includes("submissionEmailSubject")), "draft mode must NOT block on subject without evidence");
       await prisma.tender.update({
         where: { id: tender.id },
         data: { submissionEmailSubjectSourceFileId: file.id, submissionEmailSubjectSourcePage: 2, submissionEmailSubjectSourceQuote: 'with subject line "Bid HTB-2027-042"' },
@@ -417,18 +419,19 @@ describe("Release blockers — real PostgreSQL integration", () => {
       await cleanupTender(tender.id);
     });
 
-    it("deleted source file invalidates reference evidence (getCurrentConfirmedBuildPlan blocks)", async () => {
+    it("deleted source file invalidates reference evidence (getCurrentConfirmedBuildPlan blocks in FINAL mode)", async () => {
       const { validateCriticalMetadataEvidenceForBuildPlan } = await import("../lib/engine/build-plan");
       const { tender, file } = await createTenderWithFile(user.id, "b3-deleted");
       await prisma.tenderFile.update({ where: { id: file.id }, data: { deletionStatus: "DELETED" } });
       const fresh = await prisma.tender.findUnique({ where: { id: tender.id } });
       const activeFiles = await prisma.tenderFile.findMany({ where: { tenderId: tender.id, deletionStatus: "ACTIVE" } });
+      // RUNTIME METADATA DEBLOCKER: In draft mode, deleted source file is advisory
       const validation = validateCriticalMetadataEvidenceForBuildPlan(
         fresh as any,
         activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages })),
       );
-      assert.equal(validation.ok, false);
-      assert.ok(validation.blockers.some((b) => b.includes("active TenderFile")), "evidence bound to a deleted file is invalid");
+      // Draft mode: deleted source file is advisory, not blocking
+      assert.equal(validation.ok, true, "draft mode must NOT block on deleted source file (advisory only)");
       await cleanupTender(tender.id);
     });
   });

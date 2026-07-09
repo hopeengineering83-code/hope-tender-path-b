@@ -196,33 +196,22 @@ describe("export gate — effective-value wiring (G4 fix)", () => {
   });
 });
 
-// ── 5. DEADLINE_MISSING blocker ────────────────────────────────────────────────
+// ── 5. DEADLINE_MISSING — now advisory, not a hard blocker ────────────────────
 
-describe("export gate — DEADLINE_MISSING blocker", () => {
-  it("DEADLINE_MISSING source string exists in export-readiness.ts", () => {
+describe("export gate — DEADLINE_MISSING is advisory (not hard blocker)", () => {
+  it("DEADLINE_MISSING is no longer a hard blocker in export-readiness.ts", () => {
+    // RUNTIME METADATA DEBLOCKER: Missing deadline is advisory, not a hard block.
+    // The deadline may be resolved from parser/effective facts.
     assert.ok(
-      SRC.includes('"DEADLINE_MISSING"'),
-      "DEADLINE_MISSING blocker must be defined in export-readiness.ts",
+      !SRC.includes('blockers.push(tenderBlocker(\n      "DEADLINE_MISSING"'),
+      "DEADLINE_MISSING must NOT be pushed as a hard blocker",
     );
   });
 
-  it("DEADLINE_MISSING blocker fires when effective deadline is null (before the deadline-passed check)", () => {
-    const deadlineMissingIdx = SRC.indexOf('"DEADLINE_MISSING"');
-    const deadlinePassedIdx = SRC.indexOf('"DEADLINE_PASSED"');
-    assert.ok(deadlineMissingIdx !== -1, "DEADLINE_MISSING must be present");
-    assert.ok(deadlinePassedIdx !== -1, "DEADLINE_PASSED must be present");
+  it("export-readiness.ts has advisory comment for missing deadline", () => {
     assert.ok(
-      deadlineMissingIdx < deadlinePassedIdx,
-      "DEADLINE_MISSING blocker must appear before DEADLINE_PASSED advisory in source",
-    );
-  });
-
-  it("DEADLINE_MISSING is a HIGH severity blocker (not just advisory)", () => {
-    const idx = SRC.indexOf('"DEADLINE_MISSING"');
-    const snippet = SRC.slice(idx, idx + 400);
-    assert.ok(
-      snippet.includes('"HIGH"'),
-      "DEADLINE_MISSING must be a HIGH severity blocker",
+      SRC.includes("Advisory only"),
+      "must have 'Advisory only' comment for missing deadline",
     );
   });
 });

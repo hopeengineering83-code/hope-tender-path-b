@@ -206,6 +206,7 @@ describe("Controlled flow — one success + multiple blocked", () => {
   it("BLOCKED: metadata contamination", () => {
     const r = evaluateGenerationReadiness(makePassingInput({
       criticalMetadataOk: false,
+      purpose: "export",
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");

@@ -290,9 +290,17 @@ export function evaluateGenerationReadiness(
   }
 
   // G — Critical metadata: validated by validateCriticalMetadataEvidenceForBuildPlan
-  //     in the DB-backed assembly. If criticalMetadataOk is false, block.
+  //     in the DB-backed assembly.
+  //
+  //     RUNTIME METADATA DEBLOCKER (fix/remove-metadata-blockers-from-runtime):
+  //     Metadata must NOT hard-block draft generation. Only final export/final-zip
+  //     may check critical metadata. Draft generation proceeds with available data
+  //     and surfaces metadata warnings via the analysis quality panel.
   if (!input.criticalMetadataOk) {
-    return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, or not source-grounded with active tender file evidence (page + quote + containment). Resolve all critical fields before generating or exporting.");
+    if (input.purpose === "export" || input.purpose === "final-zip") {
+      return fail("METADATA_CRITICAL_FIELD_INVALID", "One or more critical metadata fields are missing, invalid, or not source-grounded with active tender file evidence (page + quote + containment). Resolve all critical fields before final export.");
+    }
+    // Draft/support/review: metadata is advisory, not blocking
   }
 
   // F — Requirement and source grounding.
