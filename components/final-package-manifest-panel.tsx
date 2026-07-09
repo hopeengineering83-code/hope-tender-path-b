@@ -14,7 +14,7 @@ import {
   type DocumentLike,
 } from "../lib/engine/document-output-state";
 import { clientLogger } from "@/lib/ui/client-logger";
-import { getCurrentConfirmedBuildPlan } from "../lib/engine/build-plan";
+import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
 
 type DocRow = {
   id: string;
@@ -148,13 +148,9 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
     if (!tender) return null;
     if (tender.generatedDocuments.length === 0) return null;
 
-    // AUTHORITATIVE: the pre-export manifest reflects the current CONFIRMED
-    // BuildPlan only, so it can never disagree with what the export gate
-    // enforces. Without one, no plan targets exist (fail closed).
-    const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
-    const hasExplicitPlan = confirmedPlan.ok;
-    const planTargets = confirmedPlan.ok ? confirmedPlan.items.filter((item) => item.required) : [];
-    const planTargetNames = new Set(planTargets.map((p) => p.exactFileName?.toLowerCase() ?? ""));
+    const finalPackage = await getFinalPackageReadinessModel(prisma, tenderId, userId);
+    const hasExplicitPlan = finalPackage.documents.planned.length > 0;
+    const generatedById = new Map(finalPackage.documents.generated.map((doc) => [doc.id, doc]));
 
     const docs: DocRow[] = tender.generatedDocuments.map((d) => ({
       ...d,
@@ -175,11 +171,12 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
         validationStatus: doc.validationStatus,
         reviewStatus: doc.reviewStatus,
       };
-      const isCandidate = isFinalExportCandidateDocument(docLike);
-      const outputState = deriveDocumentOutputState(docLike);
-      const blockReason = exportBlockReason(outputState);
-      const ready = isExportReady(docLike);
-      const inPlan = !hasExplicitPlan || planTargetNames.has((doc.exactFileName ?? "").toLowerCase());
+      const modelDoc = generatedById.get(doc.id);
+      const isCandidate = modelDoc?.exportCandidate ?? isFinalExportCandidateDocument(docLike);
+      const outputState = modelDoc?.outputState ?? deriveDocumentOutputState(docLike);
+      const blockReason = modelDoc?.blockerReason ?? exportBlockReason(outputState);
+      const ready = modelDoc?.exportReady ?? isExportReady(docLike);
+      const inPlan = Boolean(modelDoc?.plannedDocumentKey);
 
       return {
         doc,
@@ -188,12 +185,12 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
         blockReason,
         ready,
         inPlan,
-        includedInZip: isCandidate && ready,
-        excludedReason: !isCandidate
+        includedInZip: Boolean(modelDoc?.exportReady),
+        excludedReason: modelDoc?.exclusionReason ?? (!isCandidate
           ? "Excluded from export (internal/control/superseded)"
           : !ready
             ? (blockReason ?? "Not export-ready")
-            : null,
+            : null),
       };
     });
 
@@ -261,7 +258,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
 
         {!hasExplicitPlan && (
           <p className="mt-3 text-xs text-slate-500">
-            No explicit submission plan has been confirmed — the &quot;In plan&quot; column is not applicable. Build and confirm a submission plan to enable envelope separation and outside-plan exclusion.
+No final-package submission plan files are currently detected by the shared readiness model — the &quot;In plan&quot; column is not applicable. Build and confirm a submission plan to enable envelope separation and outside-plan exclusion.
           </p>
         )}
       </section>
