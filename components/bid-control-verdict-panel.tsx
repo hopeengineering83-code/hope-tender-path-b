@@ -2,6 +2,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
+import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
 import { BidDecisionForm } from "./bid-decision-form";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import { clientLogger } from "@/lib/ui/client-logger";
@@ -40,7 +41,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   if (!userId) return null;
   await prismaReady;
 
-  const [generationReadiness, canonical, tender] = await Promise.all([
+  const [generationReadiness, canonical, finalPackage, tender] = await Promise.all([
     getTenderGenerationReadinessStrict(prisma, userId, tenderId).catch((error) => {
       clientLogger.error("[BidControlVerdictPanel] generation readiness failed", {
         tenderId,
@@ -51,6 +52,14 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     }),
     getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false }).catch((error) => {
       clientLogger.error("[BidControlVerdictPanel] final readiness failed", {
+        tenderId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
+    getFinalPackageReadinessModel(prisma, tenderId, userId).catch((error) => {
+      clientLogger.error("[BidControlVerdictPanel] final package readiness failed", {
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
         message: error instanceof Error ? error.message : String(error),
@@ -70,7 +79,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   ]);
 
   if (!tender) return null;
-  if (!generationReadiness || !canonical) {
+  if (!generationReadiness || !canonical || !finalPackage) {
     return (
       <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm text-red-800">
         <p className="text-xs font-semibold uppercase tracking-wide">Bid control verdict</p>
@@ -84,12 +93,12 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   const supportPackageReady = Boolean(generationReadiness.supportPackageReady);
   const fullProposalBlockers = generationReadiness.fullProposalBlockers ?? [];
 
-  const documentBlockersCount = canonical.summary.documentBlockers;
-  const tenderBlockersCount = canonical.summary.tenderLevelBlockers;
+  const documentBlockersCount = finalPackage.documents.blockers.length;
+  const tenderBlockersCount = canonical.summary.tenderLevelBlockers + finalPackage.requirements.blockers.length;
   const advisoryWarningsCount = canonical.summary.advisoryWarnings;
-  const finalExportCandidates = canonical.summary.finalExportCandidates;
-  const workspaceDocuments = canonical.summary.workspaceDocuments;
-  const excludedInternalRows = canonical.summary.excludedInternalRows;
+  const finalExportCandidates = finalPackage.export.exportCandidateCount;
+  const workspaceDocuments = finalPackage.export.workspaceCount;
+  const excludedInternalRows = finalPackage.documents.extraGeneratedOutsidePlan.length;
   const planStatus = canonical.summary.planStatus;
   const criticalGaps = tender.complianceGaps.filter((g) => g.severity === "CRITICAL");
   const highGaps = tender.complianceGaps.filter((g) => g.severity === "HIGH");
@@ -176,7 +185,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
         <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace / export</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} / {finalExportCandidates}</p>{workspaceDocuments > 0 && finalExportCandidates === 0 && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{workspaceDocuments} workspace rows, 0 export candidates — review quality/classification</p>}</div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p>{finalPackage.documents.blockers[0] && <p className="mt-0.5 text-[10px] text-red-600 leading-tight">{finalPackage.documents.blockers[0].documentName}: {finalPackage.documents.blockers[0].reason}</p>}</div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Registered gaps</p><p className={`text-lg font-bold ${criticalGaps.length + highGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length + highGaps.length}</p><p className="text-[10px] text-slate-400">{criticalGaps.length} critical, {highGaps.length} high</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Ready for export</p><p className={`text-lg font-bold ${canonical.ok ? "text-emerald-700" : "text-red-700"}`}>{readyForExportLabel}</p></div>
       </div>

@@ -75,6 +75,26 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-09 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** final-package evidence/document readiness alignment.
+- **Branch / PR:** `fix/final-package-evidence-document-readiness` / draft PR pending tool availability.
+- **Scope:**
+  - Added shared `FinalPackageReadinessModel` for requirement evidence status, selected expert/project evidence, planned/generated documents, PDF requirements, export candidates, blockers, and deterministic ZIP manifest.
+  - Added sanitized `/api/tenders/[id]/final-package-readiness` diagnostics endpoint.
+  - Wired requirement coverage response and Bid Control Verdict counts to the shared final-package model for evidence/document/export parity.
+  - Added regression tests covering evidence coverage explanations, mandatory evidence blockers, reviewed-vs-high-score project distinction, shared document plan counts, technical-only financial exclusion, outside-plan documents, PDF manual-upload fallback semantics, and ZIP manifest blockers.
+- **Production/runtime investigation:** attempted `gh pr list` and Vercel log inspection for tender `45a2d090-af4c-4815-9736-c8b5bbbdf89d`, but this container lacks `gh` and `vercel`; no secrets were printed.
+- **Tests actually run:**
+  - `npx tsc --noEmit --pretty false` — PASS.
+  - `npx tsx --test tests/final-package-readiness-model.test.ts` — PASS (9/9).
+  - `npm run typecheck` — PASS.
+  - `npm run lint` — PASS.
+  - `npm test -- --runInBand tests/final-package-readiness-model.test.ts` — FAIL/WARN: repo test runner ignored the file filter and entered the broader suite; stopped at existing `RUN_DB_INTEGRATION=true` requirement for AI promotion evidence persistence tests.
+- **Known risks / assumptions:** manual PDF upload is represented by approved PDF generated/upload-backed rows (`format=PDF`, storage/file bytes present, validation passed, review ready); no real PDF conversion was faked. Full requested CI/build/e2e were not completed in this environment.
+- **Next action:** run full requested validation with DB integration and create/push the draft PR when GitHub/Vercel CLIs or network access are available.
+- **Merge status:** not reviewed — do not merge until full CI passes.
+
 ### 2026-07-09 UTC — GLM (Super Z)
 
 - **Mode:** Full investigation + doc updates + gap audit (branch `fix/main-gaps-and-doc-updates`, DRAFT PR).
