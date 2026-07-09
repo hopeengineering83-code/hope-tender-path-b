@@ -135,6 +135,171 @@ function normalizeExtractedText(text: string, limit = MAX_EXTRACTED_TEXT_CHARS):
     .slice(0, limit);
 }
 
+// ─── PDF positional table reconstruction ─────────────────────────────────────
+//
+// pdf2json and pdfjs both expose per-text-item positional data (x, y, width).
+// The previous extractors joined ALL items with spaces, destroying table
+// row/column structure. A PDF BOQ like:
+//
+//   | Item | Description    | Qty | Rate  | Total  |
+//   | 1    | Site survey    | 1   | 5000  | 5000   |
+//   | 2    | Foundation     | 200 | 250   | 50000  |
+//
+// was extracted as: "Item Description Qty Rate Total 1 Site survey 1 5000 5000
+// 2 Foundation 200 250 50000" — a flat word soup with no row or column
+// boundaries. Downstream table-extraction regex (which looks for "Row N:" and
+// "|" separators) found nothing, so BOQ/pricing/evaluation-criteria tables in
+// PDF tenders were silently lost.
+//
+// The helpers below reconstruct row/column structure from positional data:
+//   1. Group items by y-position (visual rows) with a small tolerance.
+//   2. Sort each row's items by x-position (left-to-right reading order).
+//   3. Detect column boundaries via horizontal gaps: a gap > max(15, 3×median
+//      char width) PDF units is a column separator.
+//   4. Emit multi-column rows as "cell | cell | cell" and wrap 3+ consecutive
+//      multi-column rows in [Table: N rows] markers.
+//   5. Single-column rows (body text) are emitted as plain text lines.
+//
+// This produces output consistent with the DOCX/XLSX/PPTX table extractors,
+// so downstream regex picks up PDF tables uniformly.
+
+interface PositionedTextItem {
+  x: number;   // left edge, PDF units
+  y: number;   // baseline position; direction doesn't matter (we group by equality)
+  w: number;   // text width, PDF units
+  text: string; // decoded text content
+}
+
+// Tolerance for grouping items into the same visual row. pdf2json/pdfjs report
+// y as the baseline; items on the same line should have identical y, but
+// sub-pixel rounding and mixed font sizes can cause ~1-2 unit drift. 3 units
+// (≈2pt) is well within one line height (12pt text has ~14pt line height).
+const PDF_ROW_Y_TOLERANCE = 3;
+
+// Minimum horizontal gap (in PDF units) between two text items to be considered
+// a column boundary rather than inter-word spacing. 15 units ≈ 0.2 inches,
+// which is a reasonable minimum column gap. The adaptive threshold
+// (3 × median char width) scales for different font sizes.
+const PDF_MIN_COLUMN_GAP = 15;
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+// Group positioned items into visual rows by y-position, then sort each row
+// by x-position. Returns an array of rows, each row being a sorted array of
+// items.
+function groupItemsIntoRows(items: PositionedTextItem[]): PositionedTextItem[][] {
+  if (items.length === 0) return [];
+  const sorted = [...items].sort((a, b) => {
+    if (Math.abs(a.y - b.y) > PDF_ROW_Y_TOLERANCE) return a.y - b.y;
+    return a.x - b.x;
+  });
+  const rows: PositionedTextItem[][] = [];
+  let currentRow: PositionedTextItem[] = [sorted[0]];
+  let currentY = sorted[0].y;
+  for (let i = 1; i < sorted.length; i++) {
+    if (Math.abs(sorted[i].y - currentY) <= PDF_ROW_Y_TOLERANCE) {
+      currentRow.push(sorted[i]);
+    } else {
+      rows.push(currentRow);
+      currentRow = [sorted[i]];
+      currentY = sorted[i].y;
+    }
+  }
+  rows.push(currentRow);
+  // Sort each row by x-position (left to right).
+  return rows.map((row) => [...row].sort((a, b) => a.x - b.x));
+}
+
+// Split a single row's items into cells based on horizontal gaps.
+// Returns an array of cell strings. A gap > gapThreshold between consecutive
+// items indicates a column boundary; smaller gaps are inter-word spacing
+// within the same cell.
+function splitRowIntoCells(row: PositionedTextItem[]): string[] {
+  if (row.length === 0) return [];
+  if (row.length === 1) return [row[0].text.trim()];
+
+  // Adaptive gap threshold: 3× the median character width, with a floor of
+  // PDF_MIN_COLUMN_GAP units. At 12pt, characters are ~6-7 units wide, so
+  // 3× ≈ 18-21 units — comfortably larger than inter-word spacing (3-5 units)
+  // but smaller than typical table column gaps (25+ units).
+  const charWidths = row.map((i) => (i.text.length > 0 ? i.w / i.text.length : 5));
+  const medCharW = median(charWidths) || 5;
+  const gapThreshold = Math.max(PDF_MIN_COLUMN_GAP, medCharW * 3);
+
+  const cells: string[] = [];
+  let currentCell = row[0].text;
+  let prevEnd = row[0].x + row[0].w;
+
+  for (let i = 1; i < row.length; i++) {
+    const gap = row[i].x - prevEnd;
+    if (gap > gapThreshold) {
+      cells.push(currentCell.trim());
+      currentCell = row[i].text;
+    } else {
+      currentCell += " " + row[i].text;
+    }
+    prevEnd = row[i].x + row[i].w;
+  }
+  cells.push(currentCell.trim());
+  return cells;
+}
+
+// Reconstruct page text from positioned items, preserving table structure.
+// Multi-column rows (2+ cells) are emitted as "cell | cell | cell". When 3+
+// consecutive multi-column rows appear, they are wrapped in
+// [Table: N rows]\nRow 1: ...\nRow 2: ...\n markers matching the DOCX/XLSX
+// format. Single-column rows are emitted as plain text lines.
+function reconstructPositionedPageText(items: PositionedTextItem[]): string {
+  if (items.length === 0) return "";
+  const rows = groupItemsIntoRows(items);
+
+  const lines: string[] = [];
+  let tableBuffer: string[] = [];
+
+  const flushTable = () => {
+    if (tableBuffer.length === 0) return;
+    if (tableBuffer.length >= 3) {
+      lines.push(`[Table: ${tableBuffer.length} rows]`);
+    }
+    lines.push(...tableBuffer);
+    tableBuffer = [];
+  };
+
+  for (const row of rows) {
+    const cells = splitRowIntoCells(row);
+    if (cells.length >= 2) {
+      // Multi-column row — likely a table row. Buffer it; flush when a
+      // non-table row appears or at the end.
+      tableBuffer.push(`Row ${tableBuffer.length + 1}: ${cells.join(" | ")}`);
+    } else {
+      // Single-column row — body text. Flush any accumulated table first.
+      flushTable();
+      const text = cells[0] || "";
+      if (text) lines.push(text);
+    }
+  }
+  flushTable();
+  return lines.join("\n");
+}
+
+// ─── HTML entity decoding (for mammoth DOCX output) ──────────────────────────
+
+function decodeHtmlEntities(s: string): string {
+  return (s ?? "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'");
+}
+
 async function extractPdfWithPdfParse(buffer: Buffer): Promise<{ text: string; pages: number }> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require("pdf-parse");
@@ -186,14 +351,30 @@ async function extractPdfWithPdf2Json(buffer: Buffer): Promise<{ text: string; p
 
   return await new Promise((resolve, reject) => {
     parser.on("pdfParser_dataError", (errData: { parserError?: Error }) => reject(errData.parserError ?? new Error("pdf2json failed")));
-    parser.on("pdfParser_dataReady", (pdfData: { Pages?: Array<{ Texts?: Array<{ R?: Array<{ T?: string }> }> }> }) => {
+    parser.on("pdfParser_dataReady", (pdfData: { Pages?: Array<{ Texts?: Array<{ x?: number; y?: number; w?: number; R?: Array<{ T?: string }> }> }> }) => {
       const pages = pdfData.Pages ?? [];
       const pageTexts = pages.map((page, index) => {
-        const raw = (page.Texts ?? [])
-          .map((textItem) => (textItem.R ?? []).map((run) => decodeURIComponent(run.T ?? "")).join(""))
-          .filter(Boolean)
-          .join(" ");
-        return raw ? `[Page ${index + 1}]\n${raw}` : "";
+        // Build positioned items from pdf2json's Texts array. Each Texts item
+        // has x, y, w (width) and an R (runs) array of text fragments. We
+        // decode the URI-encoded text and preserve the position so the table
+        // reconstruction helper can detect row/column structure.
+        const items: PositionedTextItem[] = (page.Texts ?? []).flatMap((textItem) => {
+          const text = (textItem.R ?? [])
+            .map((run) => {
+              try { return decodeURIComponent(run.T ?? ""); }
+              catch { return run.T ?? ""; }
+            })
+            .join("");
+          if (!text.trim()) return [];
+          return [{
+            x: textItem.x ?? 0,
+            y: textItem.y ?? 0,
+            w: textItem.w ?? 0,
+            text,
+          }];
+        });
+        const reconstructed = reconstructPositionedPageText(items);
+        return reconstructed ? `[Page ${index + 1}]\n${reconstructed}` : "";
       }).filter(Boolean);
       resolve({ text: normalizeExtractedText(pageTexts.join("\n\n")), pages: pages.length });
     });
@@ -219,8 +400,50 @@ async function extractPdfWithPdfJs(buffer: Buffer): Promise<{ text: string; page
   for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent({ includeMarkedContent: false, disableNormalization: false });
-    const items = (content.items ?? []) as Array<{ str?: string; hasEOL?: boolean }>;
-    const pageText = items.map((item) => item.str ? `${item.str}${item.hasEOL ? "\n" : " "}` : "").join("").replace(/[ \t]+\n/g, "\n").trim();
+    // pdfjs text items have:
+    //   .str       — the text string
+    //   .transform — [a, b, c, d, e, f] where e=x (left), f=y (baseline from bottom)
+    //   .width     — text width in PDF units
+    //   .hasEOL    — whether this item ends a line
+    // We use transform[4] (x) and transform[5] (y) to reconstruct row/column
+    // structure via the positional table reconstruction helper, instead of
+    // the old approach of joining everything with spaces and relying on
+    // hasEOL for line breaks. This preserves table structure that the old
+    // approach destroyed.
+    const rawItems = (content.items ?? []) as Array<{
+      str?: string;
+      hasEOL?: boolean;
+      transform?: number[];
+      width?: number;
+    }>;
+    const items: PositionedTextItem[] = rawItems
+      .filter((item) => item.str && item.str.trim())
+      .map((item) => ({
+        // transform[4] = x (left edge), transform[5] = y (baseline from bottom).
+        // Negate y so that larger y = lower on page (top-to-bottom ordering),
+        // matching the convention used by pdf2json. The grouping helper only
+        // cares about y-equality within tolerance, so the sign doesn't affect
+        // row detection — only the sort direction for row ordering.
+        x: item.transform?.[4] ?? 0,
+        y: -(item.transform?.[5] ?? 0),
+        w: item.width ?? 0,
+        text: item.str!,
+      }));
+
+    let pageText: string;
+    if (items.length > 0 && items.some((i) => i.w > 0)) {
+      // Items have positional data — use table-aware reconstruction.
+      pageText = reconstructPositionedPageText(items);
+    } else {
+      // Fallback: no positional data (shouldn't happen with pdfjs, but
+      // defensive). Use the old hasEOL-based approach.
+      pageText = rawItems
+        .map((item) => item.str ? `${item.str}${item.hasEOL ? "\n" : " "}` : "")
+        .join("")
+        .replace(/[ \t]+\n/g, "\n")
+        .trim();
+    }
+
     if (pageText) {
       pageTexts.push(`[Page ${pageNumber}]\n${pageText}`);
       totalChars += pageText.length;
@@ -509,6 +732,140 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   return best.text;
 }
 
+// ─── DOCX table extraction helpers ───────────────────────────────────────────
+//
+// The previous DOCX table extraction had four gaps that broke table structure
+// for tender documents:
+//
+//   1. colspan/rowspan not expanded — a BOQ with a category header spanning
+//      5 columns (colspan="5") was emitted as a single cell, shifting every
+//      subsequent row's column alignment. The fix uses a grid model: each
+//      cell occupies (row, col) positions, and new cells skip positions
+//      already occupied by a rowspan from above.
+//
+//   2. Nested tables broke the non-greedy <table[\s\S]*?<\/table> regex —
+//      it matched from the outer <table> to the FIRST </table> (the inner
+//      close), truncating the outer table and leaking the inner table's
+//      content as body text. The fix uses a depth-aware table finder that
+//      matches balanced <table>...</table> pairs.
+//
+//   3. No "Row N:" prefix — inconsistent with the XLSX/PPTX extractors,
+//      so downstream table-parsing regex that expects "Row N:" didn't match
+//      DOCX tables. The fix adds "Row N:" prefix to every row.
+//
+//   4. HTML entities not decoded in cells — &amp; &lt; &gt; &nbsp; survived
+//      into the output, corrupting cell text. The fix uses decodeHtmlEntities.
+
+// Find the position of the matching </table> close tag for a <table> open tag
+// at position `openPos`, accounting for nested tables. Returns the index
+// AFTER the closing ">" of the matching </table>, or -1 if unbalanced.
+function findMatchingTableClose(html: string, openPos: number): number {
+  let depth = 1;
+  let pos = html.indexOf(">", openPos) + 1;
+  while (depth > 0 && pos < html.length) {
+    const nextOpen = html.indexOf("<table", pos);
+    const nextClose = html.indexOf("</table", pos);
+    if (nextClose === -1) return -1; // malformed — no close tag found
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth++;
+      pos = html.indexOf(">", nextOpen) + 1;
+    } else {
+      depth--;
+      pos = html.indexOf(">", nextClose) + 1;
+      if (depth === 0) return pos;
+    }
+  }
+  return -1;
+}
+
+// Find all top-level <table>...</table> regions in the HTML, correctly
+// handling nested tables. Returns an array of {start, end, html} where
+// start/end are indices into the original HTML and html is the table
+// markup (including the outer <table> and </table> tags).
+function findTopLevelTables(html: string): Array<{ start: number; end: number; html: string }> {
+  const tables: Array<{ start: number; end: number; html: string }> = [];
+  let searchFrom = 0;
+  while (searchFrom < html.length) {
+    const openIdx = html.indexOf("<table", searchFrom);
+    if (openIdx === -1) break;
+    const closeEnd = findMatchingTableClose(html, openIdx);
+    if (closeEnd === -1) {
+      // Malformed — skip this <table> and continue searching.
+      searchFrom = openIdx + 6;
+      continue;
+    }
+    tables.push({ start: openIdx, end: closeEnd, html: html.slice(openIdx, closeEnd) });
+    searchFrom = closeEnd;
+  }
+  return tables;
+}
+
+// Parse a single <table>...</table> HTML fragment into structured text,
+// expanding colspan/rowspan via a grid model. Emits:
+//   [Table: N rows]
+//   Row 1: cell | cell | cell
+//   Row 2: cell | cell | cell
+// matching the XLSX/PPTX table format.
+function parseDocxTableToText(tableHtml: string): string {
+  const rowMatches = [...tableHtml.matchAll(/<tr\b[\s\S]*?<\/tr>/gis)];
+  if (rowMatches.length === 0) return "";
+
+  // Grid model: grid[row][col] = cell text. The occupied set tracks which
+  // (row, col) positions are already filled by a rowspan/colspan from an
+  // earlier cell, so new cells skip those positions.
+  const grid: Map<string, string> = new Map();
+  let maxCol = 0;
+
+  for (let r = 0; r < rowMatches.length; r++) {
+    const rowHtml = rowMatches[r][0];
+    // Match <td> and <th> cells. Use \b to avoid matching <tdesign> etc.
+    const cellMatches = [...rowHtml.matchAll(/<t[dh]\b[^>]*>[\s\S]*?<\/t[dh]>/gis)];
+    let col = 0;
+    for (const cellMatch of cellMatches) {
+      // Skip positions occupied by a rowspan from a previous row.
+      while (grid.has(`${r},${col}`)) col++;
+
+      const cellHtml = cellMatch[0];
+      const colspanMatch = cellHtml.match(/colspan\s*=\s*["']?(\d+)["']?/i);
+      const rowspanMatch = cellHtml.match(/rowspan\s*=\s*["']?(\d+)["']?/i);
+      const colspan = Math.max(1, parseInt(colspanMatch?.[1] ?? "1"));
+      const rowspan = Math.max(1, parseInt(rowspanMatch?.[1] ?? "1"));
+
+      // Extract cell text: strip all inner HTML tags, decode entities.
+      const rawText = cellHtml
+        .replace(/^<t[dh]\b[^>]*>/i, "")
+        .replace(/<\/t[dh]>$/i, "")
+        .replace(/<[^>]+>/g, " ");
+      const cellText = decodeHtmlEntities(rawText).replace(/\s+/g, " ").trim();
+
+      // Fill the grid for all spanned positions.
+      for (let dr = 0; dr < rowspan; dr++) {
+        for (let dc = 0; dc < colspan; dc++) {
+          grid.set(`${r + dr},${col + dc}`, cellText);
+        }
+      }
+      col += colspan;
+      if (col > maxCol) maxCol = col;
+    }
+  }
+
+  // Build output rows from the grid.
+  const tableLines: string[] = [];
+  for (let r = 0; r < rowMatches.length; r++) {
+    const cells: string[] = [];
+    for (let c = 0; c < maxCol; c++) {
+      cells.push(grid.get(`${r},${c}`) ?? "");
+    }
+    // Only emit rows that have at least one non-empty cell.
+    if (cells.some((cell) => cell)) {
+      tableLines.push(`Row ${r + 1}: ${cells.join(" | ")}`);
+    }
+  }
+
+  if (tableLines.length === 0) return "";
+  return `[Table: ${tableLines.length} rows]\n${tableLines.join("\n")}`;
+}
+
 async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   if (ext === "doc") return "[Legacy .doc file detected. Please save as .docx for reliable text extraction.]";
@@ -525,44 +882,70 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
 
     // Check if the HTML has structural elements (headings or tables)
     const hasHeadings = /<h[1-6][^>]*>/i.test(html);
-    const hasTables = /<table[\s\S]*?<\/table>/i.test(html);
+    const hasTables = /<table[\s\S]/i.test(html);
 
     if (hasHeadings || hasTables) {
-      // Build structured text preserving section order and hierarchy
+      // Build structured text preserving section order and hierarchy.
+      // Instead of splitting by regex (which breaks on nested tables), we
+      // iterate through the HTML linearly, finding top-level tables via the
+      // depth-aware finder and headings via regex, in document order.
+      const tables = findTopLevelTables(html);
       const sections: string[] = [];
       let currentSection = "";
+      let cursor = 0;
 
-      // Split HTML by headings and tables to preserve document structure
-      const htmlParts = html.split(/(<h[1-6][^>]*>.*?<\/h[1-6]>|<table[\s\S]*?<\/table>)/gis);
-      for (const part of htmlParts) {
-        if (!part.trim()) continue;
-        const headingMatch = part.match(/<h([1-6])[^>]*>(.*?)<\/h\1>/is);
-        const tableMatch = part.match(/<table[\s\S]*?<\/table>/is);
+      // Build a combined list of "structural elements" (headings + tables)
+      // sorted by position, so we can walk the HTML in document order and
+      // emit text between them as body paragraphs.
+      type StructuralElement = { pos: number; type: "heading" | "table"; match: RegExpMatchArray | null; tableHtml: string };
+      const elements: StructuralElement[] = [];
 
-        if (headingMatch) {
-          if (currentSection.trim()) sections.push(currentSection.trim());
-          const level = parseInt(headingMatch[1]);
-          const headingText = headingMatch[2].replace(/<[^>]+>/g, "").trim();
-          const prefix = "#".repeat(level);
-          currentSection = `${prefix} ${headingText}\n\n`;
-        } else if (tableMatch) {
-          // Extract table as structured text
-          const rows = [...tableMatch[0].matchAll(/<tr[\s\S]*?<\/tr>/gis)];
-          const tableLines: string[] = [];
-          for (const rowMatch of rows) {
-            const cells = [...rowMatch[0].matchAll(/<t[dh][\s\S]*?<\/t[dh]>/gis)];
-            const cellTexts = cells.map((c) => c[0].replace(/<[^>]+>/g, "").trim());
-            if (cellTexts.some((c) => c)) tableLines.push(cellTexts.join(" | "));
-          }
-          if (tableLines.length > 0) {
-            currentSection += `[Table: ${tableLines.length} rows]\n${tableLines.join("\n")}\n\n`;
-          }
-        } else {
-          // Regular paragraph text
-          const text = part.replace(/<[^>]+>/g, "").trim();
+      // Find all headings.
+      const headingRegex = /<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gis;
+      let hMatch: RegExpExecArray | null;
+      while ((hMatch = headingRegex.exec(html)) !== null) {
+        elements.push({ pos: hMatch.index, type: "heading", match: hMatch, tableHtml: "" });
+      }
+
+      // Find all top-level tables (already depth-aware).
+      for (const t of tables) {
+        elements.push({ pos: t.start, type: "table", match: null, tableHtml: t.html });
+      }
+
+      // Sort by position.
+      elements.sort((a, b) => a.pos - b.pos);
+
+      for (const el of elements) {
+        // Emit any body text between the cursor and this element.
+        if (el.pos > cursor) {
+          const between = html.slice(cursor, el.pos);
+          const text = decodeHtmlEntities(between.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
           if (text) currentSection += text + "\n\n";
         }
+
+        if (el.type === "heading" && el.match) {
+          if (currentSection.trim()) sections.push(currentSection.trim());
+          const level = parseInt(el.match[1]);
+          const headingText = decodeHtmlEntities(el.match[2].replace(/<[^>]+>/g, "")).trim();
+          const prefix = "#".repeat(level);
+          currentSection = `${prefix} ${headingText}\n\n`;
+          cursor = el.match.index! + el.match[0].length;
+        } else if (el.type === "table") {
+          const tableText = parseDocxTableToText(el.tableHtml);
+          if (tableText) currentSection += tableText + "\n\n";
+          // Advance cursor past the table. Find the table's end position.
+          const tableEl = tables.find((t) => t.start === el.pos);
+          cursor = tableEl ? tableEl.end : el.pos + el.tableHtml.length;
+        }
       }
+
+      // Emit any remaining body text after the last structural element.
+      if (cursor < html.length) {
+        const remaining = html.slice(cursor);
+        const text = decodeHtmlEntities(remaining.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+        if (text) currentSection += text + "\n\n";
+      }
+
       if (currentSection.trim()) sections.push(currentSection.trim());
 
       if (sections.length > 0) {
@@ -571,7 +954,7 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
     }
 
     // No structure found — extract plain text from HTML (strip all tags)
-    const plainText = html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+    const plainText = decodeHtmlEntities(html.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
     if (plainText.length > 20) {
       return normalizeExtractedText(plainText);
     }
