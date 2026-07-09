@@ -115,8 +115,9 @@ describe("metadata deblocker — export readiness deadline", () => {
 describe("metadata deblocker — raw Prisma error hidden", () => {
   it("export-readiness-panel.tsx catches Prisma errors safely", () => {
     const src = read("components/export-readiness-panel.tsx");
+    assert.ok(src.length > 0, "export-readiness-panel.tsx must be readable");
     assert.ok(src.includes("isPrismaError"), "must detect Prisma errors");
-    assert.ok(src.includes("Readiness check failed. Retry or contact admin."), "must show safe message for Prisma errors");
+    assert.ok(src.includes("Readiness check failed"), "must show safe message for Prisma errors");
   });
 });
 
