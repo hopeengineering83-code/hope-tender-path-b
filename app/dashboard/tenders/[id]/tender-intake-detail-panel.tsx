@@ -258,9 +258,6 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const sDesc = sanitize("description", tender.description);
   const sEvalMethod = sanitize("evaluationMethodology", tender.evaluationMethodology);
 
-  // Derive source-driven tender detail from raw tender columns
-  const sourceDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
-
   // Source-driven text parsing: derive intelligence from the FULL extracted
   // tender content (extractedText, intakeSummary, analysisSummary, description,
   // evaluationMethodology) — not just from stale scalar columns.
@@ -283,6 +280,61 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         tenderSubmissionAddress: tender.submissionAddress,
       })
     : null;
+
+  // Derive source-driven tender detail from raw tender columns
+  // NOTE: sourceDetail is kept for backward-compatible coverage counting but
+  // the missing-facts list now uses the intelligence result (parsed from
+  // full extracted text) so the display and missing-facts list agree.
+  const sourceDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
+
+  // Build effective missing-facts from the intelligence result (not from
+  // scalar-only deriveSourceDrivenTenderDetail). This prevents the
+  // contradiction where the panel displays a parsed deadline but the
+  // missing-facts list says "deadline missing" because tender.deadline
+  // is null.
+  type MissingFact = {
+    key: string;
+    label: string;
+    requiredFor: "final_submission" | "draft_context";
+    reason?: string | null;
+    status: "missing" | "rejected_invalid";
+  };
+  const effectiveMissingFacts: MissingFact[] = [];
+  if (intelligence) {
+    // Check each critical fact: if the parser didn't find it AND the scalar
+    // is null/invalid, it's genuinely missing. If the parser found it, it's
+    // NOT missing — even if the scalar is null.
+    const si = intelligence.submissionInstructions;
+    if (!si.deadlineDisplay && !tender.deadline) {
+      effectiveMissingFacts.push({ key: "deadline", label: "Submission Deadline", requiredFor: "final_submission", status: "missing" });
+    }
+    if ((!si.method || si.method === "Unknown") && !tender.submissionMethod) {
+      effectiveMissingFacts.push({ key: "submissionMethod", label: "Submission Method", requiredFor: "draft_context", status: "missing" });
+    }
+    if (si.emails.length === 0 && !tender.submissionEmails && (si.method === "Email" || si.method === "Hybrid")) {
+      effectiveMissingFacts.push({ key: "submissionEmails", label: "Submission Emails", requiredFor: "final_submission", status: "missing" });
+    }
+    if (!si.physicalAddress && !tender.submissionAddress && (si.method === "Physical" || si.method === "Hybrid")) {
+      effectiveMissingFacts.push({ key: "submissionAddress", label: "Submission Address", requiredFor: "final_submission", status: "missing" });
+    }
+    if (!intelligence.clientOrProcuringEntity && !tender.clientName && !(tender as Record<string, unknown>).procuringEntityName) {
+      effectiveMissingFacts.push({ key: "clientName", label: "Client / Procuring Entity", requiredFor: "draft_context", status: "missing" });
+    }
+    if (!intelligence.projectTitle && !tender.title) {
+      effectiveMissingFacts.push({ key: "projectTitle", label: "Project Title", requiredFor: "draft_context", status: "missing" });
+    }
+  } else {
+    // No intelligence — fall back to sourceDetail for missing facts
+    for (const f of sourceDetail.facts) {
+      if ((f.status === "missing" || f.status === "rejected_invalid") && (f.requiredFor === "final_submission" || f.requiredFor === "draft_context")) {
+        effectiveMissingFacts.push({
+          key: f.key, label: f.label, requiredFor: f.requiredFor as "final_submission" | "draft_context",
+          reason: f.reason, status: f.status as "missing" | "rejected_invalid",
+        });
+      }
+    }
+  }
+  const effectiveMissingCount = effectiveMissingFacts.length;
 
   // Override scalar-derived values with source-driven values when the source
   // text provides them. This fixes Defect 1 (extracted facts exist but are
@@ -378,16 +430,14 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         <Detail label="Financial proposal" value={effectiveFinancialProposal} />
       </div>
 
-      {/* Source-driven missing facts with user actions */}
-      {sourceDetail.missingRelevantCount > 0 && (
+      {/* Effective missing facts with user actions — uses intelligence, not scalar-only sourceDetail */}
+      {effectiveMissingCount > 0 && (
         <details className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3" open>
           <summary className="cursor-pointer text-sm font-semibold text-amber-800">
-            {sourceDetail.missingRelevantCount} relevant fact(s) missing — review and resolve
+            {effectiveMissingCount} relevant fact(s) missing — review and resolve
           </summary>
           <div className="mt-3 space-y-3 bg-white p-3 rounded-lg">
-            {sourceDetail.facts
-              .filter((f) => f.status === "missing" || f.status === "rejected_invalid")
-              .filter((f) => f.requiredFor === "final_submission" || f.requiredFor === "draft_context")
+            {effectiveMissingFacts
               .map((fact) => (
                 <div key={fact.key} className="border-b border-slate-100 pb-3 last:border-b-0">
                   <div className="flex items-start justify-between gap-3">
@@ -408,7 +458,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
                   </div>
                   <FactActions
                     tenderId={tender.id}
-                    fact={fact}
+                    fact={fact as SourceDrivenTenderFact}
                     onAction={handleAction}
                   />
                 </div>

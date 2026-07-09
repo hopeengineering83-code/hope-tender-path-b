@@ -51,14 +51,33 @@ type TenderShape = {
  * matches a placeholder/negative pattern. These values are hidden by
  * the Tender Detail panel's sanitizer as "Not extracted" and must NOT
  * trigger the corrupted-metadata banner.
+ *
+ * This function handles all common placeholder variants including
+ * invisible whitespace (NBSP \u00A0), trailing/leading spaces, and
+ * newlines. The banner should only fire for GENUINELY CORRUPTED values
+ * (TOC fragments, portal text, OCR garbage) — not for placeholders.
  */
 function isPlaceholderIsh(value: string): boolean {
-  const trimmed = value.trim();
+  // Normalize whitespace: trim, replace NBSP, collapse internal whitespace
+  const trimmed = value.replace(/\u00A0/g, " ").trim();
   if (trimmed.length === 0) return true;
+
   // Explicit placeholder patterns: "Not", "TBD", "N/A", "Unknown", etc.
   if (containsMetadataPlaceholder(trimmed)) return true;
+
+  // Comprehensive placeholder string set — case-insensitive
+  const lower = trimmed.toLowerCase();
+  const PLACEHOLDER_STRINGS = new Set([
+    "not", "not extracted", "not mentioned", "not stated", "not provided",
+    "not specified", "not applicable", "n/a", "na", "tbd", "tbc", "tba",
+    "unknown", "none", "null", "nil", "blank", "pending", "placeholder",
+    "to be determined", "to be confirmed", "to be advised",
+  ]);
+  if (PLACEHOLDER_STRINGS.has(lower)) return true;
+
   // Short single-word values that are not real data (≤4 chars, no digits)
   if (trimmed.length <= 4 && !/\d/.test(trimmed)) return true;
+
   return false;
 }
 

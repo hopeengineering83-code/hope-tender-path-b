@@ -578,6 +578,18 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       if (isCritical) {
         blockerReason = `Field "${label}" is critical. Not Stated cannot unblock it. Critical fields remain blocked until source-grounded.`;
       }
+    } else if (ledgerAuthorityState === "NOT_APPLICABLE") {
+      // ── Ledger NOT_APPLICABLE (without override) ──────────────────────
+      // The ledger says this fact does not apply. Mirror the override
+      // NOT_APPLICABLE branch so a ledger N/A entry does NOT produce
+      // status=INVALID (which would block final export — the opposite of
+      // the user's intent when marking a fact N/A).
+      if (NEVER_NOT_APPLICABLE.has(fieldKey) || isCritical) {
+        status = "BLOCKED";
+        blockerReason = `Field "${label}" is critical. Ledger Not Applicable cannot unblock it. Record a candidate value or resolve from an active tender source.`;
+      } else {
+        status = "NOT_APPLICABLE";
+      }
     } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr) {
       if (overrideMatchesGroundedSourceCheck()) {
         status = "EXTRACTED_AND_GROUNDED";
