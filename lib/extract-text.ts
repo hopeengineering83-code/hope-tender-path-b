@@ -504,24 +504,24 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   if (ext === "doc") return "[Legacy .doc file detected. Please save as .docx for reliable text extraction.]";
   const mammoth = await import("mammoth");
-  // Extract raw text for the main body
-  const result = await mammoth.extractRawText({ buffer });
-  const parts: string[] = [];
 
-  // Try to extract HTML to get headings and tables (for structure preservation)
+  // Use convertToHtml FIRST — it gives us both text and structure (headings, tables).
+  // Previously we called BOTH extractRawText AND convertToHtml, which doubled memory
+  // usage for large DOCX files and caused OOM on Vercel's 1024MB Hobby plan.
+  // Now we only call convertToHtml; if it fails or finds no structure, we extract
+  // text from the HTML itself (stripping tags).
   try {
     const htmlResult = await mammoth.convertToHtml({ buffer });
     const html = htmlResult.value ?? "";
 
-    // Extract headings (h1-h6) as section markers
-    const headingMatches = [...html.matchAll(/<h([1-6])[^>]*>(.*?)<\/h\1>/gis)];
-    if (headingMatches.length > 0) {
-      // If we have structured headings, use them to build a better text representation
-      // that preserves section order and hierarchy
+    // Check if the HTML has structural elements (headings or tables)
+    const hasHeadings = /<h[1-6][^>]*>/i.test(html);
+    const hasTables = /<table[\s\S]*?<\/table>/i.test(html);
+
+    if (hasHeadings || hasTables) {
+      // Build structured text preserving section order and hierarchy
       const sections: string[] = [];
       let currentSection = "";
-      let inTable = false;
-      let tableRows: string[] = [];
 
       // Split HTML by headings and tables to preserve document structure
       const htmlParts = html.split(/(<h[1-6][^>]*>.*?<\/h[1-6]>|<table[\s\S]*?<\/table>)/gis);
@@ -560,11 +560,18 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
         return normalizeExtractedText(sections.join("\n\n---\n\n"));
       }
     }
+
+    // No structure found — extract plain text from HTML (strip all tags)
+    const plainText = html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+    if (plainText.length > 20) {
+      return normalizeExtractedText(plainText);
+    }
   } catch {
-    // HTML extraction failed — fall through to raw text
+    // convertToHtml failed — fall through to extractRawText
   }
 
-  // Fallback: just use raw text
+  // Fallback: extract raw text only (no structure)
+  const result = await mammoth.extractRawText({ buffer });
   return normalizeExtractedText(result.value ?? "");
 }
 
