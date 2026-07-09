@@ -20,7 +20,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       select: {
         analysisSummary: true,
         analysisExtractionStatus: true,
-        tender detailsContaminated: true,
+        metadataContaminated: true,
         clientName: true,
         country: true,
         deadline: true,
@@ -68,7 +68,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     }
 
     // 3. Missing/contaminated tender details
-    if (tender.tender detailsContaminated || !(tender.clientName || (tender as Record<string, unknown>).procuringEntityName) || !tender.country || !tender.deadline) {
+    if (tender.metadataContaminated || !(tender.clientName || (tender as Record<string, unknown>).procuringEntityName) || !tender.country || !tender.deadline) {
       suggestions.push({
         icon: "📋",
         title: "Optional: review extracted details",
