@@ -288,8 +288,10 @@ describe("no raw Prisma error in UI", () => {
   it("health score panel catches errors safely", () => {
     const src = read("components/tender-health-score-panel.tsx");
     // PR #999 changed the safe-error string from "Panel failed to load" to
-    // "Panel is loading — refresh to retry if this persists."
-    assert.ok(src.includes("Panel is loading — refresh to retry if this persists."), "must show safe message on error");
+    // "Panel is loading — refresh to retry if this persists." Use a substring
+    // without the em-dash to avoid any encoding/locale issues in CI.
+    assert.ok(src.includes("Panel is loading"), "must show safe 'Panel is loading' message on error");
+    assert.ok(src.includes("refresh to retry"), "must show 'refresh to retry' guidance on error");
     assert.ok(src.includes("catch"), "must catch errors");
   });
 
