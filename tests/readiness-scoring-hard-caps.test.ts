@@ -106,15 +106,24 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
   });
 });
 
-describe("readiness scoring — HARD CAP: critical metadata missing", () => {
-  it("caps at 60 when metadata completeness < 60%", () => {
+describe("readiness scoring — metadata is advisory (caps removed per unified runtime model)", () => {
+  // PR #999 removed metadata caps from readiness-scoring.ts. Metadata is now
+  // advisory/diagnostic only — it cannot cap the readiness score. The tests
+  // below verify the NEW behavior: metadata issues do NOT reduce the score.
+  it("does NOT cap when metadata completeness < 60%", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), metadataCompletenessRatio: 0.3125 /* 5/16 */ });
-    assert.ok(r.score <= 60, `expected ≤60, got ${r.score}`);
-    assert.equal(r.appliedCap?.dimension, "metadataCompleteness");
+    assert.ok(r.score > 60, `expected >60 (no metadata cap), got ${r.score}`);
+    assert.notEqual(r.appliedCap?.dimension, "metadataCompleteness");
   });
-  it("caps at 60 when metadata has invalid placeholder fields", () => {
+  it("does NOT cap when metadata has invalid placeholder fields", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), metadataInvalidCount: 3 });
-    assert.ok(r.score <= 60, `expected ≤60, got ${r.score}`);
+    assert.ok(r.score > 60, `expected >60 (no metadata cap), got ${r.score}`);
+    assert.notEqual(r.appliedCap?.dimension, "metadataCompleteness");
+  });
+  it("does NOT cap when metadataContaminated is true", () => {
+    const r = computeReadinessScore({ ...fullyHealthyInput(), metadataContaminated: true });
+    assert.ok(r.score > 60, `expected >60 (no metadata cap), got ${r.score}`);
+    assert.notEqual(r.appliedCap?.dimension, "metadataCompleteness");
   });
 });
 

@@ -203,13 +203,14 @@ describe("Controlled flow — one success + multiple blocked", () => {
     assert.equal(r.blockerCode, "REQUIREMENT_SOURCE_UNGROUNDED");
   });
 
-  it("BLOCKED: metadata contamination", () => {
+  it("NOT BLOCKED: metadata contamination (advisory only)", () => {
+    // PR #1002 removed metadata as a hard blocker. Metadata is advisory/diagnostic
+    // only and cannot block generation or export.
     const r = evaluateGenerationReadiness(makePassingInput({
       criticalMetadataOk: false,
       purpose: "export",
     }));
-    assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
   });
 
   it("BLOCKED: stale hash (for export/final-zip)", () => {

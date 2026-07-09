@@ -122,11 +122,12 @@ describe("Gate blocks ownership violations", () => {
   });
 });
 
-describe("Gate blocks metadata contamination", () => {
-  it("blocks when criticalMetadataOk is false", () => {
+describe("Gate does NOT block metadata contamination (advisory only)", () => {
+  // PR #1002 removed metadata as a hard blocker. Metadata is advisory/diagnostic
+  // only and cannot block generation or export.
+  it("does NOT block export when criticalMetadataOk is false", () => {
     const r = evaluateGenerationReadiness(makePassingInput({ criticalMetadataOk: false, purpose: "export" }));
-    assert.equal(r.ok, false);
-    assert.equal(r.blockerCode, "METADATA_CRITICAL_FIELD_INVALID");
+    assert.ok(r.ok || r.blockerCode !== "METADATA_CRITICAL_FIELD_INVALID", "export should not block on metadata (advisory only)");
   });
 });
 
