@@ -17,6 +17,8 @@ import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
 import { detectAnalysisSourceWithApproval } from "./analysis-source";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
+import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
+import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
 
 export type ExportReadyDocument = {
   id: string;
@@ -719,3 +721,104 @@ export async function checkFullExportReadiness(opts: { tenderId: string; docs: E
   const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };
 }
+
+/**
+ * Run the document-content-quality validator against each export-candidate
+ * document and return failures for any document where okForFinal is false.
+ *
+ * This is the FINAL-APPROVAL ENFORCER for tender-specific document quality.
+ * It blocks export when:
+ *   - Placeholders or AI traces appear in final content
+ *   - Mandatory sections are missing
+ *   - Forbidden text ("As an AI", "TODO", "TBD", "Bid-Team to confirm", etc.) appears
+ *   - Financial content appears in a technical-only tender's documents
+ *   - A financial proposal or price schedule is generated when the tender
+ *     states financial proposal is not required
+ *   - A full technical proposal is generated for an EOI tender
+ *
+ * This function is called by checkFullExportReadinessWithQualityGate.
+ *
+ * @param docs - Export-candidate documents with visible text extracted.
+ * @param ctx - The tender document generation context (for tender-type-aware checks).
+ * @param requiredSectionsByType - Map of document type → required section titles.
+ * @param mandatoryRequirements - Mandatory tender requirements that must be covered.
+ */
+export function checkDocumentQualityGate(
+  docs: ExportReadyDocument[],
+  ctx: TenderDocumentGenerationContext,
+  requiredSectionsByType: Record<string, string[]>,
+  mandatoryRequirements: string[],
+): ExportReadinessFailure[] {
+  const failures: ExportReadinessFailure[] = [];
+  for (const doc of docs) {
+    // Only validate documents that have visible text content
+    const text = doc.fileContent ?? null;
+    if (!text || !looksLikePlainText(text)) continue;
+
+    const documentType = doc.documentType ?? "";
+    const requiredSections = requiredSectionsByType[documentType] ?? [];
+    const result = validateGeneratedDocumentQuality(
+      text,
+      documentType,
+      ctx,
+      requiredSections,
+      mandatoryRequirements,
+    );
+
+    if (!result.okForFinal) {
+      const reasons: string[] = [];
+      if (result.finalBlockers.length > 0) reasons.push(...result.finalBlockers);
+      if (result.aiTraceViolations.length > 0) reasons.push(...result.aiTraceViolations);
+      if (result.placeholderViolations.length > 0) reasons.push(...result.placeholderViolations);
+      if (result.missingSections.length > 0) reasons.push(`Missing required sections: ${result.missingSections.join(", ")}`);
+      if (result.inventedEvidenceRisks.length > 0) reasons.push(...result.inventedEvidenceRisks);
+      if (reasons.length > 0) {
+        failures.push({
+          documentId: doc.id,
+          name: doc.name,
+          fileName: documentFileName(doc),
+          reasons: [`[QUALITY GATE score=${result.score}]`, ...reasons],
+        });
+      }
+    }
+  }
+  return failures;
+}
+
+/**
+ * Full export readiness including the document-content-quality gate.
+ *
+ * This is the ENFORCER version of checkFullExportReadiness: it additionally
+ * runs validateGeneratedDocumentQuality() against each export-candidate
+ * document and blocks export when okForFinal is false.
+ *
+ * Use this in the /api/tenders/[id]/validate route and the final-ZIP
+ * export route to enforce tender-specific document quality.
+ */
+export async function checkFullExportReadinessWithQualityGate(opts: {
+  tenderId: string;
+  docs: ExportReadyDocument[];
+  requireFileContent?: boolean;
+  ctx: TenderDocumentGenerationContext;
+  requiredSectionsByType?: Record<string, string[]>;
+  mandatoryRequirements?: string[];
+}): Promise<ExportReadinessResult> {
+  const base = await checkFullExportReadiness(opts);
+  const requiredSectionsByType = opts.requiredSectionsByType ?? DEFAULT_REQUIRED_SECTIONS_BY_TYPE;
+  const mandatoryRequirements = opts.mandatoryRequirements ?? opts.ctx.mandatoryRequirements ?? [];
+  const qualityFailures = checkDocumentQualityGate(opts.docs, opts.ctx, requiredSectionsByType, mandatoryRequirements);
+  const allFailures = mergeFailures(base.failures, qualityFailures);
+  return {
+    ok: allFailures.length === 0 && (base.tenderLevelBlockers?.length ?? 0) === 0,
+    failures: allFailures,
+    tenderLevelBlockers: base.tenderLevelBlockers,
+    advisoryWarnings: base.advisoryWarnings,
+  };
+}
+
+const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {
+  TECHNICAL_PROPOSAL: ["Cover Letter", "Understanding of the Assignment", "Technical Approach and Methodology", "Work Plan", "Team Composition", "Compliance Matrix", "Submission Checklist"],
+  EXPRESSION_OF_INTEREST: ["Cover Letter", "Expression of Interest", "Company Profile", "Understanding of the Assignment", "Submission Checklist"],
+  QUOTATION: ["Quotation Cover Letter", "Price Schedule", "Submission Checklist"],
+  FINANCIAL_PROPOSAL: ["Financial Proposal", "Price Schedule"],
+};

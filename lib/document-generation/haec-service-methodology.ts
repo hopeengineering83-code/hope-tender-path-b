@@ -48,6 +48,70 @@ export function getMethodologyForServiceStream(stream: CompanyService): Methodol
 }
 
 /**
+ * Conceptual service streams supported by the methodology library.
+ *
+ * These extend the CompanyService union with conceptual streams that the
+ * prompt requires (consultancy, contract administration, construction
+ * management, building consultancy, engineering design, soil investigation,
+ * road/infrastructure consultancy). Each maps to one or more methodology
+ * functions.
+ */
+export type ConceptualServiceStream =
+  | CompanyService
+  | "consultancy"
+  | "contract-administration"
+  | "construction-management"
+  | "building-consultancy"
+  | "engineering-design"
+  | "soil-investigation"
+  | "infrastructure-consultancy";
+
+/**
+ * Get methodology for a conceptual service stream. Falls back to the
+ * CompanyService mapping when the stream is a known CompanyService.
+ */
+export function getMethodologyForConceptualStream(stream: ConceptualServiceStream): MethodologySection[] {
+  switch (stream) {
+    case "consultancy":
+      return consultancyMethodology();
+    case "contract-administration":
+      return contractAdministrationMethodology();
+    case "construction-management":
+      return constructionManagementMethodology();
+    case "building-consultancy":
+      return buildingConsultancyMethodology();
+    case "engineering-design":
+      return engineeringDesignMethodology();
+    case "soil-investigation":
+      return soilInvestigationMethodology();
+    case "infrastructure-consultancy":
+      return infrastructureConsultancyMethodology();
+    default:
+      return getMethodologyForServiceStream(stream as CompanyService);
+  }
+}
+
+/**
+ * Get combined methodology for multiple conceptual streams (no duplication).
+ * Accepts both CompanyService and ConceptualServiceStream values.
+ */
+export function getCombinedConceptualMethodology(streams: ConceptualServiceStream[]): MethodologySection[] {
+  const seen = new Set<string>();
+  const combined: MethodologySection[] = [];
+  for (const stream of streams) {
+    if (stream === "unknown") continue;
+    for (const section of getMethodologyForConceptualStream(stream)) {
+      if (!seen.has(section.title)) {
+        seen.add(section.title);
+        combined.push(section);
+      }
+    }
+  }
+  if (combined.length === 0) return defaultMethodology();
+  return combined;
+}
+
+/**
  * Get combined methodology for multiple service streams (no duplication).
  */
 export function getCombinedMethodology(streams: CompanyService[]): MethodologySection[] {
@@ -429,6 +493,209 @@ function defaultMethodology(): MethodologySection[] {
       title: "Execution Plan",
       content: "Our execution plan is based on best practices in the industry, with a focus on quality, timeliness, and client satisfaction. We will assign qualified personnel and use appropriate tools and technologies.",
       deliverables: ["Execution plan"],
+    },
+  ];
+}
+
+// ─── Conceptual-stream methodologies (prompt-required) ──────────────────────
+//
+// These extend the 12 CompanyService methodologies with 7 conceptual streams
+// required by the release-manager prompt:
+//   consultancy, contract-administration, construction-management,
+//   building-consultancy, engineering-design, soil-investigation,
+//   infrastructure-consultancy.
+
+function consultancyMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Scoping and Diagnosis",
+      content: "We will conduct a structured scoping workshop with the client to confirm the assignment objectives, boundaries, stakeholders, and success criteria. A diagnostic phase will review existing documentation, identify gaps, and produce a clear problem statement that guides the consultancy engagement.",
+      deliverables: ["Scoping report", "Diagnostic memo"],
+    },
+    {
+      title: "Stakeholder Engagement",
+      content: "We will identify all relevant stakeholders (internal teams, beneficiaries, regulators, donors) and design an engagement plan that ensures their input is captured at the right milestones. This includes key-informant interviews, focus groups, and validation workshops.",
+      deliverables: ["Stakeholder map", "Engagement plan"],
+    },
+    {
+      title: "Analysis and Recommendations",
+      content: "Our analysis will combine quantitative and qualitative methods appropriate to the assignment. We will benchmark against international good practice, identify root causes (not just symptoms), and formulate actionable recommendations with clear ownership, timelines, and resource implications.",
+      deliverables: ["Analysis report", "Recommendations matrix"],
+    },
+    {
+      title: "Implementation Roadmap",
+      content: "We will translate the recommendations into a phased implementation roadmap with quick wins, medium-term actions, and long-term structural changes. The roadmap will include a results framework, risk register, and monitoring indicators.",
+      deliverables: ["Implementation roadmap", "Results framework"],
+    },
+    {
+      title: "Knowledge Transfer",
+      content: "Throughout the engagement, we will document our methodology, assumptions, and findings in a way that enables the client team to apply the same approach to future assignments. A final knowledge-transfer session will walk the client team through the deliverables.",
+      deliverables: ["Knowledge-transfer session", "Methodology handbook"],
+    },
+  ];
+}
+
+function contractAdministrationMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Contract Familiarization and Setup",
+      content: "We will review the contract documents (conditions of contract, technical specifications, drawings, BOQ) and establish a contract administration framework. This includes setting up the contract register, payment certificate templates, variation order log, and claims tracking system.",
+      deliverables: ["Contract register", "Administration manual"],
+    },
+    {
+      title: "Payment Certification",
+      content: "We will review the contractor's payment applications against the work actually executed on site, the contract rates, and the approved work program. Each payment certificate will be issued with supporting calculations, deductions for retentions and advances, and clear justification for any disputed items.",
+      deliverables: ["Payment certificate", "Payment schedule"],
+    },
+    {
+      title: "Variation and Claim Management",
+      content: "We will evaluate contractor variations and claims against the contract provisions, including time-extension claims, rate-breakdown submissions, and quantum-merit claims. Each variation will be documented with a variation order, cost breakdown, and approval trace. Claims will be assessed for contractual merit and quantum reasonableness.",
+      deliverables: ["Variation order log", "Claims assessment report"],
+    },
+    {
+      title: "Contract Closeout",
+      content: "At contract completion, we will administer the closeout process: final account reconciliation, retention release, defect-liability tracking, acceptance certificates, and lessons-learned documentation. The final closeout package will provide a complete audit trail of all contractual actions.",
+      deliverables: ["Final account statement", "Closeout report"],
+    },
+  ];
+}
+
+function constructionManagementMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Pre-Construction Planning",
+      content: "We will lead pre-construction planning including constructability review, value engineering workshops, procurement scheduling, and mobilization planning. The construction management plan will address site logistics, safety, environmental controls, and quality management.",
+      deliverables: ["Construction management plan", "Constructability report"],
+    },
+    {
+      title: "Schedule and Cost Control",
+      content: "We will implement earned-value management using Primavera P6 or MS Project. The baseline schedule will be resource-loaded, and progress will be tracked against it weekly. Cost control will monitor committed costs vs. budget, forecast at completion, and variance analysis.",
+      deliverables: ["Baseline schedule", "EVM dashboard"],
+    },
+    {
+      title: "Quality and Safety Management",
+      content: "We will enforce a three-tier quality system (contractor self-inspection, consultant verification, independent audit) with inspection-and-test plans (ITPs) approved before execution. Safety management follows a project-specific HSE plan with daily toolbox talks, weekly walks, and incident reporting.",
+      deliverables: ["ITP register", "HSE plan"],
+    },
+    {
+      title: "Subcontractor and Supply Chain Coordination",
+      content: "We will coordinate subcontractors and the supply chain through weekly coordination meetings, look-ahead schedules, and material-approval tracking. Long-lead items will be identified early and procured against the critical path.",
+      deliverables: ["Coordination meeting minutes", "Look-ahead schedule"],
+    },
+    {
+      title: "Commissioning and Handover",
+      content: "We will manage the commissioning process: pre-commissioning checks, functional performance tests, integrated system tests, and readiness for handover. The handover package will include as-built drawings, O&M manuals, warranty tracking, and training records.",
+      deliverables: ["Commissioning plan", "Handover package"],
+    },
+  ];
+}
+
+function buildingConsultancyMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Building Condition Assessment",
+      content: "We will conduct a comprehensive condition assessment of the building including structural elements, envelope, MEP systems, interiors, and site works. The assessment will identify defects, their causes, and recommended remedial works with cost estimates.",
+      deliverables: ["Condition assessment report"],
+    },
+    {
+      title: "Compliance and Code Review",
+      content: "We will review the building against applicable codes (building, fire, accessibility, energy) and identify non-compliances. A compliance matrix will document each finding, the relevant code clause, and the remediation required.",
+      deliverables: ["Compliance matrix", "Code review report"],
+    },
+    {
+      title: "Energy and Sustainability Audit",
+      content: "We will perform an energy audit identifying energy-conservation measures with payback analysis. Sustainability recommendations will cover water efficiency, waste management, indoor environmental quality, and certification opportunities (LEED, BREEAM, EDGE).",
+      deliverables: ["Energy audit report", "Sustainability recommendations"],
+    },
+    {
+      title: "Capital Planning and Lifecycle Analysis",
+      content: "We will develop a 10-year capital plan identifying major repairs, replacements, and upgrades with cost forecasts and prioritization. Lifecycle analysis will evaluate the total cost of ownership for major systems.",
+      deliverables: ["Capital plan", "Lifecycle cost analysis"],
+    },
+  ];
+}
+
+function engineeringDesignMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Design Basis and Criteria",
+      content: "We will establish the design basis including applicable codes, standards, loadings, materials, and performance criteria. The design basis document will be reviewed and approved by the client before design commences.",
+      deliverables: ["Design basis document"],
+    },
+    {
+      title: "Concept and Preliminary Design",
+      content: "We will develop concept design options evaluating alternative materials, systems, and configurations. The preferred option will be developed into a preliminary design with sufficient detail to confirm feasibility, cost, and schedule.",
+      deliverables: ["Concept design report", "Preliminary design drawings"],
+    },
+    {
+      title: "Detailed Design and Analysis",
+      content: "We will perform detailed engineering analysis using established software (ETABS, SAP2000, STAAD, Revit, Civil 3D). The design will be coordinated across disciplines (civil, structural, MEP, architectural) using BIM clash detection.",
+      deliverables: ["Design calculation report", "Detailed design drawings"],
+    },
+    {
+      title: "Construction Documents",
+      content: "We will produce construction documents including technical specifications, BOQ, and bid-ready drawings. The documents will be sealed by licensed engineers and suitable for permit application and competitive bidding.",
+      deliverables: ["Technical specifications", "BOQ", "Construction drawings"],
+    },
+    {
+      title: "Design Review and Verification",
+      content: "We will conduct independent design reviews at 30%, 60%, and 90% milestones. Verification checks will confirm code compliance, constructability, and alignment with the design basis. Comments will be tracked to closure in a review log.",
+      deliverables: ["Design review reports", "Comment tracking log"],
+    },
+  ];
+}
+
+function soilInvestigationMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Reconnaissance and Planning",
+      content: "We will conduct a site reconnaissance to observe surface conditions, access constraints, and existing structures. A soil-investigation plan will be prepared specifying borehole locations, depths, sampling intervals, and in-situ tests based on the project type and loads.",
+      deliverables: ["Soil-investigation plan", "Site reconnaissance memo"],
+    },
+    {
+      title: "Field Investigation",
+      content: "We will execute the field investigation including borehole drilling, standard penetration tests (SPT), cone penetration tests (CPT), vane shear tests, and groundwater monitoring. Disturbed and undisturbed samples will be collected for laboratory testing with proper chain-of-custody documentation.",
+      deliverables: ["Borehole logs", "Field investigation report"],
+    },
+    {
+      title: "Laboratory Testing",
+      content: "We will perform laboratory tests on representative samples at an accredited geotechnical laboratory. The test program includes index properties (grain size, Atterberg limits, specific gravity), strength (triaxial, direct shear, unconfined compression), consolidation, and chemical tests (sulphate, chloride, organic content).",
+      deliverables: ["Laboratory test report"],
+    },
+    {
+      title: "Geotechnical Analysis and Reporting",
+      content: "We will analyze the field and laboratory data to develop a geotechnical model of the site. The analysis includes bearing capacity, settlement, slope stability, earth pressures, liquefaction potential, and foundation recommendations. The report will provide design parameters and construction considerations.",
+      deliverables: ["Geotechnical investigation report", "Foundation design parameters"],
+    },
+  ];
+}
+
+function infrastructureConsultancyMethodology(): MethodologySection[] {
+  return [
+    {
+      title: "Infrastructure Needs Assessment",
+      content: "We will assess current and future infrastructure demand based on demographic projections, economic trends, and service-level targets. The needs assessment covers transport, water, sanitation, power, telecommunications, and social infrastructure.",
+      deliverables: ["Needs assessment report"],
+    },
+    {
+      title: "Options Appraisal",
+      content: "We will develop and appraise alternative infrastructure options using multi-criteria analysis (MCA) covering technical feasibility, cost, environmental impact, social impact, and risk. The preferred option will be validated through stakeholder consultation.",
+      deliverables: ["Options appraisal report", "MCA matrix"],
+    },
+    {
+      title: "Engineering Feasibility",
+      content: "We will confirm engineering feasibility of the preferred option through preliminary design, site investigations, hydraulic/hydrological analysis, and constructability review. The feasibility report will include a Class-3 cost estimate and indicative schedule.",
+      deliverables: ["Feasibility report", "Class-3 cost estimate"],
+    },
+    {
+      title: "Environmental and Social Safeguards",
+      content: "We will conduct an environmental and social screening aligned with national requirements and donor safeguard policies (IFC PS, World Bank ESS, AfDB OS). An ESMP will be prepared with mitigation measures, monitoring indicators, and institutional responsibilities.",
+      deliverables: ["ESIA screening report", "ESMP"],
+    },
+    {
+      title: "Procurement and Implementation Support",
+      content: "We will support procurement through bid-document preparation, bid evaluation, and contract negotiation. During implementation, we will provide construction supervision, contract administration, and progress monitoring against the results framework.",
+      deliverables: ["Bid documents", "Supervision plan", "Progress reports"],
     },
   ];
 }

@@ -83,6 +83,8 @@ import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 import { getTenderDomainInstructions } from "./tender-domain-instructions";
+import { classifyTender } from "./tender-classification";
+import { buildServiceStreamMethodologyBlock } from "../document-generation/generation-integration";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -392,6 +394,13 @@ function fallbackProposalMarkdown(params: {
   companyProfileSummary?: string | null;
   companyLegalRecords?: Array<{ title: string; recordType?: string | null; authority?: string | null; referenceNumber?: string | null; status?: string | null }>;
   companyComplianceRecords?: Array<{ title: string; complianceType?: string | null; status?: string | null; referenceNumber?: string | null }>;
+  /**
+   * Detected service streams (from classifyTender()). When provided, the
+   * Section C technical approach will include a HAEC service-stream-specific
+   * methodology block (architecture / supervision / geotechnical / etc.)
+   * injected from lib/document-generation/haec-service-methodology.ts.
+   */
+  serviceStreams?: import("./tender-classification").CompanyService[];
 }): string {
   const expertSelected = params.expertLines.length;
   const projectSelected = params.projectLines.length;
@@ -601,6 +610,20 @@ function fallbackProposalMarkdown(params: {
   } else if (params.requirements.length > 0) {
     lines.push("## Scope Response");
     lines.push(...params.requirements.slice(0, 12).map((r) => `- ${r}`));
+  }
+
+  // ── HAEC service-stream-specific methodology injection ────────────────────
+  // When service streams are detected (from classifyTender()), inject the
+  // HAEC service-stream-specific methodology block (architecture / supervision
+  // / geotechnical / interior design / urban planning / structural / MEP /
+  // roads / water-sanitation / feasibility / environmental / project
+  // management). This makes the technical approach tender-specific rather
+  // than generic.
+  if (params.serviceStreams && params.serviceStreams.length > 0) {
+    const methodologyBlock = buildServiceStreamMethodologyBlock(params.serviceStreams);
+    if (methodologyBlock) {
+      lines.push(methodologyBlock);
+    }
   }
 
   lines.push("## Proposed Team and Expert Contributions");
@@ -1021,6 +1044,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // that propagates to every section if used directly.
   let cleanedTenderTitle = intelligence.assignmentName;
   const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+
+  // ─── Service-stream classification (for HAEC methodology injection) ────────
+  // Classify the tender to detect service streams (architecture / supervision
+  // / geotechnical / interior design / urban planning / structural / MEP /
+  // roads / water-sanitation / feasibility / environmental / project
+  // management). These are passed to fallbackProposalMarkdown() which injects
+  // a service-stream-specific methodology block into Section C (Technical
+  // Approach). This makes the generated proposal tender-specific rather than
+  // generic.
+  const tenderClassification = classifyTender(tenderText);
+  const detectedServiceStreams = tenderClassification.companyServices;
+  if (detectedServiceStreams.length > 0 && detectedServiceStreams[0] !== "unknown") {
+    logger.info(`[generate-elite] detected service streams: ${detectedServiceStreams.join(", ")} (confidence=${tenderClassification.confidence.toFixed(2)})`);
+  }
 
   // ─── G1 fix: canonical-title re-extractor ──────────────────────────────────
   // intelligence.assignmentName is sanitized but still based on tender.title,
@@ -1772,11 +1809,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [] });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [] });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
   }
 
   // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
