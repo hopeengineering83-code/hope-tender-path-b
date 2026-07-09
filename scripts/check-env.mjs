@@ -245,6 +245,9 @@ if (!hasAnyAIKey) {
 
 for (const spec of OPERATIONAL_WARNINGS) {
   if (!process.env[spec.name]) {
+    // PDF_OCR_TIMEOUT_MS has a safe default (40000ms) — don't warn if unset,
+    // just inform. The runtime code already defaults to 40000.
+    if (spec.name === "PDF_OCR_TIMEOUT_MS") continue;
     warnings.push(`  ⚠  ${spec.name}: Not set. ${spec.description}`);
   }
 }
