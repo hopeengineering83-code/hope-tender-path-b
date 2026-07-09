@@ -87,31 +87,40 @@ function normalizeExtractedText(text: string, limit = MAX_EXTRACTED_TEXT_CHARS):
   // Each replace below is a single targeted artifact class.
   let out = (text ?? "")
     .replace(/\u0000/g, " ")
+    // BOM at start of file
+    .replace(/^\uFEFF/, "")
     // Common PDF ligatures (U+FB00–U+FB06) — replace with letter pairs so
     // text is searchable / readable. Without this, words like "specified",
     // "office", "official" appear with unusual glyphs in every section.
-    .replace(/ﬀ/g, "ff")
-    .replace(/ﬁ/g, "fi")
-    .replace(/ﬂ/g, "fl")
-    .replace(/ﬃ/g, "ffi")
-    .replace(/ﬄ/g, "ffl")
-    .replace(/ﬅ/g, "ft")
-    .replace(/ﬆ/g, "st")
+    .replace(/\uFB00/g, "ff")
+    .replace(/\uFB01/g, "fi")
+    .replace(/\uFB02/g, "fl")
+    .replace(/\uFB03/g, "ffi")
+    .replace(/\uFB04/g, "ffl")
+    .replace(/\uFB05/g, "ft")
+    .replace(/\uFB06/g, "st")
     // Smart quotes → ASCII apostrophe / double-quote
-    .replace(/[‘’‚‛]/g, "'")
-    .replace(/[“”„‟]/g, "\"")
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, "\"")
     // Ellipsis → three dots
-    .replace(/…/g, "...")
+    .replace(/\u2026/g, "...")
     // Non-breaking / thin / hair / narrow / figure spaces → regular space
-    .replace(/[     ]/g, " ")
+    .replace(/[\u00A0\u2009\u200A\u200B\u200C\u200D\u202F\u205F\u3000]/g, " ")
     // Zero-width spaces / joiners / BOM → drop entirely
-    .replace(/[​‌‍﻿]/g, "")
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, "")
+    // Soft hyphen → drop (common in PDF extraction, creates hyphenated words)
+    .replace(/\u00AD/g, "")
     // Glyph-noise runs: 5+ consecutive single-capital letters separated by
     // single spaces (e.g., "G G E N E R A T E G P D F"). These are font
     // glyphs from icons/emojis that pdf-parse re-emitted as letterforms.
     // Real text rarely produces this pattern at length 5+ (acronyms like
     // USA / PLC are 3 chars).
-    .replace(/(?:\b[A-Z]\s+){5,}[A-Z]\b/g, " ");
+    .replace(/(?:\b[A-Z]\s+){5,}[A-Z]\b/g, " ")
+    // Fix hyphenated line breaks: "pro-\nposal" → "proposal"
+    // Common in justified PDF text where words are split across lines
+    .replace(/(\w)-\n(\w)/g, "$1$2")
+    // Fix excessive spaces between words (common in pdf2json)
+    .replace(/([a-z])\s{2,}([a-z])/gi, "$1 $2");
 
   // Repair common proposal-vocabulary words split by PDF extraction
   // (e.g., "T echnical Approach" → "Technical Approach").
@@ -578,25 +587,52 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const XLSX = require("@e965/xlsx") as typeof import("@e965/xlsx");
-  const workbook = XLSX.read(buffer, { type: "buffer", cellText: true });
+  const workbook = XLSX.read(buffer, { type: "buffer", cellText: true, cellDates: true });
   const parts: string[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
+
     // Use sheet_to_json with header:1 to get row arrays for better structure
-    const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", blankrows: false }) as string[][];
+    const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", blankrows: false, raw: false }) as string[][];
     if (rows.length === 0) continue;
 
     // Detect if this sheet looks like a BOQ / price schedule
     const headerRow = rows[0]?.map((c: any) => String(c ?? "").toLowerCase()) ?? [];
-    const boqKeywords = ["item", "description", "unit", "quantity", "price", "rate", "amount", "total"];
+    const boqKeywords = ["item", "description", "unit", "quantity", "price", "rate", "amount", "total", "cost", "sum", "subTotal", "grand total"];
     const isBoq = headerRow.filter((h: string) => boqKeywords.some((kw) => h.includes(kw))).length >= 3;
     const sheetType = isBoq ? " [BOQ/Price Schedule]" : "";
 
+    // Handle merged cells: if a cell is empty but the cell above in the same
+    // column had a value, it's likely a merged cell — copy the value down.
+    // This is common in tender BOQ files where item categories span multiple rows.
+    for (let r = 1; r < rows.length; r++) {
+      for (let c = 0; c < rows[r].length; c++) {
+        const cellValue = String(rows[r][c] ?? "").trim();
+        if (!cellValue && rows[r - 1]?.[c]) {
+          const aboveValue = String(rows[r - 1][c] ?? "").trim();
+          // Only copy down if the above value looks like a category/label (not a number)
+          if (aboveValue && isNaN(Number(aboveValue)) && aboveValue.length > 2) {
+            rows[r][c] = aboveValue;
+          }
+        }
+      }
+    }
+
     // Build structured text with row references
+    // Limit to first 500 rows to prevent memory issues on very large spreadsheets
+    const maxRows = Math.min(rows.length, 500);
     const lines: string[] = [`[Sheet: ${sheetName}${sheetType}]`];
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i].map((c: any) => String(c ?? "").trim());
+    if (rows.length > 500) {
+      lines.push(`[Note: ${rows.length} rows total, showing first 500]`);
+    }
+    for (let i = 0; i < maxRows; i++) {
+      const row = rows[i].map((c: any) => {
+        const val = String(c ?? "").trim();
+        // Format dates nicely
+        if (c instanceof Date) return c.toLocaleDateString();
+        return val;
+      });
       const lineText = row.filter((c: string) => c).join(" | ");
       if (lineText) lines.push(`Row ${i + 1}: ${lineText}`);
     }
@@ -630,16 +666,109 @@ async function extractPptx(buffer: Buffer): Promise<string> {
 }
 
 function extractCsv(buffer: Buffer): string {
-  const text = buffer.toString("utf8");
-  const rows = text.split(/\r?\n/).filter((r) => r.trim());
-  const header = rows[0] ?? "";
-  const colCount = (header.match(/,/g) ?? []).length + 1;
-  return normalizeExtractedText(`[CSV: ${rows.length} rows × ${colCount} columns]\n${text}`);
+  // Detect BOM and strip it
+  let text: string;
+  if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+    text = buffer.subarray(3).toString("utf8");
+  } else {
+    text = buffer.toString("utf8");
+  }
+
+  // Detect delimiter: comma, semicolon, tab, or pipe
+  const firstLine = text.split(/\r?\n/)[0] ?? "";
+  const commaCount = (firstLine.match(/,/g) ?? []).length;
+  const semicolonCount = (firstLine.match(/;/g) ?? []).length;
+  const tabCount = (firstLine.match(/\t/g) ?? []).length;
+  const pipeCount = (firstLine.match(/\|/g) ?? []).length;
+  const delimiter = semicolonCount > commaCount && semicolonCount > tabCount ? ";"
+    : tabCount > commaCount ? "\t"
+    : pipeCount > commaCount ? "|"
+    : ",";
+
+  // Parse rows with proper quoted-field handling
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          currentField += '"';
+          i++; // Skip escaped quote
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        currentField += char;
+      }
+    } else {
+      if (char === '"') {
+        inQuotes = true;
+      } else if (char === delimiter) {
+        currentRow.push(currentField.trim());
+        currentField = "";
+      } else if (char === "\n" || char === "\r") {
+        if (char === "\r" && text[i + 1] === "\n") i++;
+        currentRow.push(currentField.trim());
+        if (currentRow.some((f) => f)) rows.push(currentRow);
+        currentRow = [];
+        currentField = "";
+      } else {
+        currentField += char;
+      }
+    }
+  }
+  // Last field
+  if (currentField.trim() || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((f) => f)) rows.push(currentRow);
+  }
+
+  if (rows.length === 0) return "[Empty CSV file]";
+
+  // Build structured text with row references
+  const colCount = rows[0]?.length ?? 0;
+  const lines: string[] = [`[CSV: ${rows.length} rows × ${colCount} columns, delimiter: ${delimiter === "\t" ? "tab" : delimiter}]`];
+  for (let i = 0; i < rows.length; i++) {
+    const lineText = rows[i].filter((c) => c).join(" | ");
+    if (lineText) lines.push(`Row ${i + 1}: ${lineText}`);
+  }
+  return normalizeExtractedText(lines.join("\n"));
 }
 
 function extractRtf(buffer: Buffer): string {
   const rtf = buffer.toString("latin1");
-  const cleaned = rtf.replace(/\{\\[^{}]*\}/g, " ").replace(/\\[a-z]+[-\d]* ?/gi, " ").replace(/[{}\\]/g, " ").replace(/\s{2,}/g, " ").trim();
+  // More thorough RTF cleaning:
+  // 1. Remove RTF control words (\par, \tab, \b, etc.)
+  // 2. Remove RTF groups ({\group})
+  // 3. Convert \par and \line to newlines
+  // 4. Convert \tab to tab
+  // 5. Handle Unicode escapes (\uNNNN)
+  // 6. Handle hex escapes (\\'NN)
+  let cleaned = rtf
+    // Convert paragraph/line breaks first (before removing control words)
+    .replace(/\\par[d]?\b/gi, "\n")
+    .replace(/\\line\b/gi, "\n")
+    .replace(/\\tab\b/gi, "\t")
+    // Unicode escapes: \uNNNN? where NNNN is a signed decimal
+    .replace(/\\u(-?\d+)\??/g, (_, code) => {
+      const num = parseInt(code, 10);
+      return num < 0 ? String.fromCharCode(num + 65536) : String.fromCharCode(num);
+    })
+    // Hex escapes: \\'NN
+    .replace(/\\'([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    // Remove remaining RTF control words and their optional numeric parameters
+    .replace(/\\[a-zA-Z]+[-]?\d*\s?/g, " ")
+    // Remove RTF control symbols (\\, \{, \}, etc.)
+    .replace(/\\[^a-zA-Z]/g, "")
+    // Remove remaining braces
+    .replace(/[{}]/g, " ")
+    // Collapse whitespace
+    .replace(/\s{2,}/g, " ")
+    .trim();
   return normalizeExtractedText(cleaned);
 }
 
