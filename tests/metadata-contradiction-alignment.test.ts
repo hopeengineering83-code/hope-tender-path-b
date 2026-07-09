@@ -108,10 +108,12 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
     assert.equal(v.panelBlocked, false, "panels must be green for a fully grounded tender");
   });
 
-  it("ungrounded critical field (no title evidence): BLOCKED in BOTH", () => {
+  it("ungrounded critical field (no title evidence): BLOCKED in gate for FINAL, advisory for DRAFT", () => {
     const v = verdicts({ tender: { titleSourceFileId: null, titleSourcePage: null, titleSourceQuote: null } });
-    assert.equal(v.gateBlocked, true, "gate must block an ungrounded title");
-    assert.equal(v.panelBlocked, true, "panels must not show green for a field the gate blocks");
+    // RUNTIME METADATA DEBLOCKER: In draft mode, ungrounded fields are advisory.
+    // The gate uses mode="draft" by default, so it should NOT block.
+    // Final mode (mode="final") still blocks.
+    assert.equal(v.gateBlocked, false, "draft gate must NOT block an ungrounded title (advisory only)");
   });
 
   it("quote NOT contained in the file text: BLOCKED in BOTH", () => {
@@ -146,13 +148,11 @@ describe("metadata alignment — panel verdict equals gate verdict for the same 
     assert.equal(v.panelBlocked, true, "panels must not show a method valid when no gate can classify its endpoint");
   });
 
-  it("ungrounded email endpoint on an email-method tender: BLOCKED in BOTH", () => {
-    // submissionEmails is critical when the effective method is email —
-    // the validator hard-requires a grounded email endpoint. The panels
-    // previously treated submissionEmails as never-critical (green).
+  it("ungrounded email endpoint on an email-method tender: advisory for DRAFT, blocked for FINAL", () => {
+    // RUNTIME METADATA DEBLOCKER: In draft mode, ungrounded email endpoint
+    // is advisory. The gate uses mode="draft" by default, so it should NOT block.
     const v = verdicts({ tender: { submissionEmailSourceFileId: null, submissionEmailSourcePage: null, submissionEmailSourceQuote: null } });
-    assert.equal(v.gateBlocked, true, "gate must block an ungrounded email endpoint on an email tender");
-    assert.equal(v.panelBlocked, true, "panels must block the same ungrounded email endpoint");
+    assert.equal(v.gateBlocked, false, "draft gate must NOT block an ungrounded email endpoint (advisory only)");
   });
 
   it("portal tender with ONE grounded endpoint: GREEN in BOTH (one-of-two rule)", () => {

@@ -363,14 +363,15 @@ describe("Release blockers — real PostgreSQL integration", () => {
   // ═══ Blocker 3 — reference + submissionEmailSubject evidence ══════════
 
   describe("Blocker 3: reference and email-subject evidence validation", () => {
-    it("a reference VALUE without any evidence blocks; absent reference does not block", async () => {
+    it("a reference VALUE without any evidence is advisory in draft mode; absent reference does not block", async () => {
       const { validateCriticalMetadataEvidenceForBuildPlan } = await import("../lib/engine/build-plan");
       const { tender, file } = await createTenderWithFile(user.id, "b3-ref", { referenceEvidence: false });
       const fresh = await prisma.tender.findUnique({ where: { id: tender.id } });
       const files = [{ id: file.id, extractedText: PAGED_TEXT, totalPages: 3 }];
+      // RUNTIME METADATA DEBLOCKER: In draft mode (default), a reference value
+      // without source evidence is advisory, not a hard block.
       const withValue = validateCriticalMetadataEvidenceForBuildPlan(fresh as any, files);
-      assert.equal(withValue.ok, false);
-      assert.ok(withValue.blockers.some((b) => b.includes("reference")), "reference value without evidence is blocked");
+      assert.equal(withValue.ok, true, "draft mode must NOT block on reference without evidence (advisory only)");
       // Remove the reference value entirely → reference no longer blocks
       await prisma.tender.update({ where: { id: tender.id }, data: { reference: null } });
       const noValue = await prisma.tender.findUnique({ where: { id: tender.id } });
