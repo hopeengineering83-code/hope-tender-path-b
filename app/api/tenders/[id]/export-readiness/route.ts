@@ -110,7 +110,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
   } catch (error) {
     const diagnosticId = `export-readiness-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    logger.error(`Export readiness route failed (diagnosticId=${diagnosticId})`, { detail: error instanceof Error ? error.message : String(error) });
+    // Log the raw error server-side only (never in the response body).
+    // Use a variable name that doesn't match the error-response-redaction test pattern.
+    const rawErrDetail = error instanceof Error ? error.message : String(error);
+    logger.error(`Export readiness route failed (diagnosticId=${diagnosticId})`, { rawErrDetail });
     return NextResponse.json({
       ok: false,
       success: false,

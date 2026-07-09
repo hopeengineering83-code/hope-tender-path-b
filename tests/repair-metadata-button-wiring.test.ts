@@ -13,7 +13,11 @@ describe("GenerationActionPanel wires the repair-metadata endpoint", () => {
   const source = readFileSync("components/generation-action-panel.tsx", "utf8");
 
   it("computes metadataBlockerPresent from the blocker code (not free-text matching)", () => {
-    assert.match(source, /metadataBlockerPresent\s*=\s*fullProposalBlockers\.some\(\(b\)\s*=>\s*b\.code === "FULL_PROPOSAL_METADATA_INCOMPLETE"\)/);
+    // After tender-facts rename: the check accepts both the new
+    // FINAL_PACKAGE_FACTS_UNCONFIRMED code and the legacy
+    // FULL_PROPOSAL_METADATA_INCOMPLETE code for backward compat.
+    assert.match(source, /metadataBlockerPresent\s*=\s*fullProposalBlockers\.some\(\(b\)\s*=>\s*b\.code === "FINAL_PACKAGE_FACTS_UNCONFIRMED"/);
+    assert.match(source, /FULL_PROPOSAL_METADATA_INCOMPLETE/);
   });
 
   it("POSTs to the /repair-metadata endpoint with the evaluationMethodology field", () => {
