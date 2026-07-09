@@ -119,7 +119,7 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
             <span className={`ml-2 rounded-full px-2 py-0.5 text-xs font-bold ${tone.text} bg-white/70`}>{tone.label}</span>
           </div>
           <p className="mt-1 max-w-2xl text-xs text-slate-600">
-            Replaces the old DB-stored readiness percentage. This number is computed by the canonical readiness helper with hard caps applied (evidence=0 → ≤35, missing required docs → ≤50, regex fallback → ≤45, quality-failed docs → ≤60, blocked export gate → ≤99). Metadata gaps do NOT cap the score — they are advisory only.
+            Replaces the old DB-stored readiness percentage. This number is computed by the canonical readiness helper with hard caps applied (evidence=0 → ≤35, missing required docs → ≤50, regex fallback → ≤45, quality-failed docs → ≤60, blocked export gate → ≤99).
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 text-center text-xs">
@@ -128,7 +128,7 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
             <p className={`font-semibold ${analysisTone.tone === "ok" ? "text-emerald-700" : analysisTone.tone === "warn" ? "text-amber-700" : "text-red-700"}`}>{analysisTone.label}</p>
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
-            <p className="text-slate-500">Metadata</p>
+            <p className="text-slate-500">Tender Facts</p>
             <p className={`font-semibold ${data.summary.metadataCompletenessRatio >= 0.6 && data.summary.metadataPlaceholderCount === 0 ? "text-emerald-700" : "text-amber-700"}`}>
               {Math.round(data.summary.metadataCompletenessRatio * 100)}%
               {data.summary.metadataPlaceholderCount > 0 && <span className="ml-1 text-red-700">· {data.summary.metadataPlaceholderCount} TBC</span>}
@@ -172,26 +172,16 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
         </p>
       )}
 
-      {data.summary.missingCriticalMetadataFields && data.summary.missingCriticalMetadataFields.length > 0 && (
-        <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-xs font-medium text-slate-600 mb-1">
-            {data.summary.missingCriticalMetadataFields.length} field{data.summary.missingCriticalMetadataFields.length > 1 ? "s" : ""} not extracted (advisory only — does not block):
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {data.summary.missingCriticalMetadataFields.map((f) => (
-              <span key={f} className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                {f.replace(/_/g, " ").toLowerCase()}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+
 
       {(data.summary.outsidePlanDocuments > 0 || data.summary.staleRowCount > 0) && (
-        <p className="mt-2 text-[11px] text-slate-500">
-          {data.summary.outsidePlanDocuments > 0 && <>{data.summary.outsidePlanDocuments} outside-plan doc(s); </>}
-          {data.summary.staleRowCount > 0 && <>{data.summary.staleRowCount} historical/superseded row(s) hidden from package logic but auditable.</>}
-        </p>
+        <details className="mt-2 text-[11px] text-slate-400">
+          <summary className="cursor-pointer">Audit details</summary>
+          <p className="mt-1">
+            {data.summary.outsidePlanDocuments > 0 && <>{data.summary.outsidePlanDocuments} outside-plan doc(s); </>}
+            {data.summary.staleRowCount > 0 && <>{data.summary.staleRowCount} historical/superseded row(s) hidden from package logic but auditable.</>}
+          </p>
+        </details>
       )}
     </section>
   );

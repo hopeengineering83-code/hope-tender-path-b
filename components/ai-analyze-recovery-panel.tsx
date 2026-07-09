@@ -32,17 +32,24 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
 
   try {
     await prismaReady;
-    const [tender, job] = await Promise.all([
-      prisma.tender.findFirst({
-        where: { id: tenderId, userId },
-        select: { analysisSummary: true, analysisExtractionStatus: true },
-      }),
-      prisma.aiJob.findFirst({
-        where: { tenderId, userId, jobType: "AI_ANALYZE", stagedMergedResult: { not: null }, promotedAt: null },
-        orderBy: [{ analysisVersion: "desc" }, { createdAt: "desc" }],
-        select: { id: true, status: true, stagedMergedResult: true },
-      }),
-    ]);
+    let tender: { analysisSummary: string | null; analysisExtractionStatus: string | null } | null = null;
+    let job: { id: string; status: string; stagedMergedResult: unknown } | null = null;
+    try {
+      [tender, job] = await Promise.all([
+        prisma.tender.findFirst({
+          where: { id: tenderId, userId },
+          select: { analysisSummary: true, analysisExtractionStatus: true },
+        }),
+        prisma.aiJob.findFirst({
+          where: { tenderId, userId, jobType: "AI_ANALYZE" as const, stagedMergedResult: { not: null }, promotedAt: null },
+          orderBy: [{ analysisVersion: "desc" }, { createdAt: "desc" }],
+          select: { id: true, status: true, stagedMergedResult: true },
+        }),
+      ]);
+    } catch {
+      // Sanitized — never expose raw Prisma errors to the UI.
+      return null;
+    }
     if (!tender) return null;
 
     const staged = stagedView(job?.stagedMergedResult ?? null);

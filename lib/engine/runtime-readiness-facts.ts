@@ -435,7 +435,7 @@ function detectContradictions(
     contradictions.push({
       field: "deadline",
       displayedValue: metadata.deadline.value as string,
-      blockingPanel: "Confirm Metadata / Canonical Readiness",
+      blockingPanel: "Tender Details / Canonical Readiness",
       blockerText: "deadline missing",
       fixRequired: "Use effective deadline from parser/ledger — do not check scalar null",
     });
@@ -446,7 +446,7 @@ function detectContradictions(
     contradictions.push({
       field: "submissionEmails",
       displayedValue: Array.isArray(metadata.submissionEmails.value) ? (metadata.submissionEmails.value as string[]).join(", ") : String(metadata.submissionEmails.value),
-      blockingPanel: "Confirm Metadata",
+      blockingPanel: "Tender Details",
       blockerText: "submissionEmails has no active TenderFile source evidence",
       fixRequired: "Use review_required, not hard-block, when emails are resolved from parser",
     });
