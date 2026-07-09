@@ -165,15 +165,15 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       // Treat NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as unresolved
       const unresolvedFields = outcomes.filter((o) => o.status === "NOT_FOUND" || o.status === "REJECTED" || o.status === "UNRESOLVED" || o.status === "ERROR").map((o) => o.field ?? "unknown");
       if (repairedFields.length > 0 && unresolvedFields.length === 0) {
-        return `Metadata repaired — ${repairedFields.join(", ")} updated from tender source text.`;
+        return `Tender facts repaired — ${repairedFields.join(", ")} updated from tender source text.`;
       } else if (repairedFields.length > 0 && unresolvedFields.length > 0) {
-        return `Metadata partially repaired — ${repairedFields.join(", ")} updated. ${unresolvedFields.length} field(s) remain unresolved: ${unresolvedFields.join(", ")}.`;
+        return `Tender facts partially repaired — ${repairedFields.join(", ")} updated. ${unresolvedFields.length} field(s) remain unresolved: ${unresolvedFields.join(", ")}.`;
       } else {
         // Never report "Metadata repaired" when unresolved or error outcomes remain
-        return `Metadata repair ran — no fields could be extracted from the tender source text. ${unresolvedFields.length} field(s) remain unresolved.`;
+        return `Tender facts repair ran — no fields could be extracted from the tender source text. ${unresolvedFields.length} field(s) remain unresolved.`;
       }
     }
-    if (action === "RE_EXTRACT_METADATA") return "Metadata re-extraction complete. Review the tender detail panel to confirm updated fields.";
+    if (action === "RE_EXTRACT_METADATA") return "Tender facts re-extraction complete. Review the tender detail panel to confirm updated fields.";
     if (action === "LINK_VAULT_EVIDENCE") return (json.message as string | undefined) ?? `Vault evidence linking completed — ${(json.linked as number | undefined) ?? 0} document(s) ready.`;
     return `${recoveryCommandLabel(action)} completed.`;
   }
@@ -599,7 +599,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
               <StatusRow label="Providers" value={`${data.providerStatus.totalHealthy}/${data.providerStatus.totalConfigured} healthy`} ok={data.providerStatus.totalHealthy > 0} />
               <StatusRow label="Analysis" value={data.analysisStatus.source.replace(/_/g, " ")} ok={data.analysisStatus.source === "AI" || data.analysisStatus.source === "HUMAN_APPROVED_REGEX_FALLBACK"} />
-              <StatusRow label="Metadata" value={`${Math.round(data.metadataStatus.completenessRatio * 100)}% complete`} ok={data.metadataStatus.criticalMissing.length === 0} />
+               {/* Metadata status row removed — tender facts are advisory only */}
               <StatusRow
                 label="Source Refs"
                 value={data.sourceReferenceStatus.totalMandatoryCount > 0

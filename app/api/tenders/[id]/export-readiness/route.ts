@@ -109,9 +109,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    logger.error("Export readiness route failed", { detail: error });
-    return jsonError("Export readiness check failed. Refresh to retry.", 500, {
+    const diagnosticId = `export-readiness-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    logger.error(`Export readiness route failed (diagnosticId=${diagnosticId})`, { detail: error instanceof Error ? error.message : String(error) });
+    return NextResponse.json({
+      ok: false,
+      success: false,
+      error: `Export readiness check failed. Refresh to retry. Diagnostic ID: ${diagnosticId}`,
       code: "EXPORT_READINESS_RUNTIME_ERROR",
-    });
+      diagnosticId,
+      blockers: [],
+      warnings: [],
+    }, { status: 500 });
   }
 }
