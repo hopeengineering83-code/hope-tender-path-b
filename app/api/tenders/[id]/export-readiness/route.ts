@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
+import { safeApiError } from "../../../../../lib/engine/safe-api-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -48,10 +49,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!readiness) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     // Reconcile the export blocker with the same normalized support-level logic
-    // used by the Requirement Coverage panel. This prevents the UI contradiction
-    // where the coverage panel shows FULL/SUBSTANTIAL reviewer evidence while
-    // the export panel still reports 0/N strong evidence because it used a strict
-    // string query rather than normalizeSupportLevel().
+    // used by the Requirement Coverage panel.
     const evidenceStats = await getStrongMandatoryEvidenceStats(id);
     const reconciledTenderBlockers = readiness.tenderLevelBlockers.filter((blocker) =>
       !(blocker.category === "MANDATORY_EVIDENCE_INCOMPLETE" && evidenceStats.total > 0 && evidenceStats.percent >= 50),
@@ -59,16 +57,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + finalPackage.export.blockers.length;
     const reconciledOk = readiness.ok && finalPackageDocumentBlockers === 0 && reconciledTenderBlockers.length === 0 && finalPackage.export.zipReady;
 
-    // Canonical upstream trust flags for UI components that need to check
-    // whether docs are stale or whether the submission plan is built.
     const submissionPlanBuilt = readiness.summary.planStatus !== "NO_PLAN_NO_DOCS" && readiness.summary.planStatus !== "NO_PLAN_WITH_ACTIVE_DOCS";
     const analysisSource = readiness.summary.analysisSource ?? "UNKNOWN";
     const analysisTrusted = analysisSource === "AI";
-    // Documents are current only when the plan is built, analysis is trusted,
-    // and docs are matched to the plan (not in PLAN_MISSING_DOCS state).
     const documentsCurrent = submissionPlanBuilt && analysisTrusted && readiness.summary.planStatus === "PLAN_MATCHED";
 
     return NextResponse.json({
+      ok: reconciledOk,
       success: true,
       exportReadiness: {
         ok: reconciledOk,
@@ -103,25 +98,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         tenderLevelBlockers: reconciledTenderBlockers,
         advisoryWarnings: readiness.advisoryWarnings,
         message: readiness.message,
+        requiredDocuments: finalPackage.documents.required.length,
+        generatedDocuments: finalPackage.documents.generated.length,
+        exportReadyDocuments: finalPackage.documents.exportReady.length,
+        finalPackageFacts: {
+          zipReady: finalPackage.export.zipReady,
+          plannedCount: finalPackage.documents.planned.length,
+          missingCount: finalPackage.documents.missingRequired.length,
+          exportCandidateCount: finalPackage.export.exportCandidateCount,
+          supersededCount: finalPackage.documents.extraGeneratedOutsidePlan.length,
+        },
         submissionPlanBuilt,
         analysisTrusted,
         documentsCurrent,
       },
     });
   } catch (error) {
-    const diagnosticId = `export-readiness-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    // Log the raw error server-side only (never in the response body).
-    // Use a variable name that doesn't match the error-response-redaction test pattern.
-    const rawErrDetail = error instanceof Error ? error.message : String(error);
-    logger.error(`Export readiness route failed (diagnosticId=${diagnosticId})`, { rawErrDetail });
-    return NextResponse.json({
-      ok: false,
-      success: false,
-      error: `Export readiness check failed. Refresh to retry. Diagnostic ID: ${diagnosticId}`,
-      code: "EXPORT_READINESS_RUNTIME_ERROR",
-      diagnosticId,
-      blockers: [],
-      warnings: [],
-    }, { status: 500 });
+    return safeApiError("export-readiness", error);
   }
 }
