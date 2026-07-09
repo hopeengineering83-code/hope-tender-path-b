@@ -703,10 +703,10 @@ export async function getFinalSubmissionReadiness(
   //    flag is accurate). ─────────────────────────────────────────────────────
   if (metadata.blockingForGeneration) {
     tenderLevelBlockers.push({
-      category: "METADATA_INCOMPLETE_FOR_FINAL_GENERATION",
+      category: "TENDER_FACTS_INVALID",
       severity: "HIGH",
-      title: `Tender metadata is incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
-      recommendedAction: "Fill the missing critical tender metadata fields before final proposal generation.",
+      title: `Required Tender Details are incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
+      recommendedAction: "Fill the missing critical Tender Details — client/procuring entity, deadline, submission method — before final proposal generation.",
     });
   }
   // ── Canonical field-state gate (single source of truth) ───────────────────
@@ -826,9 +826,9 @@ export async function getFinalSubmissionReadiness(
     // not double-count the same missing-metadata condition.
     if (!metadata.blockingForGeneration && blockingFields.length > 0) {
       tenderLevelBlockers.push({
-        category: "METADATA_INCOMPLETE_FOR_FINAL_GENERATION",
+        category: "TENDER_FACTS_INVALID",
         severity: "HIGH",
-        title: `Critical tender metadata is unusable for export: ${blockingFields.join(", ")}.`,
+        title: `Required Tender Details / Submission Facts are unusable for export: ${blockingFields.join(", ")}.`,
         recommendedAction: "Resolve the flagged critical field(s) — provide a valid value or confirm them — before final export. Not Applicable is not permitted for critical fields.",
       });
     }
@@ -850,7 +850,7 @@ export async function getFinalSubmissionReadiness(
   // banners must block export until corrected.
   if (tender.metadataContaminated === true) {
     tenderLevelBlockers.push({
-      category: "METADATA_CONTAMINATED",
+      category: "CLIENT_ENTITY_CONTAMINATED",
       severity: "HIGH",
       title: "One or more entity identity fields (client name, legal name, donor agency, or implementing agency) may be contaminated by unrelated portal text.",
       recommendedAction: "Re-run AI Analyze or review and correct the affected entity fields in Tender Detail before exporting.",

@@ -188,8 +188,8 @@ export async function executeEngineRun(options: EngineRunOptions): Promise<void>
       ...data,
       success: true,
       error: warningCount > 0
-        ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, metadata, submission plan, evidence) still apply.`
-        : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, metadata, submission plan, evidence) still apply before Generate Docs.",
+        ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, tender details, submission plan, evidence) still apply.`
+        : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, tender details, submission plan, evidence) still apply before Generate Docs.",
     });
     callbacks.onSuccess();
   } catch (error) {

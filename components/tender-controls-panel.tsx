@@ -395,7 +395,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
               onClick={acceptAllHighConfidence}
               disabled={suggestionBusy !== null}
               className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
-              title="Accept every HIGH-severity suggestion (regex fallback, metadata, mandatory coverage, etc.) as real ledger rows."
+              title="Accept every HIGH-severity suggestion (regex fallback, tender details, mandatory coverage, etc.) as real ledger rows."
             >
               {suggestionBusy === "__bulk__" ? "Accepting…" : "Accept all high-confidence"}
             </button>

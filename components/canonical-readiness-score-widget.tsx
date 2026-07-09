@@ -128,7 +128,7 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
             <p className={`font-semibold ${analysisTone.tone === "ok" ? "text-emerald-700" : analysisTone.tone === "warn" ? "text-amber-700" : "text-red-700"}`}>{analysisTone.label}</p>
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
-            <p className="text-slate-500">Tender Facts</p>
+            <p className="text-slate-500">Tender Details</p>
             <p className={`font-semibold ${data.summary.metadataCompletenessRatio >= 0.6 && data.summary.metadataPlaceholderCount === 0 ? "text-emerald-700" : "text-amber-700"}`}>
               {Math.round(data.summary.metadataCompletenessRatio * 100)}%
               {data.summary.metadataPlaceholderCount > 0 && <span className="ml-1 text-red-700">· {data.summary.metadataPlaceholderCount} TBC</span>}

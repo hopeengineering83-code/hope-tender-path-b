@@ -67,7 +67,7 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
   // These are different concepts — the spec requires them shown separately
   const metrics = [
     {
-      label: "Metadata fields",
+      label: "Tender Details fields",
       numerator: metadata.validFields + metadata.groundedFields,
       denominator: metadata.totalFields,
       tooltip:
@@ -96,7 +96,7 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
     <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-          Metadata Truth Facts
+          Source-Grounded Tender Facts
         </h2>
         <span className="text-[10px] text-slate-400 font-mono">rev: {snapshotRevision.slice(0, 8)}</span>
       </div>

@@ -27,7 +27,7 @@ function actionBadge(action: string): { label: string; className: string } {
   if (a.includes("EXPORT")) return { label: "EXPORT", className: "bg-emerald-100 text-emerald-700" };
   if (a.includes("REQUIREMENT")) return { label: "REQUIREMENT", className: "bg-indigo-100 text-indigo-700" };
   if (a.includes("SUBMISSION")) return { label: "SUBMISSION", className: "bg-cyan-100 text-cyan-700" };
-  if (a.includes("METADATA")) return { label: "METADATA", className: "bg-fuchsia-100 text-fuchsia-700" };
+  if (a.includes("METADATA") || a.includes("TENDER_FACTS")) return { label: "Tender Details", className: "bg-fuchsia-100 text-fuchsia-700" };
   return { label: action.slice(0, 12), className: "bg-slate-100 text-slate-600" };
 }
 
@@ -79,7 +79,7 @@ export async function AuditTrailPanel({ tenderId }: { tenderId: string }) {
 
     const latest = logs.slice(0, 3) as AuditLogLike[];
     const older = logs.slice(3) as AuditLogLike[];
-    const filterLabels = ["Metadata", "Submission Plan", "Requirement", "Generate", "Export", "Manual Override"];
+    const filterLabels = ["Tender Details", "Submission Plan", "Requirement", "Generate", "Export", "Manual Override"];
 
     return (
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">

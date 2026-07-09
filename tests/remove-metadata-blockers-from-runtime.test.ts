@@ -1,11 +1,16 @@
-// Tests proving metadata has been removed as a hard blocker from the tender runtime.
+// Tests proving the unified tender-facts model is enforced across the runtime.
+//
+// PR #1004 weakened final-output safety by making metadata fully advisory.
+// This restoration re-enables fail-closed behavior for final export while
+// keeping draft generation unblocked. Blocker code METADATA_CRITICAL_FIELD_INVALID
+// has been renamed to TENDER_FACTS_INVALID.
 //
 // These tests prove:
-//   1. Metadata does not hard-block draft generation
-//   2. Metadata only blocks final export
+//   1. Tender facts do NOT hard-block draft generation (advisory for draft)
+//   2. Tender facts DO block final export (fail-closed with TENDER_FACTS_INVALID)
 //   3. submissionEmails lack of source evidence is advisory in draft
 //   4. Analysis Quality is not capped at 40 for missing evaluation weights
-//   5. Export readiness does not block on missing deadline
+//   5. Export-readiness resolver treats deadline as advisory (gate still blocks)
 //   6. Raw Prisma errors are hidden from UI
 //   7. Deployment diagnostics exist in runtime-readiness-parity
 
@@ -15,25 +20,37 @@ import { readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-// ─── 1. Metadata does not hard-block draft generation ───────────────────────
+// ─── 1. Tender facts: draft advisory, final fail-closed ─────────────────────
 
-describe("metadata deblocker — draft generation", () => {
-  it("generation-readiness-gate does NOT block draft on criticalMetadataOk=false", () => {
-    // PR #1002 removed metadata as a hard blocker entirely (both draft AND
-    // export). The gate no longer checks criticalMetadataOk for any purpose.
+describe("tender facts gate — draft advisory, final fail-closed", () => {
+  it("generation-readiness-gate does NOT block draft on criticalMetadataOk=false (advisory for draft)", () => {
+    // Tender-facts model: draft generation is NOT blocked by missing optional
+    // tender details. The gate's `criticalMetadataOk` check only fail-closes
+    // FINAL purposes (export, final-zip). Draft purposes pass through.
     const src = read("lib/engine/generation-readiness-gate.ts");
-    assert.ok(src.includes("REMOVED AS A HARD BLOCKER"), "must document metadata removal as hard blocker");
-    assert.ok(src.includes("Metadata is advisory/diagnostic only"), "must state metadata is advisory only");
-    // The old export-only block must NOT exist anymore.
-    assert.ok(!src.includes('return fail("METADATA_CRITICAL_FIELD_INVALID"'), "must NOT block export with METADATA_CRITICAL_FIELD_INVALID (removed)");
+    // The gate must document that draft generation is unblocked for tender facts.
+    assert.ok(src.includes("Draft generation remains unblocked"), "must document draft generation is unblocked for tender facts");
+    assert.ok(src.includes("tender facts are advisory, not blocking"), "must state tender facts are advisory for draft");
+    // The new TENDER_FACTS_INVALID blocker code must be present (renamed from
+    // METADATA_CRITICAL_FIELD_INVALID per the unified tender-facts model).
+    assert.ok(src.includes('"TENDER_FACTS_INVALID"'), "must define TENDER_FACTS_INVALID blocker code");
   });
 
-  it("generation-readiness-gate DOES block export on criticalMetadataOk=false", () => {
-    // After PR #1002: metadata no longer blocks export either. This test
-    // was renamed to reflect the new behavior — metadata is fully advisory.
+  it("generation-readiness-gate DOES block export on criticalMetadataOk=false with TENDER_FACTS_INVALID", () => {
+    // PR #1004 weakened this by removing the export block entirely. The
+    // restoration re-enables fail-closed behavior: export/final-zip with
+    // criticalMetadataOk=false returns TENDER_FACTS_INVALID. The blocker code
+    // is renamed from METADATA_CRITICAL_FIELD_INVALID to TENDER_FACTS_INVALID.
     const src = read("lib/engine/generation-readiness-gate.ts");
-    assert.ok(!src.includes('return fail("METADATA_CRITICAL_FIELD_INVALID"'), "must NOT block export with METADATA_CRITICAL_FIELD_INVALID (metadata is advisory)");
-    assert.ok(src.includes("cannot block generation or export"), "must state metadata cannot block generation or export");
+    // The gate must check criticalMetadataOk for export/final-zip purposes.
+    assert.ok(src.includes('if (input.purpose === "export" || input.purpose === "final-zip")'), "must gate tender-facts block on export/final-zip purpose");
+    // The fail() call must use TENDER_FACTS_INVALID (not the old code).
+    assert.ok(src.includes('"TENDER_FACTS_INVALID"'), "must block export with TENDER_FACTS_INVALID");
+    // The old blocker code is retained only as a deprecated alias in the type
+    // union — it must NOT be used in any active return fail() call.
+    assert.ok(!/return\s+fail\(\s*"METADATA_CRITICAL_FIELD_INVALID"/.test(src), "must NOT use METADATA_CRITICAL_FIELD_INVALID in any active fail() call (renamed to TENDER_FACTS_INVALID)");
+    // The restoration comment must reference PR #1004's weakening.
+    assert.ok(src.includes("PR #1002 removed this check entirely, weakening final-output safety"), "must document the restoration context");
   });
 });
 

@@ -391,7 +391,7 @@ export async function assertTenderReadyToDraftBuildPlan(
   // validator for BuildPlan preflight, confirmation, and release gates.
   const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(tender as any, tender.files as any[], (tender as any).metadataOverrides ?? []);
   if (!metaValidation.ok) {
-    return { ok: false, code: "METADATA_CRITICAL_FIELD_INVALID", message: `Critical metadata evidence validation failed: ${metaValidation.blockers.join("; ")}`, status: 422 };
+    return { ok: false, code: "TENDER_FACTS_INVALID", message: `Required Tender Details / Submission Facts evidence validation failed: ${metaValidation.blockers.join("; ")}`, status: 422 };
   }
 
   // 7. Mandatory requirements grounded by ACTIVE TenderFile + valid page + meaningful quote contained in file text

@@ -88,7 +88,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
   const fullProposalReady = isGenerationActionEnabled(canonicalGenerationState, serverGateAllowsGeneration);
   const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
   const blocked = !fullProposalReady;
-  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
+  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FINAL_PACKAGE_FACTS_UNCONFIRMED" || b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
 
   const autoPromotionAvailable = Boolean(
     readiness?.counts &&
@@ -291,8 +291,8 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
 
         {canMutate && metadataBlockerPresent && (
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-            <p className="text-xs font-semibold text-amber-700">Metadata incomplete — source-grounded repair available</p>
-            <p className="mt-1 text-xs text-amber-600">Use the source-grounded repair to extract missing metadata fields directly from the tender document.</p>
+            <p className="text-xs font-semibold text-amber-700">Tender Details incomplete — source-grounded repair available</p>
+            <p className="mt-1 text-xs text-amber-600">Use the source-grounded repair to extract missing Tender Details fields directly from the tender document.</p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"

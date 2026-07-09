@@ -59,7 +59,7 @@ export function CleanCorruptedMetadataButton({ tenderId, badCount }: { tenderId:
       <button
         onClick={clean}
         disabled={running || isPending}
-        title="Re-runs the metadata extractor against the stored PDF text. Only invalid stored values are overwritten — valid manual edits are preserved."
+        title="Re-runs the Tender Details extractor against the stored PDF text. Only invalid stored values are overwritten — valid manual edits are preserved."
         className="self-start rounded-lg bg-red-700 px-5 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {running || isPending ? "Cleaning…" : `Clean now (${badCount})`}

@@ -129,8 +129,9 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       // Clear the "click again" nudge once the gate passes or blockers are resolved
       if (r?.ok || (r?.summary?.documentBlockers ?? 0) === 0) setAutoFinalizeRemaining(null);
       router.refresh();
-    } catch (err) {
+    } catch {
       // Never expose raw Prisma error text to UI.
+      // Use safe generic message — raw error details are logged server-side only.
       setError("Export readiness check failed. Refresh to retry. If the problem persists, contact admin.");
     } finally {
       setLoading(false);

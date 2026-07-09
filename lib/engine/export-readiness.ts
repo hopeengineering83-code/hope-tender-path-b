@@ -415,18 +415,18 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     }
   }
 
-  // ── Metadata contamination blocker ───────────────────────────────────────
+  // ── Client entity contamination blocker ───────────────────────────────────
   if ((tender as { metadataContaminated?: boolean }).metadataContaminated && !isOverridden("clientName")) {
     blockers.push(tenderBlocker(
-      "METADATA_CONTAMINATED",
+      "CLIENT_ENTITY_CONTAMINATED",
       "The procuring entity/client name may be contaminated by unrelated tender portal text.",
-      "Correct the client name in tender metadata before exporting.",
+      "Correct the client name in Tender Details before exporting.",
       "HIGH",
     ));
   }
 
-  // ── Metadata placeholder hygiene blocker ─────────────────────────────────
-  // Block when critical tender metadata fields still contain placeholder strings.
+  // ── Tender Details placeholder hygiene blocker ─────────────────────────────
+  // Block when critical tender details fields still contain placeholder strings.
   const criticalMetadataFields: Array<[string, string | null | undefined]> = [
     ["Client name", effectiveValue("clientName", tender.clientName)],
     ["Procuring entity", effectiveValue("procuringEntityName", tender.procuringEntityName)],

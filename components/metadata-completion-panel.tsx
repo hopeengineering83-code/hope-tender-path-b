@@ -25,7 +25,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
           setError("Failed to load snapshot");
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load metadata");
+        setError(e instanceof Error ? e.message : "Failed to load Tender Details");
       } finally {
         setLoading(false);
       }
@@ -36,7 +36,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   if (loading) {
     return (
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-        Loading metadata completion…
+        Loading Tender Details…
       </section>
     );
   }
@@ -44,7 +44,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   if (error || !snapshot) {
     return (
       <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-        Could not load metadata: {error || "Unknown error"}
+        Could not load Tender Details: {error || "Unknown error"}
       </section>
     );
   }
@@ -74,11 +74,11 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   }
 
   return (
-    <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="metadata-completion-panel">
+    <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="tender-details-panel">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900">Metadata Completion</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Tender Details</h3>
             {snapshotRevision && (
               <span className="text-[10px] text-slate-400 font-mono ml-3">rev: {snapshotRevision.slice(0, 8)}</span>
             )}

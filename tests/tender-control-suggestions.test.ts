@@ -49,7 +49,7 @@ describe("deriveControlSuggestions — every blocker category from the audit tas
 
   it("METADATA_INCOMPLETE names the missing fields", () => {
     const out = deriveControlSuggestions(baseInput({ metadataStatus: { criticalMissing: ["deadline", "evaluationCriteria", "submissionMethod"] } }));
-    const s = out.find((s) => s.code === "METADATA_INCOMPLETE");
+    const s = out.find((s) => s.code === "TENDER_FACTS_INCOMPLETE");
     assert.ok(s);
     assert.match(s!.description, /deadline/);
     assert.match(s!.description, /evaluationCriteria/);
@@ -126,7 +126,7 @@ describe("deriveControlSuggestions — every blocker category from the audit tas
     for (const expected of [
       "AI_PROVIDERS_COOLING",
       "REGEX_FALLBACK_UNAPPROVED",
-      "METADATA_INCOMPLETE",
+      "TENDER_FACTS_INCOMPLETE",
       "SOURCE_REFS_MISSING",
       "MANDATORY_COVERAGE_ZERO",
       "SUBMISSION_PLAN_NOT_BUILT",
@@ -144,7 +144,7 @@ describe("isHighConfidenceSuggestion — bulk-accept eligibility", () => {
     for (const code of [
       "AI_PROVIDERS_NOT_CONFIGURED",
       "REGEX_FALLBACK_UNAPPROVED",
-      "METADATA_INCOMPLETE",
+      "TENDER_FACTS_INCOMPLETE",
       "MANDATORY_COVERAGE_ZERO",
       "NO_ACTIVE_EXPORT_CANDIDATES",
       "MISSING_OFFICIAL_ORIGINALS",
