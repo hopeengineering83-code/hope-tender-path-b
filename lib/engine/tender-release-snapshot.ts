@@ -532,42 +532,13 @@ export async function getTenderReleaseSnapshot(
   });
 
   // GATE-ALIGNED STRICT METADATA CHECK — mirrors generation-readiness-gate.ts:716-732.
-  // Uses the SAME pure helper the gate uses (validateCriticalMetadataEvidenceForBuildPlan)
-  // so the snapshot's metadata.gateValid can never disagree with the gate's criticalMetadataOk.
-  // Short-circuits when the resolver already flags a blocker (defense in depth — same as the gate).
-  // Zero new DB queries: the validator is pure and the snapshot already loaded all needed data.
-  let metadataGateValid = !metadataResult.hasGenerationBlocker;
-  let metadataGateBlocker: string | null = metadataResult.hasGenerationBlocker
-    ? "One or more critical metadata fields are invalid or ungrounded."
-    : null;
-  if (metadataGateValid) {
-    try {
-      const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
-      const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(
-        tender as any,
-        activeFiles,
-        ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
-          field: o.field,
-          fieldState: o.fieldState,
-          overrideValue: o.overrideValue,
-          reason: o.reason,
-          confirmationBasis: o.confirmationBasis,
-          authorityClass: o.authorityClass,
-          confirmedAt: o.confirmedAt,
-        })),
-        "draft", // Authority model: snapshot gateValid = draft readiness
-      );
-      if (!metaValidation.ok) {
-        metadataGateValid = false;
-        metadataGateBlocker = metaValidation.blockers[0]
-          ?? "Critical metadata evidence is missing or invalid.";
-      }
-    } catch {
-      // Fail closed — never let a thrown error read as gateValid=true.
-      metadataGateValid = false;
-      metadataGateBlocker = "Metadata gate check failed (internal error).";
-    }
-  }
+  // METADATA IS NO LONGER A HARD BLOCKER (unified runtime model).
+  // The snapshot's metadata.gateValid is ALWAYS true — metadata cannot
+  // block the workflow. The hasGenerationBlocker/hasExportBlocker flags
+  // from the canonical resolver are kept for diagnostic display but do
+  // NOT affect gateValid, generationBlockers, or exportBlockers.
+  const metadataGateValid = true;
+  const metadataGateBlocker: string | null = null;
   const metadata: SnapshotMetadataState = {
     ...metadataResult,
     gateValid: metadataGateValid,
@@ -741,10 +712,12 @@ export async function getTenderReleaseSnapshot(
   };
 
   // Aggregate generation/export/zip eligibility.
+  // METADATA IS NO LONGER A BLOCKER — removed metadata.hasGenerationBlocker
+  // and metadata.hasExportBlocker from the blocker arrays. Per the unified
+  // runtime model, metadata is advisory/diagnostic only.
   const generationBlockers: string[] = [
     ...(extraction.blocker ? [extraction.blocker] : []),
     ...(analysis.blocker ? [analysis.blocker] : []),
-    ...(metadata.hasGenerationBlocker ? ["One or more critical metadata fields are invalid or ungrounded."] : []),
     ...(requirements.blocker ? [requirements.blocker] : []),
     ...(buildPlan.blocker ? [buildPlan.blocker] : []),
     ...(vault.blocker ? [vault.blocker] : []),
@@ -752,11 +725,6 @@ export async function getTenderReleaseSnapshot(
 
   const exportBlockers: string[] = [
     ...generationBlockers,
-    // Authority model: export requires hasExportBlocker to be false (manual
-    // values on critical fields must have sufficient audit).
-    ...(metadata.hasExportBlocker && !metadata.hasGenerationBlocker
-      ? ["One or more critical metadata fields have human-confirmed values with insufficient audit for final export."]
-      : []),
     // Export requires evidence coverage ≥ 50% on mandatory requirements when any exist.
     ...(mandatory.length > 0 && evidence.coveragePercent < 50
       ? [`Evidence coverage is ${evidence.coveragePercent}% (need ≥ 50% for export).`]

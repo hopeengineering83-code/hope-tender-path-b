@@ -1690,23 +1690,17 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   // Mirror hasRealClientName() from lib/engine/metadata-validators.ts.
   // Use clientName || procuringEntityName to match the server-side gate.
   const clientNameInvalid = getClientNameStatus(tender.clientName || tender.procuringEntityName) !== "VALID";
-  const metadataContaminatedBlock = tender.metadataContaminated === true;
+  const metadataContaminatedBlock = false; // METADATA IS NO LONGER A BLOCKER (unified runtime model)
   // BuildPlan is the AUTHORITATIVE plan. GeneratedDocument rows MUST NEVER be
-  // used as a proxy for plan existence — that was the legacy hasValidSubmission
-  // path which counted any non-SUPERSEDED row (including PLANNED/pending rows)
-  // as proof of a plan. The server-side gate (assertTenderReadyForGeneration
-  // AndExport) enforces hasCurrentConfirmedBuildPlan + recordedBuildPlanState.
-  // The UI cannot cheaply know the confirmed-plan state without an extra API
-  // call, so it does NOT block on plan here — the server gate is authoritative.
-  // The UI still blocks on the other hard gates (extraction, metadata, analysis,
-  // requirements, evidence) so the button is disabled for genuinely unready
-  // tenders; if the user clicks it on a tender without a confirmed BuildPlan,
-  // the server returns BUILD_PLAN_NOT_CONFIRMED with nextAction BUILD_SUBMISSION_PLAN.
+  // used as a proxy for plan existence. The server-side gate enforces
+  // hasCurrentConfirmedBuildPlan. The UI does NOT block on plan here.
+  //
+  // METADATA IS NO LONGER A BLOCKER: clientNameInvalid and
+  // metadataContaminatedBlock are no longer checked. The UI only blocks on
+  // extraction quality, analysis approval, and requirements.
 
   const canGenerateDocs = !analysisIsFallbackUnapproved
     && !extractionCorrupted
-    && !clientNameInvalid
-    && !metadataContaminatedBlock
     && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
@@ -1715,11 +1709,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
     && !criticalHardBlockExists;
   const generateDisabledReason = extractionCorrupted
     ? "Extraction is corrupted or too weak — run OCR extraction or re-upload a clearer scan before generating"
-    : metadataContaminatedBlock
-      ? "Tender metadata is contaminated — review and correct the client name and critical fields before generating"
-      : clientNameInvalid
-        ? "Client/procuring entity name is missing or invalid — run AI Analyze or enter it manually before generating"
-        : analysisIsFallbackUnapproved
+    : analysisIsFallbackUnapproved
           ? "Analysis used regex fallback — re-extract and re-run AI Analyze before generating (human approval is audit-only and does not authorize generation)"
           : tender.requirements.length === 0
             ? "Run AI Analyze or Run Engine first to extract requirements"
