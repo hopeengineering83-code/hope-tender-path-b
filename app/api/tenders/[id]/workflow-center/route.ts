@@ -96,7 +96,7 @@ export async function GET(
       },
       {
         stage: 5,
-        label: "Confirm Metadata",
+        label: "Tender Details",
         // Gate parity: a stage must never show READY while the generation
         // gate's metadata check (snapshot.metadata.gateValid — the SAME pure
         // validator the gate runs) would block. The >80%-valid ratio only

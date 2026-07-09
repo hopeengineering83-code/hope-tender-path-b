@@ -599,7 +599,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
               <StatusRow label="Providers" value={`${data.providerStatus.totalHealthy}/${data.providerStatus.totalConfigured} healthy`} ok={data.providerStatus.totalHealthy > 0} />
               <StatusRow label="Analysis" value={data.analysisStatus.source.replace(/_/g, " ")} ok={data.analysisStatus.source === "AI" || data.analysisStatus.source === "HUMAN_APPROVED_REGEX_FALLBACK"} />
-              <StatusRow label="Tender Details" value={`${Math.round(data.metadataStatus.completenessRatio * 100)}% complete`} ok={data.metadataStatus.criticalMissing.length === 0} />
+               {/* Tender Details status row removed — tender facts are advisory only */}
               <StatusRow
                 label="Source Refs"
                 value={data.sourceReferenceStatus.totalMandatoryCount > 0

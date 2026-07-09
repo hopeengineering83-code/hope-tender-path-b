@@ -133,7 +133,8 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       // RUNTIME METADATA DEBLOCKER: Never expose raw Prisma error text to UI.
       // Use safe generic message with diagnostic context.
       const isPrismaError = err instanceof Error && (err.message.includes("prisma") || err.message.includes("Prisma") || err.message.includes("Invalid"));
-      setError("Export readiness check failed. Refresh to retry. If the problem persists, contact admin.");
+      const body = await res.json().catch(() => ({}));
+      setError(body?.diagnosticId ? `Export readiness check failed. Diagnostic ID: ${body.diagnosticId}` : "Export readiness check failed. Refresh to retry.");
     } finally {
       setLoading(false);
     }
@@ -528,7 +529,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             title="Check for prohibited branding/signature/stamp in generated documents and mark affected docs for regeneration."
           >
-            {repairingAssets ? "Checking…" : "Repair prohibited assets"}
+            {repairingAssets ? "Checking…" : "Repair prohibited assets (if any)"}
           </button>
           {readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50">

@@ -468,7 +468,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
       )}
 
       <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show all extracted metadata</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show source-grounded tender facts</summary>
         <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 bg-white p-3 text-sm md:grid-cols-2">
           <Detail label="Client address" value={sAddress} />
           <Detail label="Client contact" value={sContactName} />

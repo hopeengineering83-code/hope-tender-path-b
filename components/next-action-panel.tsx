@@ -17,7 +17,7 @@ const STEPS = [
   "Upload Tender",
   "Fix Extraction",
   "Run AI Analyze",
-  "Confirm Metadata",
+  // "Confirm Metadata" removed — metadata is not a workflow stage
   "Confirm Requirements",
   "Build Plan",
   "Generate Docs",
