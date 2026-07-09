@@ -44,7 +44,7 @@ function scoreBar(score: number, max: number) {
 const DIMENSION_MODULE: Record<string, CanonicalModuleKey> = {
   Extraction: "extraction",
   "AI Analysis": "analysis",
-  Metadata: "metadata",
+  "Tender Details": "metadata",
   Requirements: "requirements",
   "Submission Plan": "submissionPlan",
   Documents: "documents",

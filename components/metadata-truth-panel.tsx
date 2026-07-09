@@ -41,7 +41,7 @@ function MetricCard({
 
 // ─── Main panel ──────────────────────────────────────────────────────────────
 
-export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
+export function SourceGroundedTenderFactsPanel({ tenderId }: { tenderId: string }) {
   const [snapshot, setSnapshot] = useState<TenderReleaseSnapshot | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState<string>("");
 
@@ -151,3 +151,6 @@ export function MetadataTruthPanel({ tenderId }: { tenderId: string }) {
     </section>
   );
 }
+
+// Backward-compat alias — use SourceGroundedTenderFactsPanel in new code.
+export const MetadataTruthPanel = SourceGroundedTenderFactsPanel;
