@@ -125,19 +125,30 @@ describe("hardened gate — critical metadata gate (G)", () => {
 // ─── Content-hash binding is always enforced ──────────────────────────────────
 
 describe("hardened gate — content-hash always enforced (no legacy bypass)", () => {
-  it("blocks when content hash mismatches", () => {
+  it("blocks when content hash mismatches (for export/final-zip)", () => {
     const r = evaluateGenerationReadiness(goodInput({
       latestJobHash: "old_hash",
       currentContentHash: "new_hash",
+      purpose: "export",
     }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 
-  it("blocks when latestJobHash is null", () => {
-    const r = evaluateGenerationReadiness(goodInput({ latestJobHash: null }));
+  it("blocks when latestJobHash is null (for export/final-zip)", () => {
+    const r = evaluateGenerationReadiness(goodInput({ latestJobHash: null, purpose: "export" }));
     assert.equal(r.ok, false);
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
+  });
+
+  it("does NOT hard-block draft generation when content hash mismatches", () => {
+    const r = evaluateGenerationReadiness(goodInput({
+      latestJobHash: "old_hash",
+      currentContentHash: "new_hash",
+      purpose: "generate",
+    }));
+    // Draft: content-changed is a warning, not a hard block
+    assert.ok(r.ok || r.blockerCode !== "ANALYSIS_HASH_MISMATCH", "draft should not hard-block on hash mismatch");
   });
 });
 
