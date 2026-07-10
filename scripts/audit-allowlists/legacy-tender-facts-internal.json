@@ -1,0 +1,10 @@
+{
+  "purpose": "Internal legacy compatibility names that may remain until schema/route migrations are sequenced.",
+  "allowedInternalTerms": [
+    "metadataOverrides",
+    "TenderMetadataOverride",
+    "metadataContaminated",
+    "tender-metadata-completeness",
+    "metadata-validators"
+  ]
+}

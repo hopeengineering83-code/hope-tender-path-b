@@ -75,6 +75,30 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** release-hardening guardrails, regression-prevention audits, and legacy Tender Facts compatibility mapping.
+- **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR pending.
+- **Scope:**
+  - Added static audit scripts for user-facing metadata language, raw API error exposure, and warning-only workflow/readiness state consistency.
+  - Added test-only public API safety helper plus product/error term constants.
+  - Added focused final-export/API contract safety regression tests that document fail-closed public blocker-code expectations without touching #1012/#1013 UI/API files.
+  - Added `docs/RELEASE_GUARDRAILS.md` and `docs/legacy-tender-facts-compatibility-map.md`; no risky legacy route/file renames were performed.
+  - Updated `package.json` with manual audit script aliases.
+- **Files changed:** `package.json`, `docs/RELEASE_GUARDRAILS.md`, `docs/legacy-tender-facts-compatibility-map.md`, `lib/assert-public-api-safe.ts`, `lib/product-terms.ts`, `lib/public-error-messages.ts`, `scripts/audit-allowlists/legacy-tender-facts-internal.json`, `scripts/audit-no-user-facing-metadata.mjs`, `scripts/audit-safe-api-errors.mjs`, `scripts/audit-workflow-state-consistency.mjs`, `tests/api-contract-public-safety.test.ts`, `tests/final-export-safety-invariants.test.ts`, `operator_handoff.md`.
+- **Tests actually run:**
+  - `npx tsc --noEmit --pretty false` — PASS.
+  - `npm run lint` — PASS.
+  - `npx tsx --test tests/final-export-safety-invariants.test.ts tests/api-contract-public-safety.test.ts` — PASS (14/14; environment warnings for missing local env only).
+  - `node scripts/audit-safe-api-errors.mjs` — PASS.
+  - `node scripts/audit-workflow-state-consistency.mjs` — PASS in warning-only mode; reported independent-readiness warnings in `lib/engine/tender-control-suggestions.ts` and `lib/tender-next-action.ts`.
+  - `node scripts/audit-no-user-facing-metadata.mjs` — FAIL on current main baseline, as expected before PR #1012/#1013 UI copy cleanup and broader legacy route language cleanup; findings were not force-fixed to avoid overlap.
+- **CI/deployment status:** local only; no Vercel preview or production deployment triggered.
+- **Known risks / assumptions:** #1012/#1013 changed-file lists were inspected from GitHub web because `gh` is unavailable and no `origin` remote is configured locally; this branch intentionally avoids their touched files. Full `npm test` and `npm run build` were not run in this session.
+- **Next action:** after #1012/#1013 merge, re-run `node scripts/audit-no-user-facing-metadata.mjs` and either remove resolved baseline findings or add narrow legacy-internal allowlist entries.
+- **Merge status:** not reviewed — merge-safe only after #1012/#1013 sequencing and the metadata-language audit baseline are reconciled.
+
+
 ### 2026-07-09 UTC — ChatGPT (GPT-5.5)
 
 - **Mode:** deep follow-up on final-package readiness gaps after review feedback.
