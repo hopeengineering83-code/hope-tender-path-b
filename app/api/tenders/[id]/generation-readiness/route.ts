@@ -37,7 +37,8 @@ export async function GET(
     const orderEntries = safeParseJsonArray(tender.exactFileOrder);
     const submissionPlanBuilt = (Array.isArray(planEntries) && planEntries.length > 0) || (Array.isArray(orderEntries) && orderEntries.length > 0);
     const requirementsExist = (tender._count.requirements ?? 0) > 0;
-    const requiredDocumentsTotal = Math.max(planEntries.length, orderEntries.length);
+    const plannedDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "PLANNED").length;
+    const requiredDocumentsTotal = Math.max(planEntries.length, orderEntries.length, tender._count.requirements ?? 0, plannedDocumentsTotal);
     const generatedDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED").length;
     const exportReadyDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && /READY_FOR_EXPORT|APPROVED/i.test(doc.reviewStatus ?? "")).length;
 

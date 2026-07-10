@@ -91,6 +91,27 @@ describe("route-driven workflow truth verification", () => {
     }
   });
 
+  it("generation-readiness counts requirements even before a confirmed Build Plan exists", () => {
+    const source = read("app/api/tenders/[id]/generation-readiness/route.ts");
+    assert.match(source, /tender\._count\.requirements/, "generation-readiness denominator must include extracted requirements");
+    assert.match(source, /plannedDocumentsTotal/, "generation-readiness denominator must include planned document rows");
+    assert.match(source, /Math\.max\(planEntries\.length, orderEntries\.length, tender\._count\.requirements \?\? 0, plannedDocumentsTotal\)/);
+  });
+
+  it("shared envelope treats explicit PARTIAL status as not ok", () => {
+    const envelope = buildPublicReadinessEnvelope({
+      ok: true,
+      status: "PARTIAL",
+      blockers: [],
+      warnings: [{ message: "Review still required.", nextAction: "REVIEW_ANALYSIS" }],
+      requiredDocumentsTotal: 1,
+      generatedDocumentsTotal: 1,
+      exportReadyDocumentsTotal: 0,
+    });
+    assert.equal(envelope.ok, false);
+    assert.equal(envelope.status, "PARTIAL");
+  });
+
   it("shared envelope fails closed: ok cannot stay true when blockers exist", () => {
     const envelope = buildPublicReadinessEnvelope({
       ok: true,

@@ -71,10 +71,11 @@ export function buildPublicReadinessEnvelope(input: {
   const requiredDocumentsTotal = asNonNegativeInteger(input.requiredDocumentsTotal);
   const generatedDocumentsTotal = asNonNegativeInteger(input.generatedDocumentsTotal);
   const exportReadyDocumentsTotal = asNonNegativeInteger(input.exportReadyDocumentsTotal);
-  const ok = Boolean(input.ok) && blockers.length === 0;
+  const status = input.status ?? (Boolean(input.ok) && blockers.length === 0 ? "READY" : "BLOCKED");
+  const ok = Boolean(input.ok) && blockers.length === 0 && status === "READY";
   return {
     ok,
-    status: input.status ?? (ok ? "READY" : "BLOCKED"),
+    status,
     blockers,
     warnings,
     primaryBlockerReason: input.primaryBlockerReason ?? primary?.message ?? null,
