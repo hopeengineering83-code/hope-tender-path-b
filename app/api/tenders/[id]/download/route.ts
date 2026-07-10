@@ -649,10 +649,16 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
   const pdfGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
   if (!pdfGate.ok) return err(`PDF export blocked: ${pdfGate.blockerDetail}`, 409, { code: pdfGate.blockerCode });
 
-  // Pick the target document
+  // Pick the target document. Auto-pick prefers the DOCX revision — once a
+  // required PDF has been finalized, "Technical Proposal.docx" and
+  // "Technical Proposal.pdf" can both be active, and only the DOCX is a
+  // convertible source for the finalizer.
+  const technicalMatch = (d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "");
   const target = docId
     ? docs.find((d: any) => d.id === docId)
-    : docs.find((d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "")) ?? docs[0];
+    : docs.find((d: any) => technicalMatch(d) && (d.exactFileName ?? d.name ?? "").toLowerCase().endsWith(".docx"))
+      ?? docs.find((d: any) => technicalMatch(d))
+      ?? docs[0];
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
 
   // Load the source bytes (inline or storage-backed) before finalization.
