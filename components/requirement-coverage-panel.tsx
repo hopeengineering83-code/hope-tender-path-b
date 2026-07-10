@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDownIcon, RefreshIcon } from "./icons";
+import { ChevronDownIcon, RefreshIcon, WarningIcon, CheckIcon, CrossIcon } from "./icons";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 
@@ -370,7 +370,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
           </div>
           {traceability.warnings.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-xs text-amber-800">
-              {traceability.warnings.map((w) => <li key={w}>⚠ {w}</li>)}
+              {traceability.warnings.map((w) => <li key={w} className="inline-flex items-start gap-1"><WarningIcon className="mt-0.5 shrink-0" /> <span>{w}</span></li>)}
             </ul>
           )}
           {traceability.warnings.length === 0 && (
@@ -397,8 +397,8 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
 
       {/* Source ref warning */}
       {data.missingSourceRef > 0 && (
-        <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
-          ⚠ {data.missingSourceRef} requirements are &quot;raw fallback&quot; (no source tracing). Trusted tracing required for final export.
+        <div className="inline-flex items-start gap-1 border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
+          <WarningIcon className="mt-0.5 shrink-0" /> <span>{data.missingSourceRef} requirements are &quot;raw fallback&quot; (no source tracing). Trusted tracing required for final export.</span>
         </div>
       )}
 
@@ -491,7 +491,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                           })()}
                         </div>
                       ) : (
-                        <p className="text-xs text-amber-700">⚠ No source reference recorded. Run source extraction or add manually.</p>
+                        <p className="inline-flex items-start gap-1 text-xs text-amber-700"><WarningIcon className="mt-0.5 shrink-0" /> <span>No source reference recorded. Run source extraction or add manually.</span></p>
                       )}
                     </div>
 
@@ -524,9 +524,9 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                                 {link.autoLinked && (
                                   <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                                     {confirmState?.success ? (
-                                      <span className="text-[10px] text-green-700 font-medium">{confirmState.success} ✓</span>
+                                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 font-medium">{confirmState.success} <CheckIcon /></span>
                                     ) : rejectState?.success ? (
-                                      <span className="text-[10px] text-red-700 font-medium">{rejectState.success}</span>
+                                      <span className="inline-flex items-center gap-0.5 text-[10px] text-red-700 font-medium">{rejectState.success} <CrossIcon /></span>
                                     ) : (
                                       <>
                                         {canMutate ? (
@@ -534,16 +534,18 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                                             <button
                                               onClick={() => void confirmEvidence(row.id, link)}
                                               disabled={confirmState?.pending || rejectState?.pending}
-                                              className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800 hover:bg-green-200 disabled:opacity-50"
+                                              className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800 hover:bg-green-200 disabled:opacity-60"
+                                              title="Confirm partial evidence as sufficient"
                                             >
-                                              {confirmState?.pending ? "…" : "✓ Confirm partial evidence"}
+                                              <CheckIcon /> {confirmState?.pending ? "…" : "Confirm partial evidence"}
                                             </button>
                                             <button
                                               onClick={() => void rejectEvidence(row.id, link)}
                                               disabled={confirmState?.pending || rejectState?.pending}
-                                              className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
+                                              className="inline-flex items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-200 disabled:opacity-60"
+                                              title="Mark evidence as not applicable"
                                             >
-                                              {rejectState?.pending ? "…" : "✗ Not applicable"}
+                                              <CrossIcon /> {rejectState?.pending ? "…" : "Not applicable"}
                                             </button>
                                           </>
                                         ) : (
@@ -577,7 +579,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                             const key = `${row.id}:${action}`;
                             const state = coverageActionStates[key];
                             if (state?.success) {
-                              return <span key={action} className="text-[10px] text-green-700 font-medium">{state.success} ✓</span>;
+                              return <span key={action} className="inline-flex items-center gap-0.5 text-[10px] text-green-700 font-medium">{state.success} <CheckIcon /></span>;
                             }
                             return (
                               <button

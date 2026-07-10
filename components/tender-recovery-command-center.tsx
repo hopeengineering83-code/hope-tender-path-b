@@ -519,7 +519,8 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             <button
               onClick={() => void executeAction(data.primaryNextAction)}
               disabled={actioning}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              title={`Execute: ${actionLabel}`}
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
             >
               <PlayIcon /> {actioning ? "Working…" : "Execute"}
             </button>
@@ -527,13 +528,14 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             <button
               onClick={() => void executeAction(data.primaryNextAction)}
               disabled={actioning}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              title={`Execute: ${actionLabel}`}
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
             >
               <PlayIcon /> {actioning ? "Working…" : "Execute"}
             </button>
           ) : null)}
           {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
-            <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+            <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700" title="Download the final submission ZIP">
               <DownloadIcon /> Download ZIP
             </a>
           )}
@@ -577,27 +579,27 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                 {/* METADATA_INCOMPLETE quick-actions removed — metadata is advisory only */}
                 {canMutate && b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Retry AI Analyze</button>
+                    <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60" title="Retry AI Analyze with all available providers"><RefreshIcon /> Retry AI Analyze</button>
                   </div>
                 )}
                 {canMutate && b.code === "ANALYSIS_PARTIAL_NEEDS_RESUME" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    <button onClick={() => void executeAction("RESUME_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Resume AI Analyze</button>
+                    <button onClick={() => void executeAction("RESUME_AI_ANALYZE")} disabled={actioning} className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60" title="Resume the partial AI Analyze job from where it left off"><PlayIcon /> Resume AI Analyze</button>
                   </div>
                 )}
                 {canMutate && b.code === "EVIDENCE_NOT_ASSESSED" && (
                   <div className="mt-1.5">
-                    <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Run Engine</button>
+                    <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60" title="Run Engine to create requirement-evidence links"><PlayIcon /> Run Engine</button>
                   </div>
                 )}
                 {canMutate && b.code === "ENGINE_RAN_NO_MATCHES" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    <button onClick={() => void executeAction("REVIEW_MATCHING_INPUTS")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Review Matching Inputs</button>
+                    <button onClick={() => void executeAction("REVIEW_MATCHING_INPUTS")} disabled={actioning} className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60" title="Review vault experts/projects and compliance records"><WarningIcon /> Review Matching Inputs</button>
                   </div>
                 )}
                 {canMutate && b.code === "MANDATORY_EVIDENCE_WEAK" && (
                   <div className="mt-1.5">
-                    <button onClick={() => void executeAction("LINK_VAULT_EVIDENCE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Link Vault Evidence</button>
+                    <button onClick={() => void executeAction("LINK_VAULT_EVIDENCE")} disabled={actioning} className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60" title="Link vault evidence to strengthen mandatory coverage"><CheckIcon /> Link Vault Evidence</button>
                   </div>
                 )}
               </li>

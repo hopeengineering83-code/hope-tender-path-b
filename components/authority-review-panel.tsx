@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { errorCodeLabel } from "@/lib/ui/human-labels";
+import { RefreshIcon, WarningIcon, CheckCircleIcon, CrossIcon, InfoIcon, ChevronDownIcon } from "./icons";
 import type {
   AuthorityReviewResult,
   AuthorityBlocker,
@@ -16,21 +17,21 @@ interface AuthorityReviewPanelProps {
 function statusBadge(status: AuthorityReviewStatus) {
   if (status === "AUTHORITY_READY") {
     return (
-      <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700">
-        AUTHORITY READY
+      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700">
+        <CheckCircleIcon /> AUTHORITY READY
       </span>
     );
   }
   if (status === "NEEDS_REVIEW") {
     return (
-      <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
-        NEEDS REVIEW
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+        <WarningIcon /> NEEDS REVIEW
       </span>
     );
   }
   return (
-    <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
-      BLOCKED
+    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+      <CrossIcon /> BLOCKED
     </span>
   );
 }
@@ -114,7 +115,7 @@ function DocumentRow({ doc }: { doc: DocumentAuthorityScore }) {
         <div className="flex flex-shrink-0 items-center gap-2">
           <span className="text-sm font-semibold text-slate-700">{doc.score}/100</span>
           {statusBadge(doc.status)}
-          <span className="text-slate-400">{expanded ? "▲" : "▼"}</span>
+          <span className="text-slate-400"><ChevronDownIcon className={expanded ? "rotate-180" : ""} /></span>
         </div>
       </button>
       {expanded && (
@@ -220,9 +221,10 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
             type="button"
             onClick={() => void fetchReview()}
             disabled={loading}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            title="Refresh the authority review"
           >
-            {loading ? "Loading…" : "Refresh"}
+            <RefreshIcon /> {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
