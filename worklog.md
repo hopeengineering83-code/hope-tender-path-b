@@ -2209,143 +2209,74 @@ Stage Summary:
 - NOT merged — per user instruction, leaving merge to the user.
 
 ---
-Task ID: fix-action-icons-visibility-and-affordance
+Task ID: fix-buildplan-document-generation-pipeline
 Agent: main (Super Z / GLM)
-Task: Fix action icons visibility and affordance. PR #1029.
+Task: Fix backend pipeline: Build Plan → required document rows → generated content → validation → review/approval → export-ready package. PR #1030.
 
 Work Log:
-- Created branch fix/action-icons-visibility-and-affordance from main (13dbf226).
-- Inspected components/icons.tsx (17 icons already existed) and 12 priority
-  component files listed in the spec.
-- Found 81 files with raw Unicode glyphs across components/ and app/.
-- Focused on the 12 priority files + tender-detail.tsx.
-
-ROOT CAUSE:
-Raw Unicode dingbat glyphs (✦ ✓ → ↓ ⚡ ▶ ↻ ⊘ ⏳ ⚠ ✕ ↺ ↗ ▲ ▼) render as
-blank/tofu on Android/tablet/browser font stacks because they depend on
-font glyph coverage. Inline SVGs render identically everywhere. Some
-buttons used no icon at all, some used disabled:opacity-40/50 (too faint),
-and some icon-only buttons lacked accessible labels.
+- Created branch fix/buildplan-document-generation-pipeline from main (fe1a7b76).
+- Audited 8 priority pipeline files via subagent (research-only).
+- Found 5 real backend gaps (not cosmetic):
 
 GAPS FIXED:
 
-1. Added 6 new SVG icons to components/icons.tsx:
-   - UploadIcon, ShareIcon, DocumentIcon, PaperclipIcon, ClipboardCheckIcon,
-     SettingsIcon
+1. bulk-review/route.ts — READY_FOR_EXPORT now requires validation+generation+content:
+   - Added validationStatus=VALIDATED/PASSED check → VALIDATION_REQUIRED_BEFORE_EXPORT
+   - Added generationStatus=GENERATED check → GENERATION_REQUIRED_BEFORE_EXPORT
+   - Added generatedDocumentHasContent check → CONTENT_REQUIRED_BEFORE_EXPORT
+   - Rejects entire batch if any doc fails (fail closed)
+   - APPROVED also requires generationStatus=GENERATED
 
-2. Replaced ALL raw Unicode dingbats in operational components:
-   - tender-detail.tsx (15+ instances: ⚠ scanned, ✓ REVIEWED, ⚠, ✓, →, ↓, ✕, ↺, ▲▼)
-   - engine-action-panel.tsx (⚡ ⏳ in button labels)
-   - document-validator-panel.tsx (✓ ⚠ ✗ Unicode badges)
-   - export-readiness-panel.tsx (✓ ⚠ ⏳ ✕ ↺ Unicode)
-   - requirement-coverage-panel.tsx (⚠ ✓ ✗ Unicode)
-   - tender-controls-panel.tsx (⚠️ emoji in RISK)
-   - tender-share-panel.tsx (↗ Unicode)
-   - authority-review-panel.tsx (▲ ▼ Unicode)
-   - generation-action-panel.tsx (no icons on Generate/repair buttons)
+2. validate/route.ts — fail-closed on quality gate throw + PDF coverage check:
+   - Removed .catch() fallback that silently weakened validation
+   - Quality gate throw now returns HTTP 500 QUALITY_GATE_UNAVAILABLE (fail closed)
+   - Added PDF_REQUIRED_CONVERSION_UNAVAILABLE check via detectTenderFormatPolicy
 
-3. Added visible SVG icons to all primary workflow action buttons:
-   - AI Analyze → SparklesIcon
-   - Run Engine → PlayIcon
-   - Generate Docs → BoltIcon
-   - Validate → CheckIcon
-   - ZIP Package → DownloadIcon
-   - Approve All → CheckCircleIcon
-   - Regen CVs → RefreshIcon
-   - Retry AI Analyze → RefreshIcon
-   - Resume AI Analyze → PlayIcon
-   - Review Matching Inputs → WarningIcon
-   - Link Vault Evidence → CheckIcon
-   - Auto-finalize → CheckCircleIcon
-   - Repair safe document gaps → RefreshIcon
-   - Use vault evidence → PaperclipIcon
-   - Repair source references → RefreshIcon
-   - Fix document types → RefreshIcon
-   - Clean duplicate rows → RefreshIcon
-   - Repair prohibited assets → WarningIcon (conditional on PROHIBITED_ASSET)
-   - Exclude outside-plan files → BanIcon
-   - Check export gate / Re-check → RefreshIcon
-   - Download Final ZIP → DownloadIcon
-   - Download blocked → LockIcon
-   - Generate Share Link → ShareIcon
-   - Copy → CheckIcon
-   - Revoke → CrossIcon
-   - Refresh (authority review) → RefreshIcon
+3. export-readiness.ts — checkDocumentQualityGate extracts DOCX visible text:
+   - Made async, calls extractDocxVisibleText for base64 DOCX files
+   - Previously skipped ALL base64 DOCX files (looksLikePlainText=false)
 
-4. Upgraded disabled:opacity-40/50 → disabled:opacity-60 on all primary
-   action buttons so icons + labels remain readable when disabled.
+4. document-quality-validator.ts — accepts visibleText param:
+   - Callers with base64 DOCX content can pass pre-extracted visible text
+   - Regex checks now run against real document text, not base64 gibberish
 
-5. Added title attributes to all disabled primary actions with exact
-   disabled reason (Generate Docs, ZIP Package, Execute, etc.).
+5. final-submission-readiness.ts — extracts DOCX visible text + OUTSIDE_PLAN_DOCUMENTS:
+   - qualityReports now extracts visible text via extractDocxVisibleText
+   - Added OUTSIDE_PLAN_DOCUMENTS tender-level blocker (defense-in-depth)
 
-6. Accessibility fixes:
-   - Every icon-only button has aria-label + title.
-   - Every action button has a visible text label (no icon-only critical actions).
-   - SVG icons use stroke='currentColor' for proper contrast inheritance.
+6. download/route.ts — extracts DOCX visible text for quality validation:
+   - Phase 4 quality validation now runs regex checks on real document text
 
-7. Conditional rendering:
-   - 'Repair prohibited assets' button only renders when a PROHIBITED_ASSET
-     blocker exists (was: always visible, confusing when no prohibited assets).
-   - 'Export Ready' counter in Recovery Command Center only turns green when
-     finalSubmissionStatus === READY (was: green whenever finalExportCandidates > 0).
-
-8. Status badges upgraded to inline-flex with SVG icons:
-   - Document Validator score badges (Clean/Review/Blocked)
-   - Authority Review status badges (AUTHORITY READY/NEEDS REVIEW/BLOCKED)
-   - Extraction badges (scanned/chars)
-   - Trust badges (REVIEWED)
-   - Validation report (Passed/Failed/All checks passed)
-
-TESTS ADDED (38 new tests in tests/action-icons-visibility.test.ts):
-- Spec Test 1: No raw Unicode in 9 workflow components + tender-detail (10 tests)
-- Spec Test 2: Generate Docs → BoltIcon + text (3 tests)
-- Spec Test 3: Validate → CheckIcon + text (1 test)
-- Spec Test 4: Run Engine → PlayIcon + text (2 tests)
-- Spec Test 5: ZIP Package → DownloadIcon + text (2 tests)
-- Spec Test 6: Disabled buttons use disabled:opacity-60 (3 tests)
-- Spec Test 7: Disabled primary actions have title (3 tests)
-- Spec Test 8: Recovery Command Center SVG icons (3 tests)
-- Spec Test 9: Document Validator SVG icons (2 tests)
-- Spec Test 10: Extraction/Trust badges use SVG icons (2 tests)
-- Spec Test 11: No user-facing 'metadata' wording (2 tests)
-- Spec Test 12: icons.tsx exports all 17 required icons (1 test)
-- Spec Test 13: Share Tender panel uses ShareIcon (2 tests)
-- Spec Test 14: Repair prohibited assets conditional (1 test)
-- Spec Test 15: SVG icons use stroke='currentColor' (1 test)
+TESTS ADDED (44 new tests in tests/buildplan-generation-pipeline.test.ts):
+- Spec Test 1: Confirmed Build Plan required (3 tests)
+- Spec Test 2: PLANNED → GENERATED only after content (4 tests)
+- Spec Test 3: Empty docs fail validation (3 tests)
+- Spec Test 4: Required PDF missing blocks export (3 tests)
+- Spec Test 5: PDF conversion unavailable exact code (2 tests)
+- Spec Test 6: Validation failure prevents approval (4 tests)
+- Spec Test 7: Approval failure prevents export-ready count (4 tests)
+- Spec Test 8: Stale/superseded excluded from ZIP (3 tests)
+- Spec Test 9: ZIP manifest matches active docs (3 tests)
+- Spec Test 10: No AI traces in generated docs (5 tests)
+- Spec Test 11: Final export fail-closed (6 tests)
+- Cross-cutting: visibleText param (2 tests)
 
 VERIFICATION:
 - npx tsc --noEmit: PASS
 - npm run lint: PASS (1 pre-existing postcss warning)
-- npm run build: PASS (22.6s, 58/58 pages)
-- 38 new tests PASS
-- 177 targeted tests PASS (lifecycle + recovery + icon + UI tests)
-- 132 UI-related tests PASS (no regressions)
-- #1026 lifecycle truth and #1025 canonical readiness fixes preserved
-
-FILES CHANGED (12 files, +650 / -176):
-  M  app/dashboard/tenders/[id]/tender-detail.tsx
-  M  components/authority-review-panel.tsx
-  M  components/document-validator-panel.tsx
-  M  components/engine-action-panel.tsx
-  M  components/export-readiness-panel.tsx
-  M  components/generation-action-panel.tsx
-  M  components/icons.tsx
-  M  components/requirement-coverage-panel.tsx
-  M  components/tender-controls-panel.tsx
-  M  components/tender-recovery-command-center.tsx
-  M  components/tender-share-panel.tsx
-  A  tests/action-icons-visibility.test.ts
+- npm run build: PASS (21.8s, 58/58 pages)
+- 44 new tests PASS
+- 131 targeted tests PASS (pipeline + quality + lifecycle + safety)
+- 68 related tests PASS (no regressions)
 
 SAFETY STATEMENT:
-No readiness, export, or lifecycle safety behavior was changed or weakened.
-The bar for finalExportReady is unchanged. DOWNLOAD_ZIP remains blocked
-whenever any condition fails. The #1026 lifecycle truth and #1025 canonical
-readiness count fixes are preserved — all their tests still pass.
+No important safety behavior was weakened. The bar for finalExportReady is
+unchanged. DOWNLOAD_ZIP remains blocked whenever any condition fails. All
+existing fail-closed behavior is preserved — the fixes only ADD new gates
+and close the silent-degradation gap in validate/route.ts.
 
 Stage Summary:
-- PR #1029 pushed to GitHub: https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1029
-- All raw Unicode operational icons removed from priority components.
-- All primary workflow action buttons now have visible SVG icons + text labels.
-- Disabled buttons remain readable (opacity-60 minimum).
-- Every icon-only button has aria-label + title for accessibility.
+- PR #1030 pushed to GitHub: https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1030
+- 5 real backend pipeline gaps closed.
+- 44 new regression tests prove the pipeline is fail-closed at every stage.
 - NOT merged — per user instruction, leaving merge to the user.
