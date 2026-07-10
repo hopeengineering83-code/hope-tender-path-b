@@ -69,6 +69,71 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Clean up old SUPERSEDED ExportPackage rows — each /export POST creates a
+    // new READY row and marks the prior as SUPERSEDED. Without this, old
+    // package records accumulate indefinitely (cost + clutter).
+    // Select exact IDs first, then delete only those IDs — prevents race
+    // condition where rows change between a broad deleteMany and metrics.
+    const supersededExportPkgIds = await prisma.exportPackage.findMany({
+      where: { status: "SUPERSEDED", createdAt: { lt: thirtyDaysAgo } },
+      select: { id: true },
+    }).then((rows) => rows.map((r) => r.id)).catch(() => [] as string[]);
+
+    const deletedExportPackages = supersededExportPkgIds.length > 0
+      ? await prisma.exportPackage.deleteMany({ where: { id: { in: supersededExportPkgIds } } }).catch(() => ({ count: 0 }))
+      : { count: 0 };
+
+    // Clean up old SUPERSEDED GeneratedDocument rows AND their blob storage.
+    // Each engine re-run supersedes all active docs, but the old rows —
+    // including their fileContent blobs — persist forever without this.
+    //
+    // Race-condition-safe approach:
+    //   1. Select exact candidate IDs + storagePath (single read)
+    //   2. Delete only those exact IDs (deterministic — no broad deleteMany)
+    //   3. Blob cleanup uses exactly the selected/deleted rows
+    // This prevents divergence between DB cleanup and blob cleanup if rows
+    // change status between read and delete.
+    const supersededDocCandidates = await prisma.generatedDocument.findMany({
+      where: {
+        generationStatus: "SUPERSEDED",
+        updatedAt: { lt: thirtyDaysAgo },
+      },
+      select: { id: true, storagePath: true, fileContent: true, exactFileName: true },
+    }).catch(() => []);
+
+    const supersededDocIds = supersededDocCandidates.map((d) => d.id);
+    const deletedSupersededDocs = supersededDocIds.length > 0
+      ? await prisma.generatedDocument.deleteMany({ where: { id: { in: supersededDocIds } } }).catch(() => ({ count: 0 }))
+      : { count: 0 };
+
+    // Best-effort blob cleanup for exactly the selected/deleted rows.
+    // If blob cleanup fails after DB deletion, log safe diagnostics and
+    // report partial blob cleanup — do not expose raw internals.
+    let supersededDocBlobsCleaned = 0;
+    let supersededDocBlobFailures = 0;
+    if (supersededDocCandidates.length > 0) {
+      const storage = getStorageAdapter();
+      for (const doc of supersededDocCandidates) {
+        if (doc.storagePath || doc.fileContent) {
+          try {
+            await storage.deleteFile({
+              storagePath: doc.storagePath,
+              fileContent: doc.fileContent,
+              fileName: doc.exactFileName ?? doc.id,
+            });
+            supersededDocBlobsCleaned++;
+          } catch (err) {
+            supersededDocBlobFailures++;
+            logger.warn(`[cleanup-old-records] generated doc blob cleanup failed`, {
+              docId: doc.id,
+              exactFileName: doc.exactFileName,
+              errorClass: err instanceof Error ? err.constructor.name : "UnknownError",
+            });
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       deleted: {
         aiJobs: deletedAiJobs.count,
@@ -76,6 +141,10 @@ export async function GET(req: NextRequest) {
         copilotMessages: deletedCopilotMessages.count,
         tenderFiles: deletedTenderFiles.count,
         blobsCleaned: filesToDelete.length,
+        exportPackages: deletedExportPackages.count,
+        supersededDocs: deletedSupersededDocs.count,
+        supersededDocBlobsCleaned,
+        supersededDocBlobFailures,
       },
     });
   } catch (error) {

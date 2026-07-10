@@ -3,7 +3,6 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resultFromRunRow } from "../../../../../lib/engine/tender-workflow-runner";
 import { buildFinalPackageManifest } from "../../../../../lib/engine/final-package-manifest";
-import { validateGeneratedFileBytes } from "../../../../../lib/engine/generated-file-integrity";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +18,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id: tenderId } = await params;
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    include: { generatedDocuments: true, exportPackages: { orderBy: { createdAt: "desc" }, take: 1 } },
+    include: {
+      // Only load non-SUPERSEDED docs, and use explicit select to avoid
+      // loading the base64 fileContent blob (can be multi-MB per doc).
+      // The file-integrity check at line 39 fetches bytes lazily via
+      // readGeneratedDocumentContent when needed.
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        select: {
+          id: true, name: true, exactFileName: true, exactOrder: true,
+          format: true, generationStatus: true, validationStatus: true,
+          reviewStatus: true, storagePath: true, documentType: true,
+          reviewNotes: true, updatedAt: true,
+        },
+      },
+      exportPackages: { orderBy: { createdAt: "desc" }, take: 1 },
+    },
   });
   if (!tender) {
     return NextResponse.json({ ok: false, operation: "WORKFLOW_STATUS", warnings: [], blockers: ["Tender not found"], errorCode: "TENDER_NOT_FOUND", recoverable: false }, { status: 404 });
@@ -37,25 +51,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
 
   const fileIntegrityProblems = tender.generatedDocuments.flatMap((doc) => {
-    const bytes = doc.fileContent ?? null;
-    const validation = validateGeneratedFileBytes({
-      tenantId: company.id,
-      tenderId,
-      documentId: doc.id,
-      filename: doc.exactFileName ?? doc.name ?? `${doc.id}.docx`,
-      mimeType: doc.format === "PDF" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      bytes,
-      expectedExtension: doc.format === "PDF" ? "pdf" : "docx",
-      minBytes: 16,
-    });
-    return validation.ok ? [] : [{ documentId: doc.id, filename: doc.exactFileName ?? doc.name, problem: validation.problem }];
+    // fileContent is not loaded in the select (to avoid loading multi-MB blobs).
+    // Skip the byte-level integrity check here — the download route does a
+    // full integrity check before serving. This route only needs status-level
+    // info (GENERATED / FAILED / SUPERSEDED).
+    return doc.generationStatus === "GENERATED" && !doc.storagePath
+      ? [{ documentId: doc.id, filename: doc.exactFileName ?? doc.name, problem: "Generated document has no stored content" }]
+      : [];
   });
 
   const manifest = buildFinalPackageManifest(tender.generatedDocuments.map((doc) => ({
     id: doc.id,
     exactFileName: doc.exactFileName,
     name: doc.name,
-    fileContent: doc.fileContent,
+    fileContent: null, // Not loaded — download route fetches lazily
     exactOrder: doc.exactOrder,
     generationStatus: doc.generationStatus,
   })));

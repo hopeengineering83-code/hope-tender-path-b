@@ -332,23 +332,37 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
 
     await prisma.$transaction(
-      async (tx) => executeTenderDeletion(tx, tenderId, correlationId),
+      async (tx) => {
+        const result = await executeTenderDeletion(tx, tenderId, correlationId);
+        // Stash generated doc paths for post-commit blob cleanup
+        for (const p of result.generatedDocPaths) {
+          (filesForCleanup as Array<{ storagePath: string | null; fileContent: string | null; originalFileName?: string; exactFileName?: string | null }>).push({
+            storagePath: p.storagePath,
+            fileContent: p.fileContent,
+            exactFileName: p.exactFileName,
+          });
+        }
+      },
       { timeout: 30000, isolationLevel: "Serializable" },
     );
 
     // Best-effort blob cleanup AFTER the transaction commits — if a blob
     // delete fails, log it but don't fail the request (the DB rows are gone).
     // A reaper cron could retry failed deletes in the future.
+    // Cleans up BOTH source files (TenderFile) and generated docs (GeneratedDocument).
     if (filesForCleanup.length > 0) {
       const storage = getStorageAdapter();
       for (const file of filesForCleanup) {
-        if (file.storagePath || file.fileContent) {
+        const sp = file.storagePath;
+        const fc = file.fileContent;
+        if (sp || fc) {
+          const fname = (file as { originalFileName?: string }).originalFileName ?? (file as { exactFileName?: string | null }).exactFileName ?? "unknown";
           storage.deleteFile({
-            storagePath: file.storagePath,
-            fileContent: file.fileContent,
-            fileName: file.originalFileName,
+            storagePath: sp,
+            fileContent: fc,
+            fileName: fname,
           }).catch((err) => {
-            logger.warn(`[tender-delete] blob cleanup failed for ${file.originalFileName}`, { tenderId, detail: err instanceof Error ? err.message : String(err) });
+            logger.warn(`[tender-delete] blob cleanup failed for ${fname}`, { tenderId, detail: err instanceof Error ? err.message : String(err) });
           });
         }
       }
