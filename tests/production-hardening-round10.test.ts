@@ -22,11 +22,16 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 describe("production hardening — C1: cross-tenant auth bypass", () => {
   const src = read("app/api/tenders/[id]/proposal-versions/[versionId]/route.ts");
+  const helperSrc = read("lib/tender-ownership.ts");
 
-  it("DELETE handler restricts unscoped fallback to ADMIN only", () => {
+  it("DELETE handler delegates to requireTenderAccess (ADMIN-only fallback enforced centrally)", () => {
+    // The route was refactored to use requireTenderAccess(id, actor.id, actor.role)
+    // — a centralized helper that enforces ADMIN-only fallback. The literal
+    // `actor.role === "ADMIN"` check now lives in lib/tender-ownership.ts (line 15),
+    // not in every route handler. This is MORE secure (DRY, single audit point).
     assert.ok(
-      src.includes('actor.role === "ADMIN"'),
-      "unscoped fallback must be gated on actor.role === ADMIN (was available to PROPOSAL_MANAGER)",
+      src.includes("requireTenderAccess(id, actor.id, actor.role)"),
+      "DELETE handler must delegate to requireTenderAccess with actor.role (centralized ADMIN-only fallback)",
     );
     assert.ok(
       !src.includes("?? await prisma.tender.findFirst({ where: { id } })"),
@@ -34,10 +39,40 @@ describe("production hardening — C1: cross-tenant auth bypass", () => {
     );
   });
 
-  it("POST handler restricts unscoped fallback to ADMIN only", () => {
-    // Count occurrences — both DELETE and POST should have the ADMIN gate
-    const adminGates = (src.match(/actor\.role === "ADMIN"/g) ?? []).length;
-    assert.ok(adminGates >= 2, `must have at least 2 ADMIN-only gates (DELETE + POST), found ${adminGates}`);
+  it("POST handler delegates to requireTenderAccess (ADMIN-only fallback enforced centrally)", () => {
+    // Count occurrences — both DELETE and POST should delegate to requireTenderAccess.
+    const delegations = (src.match(/requireTenderAccess\(id, actor\.id, actor\.role\)/g) ?? []).length;
+    assert.ok(
+      delegations >= 2,
+      `must have at least 2 requireTenderAccess delegations (DELETE + POST), found ${delegations}`,
+    );
+  });
+
+  it("requireTenderAccess helper enforces ADMIN-only fallback (the actual security property)", () => {
+    // The helper IS the security gate. Verifying the literal check lives here
+    // (not in every route) is the correct regression test for "C1: cross-tenant
+    // auth bypass — fallback restricted to ADMIN only".
+    assert.ok(
+      helperSrc.includes('actorRole !== "ADMIN"'),
+      "requireTenderAccess must gate the unscoped fallback on actorRole === ADMIN",
+    );
+    assert.ok(
+      helperSrc.includes("return null; // Cross-tenant access blocked"),
+      "requireTenderAccess must return null for non-ADMIN cross-tenant access",
+    );
+  });
+
+  it("requireTenderAccess is the ONLY place that does the unscoped fallback (no parallel paths)", () => {
+    // The route must NOT have its own prisma.tender.findFirst({ where: { id } })
+    // (unscoped) — that path is now exclusively in requireTenderAccess.
+    assert.ok(
+      !src.includes("prisma.tender.findFirst({ where: { id },"),
+      "route must not do its own unscoped tender lookup — requireTenderAccess is the only path",
+    );
+    assert.ok(
+      helperSrc.includes('prisma.tender.findFirst({ where: { id: tenderId }'),
+      "requireTenderAccess is the single place that does the ADMIN-gated unscoped lookup",
+    );
   });
 });
 
