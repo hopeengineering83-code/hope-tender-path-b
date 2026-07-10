@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { getStorageAdapter } from "../../../../../../lib/storage";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
+import { logger } from "../../../../../../lib/observability";
 
 export async function GET(
   _req: Request,
@@ -76,9 +77,17 @@ export async function DELETE(
       fileName: file.originalFileName,
     });
     // Nullify all source-evidence references to this file BEFORE deleting it,
-    // so requirements and tender metadata fields don't dangle. Without this,
+    // so requirements and tender fields don't dangle. Without this,
     // the canonical resolver may still report EXTRACTED_AND_GROUNDED against
     // a fileId that no longer exists until the next AI Analyze run.
+    //
+    // CRITICAL: Linked-fact cleanup (TenderFactsLedger, ExtractionQualityOverride,
+    // TenderSubmissionEmail) must NOT use silent .catch(() => {}). If these
+    // fail, the transaction must roll back — deleting a source file while
+    // leaving dangling source-grounded facts would create false confidence
+    // in export readiness. The only exception is when the table itself doesn't
+    // exist (test/dev environments before migration) — that specific Prisma
+    // error (P2021 "table does not exist") is caught and logged explicitly.
     await prisma.$transaction(async (tx) => {
       // Nullify requirement source references
       await tx.tenderRequirement.updateMany({
@@ -86,7 +95,6 @@ export async function DELETE(
         data: { sourceTenderFileId: null, sourcePageNumber: null, sourceExactQuote: null },
       });
       // Nullify tender source-evidence columns that reference this file
-      // (title, clientName, deadline, reference, submissionMethod, etc.)
       const sourceColumns = [
         "titleSourceFileId", "clientNameSourceFileId", "deadlineSourceFileId",
         "referenceSourceFileId", "submissionMethodSourceFileId",
@@ -99,22 +107,49 @@ export async function DELETE(
           data: { [col]: null } as any,
         });
       }
-      // Nullify TenderFactsLedger entries that reference this file — without
-      // this, ledger facts still claim SOURCE_GROUNDED against a deleted file,
-      // and the canonical resolver may surface them as grounded evidence.
-      await (tx as any).tenderFactsLedger.updateMany({
-        where: { tenderId, sourceFileId: fileId },
-        data: { sourceFileId: null, sourcePage: null, sourceQuote: null, authorityState: "EXTRACTED_UNVERIFIED" },
-      }).catch(() => {});
-      // Nullify ExtractionQualityOverride entries that reference this file
-      await (tx as any).extractionQualityOverride.deleteMany({
-        where: { tenderFileId: fileId },
-      }).catch(() => {});
+      // Nullify TenderFactsLedger entries that reference this file.
+      // Without this, ledger facts still claim SOURCE_GROUNDED against a
+      // deleted file — false export-readiness confidence.
+      // NO silent .catch — if this fails for a real DB error, roll back.
+      // Only catch P2021 (table not found in pre-migration environments).
+      try {
+        await (tx as any).tenderFactsLedger.updateMany({
+          where: { tenderId, sourceFileId: fileId },
+          data: { sourceFileId: null, sourcePage: null, sourceQuote: null, authorityState: "EXTRACTED_UNVERIFIED" },
+        });
+      } catch (e: any) {
+        if (e?.code === "P2021") {
+          // Table doesn't exist yet (pre-migration) — safe to skip
+          logger.info("[file-delete] TenderFactsLedger table not found — skipping (pre-migration)");
+        } else {
+          throw e; // Roll back — don't leave dangling source-grounded facts
+        }
+      }
+      // Delete ExtractionQualityOverride entries that reference this file
+      try {
+        await (tx as any).extractionQualityOverride.deleteMany({
+          where: { tenderFileId: fileId },
+        });
+      } catch (e: any) {
+        if (e?.code === "P2021") {
+          logger.info("[file-delete] ExtractionQualityOverride table not found — skipping (pre-migration)");
+        } else {
+          throw e;
+        }
+      }
       // Nullify TenderSubmissionEmail entries that reference this file
-      await (tx as any).tenderSubmissionEmail.updateMany({
-        where: { tenderId, sourceFileId: fileId },
-        data: { sourceFileId: null, sourcePage: null, sourceQuote: null },
-      }).catch(() => {});
+      try {
+        await (tx as any).tenderSubmissionEmail.updateMany({
+          where: { tenderId, sourceFileId: fileId },
+          data: { sourceFileId: null, sourcePage: null, sourceQuote: null },
+        });
+      } catch (e: any) {
+        if (e?.code === "P2021") {
+          logger.info("[file-delete] TenderSubmissionEmail table not found — skipping (pre-migration)");
+        } else {
+          throw e;
+        }
+      }
       await tx.tenderFile.delete({ where: { id: fileId } });
     });
   } catch {

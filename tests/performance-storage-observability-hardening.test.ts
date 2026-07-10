@@ -19,7 +19,7 @@ const read = (p: string) => readFileSync(p, "utf8");
 // ─── 1. Cleanup cron ────────────────────────────────────────────────────────
 
 describe("Cleanup cron — stale artifact cleanup", () => {
-  it("deletes old SUPERSEDED ExportPackage rows", () => {
+  it("deletes old SUPERSEDED ExportPackage rows using exact ID selection (race-condition-safe)", () => {
     const src = read("app/api/cron/cleanup-old-records/route.ts");
     assert.ok(
       src.includes('status: "SUPERSEDED"'),
@@ -29,21 +29,71 @@ describe("Cleanup cron — stale artifact cleanup", () => {
       src.includes("deletedExportPackages"),
       "must report deleted ExportPackage count in response",
     );
+    // Race-condition-safe: select exact IDs first, then delete only those IDs
+    assert.ok(
+      src.includes("supersededExportPkgIds"),
+      "must select exact ExportPackage IDs first (not broad deleteMany)",
+    );
+    assert.ok(
+      src.includes("id: { in: supersededExportPkgIds }"),
+      "must delete only the pre-selected IDs (deterministic deletion)",
+    );
   });
 
-  it("deletes old SUPERSEDED GeneratedDocument rows with blob cleanup", () => {
+  it("deletes old SUPERSEDED GeneratedDocument rows with blob cleanup (race-condition-safe)", () => {
     const src = read("app/api/cron/cleanup-old-records/route.ts");
     assert.ok(
       src.includes('generationStatus: "SUPERSEDED"'),
       "must delete SUPERSEDED GeneratedDocument rows older than 30 days",
     );
+    // Race-condition-safe: select exact candidates first, then delete only those IDs
     assert.ok(
-      src.includes("supersededDocs"),
-      "must read storagePath before deleting for blob cleanup",
+      src.includes("supersededDocCandidates"),
+      "must select exact candidates first (not broad deleteMany)",
+    );
+    assert.ok(
+      src.includes("supersededDocIds"),
+      "must build ID list from selected candidates",
+    );
+    assert.ok(
+      src.includes("id: { in: supersededDocIds }"),
+      "must delete only the pre-selected IDs (deterministic deletion)",
     );
     assert.ok(
       src.includes("supersededDocBlobsCleaned"),
       "must report cleaned blob count in response",
+    );
+    assert.ok(
+      src.includes("supersededDocBlobFailures"),
+      "must report blob cleanup failures honestly (partial cleanup)",
+    );
+  });
+
+  it("does NOT use broad deleteMany without ID selection for superseded docs", () => {
+    const src = read("app/api/cron/cleanup-old-records/route.ts");
+    // The old race-condition-prone pattern was a standalone deleteMany with
+    // only status+date criteria (no id: { in: ... }). The fix selects IDs
+    // first, then deletes by ID. Verify the broad pattern is gone.
+    const broadDeleteMatch = src.match(/prisma\.generatedDocument\.deleteMany\(\{[^}]*generationStatus:\s*"SUPERSEDED"[^}]*\}/s);
+    assert.ok(
+      !broadDeleteMatch || broadDeleteMatch[0].includes("id: { in:"),
+      "must NOT use broad deleteMany without ID selection for superseded docs",
+    );
+  });
+
+  it("blob cleanup uses try/catch with safe diagnostics (not .catch(() => {}))", () => {
+    const src = read("app/api/cron/cleanup-old-records/route.ts");
+    assert.ok(
+      !/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src) || !src.includes("supersededDoc"),
+      "must NOT use silent .catch(() => {}) for blob cleanup",
+    );
+    assert.ok(
+      src.includes("supersededDocBlobFailures"),
+      "must count and report blob cleanup failures",
+    );
+    assert.ok(
+      src.includes("errorClass"),
+      "must log error class (not raw error message) for blob failures",
     );
   });
 });
@@ -100,6 +150,49 @@ describe("Source-file deletion — orphan cleanup", () => {
     assert.ok(
       src.includes("tenderSubmissionEmail.updateMany"),
       "must nullify TenderSubmissionEmail.sourceFileId on file delete",
+    );
+  });
+
+  it("does NOT use silent .catch(() => {}) for critical cleanup operations", () => {
+    const src = read("app/api/tenders/[id]/files/[fileId]/route.ts");
+    // The old code used .catch(() => {}) which silently swallowed DB errors,
+    // allowing the transaction to commit with dangling source-grounded facts.
+    // The fix uses explicit try/catch that only catches P2021 (table not found)
+    // and re-throws all other errors.
+    assert.ok(
+      !/tenderFactsLedger[\s\S]*?\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src),
+      "must NOT use silent .catch(() => {}) for TenderFactsLedger cleanup",
+    );
+    assert.ok(
+      !/extractionQualityOverride[\s\S]*?\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src),
+      "must NOT use silent .catch(() => {}) for ExtractionQualityOverride cleanup",
+    );
+    assert.ok(
+      !/tenderSubmissionEmail[\s\S]*?\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src),
+      "must NOT use silent .catch(() => {}) for TenderSubmissionEmail cleanup",
+    );
+  });
+
+  it("catches P2021 (table not found) explicitly for pre-migration environments", () => {
+    const src = read("app/api/tenders/[id]/files/[fileId]/route.ts");
+    assert.ok(
+      src.includes("P2021"),
+      "must catch P2021 (table does not exist) for pre-migration dev/test environments",
+    );
+    assert.ok(
+      src.includes("throw e"),
+      "must re-throw non-P2021 errors to roll back the transaction",
+    );
+  });
+
+  it("downgrades source-grounded facts to EXTRACTED_UNVERIFIED on file delete", () => {
+    const src = read("app/api/tenders/[id]/files/[fileId]/route.ts");
+    // When a source file is deleted, linked facts must lose their grounded
+    // status — they become EXTRACTED_UNVERIFIED, which blocks final export
+    // until the user re-grounds or re-confirms them.
+    assert.ok(
+      src.includes("authorityState: \"EXTRACTED_UNVERIFIED\""),
+      "must downgrade TenderFactsLedger authorityState to EXTRACTED_UNVERIFIED",
     );
   });
 });
