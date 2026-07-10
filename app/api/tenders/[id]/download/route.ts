@@ -263,17 +263,33 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
 
   // ── Phase 4: Server-enforced quality validation check for ALL docs ─────────
+  // Per spec rule 6: validation must not approve empty content, placeholder
+  // content, AI traces, pricing leakage, or wrong envelope files. We extract
+  // the visible text from base64 DOCX content before running the quality
+  // validator — otherwise the regex checks would run against base64 gibberish
+  // and never match, silently skipping placeholder/AI-trace detection.
   const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
-  const blockedDocs = tender.generatedDocuments.filter((doc: any) => {
-    if (!isFinalExportCandidateDocument(doc)) return false;
+  const { extractDocxVisibleText: extractVisibleText } = await import("../../../../../lib/engine/export-readiness");
+  const blockedDocs: any[] = [];
+  for (const doc of tender.generatedDocuments) {
+    if (!isFinalExportCandidateDocument(doc)) continue;
+    // Extract visible text from base64 DOCX so the quality validator can
+    // run its regex checks (placeholders, AI traces, pricing leakage,
+    // envelope mismatch) against the actual document text.
+    let visibleText: string | null = null;
+    const fileName = doc.exactFileName ?? doc.name ?? "";
+    if (doc.fileContent && fileName.toLowerCase().endsWith(".docx")) {
+      visibleText = await extractVisibleText(doc.fileContent, fileName);
+    }
     const quality = validateDocumentQuality({
       name: doc.name,
       documentType: doc.documentType,
-      fileContent: doc.fileContent, // Note: may be base64 if not text, validator handles this
+      fileContent: doc.fileContent,
       storagePath: doc.storagePath,
+      visibleText,
     });
-    return quality.status === "BLOCKED";
-  });
+    if (quality.status === "BLOCKED") blockedDocs.push(doc);
+  }
 
   if (blockedDocs.length > 0) {
     return err(

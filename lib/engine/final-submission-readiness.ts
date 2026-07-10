@@ -57,6 +57,7 @@ import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysi
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
+import { extractDocxVisibleText } from "./export-readiness";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -638,14 +639,31 @@ export async function getFinalSubmissionReadiness(
   // Documents below threshold drive both the readiness-scoring cap and
   // a tender-level blocker so the screenshot regression (PASSED docs
   // with shallow content) cannot recur silently.
-  const qualityReports = finalCandidates.map((doc) => {
-    const visible = typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000
-      // The base64-decoded visible text is best-effort here; the admin audit
-      // endpoint performs the proper DOCX visible-text decode. For the
-      // readiness gate we just need a quality SIGNAL, not the perfect text.
-      ? doc.fileContent
-      : null;
-    return {
+  //
+  // Per spec rule 6: validation must not approve empty content, placeholder
+  // content, AI traces, or pricing leakage. We extract the visible text
+  // from base64 DOCX content before passing it to the quality scorer —
+  // otherwise the scorer would run against base64 gibberish and never
+  // match placeholder/AI-trace patterns, silently skipping the quality gate
+  // for all generated DOCX files.
+  const qualityReports: Array<{ doc: any; report: ReturnType<typeof assessGeneratedDocumentQuality> }> = [];
+  for (const doc of finalCandidates) {
+    let visible: string | null = null;
+    if (typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000) {
+      const fileName = doc.exactFileName ?? doc.name ?? "";
+      if (fileName.toLowerCase().endsWith(".docx")) {
+        // Extract visible text from base64 DOCX for accurate quality scoring.
+        visible = await extractDocxVisibleText(doc.fileContent, fileName);
+      }
+      // For non-DOCX files (PDF, etc.), visible stays null — the quality
+      // scorer will skip visible-text checks but the file-signature check
+      // and output-state machine still enforce format correctness.
+      if (!visible && !fileName.toLowerCase().endsWith(".docx")) {
+        // Plain-text content (legacy or markdown) — use as-is.
+        visible = doc.fileContent;
+      }
+    }
+    qualityReports.push({
       doc,
       report: assessGeneratedDocumentQuality({
         doc,
@@ -654,8 +672,8 @@ export async function getFinalSubmissionReadiness(
         hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
         requirements: tender.requirements,
       }),
-    };
-  });
+    });
+  }
   const qualityFailed = qualityReports.filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED").length;
 
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
@@ -910,6 +928,20 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: `${missingPlan.length} submission plan document(s) have not been generated: ${missingPlan.map((d) => d.exactFileName).join(", ")}.`,
       recommendedAction: "Generate the missing documents from the Generate Documents panel before attempting final export.",
+    });
+  }
+  // Hard block when there are generated documents outside the confirmed
+  // submission plan — these would either be included incorrectly (wrong
+  // package) or need to be superseded. Per spec rule 9: superseded, stale,
+  // failed, PLANNED, or outside-plan rows must be excluded from the ZIP.
+  // This explicit blocker mirrors the EXTRA_FILES check in
+  // filePlanBlockersFromLists for defense-in-depth.
+  if (extraPlan.length > 0 && hasExplicitPlanScope) {
+    tenderLevelBlockers.push({
+      category: "OUTSIDE_PLAN_DOCUMENTS",
+      severity: "HIGH",
+      title: `${extraPlan.length} generated document(s) are outside the confirmed submission plan: ${extraPlan.map((d) => d.exactFileName ?? d.name).slice(0, 5).join(", ")}${extraPlan.length > 5 ? ` and ${extraPlan.length - 5} more` : ""}.`,
+      recommendedAction: "Supersede or remove the outside-plan documents before final export, or add them to the submission plan if they are required.",
     });
   }
   // Hard block when the tender has mandatory requirements but no submission plan
