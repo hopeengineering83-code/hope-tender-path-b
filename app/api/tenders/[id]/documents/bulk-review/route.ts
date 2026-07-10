@@ -68,7 +68,7 @@ export async function POST(
 
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
-    select: { id: true, title: true },
+    select: { id: true, title: true, analysisExtractionStatus: true },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found or not accessible." }, { status: 404 });
 
@@ -81,6 +81,11 @@ export async function POST(
   // deliverable paths (/export, /download) re-enforce the gate fail-closed,
   // so this is defense-in-depth, not a leak fix.
   if (reviewStatus === "READY_FOR_EXPORT") {
+    // Block on PARTIAL_EXTRACTION_AI_ANALYZED
+    if (tender.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+      return NextResponse.json({ error: "Cannot approve documents for export: AI analysis ran on partial extraction. Re-extract and re-run AI Analyze.", code: "ANALYSIS_FROM_PARTIAL_EXTRACTION" }, { status: 422 });
+    }
+
     const { assertTenderReadyForGenerationAndExport } = await import("../../../../../../lib/engine/generation-readiness-gate");
     const centralGate = await assertTenderReadyForGenerationAndExport({
       prisma,

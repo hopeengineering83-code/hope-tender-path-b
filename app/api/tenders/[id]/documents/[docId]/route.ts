@@ -140,6 +140,16 @@ export async function PUT(
   // gate when a doc is already READY_FOR_EXPORT and the user is just updating
   // notes.
   if (newStatus === "READY_FOR_EXPORT" && newStatus !== priorStatus) {
+    // Block on PARTIAL_EXTRACTION_AI_ANALYZED — cannot mark docs export-ready
+    // on partial extraction (inconsistent with /export and /generate).
+    const tenderForExtractionCheck = await prisma.tender.findFirst({
+      where: { id: tenderId, userId: actor.id },
+      select: { analysisExtractionStatus: true },
+    });
+    if (tenderForExtractionCheck?.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+      return NextResponse.json({ error: "Cannot mark document export-ready: AI analysis ran on partial extraction. Re-extract and re-run AI Analyze.", code: "ANALYSIS_FROM_PARTIAL_EXTRACTION" }, { status: 422 });
+    }
+
     const { assertTenderReadyForGenerationAndExport } = await import("../../../../../../lib/engine/generation-readiness-gate");
     const centralGate = await assertTenderReadyForGenerationAndExport({
       prisma,

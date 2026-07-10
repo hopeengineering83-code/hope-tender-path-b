@@ -83,6 +83,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   // ── Central generation readiness gate ──────────────────────────────────
   // Regenerating expert CVs creates GENERATED GeneratedDocument rows —
+  // Block on PARTIAL_EXTRACTION_AI_ANALYZED — inconsistent to allow CV
+  // regeneration on partial extraction when /generate blocks it.
+  if (tender.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_PARTIAL_EXTRACTION", error: "AI analysis ran on partial extraction; re-extract and re-run AI Analyze before regenerating CVs.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
+  }
+
   // a generation act that must pass the SAME central gate as /generate
   // and the PROPOSAL_GENERATION handler. Without this, the maintenance
   // endpoint could produce final-looking CV documents on a tender whose

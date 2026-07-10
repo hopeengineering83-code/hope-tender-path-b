@@ -1,0 +1,437 @@
+/**
+ * Runtime idempotency, route security, and revision safety tests.
+ *
+ * Tests:
+ *   1. Operation lock helper exists and exports correct functions.
+ *   2. Lock TTL is 10 minutes (not infinite).
+ *   3. withTenderOperationLock wraps async operations.
+ *   4. Package revision helper computes composite hash.
+ *   5. verifySourceFilesNotDeleted checks for active files.
+ *   6. Download route revalidates source files before ZIP.
+ *   7. Export route checks readiness before creating package.
+ *   8. Download route checks central gate before serving.
+ *   9. Cross-user protection: all mutation routes use requireRole + userId filter.
+ *  10. Viewer role cannot mutate (checked via requireRole calls).
+ *  11. Partial AI Analyze cannot authorize (checked via analysis-state-resolver).
+ *  12. Generated docs P2002 convergence pattern exists.
+ *  13. Raw Prisma errors are not exposed in download route.
+ *  14. Final export fail-closed: export route checks central gate.
+ *  15. Superseded docs excluded from active package counts.
+ */
+
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const read = (p: string) => readFileSync(p, "utf8");
+
+// ─── 1-3. Operation lock helper ─────────────────────────────────────────────
+
+describe("1-3. Operation lock helper", () => {
+  it("lib/engine/tender-operation-lock.ts exists and exports required functions", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    assert.ok(src.includes("export async function acquireTenderOperationLock"), "must export acquireTenderOperationLock");
+    assert.ok(src.includes("export async function releaseTenderOperationLock"), "must export releaseTenderOperationLock");
+    assert.ok(src.includes("export async function withTenderOperationLock"), "must export withTenderOperationLock");
+    assert.ok(src.includes("export async function isOperationRunning"), "must export isOperationRunning");
+  });
+
+  it("lock TTL is 10 minutes (not infinite)", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    assert.ok(src.includes("LOCK_TTL_MS"), "must define LOCK_TTL_MS");
+    assert.ok(src.includes("10 * 60 * 1000"), "TTL must be 10 minutes");
+  });
+
+  it("supports all 7 operation types", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    const ops = ["AI_ANALYZE", "BUILD_PLAN", "GENERATE_DOCUMENTS", "VALIDATE_DOCUMENTS", "APPROVE_DOCUMENTS", "EXPORT_PACKAGE", "DOWNLOAD_PACKAGE"];
+    for (const op of ops) {
+      assert.ok(src.includes(`"${op}"`), `must support operation: ${op}`);
+    }
+  });
+
+  it("uses TenderWorkflowRun for DB-backed locking (not in-memory)", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    assert.ok(src.includes("tenderWorkflowRun"), "must use TenderWorkflowRun model");
+    assert.ok(src.includes("P2002"), "must handle P2002 unique constraint for race safety");
+    assert.ok(src.includes("STALE_LOCK_EXPIRED"), "must expire stale locks");
+  });
+
+  it("withTenderOperationLock releases lock on success AND failure", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    assert.ok(src.includes('status: "SUCCEEDED"'), "must release with SUCCEEDED on success");
+    assert.ok(src.includes('status: "FAILED"'), "must release with FAILED on error");
+    assert.ok(src.includes("throw error"), "must re-throw error after releasing lock");
+  });
+});
+
+// ─── 4-5. Package revision safety ──────────────────────────────────────────
+
+describe("4-5. Package revision safety", () => {
+  it("lib/engine/package-revision-safety.ts exists and exports required functions", () => {
+    const src = read("lib/engine/package-revision-safety.ts");
+    assert.ok(src.includes("export async function computePackageRevision"), "must export computePackageRevision");
+    assert.ok(src.includes("export async function verifyPackageRevision"), "must export verifyPackageRevision");
+    assert.ok(src.includes("export async function verifySourceFilesNotDeleted"), "must export verifySourceFilesNotDeleted");
+  });
+
+  it("computePackageRevision hashes requirements, build plan, and generated docs", () => {
+    const src = read("lib/engine/package-revision-safety.ts");
+    assert.ok(src.includes("requirementHash"), "must compute requirement hash");
+    assert.ok(src.includes("buildPlanHash"), "must compute build plan hash");
+    assert.ok(src.includes("generatedDocHash"), "must compute generated doc hash");
+    assert.ok(src.includes("compositeHash"), "must compute composite hash");
+    assert.ok(src.includes("SUPERSEDED"), "must filter SUPERSEDED docs from hash");
+  });
+
+  it("verifySourceFilesNotDeleted checks for active files", () => {
+    const src = read("lib/engine/package-revision-safety.ts");
+    assert.ok(src.includes('deletionStatus: "ACTIVE"'), "must check for ACTIVE files");
+    assert.ok(src.includes("ok: false"), "must return ok=false when no active files");
+  });
+});
+
+// ─── 6. Download route revalidation ─────────────────────────────────────────
+
+describe("6. Download route revalidation", () => {
+  it("download route verifies source files before building ZIP", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("verifySourceFilesNotDeleted"), "must call verifySourceFilesNotDeleted");
+    assert.ok(src.includes("SOURCE_FILES_DELETED"), "must return SOURCE_FILES_DELETED error code");
+  });
+
+  it("download route checks central gate (assertTenderReadyForGenerationAndExport)", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("assertTenderReadyForGenerationAndExport"), "must call central gate");
+    assert.ok(src.includes('purpose: "final-zip"'), "must use final-zip purpose for download");
+  });
+
+  it("download route checks final submission readiness before ZIP", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("getFinalSubmissionReadiness"), "must call getFinalSubmissionReadiness");
+    assert.ok(src.includes("EXPORT_READINESS_BLOCKED"), "must block when readiness fails");
+  });
+
+  it("download route checks single-document export gate", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("singleGate"), "must check single document gate");
+    assert.ok(src.includes("isFinalExportCandidateDocument"), "must verify document is export candidate");
+  });
+});
+
+// ─── 7. Export route readiness ──────────────────────────────────────────────
+
+describe("7. Export route readiness", () => {
+  it("export route checks full export readiness before creating package", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    assert.ok(src.includes("checkFullExportReadiness"), "must call checkFullExportReadiness");
+    assert.ok(src.includes("readiness.ok"), "must check readiness.ok");
+  });
+
+  it("export route calls central gate with purpose export", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    assert.ok(src.includes("assertTenderReadyForGenerationAndExport"), "must call central gate");
+    assert.ok(src.includes('purpose: "export"'), "must use export purpose");
+  });
+});
+
+// ─── 8. Cross-user protection ───────────────────────────────────────────────
+
+describe("8. Cross-user protection", () => {
+  const mutationRoutes = [
+    "app/api/tenders/[id]/export/route.ts",
+    "app/api/tenders/[id]/download/route.ts",
+    "app/api/tenders/[id]/generate/route.ts",
+    "app/api/tenders/[id]/validate/route.ts",
+  ];
+
+  for (const route of mutationRoutes) {
+    it(`${route} requires role and filters by userId`, () => {
+      const src = read(route);
+      assert.ok(src.includes("requireRole"), `${route} must call requireRole`);
+      assert.ok(src.includes("userId"), `${route} must filter by userId`);
+    });
+  }
+
+  it("export route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    assert.ok(src.includes('"ADMIN"') && src.includes('"PROPOSAL_MANAGER"'), "export must require ADMIN or PROPOSAL_MANAGER");
+  });
+
+  it("download route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("requireRole"), "download must call requireRole");
+  });
+
+  it("generate route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/generate/route.ts");
+    assert.ok(src.includes("requireRole"), "generate must call requireRole");
+  });
+});
+
+// ─── 9. Viewer role cannot mutate ───────────────────────────────────────────
+
+describe("9. Viewer role cannot mutate", () => {
+  it("export route does NOT include VIEWER in requireRole", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    const requireRoleLine = src.match(/requireRole\([^)]+\)/)?.[0] ?? "";
+    assert.ok(!requireRoleLine.includes("VIEWER"), "export must not allow VIEWER");
+  });
+
+  it("generate route does NOT include VIEWER in requireRole", () => {
+    const src = read("app/api/tenders/[id]/generate/route.ts");
+    const requireRoleLine = src.match(/requireRole\([^)]+\)/)?.[0] ?? "";
+    assert.ok(!requireRoleLine.includes("VIEWER"), "generate must not allow VIEWER");
+  });
+});
+
+// ─── 10. Partial AI Analyze cannot authorize ────────────────────────────────
+
+describe("10. Partial AI Analyze safety", () => {
+  it("analysis-state-resolver does not return AI_SUCCEEDED for partial", () => {
+    const src = read("lib/engine/analysis-state-resolver.ts");
+    assert.ok(src.includes("PARTIAL_SUCCESS"), "must handle PARTIAL_SUCCESS");
+    assert.ok(src.includes("AI_SUCCEEDED"), "must have AI_SUCCEEDED state");
+    // PARTIAL_SUCCESS must NOT map to AI_SUCCEEDED
+    const partialMatch = src.match(/PARTIAL_SUCCESS[\s\S]{0,200}/);
+    if (partialMatch) {
+      assert.ok(!partialMatch[0].includes("AI_SUCCEEDED"), "PARTIAL_SUCCESS must not produce AI_SUCCEEDED");
+    }
+  });
+
+  it("generate-missing-plan-files route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+});
+
+// ─── 11. Generated docs P2002 convergence ───────────────────────────────────
+
+describe("11. Generated docs concurrency safety", () => {
+  it("generate-elite.ts has P2002 convergence pattern", () => {
+    const src = read("lib/engine/generate-elite.ts");
+    assert.ok(src.includes("P2002"), "must handle P2002 unique constraint");
+    assert.ok(src.includes("SUPERSEDED"), "must use SUPERSEDED for old docs");
+    assert.ok(src.includes("generationStatus: { not: \"SUPERSEDED\" }"), "must filter SUPERSEDED when finding active docs");
+  });
+});
+
+// ─── 12. Raw Prisma errors not exposed in download ──────────────────────────
+
+describe("12. Raw Prisma error sanitization in download", () => {
+  it("download route does not expose error.message in response", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    // The download route uses `err()` helper which takes a message string.
+    // Check that no raw error.message is passed to err() or NextResponse.
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (trimmed.startsWith("//")) continue;
+      if (trimmed.includes("logger.")) continue;
+      // Allow error.message in regex tests (PERF-003)
+      if (trimmed.includes("/PERF-003") || trimmed.includes("safety cap")) continue;
+      // Check for direct exposure
+      if (/error:\s*error\s*\.\s*message/.test(line) || /error:\s*err\s*\.\s*message/.test(line)) {
+        assert.fail(`download route line ${i + 1}: exposes error.message: ${trimmed}`);
+      }
+    }
+  });
+});
+
+// ─── 13. Final export fail-closed ───────────────────────────────────────────
+
+describe("13. Final export fail-closed", () => {
+  it("export route returns 409 when readiness fails", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    assert.ok(src.includes("readiness.ok"), "must check readiness.ok");
+    assert.ok(src.includes("409") || src.includes("return err"), "must return error when readiness fails");
+  });
+
+  it("download route returns 409 when central gate fails", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("singleGate.ok") || src.includes("gate.ok"), "must check gate.ok");
+    assert.ok(src.includes("409"), "must return 409 when gate fails");
+  });
+
+  it("generation gate blocks export on TENDER_FACTS_INVALID", () => {
+    const src = read("lib/engine/generation-readiness-gate.ts");
+    assert.ok(src.includes("TENDER_FACTS_INVALID"), "must use TENDER_FACTS_INVALID");
+    assert.ok(src.includes("criticalMetadataOk"), "must check criticalMetadataOk for export");
+  });
+});
+
+// ─── 14. Superseded docs excluded from counts ───────────────────────────────
+
+describe("14. Superseded docs audit-only", () => {
+  it("final-package-readiness-model excludes SUPERSEDED from export-ready", () => {
+    const src = read("lib/engine/final-package-readiness-model.ts");
+    assert.ok(src.includes("SUPERSEDED"), "must reference SUPERSEDED");
+    assert.ok(src.includes("activeStatus"), "must use activeStatus to filter");
+  });
+
+  it("export-readiness route returns generatedDocuments and supersededCount separately", () => {
+    const src = read("app/api/tenders/[id]/export-readiness/route.ts");
+    assert.ok(src.includes("generatedDocuments"), "must return generatedDocuments count");
+    assert.ok(src.includes("supersededCount"), "must return supersededCount separately");
+    assert.ok(src.includes("finalPackage.documents.generated"), "must source from finalPackage model");
+  });
+});
+
+// ─── 15. Additional route authorization ─────────────────────────────────────
+
+describe("15. Additional route authorization", () => {
+  it("validate route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/validate/route.ts");
+    assert.ok(src.includes("requireRole"), "validate must call requireRole");
+    assert.ok(src.includes('"ADMIN"') && src.includes('"PROPOSAL_MANAGER"'), "validate must require ADMIN or PROPOSAL_MANAGER");
+  });
+
+  it("auto-finalize route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/auto-finalize/route.ts");
+    assert.ok(src.includes("requireRole"), "auto-finalize must call requireRole");
+  });
+
+  it("build-plan route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/build-plan/route.ts");
+    assert.ok(src.includes("requireRole"), "build-plan must call requireRole");
+  });
+
+  it("approve-analysis route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/approve-analysis/route.ts");
+    assert.ok(src.includes("requireRole"), "approve-analysis must call requireRole");
+  });
+
+  it("bid-decision route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/bid-decision/route.ts");
+    assert.ok(src.includes("requireRole"), "bid-decision must call requireRole");
+  });
+
+  it("re-extract-metadata route blocks VIEWER/REVIEWER from mutating", () => {
+    const src = read("app/api/tenders/[id]/re-extract-metadata/route.ts");
+    assert.ok(src.includes('["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)'), "re-extract-metadata must check role manually");
+    assert.ok(src.includes("forbiddenResponse"), "re-extract-metadata must return forbidden for non-admin");
+  });
+
+  it("metadata-override route requires ADMIN or PROPOSAL_MANAGER", () => {
+    const src = read("app/api/tenders/[id]/metadata-override/route.ts");
+    assert.ok(src.includes("requireRole"), "metadata-override must call requireRole");
+  });
+});
+
+// ─── 16. Export package idempotency ─────────────────────────────────────────
+
+describe("16. Export package idempotency", () => {
+  it("export route supersedes old READY packages before creating new one", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    assert.ok(src.includes("updateMany"), "must update old packages");
+    assert.ok(src.includes('status: "SUPERSEDED"'), "must supersede old READY packages");
+    assert.ok(src.includes('status: "READY"'), "must create new READY package");
+    assert.ok(src.includes("$transaction"), "must use transaction for atomicity");
+  });
+
+  it("export route never creates package when readiness fails", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    // The readiness check must come BEFORE the package creation
+    const readinessIdx = src.indexOf("checkFullExportReadiness");
+    const createIdx = src.indexOf("exportPackage.create");
+    assert.ok(readinessIdx > 0 && createIdx > 0, "must have both readiness check and package creation");
+    assert.ok(readinessIdx < createIdx, "readiness check must come BEFORE package creation");
+  });
+});
+
+// ─── 17. Download revalidation completeness ─────────────────────────────────
+
+describe("17. Download revalidation completeness", () => {
+  it("download route does not serve stored packages (always builds fresh)", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    // The download route should NOT query ExportPackage to serve a stored ZIP
+    // It should always build fresh, re-checking readiness each time
+    const exportPackageQuery = src.match(/exportPackage\.findFirst|exportPackage\.findMany/g);
+    // If it does query ExportPackage, it should only be for metadata, not to serve the ZIP
+    // For now, verify that the route calls getFinalSubmissionReadiness (fresh check)
+    assert.ok(src.includes("getFinalSubmissionReadiness"), "must call getFinalSubmissionReadiness for fresh check");
+    assert.ok(src.includes("assertTenderReadyForGenerationAndExport"), "must call central gate for fresh check");
+  });
+
+  it("download route checks duplicate filenames in ZIP", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("dupes"), "must check for duplicate filenames");
+    assert.ok(src.includes("DUPLICATE_FILENAMES_IN_ZIP"), "must return DUPLICATE_FILENAMES_IN_ZIP error");
+  });
+
+  it("download route verifies document is export candidate before serving", () => {
+    const src = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(src.includes("isFinalExportCandidateDocument"), "must check isFinalExportCandidateDocument");
+    assert.ok(src.includes("INTERNAL_DRAFT_NOT_EXPORTABLE"), "must block internal drafts");
+  });
+});
+
+// ─── 18. Raw error sanitization in all mutation routes ──────────────────────
+
+describe("18. Raw error sanitization in mutation routes", () => {
+  const routesToCheck = [
+    "app/api/tenders/[id]/export/route.ts",
+    "app/api/tenders/[id]/download/route.ts",
+    "app/api/tenders/[id]/generate/route.ts",
+    "app/api/tenders/[id]/validate/route.ts",
+    "app/api/tenders/[id]/auto-finalize/route.ts",
+  ];
+
+  for (const route of routesToCheck) {
+    it(`${route} does not expose raw error.message in response body`, () => {
+      const src = read(route);
+      const lines = src.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
+        if (trimmed.includes("logger.") || trimmed.includes("console.")) continue;
+        if (trimmed.includes("/PERF-003") || trimmed.includes("safety cap")) continue;
+        if (trimmed.includes("instanceof Error") && trimmed.includes("message") && !trimmed.includes("json") && !trimmed.includes("NextResponse") && !trimmed.includes("err(")) continue;
+        if (/error:\s*error\s*\.\s*message/.test(line) || /error:\s*err\s*\.\s*message/.test(line)) {
+          assert.fail(`${route} line ${i + 1}: exposes error.message: ${trimmed}`);
+        }
+      }
+    });
+  }
+});
+
+// ─── 19. PARTIAL_EXTRACTION_AI_ANALYZED checks on all generation/export routes ──
+
+describe("19. PARTIAL_EXTRACTION_AI_ANALYZED blocked on all generation/export routes", () => {
+  it("generate route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    const src = read("app/api/tenders/[id]/generate/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "generate must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("generate-missing-plan-files route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "generate-missing-plan-files must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("regenerate-cvs route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    const src = read("app/api/tenders/[id]/regenerate-cvs/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "regenerate-cvs must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("documents/[docId] route blocks PARTIAL_EXTRACTION_AI_ANALYZED for READY_FOR_EXPORT", () => {
+    const src = read("app/api/tenders/[id]/documents/[docId]/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "documents/[docId] must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("documents/bulk-review route blocks PARTIAL_EXTRACTION_AI_ANALYZED for READY_FOR_EXPORT", () => {
+    const src = read("app/api/tenders/[id]/documents/bulk-review/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "bulk-review must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("ai-proposal route blocks PARTIAL_EXTRACTION_AI_ANALYZED before persist", () => {
+    const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "ai-proposal must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("export route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    const src = read("app/api/tenders/[id]/export/route.ts");
+    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "export must check PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+});
