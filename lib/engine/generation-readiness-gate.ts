@@ -14,8 +14,17 @@
 //   - hasValidSubmissionPlan            (real submission-plan signal)
 // …and adds the binding conditions the spec requires: current-content-hash
 // match, chunk integrity, mandatory-requirement source grounding, weak-
-// extraction override (ExtractionQualityOverride), and regex-fallback approval
-// bound to the exact job + content hash (FallbackApprovalRecord).
+// extraction override (ExtractionQualityOverride).
+//
+// NOTE: HUMAN_APPROVED_FALLBACK is PERMANENTLY HARD-BLOCKED at the state
+// check (line ~236). The spec's "regex-fallback approval bound to the exact
+// job + content hash (FallbackApprovalRecord)" mechanism exists in
+// lib/engine/readiness-overrides.ts (recordFallbackApproval/hasBoundFallbackApproval)
+// and rows ARE written by the approve-analysis route, but the gate does NOT
+// consult them — it hard-blocks before any binding check could run. This is
+// intentionally MORE restrictive than the original spec (audit-only approval
+// never authorizes release). The hasBoundFallbackApproval helper is retained
+// for future use but is not currently wired into the gate.
 //
 // ARCHITECTURE: a PURE decision function `evaluateGenerationReadiness(input)`
 // holds all the logic (fully unit-testable, no DB), and the async
@@ -34,7 +43,7 @@ import {
   computeAnalysisContentHash,
 } from "./tender-analysis-content";
 import { assessExtractionQuality } from "../extraction-quality";
-import { hasBoundFallbackApproval, hasActiveExtractionOverride } from "./readiness-overrides";
+import { hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when

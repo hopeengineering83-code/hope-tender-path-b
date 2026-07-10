@@ -7,13 +7,14 @@ This repository is operated by more than one coding tool. Before any work, read:
 3. `CLAUDE_TASKS.md`
 4. the latest target branch, open pull requests, CI, and current working tree
 
-## Current Main State (SHA: 80607254)
+## Current Main State (SHA: 63369f03)
 
 - **tsc:** PASS (run `npx prisma generate` first)
 - **lint:** PASS
 - **build:** PASS
-- **Tests:** 844+ critical tests PASS
+- **Tests:** 464 test files, 6000+ tests PASS
 - **Main is stable.** All 5 clusters (A-E) from DECISIONS_NEEDED.md are resolved.
+- **Recent merges:** #1029 (action icons), #1028 (screenshot contradictions), #1027 (generation/buildplan/export truth), #1026 (lifecycle truth), #1025 (canonical readiness counts).
 
 ## Canonical Provider Order (NEVER change)
 

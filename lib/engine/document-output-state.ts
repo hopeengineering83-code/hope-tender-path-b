@@ -113,10 +113,35 @@ function plannedExtension(doc: DocumentLike): "pdf" | "docx" | "xlsx" | "zip" | 
 }
 
 function requestedFormat(doc: DocumentLike): "pdf" | "docx" | "xlsx" | "zip" | "markdown" | "control" | "other" {
-  const label = `${doc.format ?? ""} ${doc.documentType ?? ""} ${doc.reviewStatus ?? ""} ${doc.generationStatus ?? ""}`.toLowerCase();
-  if (/markdown|quick_draft|draft_only/.test(label)) return "markdown";
-  if (/control|placeholder|replace_with_original|original_required|not_exportable|planned/.test(label)) return "control";
+  // BUG FIX: Previously this function concatenated format + documentType +
+  // reviewStatus + generationStatus into a single `label` string and ran
+  // regexes against it. This caused false positives: a .pdf file with
+  // documentType="PLANNED" would match the `planned` regex and return
+  // "control" instead of "pdf". Now we check each field INDIVIDUALLY so
+  // the format detection is not coupled to unrelated status fields.
   const fmt = (doc.format ?? "").toLowerCase();
+  const dtype = (doc.documentType ?? "").toLowerCase();
+  const rev = (doc.reviewStatus ?? "").toLowerCase();
+
+  // Markdown / internal-draft detection — check format + documentType only
+  if (/markdown|quick_draft|draft_only/.test(`${fmt} ${dtype}`)) return "markdown";
+  // Control / non-exportable detection — check format + documentType +
+  // reviewStatus, but NOT generationStatus (PLANNED generationStatus is
+  // handled explicitly in deriveDocumentOutputState:141, not here).
+  // NOTE: documentType="PLANNED" is NOT treated as control — documentType
+  // is a category label, not a generation status. A .pdf file with
+  // documentType="PLANNED" should still be classified by its format.
+  if (
+    fmt === "control" ||
+    dtype === "submission_control" ||
+    dtype === "submission_rules" ||
+    dtype === "placeholder" ||
+    rev === "replace_with_original" ||
+    rev === "not_exportable"
+  ) {
+    return "control";
+  }
+
   if (fmt === "pdf") return "pdf";
   if (fmt === "docx" || fmt === "doc") return "docx";
   if (fmt === "xlsx" || fmt === "xls") return "xlsx";

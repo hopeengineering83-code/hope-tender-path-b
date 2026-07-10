@@ -698,22 +698,28 @@ export async function computeTenderLifecycle(
   // Metadata is NO LONGER a hard blocker. Missing critical fields and
   // contamination are recorded as warnings (not blockers) so the workflow
   // can proceed to analysis, generation, and export.
-  else if (meta.missingCritical.length > 0 || meta.invalidFields.length > 0 || tender.metadataContaminated) {
-    if (meta.missingCritical.length > 0) {
-      warnings.push({
-        code: "METADATA_FIELDS_MISSING",
-        message: `${meta.missingCritical.length} optional metadata field(s) are missing — advisory only, does not block.`,
-      });
-    }
-    if (tender.metadataContaminated) {
-      warnings.push({
-        code: "CLIENT_ENTITY_CONTAMINATED_ADVISORY",
-        message: "Client name may contain portal text — advisory only, does not block.",
-      });
-    }
+  //
+  // BUG FIX: This was previously an `else if` branch that set ONLY warnings
+  // but did NOT set lifecycleState/primaryNextAction. Because it was in the
+  // if/else-if chain, control exited the chain and the fallbacks at the
+  // bottom kicked in (ANALYSIS_APPROVED + LINK_VAULT_EVIDENCE), hiding
+  // downstream states like SOURCE_REFERENCES_INCOMPLETE. Now the warnings
+  // are pushed unconditionally (NOT as an else-if) so the rest of the
+  // chain continues to evaluate.
+  if (meta.missingCritical.length > 0) {
+    warnings.push({
+      code: "METADATA_FIELDS_MISSING",
+      message: `${meta.missingCritical.length} optional metadata field(s) are missing — advisory only, does not block.`,
+    });
+  }
+  if (tender.metadataContaminated) {
+    warnings.push({
+      code: "CLIENT_ENTITY_CONTAMINATED_ADVISORY",
+      message: "Client name may contain portal text — advisory only, does not block.",
+    });
   }
   // 7. Source references missing for mandatory requirements
-  else if (ungroundedMandatory.length > 0 && mandatoryReqs.length > 0) {
+  if (ungroundedMandatory.length > 0 && mandatoryReqs.length > 0) {
     lifecycleState = "SOURCE_REFERENCES_INCOMPLETE";
     primaryNextAction = "REPAIR_SOURCE_REFERENCES";
     warnings.push({
@@ -721,10 +727,10 @@ export async function computeTenderLifecycle(
       message: `${ungroundedMandatory.length}/${mandatoryReqs.length} mandatory requirements lack source page/quote traceability.`,
     });
     // Not a hard blocker here — becomes one at export time
-    if (requirements.length === 0) {
-      lifecycleState = "AI_ANALYSIS_REQUIRED";
-      primaryNextAction = "RUN_AI_ANALYZE";
-    }
+    // NOTE: The previous inner `if (requirements.length === 0)` was dead
+    // code — the outer condition `mandatoryReqs.length > 0` guarantees
+    // `requirements.length > 0` (mandatoryReqs is a filter of requirements).
+    // Removed per audit.
   }
   // 8. No submission plan rows (requirements but no plan)
   else if (requirements.length > 0 && plan.totalRequired === 0 && docsSnap.length === 0) {
