@@ -127,7 +127,7 @@ export function checkTenderFormatCoverage(
       ok: false,
       code: "PDF_REQUIRED_CONVERSION_UNAVAILABLE",
       missing: policy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName),
-      reason: `Tender requires PDF output (${policy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName).join(", ")}) but only DOCX files are generated. PDF conversion is not currently available — generate the PDF separately and upload it, or contact the maintainer to enable in-engine PDF rendering.`,
+      reason: `Tender requires PDF output (${policy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName).join(", ")}) but no generated PDF file exists. Finalize the required PDF from the approved source document (Finalize PDF), or upload the tender-issued PDF, before final export.`,
     };
   }
   if (missingFormats.includes("docx")) {

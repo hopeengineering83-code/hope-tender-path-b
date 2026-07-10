@@ -24,6 +24,7 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "REPAIR_OR_EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "OPEN_SETTINGS") return "/dashboard/settings";
   if (action === "OPEN_TENDER_DETAIL") return `/dashboard/tenders/${tenderId}`;
+  if (action === "FINALIZE_REQUIRED_PDF") return `/dashboard/tenders/${tenderId}#generated-documents`;
   return `/dashboard/tenders/${tenderId}`;
 }
 
@@ -45,6 +46,7 @@ function buildActionLabel(action?: string): string {
   if (action === "REPAIR_OR_EDIT_TENDER") return "Repair or edit Tender Details";
   if (action === "OPEN_SETTINGS") return "Open settings";
   if (action === "OPEN_TENDER_DETAIL") return "Open tender detail";
+  if (action === "FINALIZE_REQUIRED_PDF") return "Finalize required PDF";
   return "Open tender";
 }
 

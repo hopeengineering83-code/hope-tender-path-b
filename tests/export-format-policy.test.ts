@@ -121,7 +121,7 @@ describe("checkTenderFormatCoverage", () => {
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.equal(result.code, "PDF_REQUIRED_CONVERSION_UNAVAILABLE");
-      assert.match(result.reason, /PDF conversion is not currently available/i);
+      assert.match(result.reason, /Finalize the required PDF from the approved source document/i);
       assert.deepEqual(result.missing, ["Technical-Proposal.pdf"]);
     }
   });

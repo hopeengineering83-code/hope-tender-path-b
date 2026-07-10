@@ -232,13 +232,16 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       assert.ok(src.includes("/technical.proposal|technical_proposal/i.test"), "PDF route must fallback to technical proposal if docId is null");
     });
 
-    it("PDF route must generate from markdown content", async () => {
+    it("PDF route must render through the fail-closed finalizer, which generates from extracted text", async () => {
        const { readFileSync } = await import("node:fs");
        const { resolve } = await import("node:path");
-       const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/download/route.ts"), "utf8");
+       const routeSrc = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/download/route.ts"), "utf8");
+       const finalizerSrc = readFileSync(resolve(process.cwd(), "lib/engine/workflow/pdf-finalizer.ts"), "utf8");
 
-       assert.ok(src.includes("generateProposalPdf({"), "PDF route must call generateProposalPdf");
-       assert.ok(src.includes("markdown,"), "PDF route must pass markdown content to generator");
+       assert.ok(routeSrc.includes("finalizeRequiredPdf({"), "PDF route must call finalizeRequiredPdf");
+       assert.ok(finalizerSrc.includes("generateProposalPdf({"), "finalizer must call generateProposalPdf");
+       assert.ok(finalizerSrc.includes("markdown: text"), "finalizer must pass extracted visible text as the PDF body");
+       assert.ok(!routeSrc.includes("target.contentSummary ?? target.name ?? tender.title"), "PDF route must not fall back to contentSummary/title as PDF body");
     });
   });
 });

@@ -190,6 +190,17 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     method: "POST",
     path: "/api/tenders/{tenderId}/auto-finalize",
   },
+  // Required-PDF finalization — recovery for PDF_REQUIRED_CONVERSION_UNAVAILABLE.
+  // Renders the tender-required PDF (e.g. "Technical Proposal.pdf") from the
+  // matching approved DOCX and persists it at PENDING validation/review; the
+  // operator then validates + approves it like any other document.
+  FINALIZE_REQUIRED_PDF: {
+    label: "Finalize Required PDF",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/finalize-pdf",
+    aliases: ["PDF_REQUIRED_CONVERSION_UNAVAILABLE", "TENDER_REQUIRES_PDF"],
+  },
   RESOLVE_EXPORT_BLOCKERS: {
     label: "Export Readiness",
     kind: "api",
