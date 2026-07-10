@@ -2122,3 +2122,88 @@ Stage Summary:
   creators respect the partial unique index" — including generate-elite.ts
   (which was previously reverted).
 - NOT merged — pushed to temp-pr954-rebase branch for review.
+
+---
+Task ID: fix-run-engine-lifecycle-truth-gaps
+Agent: main (Super Z / GLM)
+Task: Push PR to GitHub and fix remaining gaps (except merging). PR #1026.
+
+Work Log:
+- Pushed fix/run-engine-lifecycle-truth to GitHub (commit 965035d0).
+- Created PR #1026 via GitHub API:
+  https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1026
+- Audited spec against implementation to identify remaining gaps.
+
+GAPS FIXED (3 gaps):
+
+1. engineHasRun now checks BOTH AiJob AND AuditLog:
+   - ROOT CAUSE: The sync engine route (POST /api/tenders/[id]/engine)
+     calls runTenderEngine directly WITHOUT creating an AiJob. The
+     AiJob count alone misses sync engine runs — so a user who ran
+     Engine synchronously would see RUN_ENGINE recommended again
+     because engineHasRun was false.
+   - FIX: Added a second durable signal — count TENDER_ENGINE_RUN_STARTED
+     audit log entries. runTenderEngine writes this audit entry at the
+     start of EVERY run (sync and async), making it the most reliable
+     durable signal.
+   - engineHasRun = engineJobCount > 0 || engineAuditCount > 0
+   - The AuditLog has @@index([action]) and @@index([entityType, entityId])
+     so the query is efficient.
+
+2. Spec rule 5 & 6 invariant: primaryNextAction never contradicts
+   blockedActions when final is BLOCKED:
+   - ROOT CAUSE: The state machine above the invariant check is correct,
+     but a future code path could break the invariant — primaryNextAction
+     could end up mapping to a blocked AllowedAction, contradicting the
+     blockers displayed in the UI.
+   - FIX: Added a defensive check before the return: if primaryNextAction
+     maps to a blocked AllowedAction, fall back to the first blocker's
+     resolving action (or LINK_VAULT_EVIDENCE as a safe default).
+   - The blockerToAction map covers all blocker codes the state machine
+     can emit when final is BLOCKED: NO_FILES, NO_EXTRACTED_TEXT,
+     NO_AI_PROVIDER, ANALYSIS_REGEX_FALLBACK_UNAPPROVED,
+     ANALYSIS_FALLBACK_AUDIT_ONLY, ANALYSIS_PARTIAL_NEEDS_RESUME,
+     EVIDENCE_NOT_ASSESSED, ENGINE_RAN_NO_MATCHES,
+     MANDATORY_EVIDENCE_WEAK, DOCUMENTS_NOT_GENERATED,
+     OFFICIAL_ORIGINALS_MISSING, QUALITY_GATE_FAILED.
+   - The safe fallback is LINK_VAULT_EVIDENCE (never RUN_ENGINE) so a
+     future code path can never resurrect the "Endless Run Engine loop".
+
+3. Lifecycle route 404 now uses newDiagnosticId for consistency:
+   - Replaced inline diagnosticId template
+     (`lifecycle-${Date.now()}-${Math.random()...}`)
+     with newDiagnosticId('lifecycle') so all diagnostic IDs follow the
+     same format and use the shared helper.
+
+TESTS ADDED (5 new, 44 total in lifecycle-truth-regression.test.ts):
+- engineHasRun checks both AiJob and AuditLog (2 tests):
+  * orchestrator source queries both aiJob.count and auditLog.count
+  * orchestrator comments explain WHY the audit log check is needed
+- primaryNextAction never contradicts blockedActions (3 tests):
+  * orchestrator source includes the contradiction-check invariant
+  * orchestrator maps blocker codes to resolving primary actions
+  * orchestrator safe-fallback is LINK_VAULT_EVIDENCE (not RUN_ENGINE)
+
+VERIFICATION:
+- npx tsc --noEmit: PASS
+- npm run lint: PASS
+- npm run build: PASS (22.6s, 58/58 pages)
+- 126 targeted tests PASS:
+  (lifecycle-truth-regression + tender-lifecycle-orchestrator +
+  recovery-command-center-actions + systemic-contradictions-after-517)
+
+FILES CHANGED (in gap-fix commit 2e0aa6e1):
+  M  app/api/tenders/[id]/lifecycle/route.ts          (+5 / -2)
+  M  lib/engine/tender-lifecycle-orchestrator.ts      (+74 / -3)
+  M  tests/lifecycle-truth-regression.test.ts         (+87 / 0)
+
+Stage Summary:
+- PR #1026 pushed to GitHub with 2 commits:
+  1. 965035d0 — fix: Run Engine lifecycle truth — distinguish Engine-ran from never-ran
+  2. 2e0aa6e1 — fix: close remaining gaps — audit log signal + contradiction invariant
+- All 3 remaining gaps closed. The orchestrator now:
+  * Detects sync engine runs via the AuditLog (not just async AiJobs).
+  * Enforces spec rule 5 & 6 invariant: primaryNextAction never
+    contradicts blockedActions when final is BLOCKED.
+  * Uses newDiagnosticId consistently for all diagnostic IDs.
+- NOT merged — per user instruction, leaving merge to the user.

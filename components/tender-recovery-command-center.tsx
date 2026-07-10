@@ -9,12 +9,14 @@ import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossI
 
 type LifecycleState =
   | "UPLOADED" | "EXTRACTED" | "AI_ANALYSIS_REQUIRED" | "AI_ANALYSIS_FAILED"
-  | "ANALYSIS_FALLBACK_UNAPPROVED" | "ANALYSIS_READY_FOR_REVIEW" | "ANALYSIS_APPROVED"
+  | "ANALYSIS_FALLBACK_UNAPPROVED" | "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY"
+  | "ANALYSIS_READY_FOR_REVIEW" | "ANALYSIS_APPROVED"
   | "METADATA_INCOMPLETE" | "SOURCE_REFERENCES_INCOMPLETE" | "SUBMISSION_PLAN_REQUIRED"
-  | "SUBMISSION_PLAN_READY" | "EVIDENCE_MATCHING_REQUIRED" | "EVIDENCE_MATCHED"
+  | "SUBMISSION_PLAN_READY" | "EVIDENCE_MATCHING_REQUIRED" | "EVIDENCE_MATCHING_EMPTY"
+  | "EVIDENCE_MATCHING_UNCONFIRMED" | "EVIDENCE_MATCHED"
   | "DOCUMENT_GENERATION_REQUIRED" | "DOCUMENTS_GENERATED" | "OFFICIAL_ORIGINALS_REQUIRED"
-  | "QUALITY_REVIEW_REQUIRED" | "AUTO_FINALIZE_REQUIRED" | "EXPORT_READINESS_BLOCKED"
-  | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
+  | "QUALITY_REVIEW_REQUIRED" | "AUTO_FINALIZE_REQUIRED" | "PARTIAL_AI_ANALYSIS_BLOCKED"
+  | "EXPORT_READINESS_BLOCKED" | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
 
 type BlockedAction = { action: string; reason: string };
 type Blocker = { code: string; message: string; action: string };
@@ -29,6 +31,7 @@ type LifecycleResult = {
   blockers: Blocker[];
   warnings: Warning[];
   advisoryWarnings: Warning[];
+  diagnosticId?: string;
   counts: {
     requiredPlanRows: number;
     generatedNarrativeDocs: number;
@@ -48,7 +51,7 @@ type LifecycleResult = {
     hasCooledDownProvider: boolean;
     primaryProvider: string | null;
   };
-  analysisStatus: { source: string; hasText: boolean; score: number | null };
+  analysisStatus: { source: string; hasText: boolean; score: number | null; canonicalState?: string };
   metadataStatus: {
     completenessRatio: number;
     criticalMissing: string[];
@@ -63,7 +66,7 @@ type LifecycleResult = {
     totalOutsidePlan: number;
     totalOfficialOriginalsRequired: number;
   };
-  evidenceStatus: { totalMandatory: number; fullyCoveredMandatory: number; coverageRatio: number };
+  evidenceStatus: { totalMandatory: number; fullyCoveredMandatory: number; coverageRatio: number; engineHasRun?: boolean };
   documentStatus: { total: number; generated: number; planned: number; superseded: number };
   qualityStatus: { qualityFailed: number };
   officialOriginalStatus: { required: number; attached: number };
@@ -83,6 +86,7 @@ const STATE_LABELS: Record<LifecycleState, string> = {
   AI_ANALYSIS_REQUIRED: "AI Analysis Required",
   AI_ANALYSIS_FAILED: "AI Analysis Failed",
   ANALYSIS_FALLBACK_UNAPPROVED: "Fallback Analysis — Unapproved",
+  ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY: "Fallback Approved — Audit Only",
   ANALYSIS_READY_FOR_REVIEW: "Analysis Ready",
   ANALYSIS_APPROVED: "Analysis Approved",
   METADATA_INCOMPLETE: "Tender Workflow",
@@ -90,12 +94,15 @@ const STATE_LABELS: Record<LifecycleState, string> = {
   SUBMISSION_PLAN_REQUIRED: "Submission Plan Required",
   SUBMISSION_PLAN_READY: "Submission Plan Ready",
   EVIDENCE_MATCHING_REQUIRED: "Evidence Matching Required",
+  EVIDENCE_MATCHING_EMPTY: "Engine Ran — No Matches",
+  EVIDENCE_MATCHING_UNCONFIRMED: "Evidence Unconfirmed",
   EVIDENCE_MATCHED: "Evidence Matched",
   DOCUMENT_GENERATION_REQUIRED: "Documents Need Generation",
   DOCUMENTS_GENERATED: "Documents Generated",
   OFFICIAL_ORIGINALS_REQUIRED: "Official Originals Required",
   QUALITY_REVIEW_REQUIRED: "Quality Review Required",
   AUTO_FINALIZE_REQUIRED: "Ready to Finalize",
+  PARTIAL_AI_ANALYSIS_BLOCKED: "AI Analyze Partial — Resume Required",
   EXPORT_READINESS_BLOCKED: "Export Blocked",
   EXPORT_READY: "Export Ready",
   ZIP_READY: "ZIP Ready",
@@ -106,11 +113,29 @@ const ACTION_LABELS = new Proxy({} as Record<string, string>, {
   get: (_target, prop: string | symbol) => typeof prop === "string" ? recoveryCommandLabel(prop) : undefined,
 });
 
-function stateColor(state: LifecycleState): string {
+// Per spec rule 7: "Analysis Approved" must not look like release approval
+// when final submission is BLOCKED. This helper downgrades the badge color
+// to amber (secondary) when the final status is BLOCKED, even if the state
+// would otherwise be blue/green. Only EXPORT_READY / ZIP_READY / CLOSED
+// keep their strong colors when final is BLOCKED — and EXPORT_READY can
+// never be BLOCKED by definition (finalExportReady=true ⇒ READY).
+function stateColor(state: LifecycleState, finalStatus: "BLOCKED" | "PARTIAL" | "READY"): string {
   if (state === "EXPORT_READY" || state === "ZIP_READY") return "bg-green-100 text-green-800 border-green-300";
   if (state === "CLOSED") return "bg-slate-100 text-slate-600 border-slate-300";
-  if (state === "AUTO_FINALIZE_REQUIRED" || state === "DOCUMENTS_GENERATED") return "bg-blue-100 text-blue-800 border-blue-300";
-  if (state.includes("REQUIRED") || state.includes("MISSING") || state.includes("FAILED") || state.includes("UNAPPROVED")) return "bg-red-100 text-red-800 border-red-300";
+  if (state === "AUTO_FINALIZE_REQUIRED" || state === "DOCUMENTS_GENERATED") {
+    // Blue (good) only when final is READY or PARTIAL. When BLOCKED, downgrade
+    // to amber so the user does not mistake "Ready to Finalize" for release-ready.
+    return finalStatus === "BLOCKED"
+      ? "bg-amber-100 text-amber-800 border-amber-300"
+      : "bg-blue-100 text-blue-800 border-blue-300";
+  }
+  // ANALYSIS_APPROVED: when final is BLOCKED, this is NOT release approval.
+  // Render as amber (secondary) so the user reads it as "context only" and
+  // pays attention to the BLOCKED badge instead.
+  if (state === "ANALYSIS_APPROVED" && finalStatus === "BLOCKED") {
+    return "bg-amber-100 text-amber-800 border-amber-300";
+  }
+  if (state.includes("REQUIRED") || state.includes("MISSING") || state.includes("FAILED") || state.includes("UNAPPROVED") || state.includes("EMPTY") || state.includes("UNCONFIRMED") || state.includes("BLOCKED") || state.includes("PARTIAL_AI")) return "bg-red-100 text-red-800 border-red-300";
   return "bg-amber-100 text-amber-800 border-amber-300";
 }
 
@@ -150,6 +175,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
     }
     if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;
     if (action === "RUN_ENGINE") return "Engine ran. Review lifecycle, generation readiness, and export readiness before proceeding.";
+    if (action === "RESUME_AI_ANALYZE") return "AI Analyze resume enqueued. Polling until the job completes — remaining chunks will be picked up automatically.";
     if (action === "REPAIR_SOURCE_REFERENCES") return `Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`;
     if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "GENERATE_DOCS" || action === "GENERATE_MISSING_PLANNED_DOCS") return `Missing planned document generation finished — ${json.generated ?? json.created ?? json.count ?? 0} row(s) updated. Review and validate before export.`;
     if (action === "VALIDATE_DOCS") return "Validation completed. Review validation results and remaining blockers.";
@@ -340,6 +366,17 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), fetchOptions);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? json.message ?? `${spec.label} failed`);
+        // Per spec rule 8: for RUN_ENGINE, refresh lifecycle first, then
+        // build the success message from the refreshed primaryNextAction
+        // so the user sees the TRUE next step (Link/confirm evidence,
+        // Generate docs, etc.) instead of a generic "Engine ran" message
+        // that hides remaining blockers.
+        if (action === "RUN_ENGINE") {
+          const refreshed = await load();
+          router.refresh();
+          setActionMsg(engineFollowUpMessage(refreshed));
+          return;
+        }
         setActionMsg(messageForApiAction(action, json));
         await load();
         router.refresh();
@@ -358,16 +395,50 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
     }
   }
 
-  const load = useCallback(async () => {
+  // Per spec rule 8: Engine success message must include the true next
+  // action after refreshing lifecycle. The orchestrator may now report
+  // EVIDENCE_MATCHING_UNCONFIRMED (→ LINK_VAULT_EVIDENCE),
+  // EVIDENCE_MATCHING_EMPTY (→ REVIEW_MATCHING_INPUTS),
+  // DOCUMENT_GENERATION_REQUIRED (→ GENERATE_REQUIRED_DOCUMENTS), or
+  // stay on RUN_ENGINE only if matching truly never ran. This helper
+  // turns the refreshed lifecycle into a honest follow-up string.
+  function engineFollowUpMessage(lc: LifecycleResult | null): string {
+    if (!lc) return "Engine ran. Review the lifecycle panel below for the next step.";
+    const next = ACTION_LABELS[lc.primaryNextAction] ?? lc.primaryNextAction;
+    if (lc.primaryNextAction === "LINK_VAULT_EVIDENCE") {
+      return `Engine completed. Evidence is still not confirmed — ${lc.evidenceStatus.fullyCoveredMandatory ?? 0}/${lc.evidenceStatus.totalMandatory ?? 0} mandatory requirements covered by FULL/SUBSTANTIAL evidence. Next: ${next}.`;
+    }
+    if (lc.primaryNextAction === "REVIEW_MATCHING_INPUTS") {
+      return "Engine completed but produced no matching rows. Review vault experts/projects and re-run Engine. Next: Review matching inputs.";
+    }
+    if (lc.primaryNextAction === "GENERATE_REQUIRED_DOCUMENTS") {
+      return `Engine completed. ${lc.counts.plannedMissingDocs} required document(s) still need generation. Next: ${next}.`;
+    }
+    if (lc.primaryNextAction === "RUN_ENGINE") {
+      return "Engine completed. Matching has not yet run — re-run Engine to create requirement-evidence links.";
+    }
+    if (lc.primaryNextAction === "AUTO_FINALIZE") {
+      return `Engine completed. Documents are ready to finalize. Next: ${next}.`;
+    }
+    if (lc.primaryNextAction === "DOWNLOAD_FINAL_ZIP") {
+      return "Engine completed. All readiness gates passed — Download ZIP is available.";
+    }
+    return `Engine completed. Next: ${next}.`;
+  }
+
+  const load = useCallback(async (): Promise<LifecycleResult | null> => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/lifecycle`);
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Failed to load lifecycle");
-      setData(json as LifecycleResult);
+      const result = json as LifecycleResult;
+      setData(result);
+      return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load lifecycle");
+      return null;
     } finally {
       setLoading(false);
     }
@@ -397,6 +468,11 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
 
   const stateLabel = STATE_LABELS[data.lifecycleState] ?? data.lifecycleState;
   const actionLabel = ACTION_LABELS[data.primaryNextAction] ?? data.primaryNextAction;
+  // Per spec rule 5: Recovery Command Center must never display an action
+  // that contradicts its own blockers. When final is BLOCKED, suppress any
+  // "All good" / release-ready framing in the header — show the BLOCKED
+  // badge prominently and treat the lifecycle state as secondary context.
+  const isBlocked = data.finalSubmissionStatus === "BLOCKED";
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -404,12 +480,17 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-gray-800">Recovery Command Center</span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${stateColor(data.lifecycleState)}`}>
+          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${stateColor(data.lifecycleState, data.finalSubmissionStatus)}`} title={isBlocked ? "Lifecycle context (secondary) — final submission is BLOCKED" : undefined}>
             {stateLabel}
           </span>
           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${submissionBadge(data.finalSubmissionStatus)}`}>
             {data.finalSubmissionStatus}
           </span>
+          {isBlocked && data.diagnosticId && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-mono text-gray-500" title="Quote this ID in support requests">
+              {data.diagnosticId}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -499,9 +580,19 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                     <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Retry AI Analyze</button>
                   </div>
                 )}
+                {canMutate && b.code === "ANALYSIS_PARTIAL_NEEDS_RESUME" && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button onClick={() => void executeAction("RESUME_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Resume AI Analyze</button>
+                  </div>
+                )}
                 {canMutate && b.code === "EVIDENCE_NOT_ASSESSED" && (
                   <div className="mt-1.5">
                     <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Run Engine</button>
+                  </div>
+                )}
+                {canMutate && b.code === "ENGINE_RAN_NO_MATCHES" && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button onClick={() => void executeAction("REVIEW_MATCHING_INPUTS")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Review Matching Inputs</button>
                   </div>
                 )}
                 {canMutate && b.code === "MANDATORY_EVIDENCE_WEAK" && (
@@ -536,13 +627,18 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         </div>
       )}
 
-      {/* Document count summary — always visible */}
+      {/* Document count summary — always visible.
+          Per spec rule 5 & 7: when final status is BLOCKED, never display
+          "all good" / release-ready language. The "Export Ready" counter
+          only turns green when final status is READY — otherwise it stays
+          neutral so the user is not misled into thinking the count of
+          final export candidates equals "ready to download". */}
       <div className="grid grid-cols-4 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
         {[
           { label: "Required", value: data.counts.requiredPlanRows },
           { label: "Generated", value: data.counts.generatedNarrativeDocs },
           { label: "Missing", value: data.counts.plannedMissingDocs, danger: data.counts.plannedMissingDocs > 0 },
-          { label: "Export Ready", value: data.counts.finalExportCandidates, good: data.counts.finalExportCandidates > 0 },
+          { label: "Export Ready", value: data.counts.finalExportCandidates, good: data.counts.finalExportCandidates > 0 && data.finalSubmissionStatus === "READY" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
             <div className={`text-base font-bold ${cell.danger ? "text-red-600" : cell.good ? "text-green-700" : "text-gray-800"}`}>
@@ -552,6 +648,15 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           </div>
         ))}
       </div>
+      {/* BLOCKED notice: shown when final status is BLOCKED, replacing any
+          implicit "all good" interpretation of the counters above. Per spec
+          rule 7, this is the primary headline — the lifecycle badge above
+          becomes secondary context. */}
+      {isBlocked && (
+        <div className="border-b border-red-200 bg-red-50 px-5 py-2 text-xs font-medium text-red-800">
+          Final submission is BLOCKED — review the blockers above before proceeding. The lifecycle badge is secondary context, not release approval.
+        </div>
+      )}
       {/* Plan-not-built notice: shown when all counters are 0 and no submission plan exists */}
       {data.counts.requiredPlanRows === 0
         && data.counts.generatedNarrativeDocs === 0
@@ -598,7 +703,15 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Status Summary</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
               <StatusRow label="Providers" value={`${data.providerStatus.totalHealthy}/${data.providerStatus.totalConfigured} healthy`} ok={data.providerStatus.totalHealthy > 0} />
-              <StatusRow label="Analysis" value={data.analysisStatus.source.replace(/_/g, " ")} ok={data.analysisStatus.source === "AI" || data.analysisStatus.source === "HUMAN_APPROVED_REGEX_FALLBACK"} />
+              <StatusRow
+                label="Analysis"
+                value={
+                  data.analysisStatus.canonicalState === "PARTIAL_NEEDS_RESUME"
+                    ? "PARTIAL — resume required"
+                    : data.analysisStatus.source.replace(/_/g, " ")
+                }
+                ok={data.analysisStatus.source === "AI" && data.analysisStatus.canonicalState !== "PARTIAL_NEEDS_RESUME"}
+              />
                {/* Tender Details status row removed — tender facts are advisory only */}
               <StatusRow
                 label="Source Refs"
@@ -610,7 +723,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
               <StatusRow
                 label="Evidence"
                 value={data.evidenceStatus.totalMandatory > 0
-                  ? `${data.evidenceStatus.fullyCoveredMandatory ?? 0}/${data.evidenceStatus.totalMandatory} covered`
+                  ? `${data.evidenceStatus.fullyCoveredMandatory ?? 0}/${data.evidenceStatus.totalMandatory} covered${data.evidenceStatus.engineHasRun ? "" : " (engine not run)"}`
                   : "No mandatory reqs"}
                 ok={(data.evidenceStatus.coverageRatio ?? 0) > 0.7}
               />
