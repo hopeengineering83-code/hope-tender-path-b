@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { PlayIcon, BoltIcon, ClockIcon } from "./icons";
 
 type ExtractionBlocker = {
   fileName?: string;
@@ -407,9 +408,10 @@ export function EngineActionPanel({
             <button
               onClick={() => runEngine(true)}
               disabled={running || isPending}
-              className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Force run Engine once, bypassing the extraction-quality gate"
             >
-              Force run once
+              <BoltIcon /> Force run once
             </button>
           )}
           {/* Sync run — only show for small vaults; large vaults should
@@ -418,10 +420,10 @@ export function EngineActionPanel({
             <button
               onClick={() => runEngine(false)}
               disabled={running || isPending}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               title="Synchronous — bound to 60s Vercel route cap"
             >
-              {running || isPending ? "Running…" : "Run Engine"}
+              <PlayIcon /> {running || isPending ? "Running…" : "Run Engine"}
             </button>
           )}
           {/* For large vaults, the primary CTA automatically uses safe
@@ -433,7 +435,7 @@ export function EngineActionPanel({
               ? runEngineAsync(false, { safe: "true", skipAiRematch: "true" })
               : runEngineAsync(false)}
             disabled={running || isPending}
-            className={`rounded-lg border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${
               isLargeVault
                 ? "border-amber-500 bg-amber-600 text-white hover:bg-amber-700"
                 : "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
@@ -443,10 +445,10 @@ export function EngineActionPanel({
               : "Queues an AiJob and watches it in the background — escapes the 60s cap for large tenders"}
           >
             {running && asyncStatus
-              ? "Running in background…"
+              ? <><ClockIcon /> Running in background…</>
               : isLargeVault
-                ? "Run Engine (Safe Mode)"
-                : "Run in background"}
+                ? <><BoltIcon /> Run Engine (Safe Mode)</>
+                : <><ClockIcon /> Run in background</>}
           </button>
           )}
           {!canMutate && (
@@ -468,16 +470,18 @@ export function EngineActionPanel({
             <button
               onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
               disabled={running || isPending}
-              className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Run Engine in Safe Mode — skips AI rematch, uses deterministic scoring"
             >
-              Run Safe Mode (recommended)
+              <BoltIcon /> Run Safe Mode (recommended)
             </button>
             <button
               onClick={() => runEngineAsync(false)}
               disabled={running || isPending}
-              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Run full Engine with AI rematch (may exceed 60s on large vaults)"
             >
-              Run full mode anyway
+              <PlayIcon /> Run full mode anyway
             </button>
           </div>
         </div>

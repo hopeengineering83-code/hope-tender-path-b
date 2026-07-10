@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { parseRepairMetadataResponse, buildRepairMessage } from "../lib/engine/repair-metadata-contract";
 import { GenerationProgressPanel } from "./generation-progress-panel";
 import { CanonicalStatusBadge } from "./canonical-status-badge";
+import { BoltIcon, RefreshIcon, WarningIcon, CheckCircleIcon, BanIcon } from "./icons";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
@@ -63,11 +64,11 @@ export function GenerationActionButton({ canonicalGenerationState, fullProposalR
       disabled={blocked || busy}
       aria-disabled={blocked || busy}
       className={fullProposalReady
-        ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-        : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
+        ? "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+        : "inline-flex items-center gap-1.5 cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-600"}
       title={blocked ? blockedReason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
     >
-      {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
+      {fullProposalReady ? <BoltIcon /> : <BanIcon />} {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
     </button>
   );
 }
@@ -298,17 +299,19 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
                 type="button"
                 onClick={runRepairMetadata}
                 disabled={running || isPending}
-                className="rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200 disabled:opacity-60"
+                title="Repair evaluation criteria fields from the tender source"
               >
-                Repair evaluation criteria only
+                <RefreshIcon /> Repair evaluation criteria only
               </button>
               <button
                 type="button"
                 onClick={runRepairAllMetadata}
                 disabled={running || isPending}
-                className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                title="Repair all empty Tender Details fields from the tender source"
               >
-                Repair all empty fields from source
+                <RefreshIcon /> Repair all empty fields from source
               </button>
             </div>
           </div>

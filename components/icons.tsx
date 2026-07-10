@@ -12,6 +12,7 @@
 // layout changes.
 
 import type { SVGProps } from "react";
+import * as React from "react";
 
 type IconProps = SVGProps<SVGSVGElement> & { title?: string };
 
@@ -210,6 +211,75 @@ export function InfoIcon(props: IconProps) {
       {props.title ? <title>{props.title}</title> : null}
       <circle cx="12" cy="12" r="9" />
       <path d="M12 8v.01M12 12v4" />
+    </svg>
+  );
+}
+
+/** Upload (tray + up arrow) — attach / upload. */
+export function UploadIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M12 19V7M8 11l4-4 4 4" />
+      <path d="M5 19h14" />
+    </svg>
+  );
+}
+
+/** Share (node + arrows) — share tender. Replaces ↗ */
+export function ShareIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+    </svg>
+  );
+}
+
+/** Document / list — Build Plan, submission plan, document-type rows. */
+export function DocumentIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 2h8l6 6v14H6z" />
+      <path d="M14 2v6h6" />
+      <path d="M9 13h6M9 17h6M9 9h2" />
+    </svg>
+  );
+}
+
+/** Paperclip — attach existing file. */
+export function PaperclipIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M21 11.5l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" />
+    </svg>
+  );
+}
+
+/** Clipboard with check — validate / review complete. */
+export function ClipboardCheckIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <rect x="6" y="4" width="12" height="18" rx="2" />
+      <path d="M9 4V2h6v2" />
+      <path d="M9 13l2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Settings / gear — configure. */
+export function SettingsIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   );
 }

@@ -17,7 +17,7 @@ import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
 import { TenderDetailsPanel } from "../../../../components/metadata-completion-panel";
 import { CollapsiblePanel } from "../../../../components/collapsible-panel";
-import { SparklesIcon, BoltIcon, CheckIcon, ArrowRightIcon, DownloadIcon } from "../../../../components/icons";
+import { SparklesIcon, BoltIcon, CheckIcon, CheckCircleIcon, ArrowRightIcon, DownloadIcon, PlayIcon, WarningIcon, CrossIcon, RefreshIcon, BanIcon, ChevronDownIcon } from "../../../../components/icons";
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "../../../../components/canonical-status-badge";
 import type { CanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
@@ -204,14 +204,14 @@ function FileTypeBadge({ name }: { name: string }) {
 }
 
 function ExtractionBadge({ extractedTextLength, isScannedPlaceholder }: { extractedTextLength?: number | null; isScannedPlaceholder?: boolean | null }) {
-  if (isScannedPlaceholder) return <span className="text-xs text-amber-600">⚠ scanned</span>;
+  if (isScannedPlaceholder) return <span className="inline-flex items-center gap-1 text-xs text-amber-600"><WarningIcon /> scanned</span>;
   const length = extractedTextLength ?? 0;
   if (length <= 0) return <span className="text-xs text-slate-300">no text</span>;
-  return <span className="text-xs text-green-600">{length.toLocaleString()} chars</span>;
+  return <span className="inline-flex items-center gap-1 text-xs text-green-600"><CheckIcon /> {length.toLocaleString()} chars</span>;
 }
 
 function TrustBadge({ level }: { level?: string | null }) {
-  if (level === "REVIEWED") return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">✓ REVIEWED</span>;
+  if (level === "REVIEWED") return <span className="inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700"><CheckIcon /> REVIEWED</span>;
   if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">AI DRAFT</span>;
   return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">DRAFT</span>;
 }
@@ -448,7 +448,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       {toggleError && (
         <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center justify-between gap-2">
           <span>{toggleError}</span>
-          <button onClick={() => setToggleError(null)} aria-label="Dismiss error" className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
+          <button onClick={() => setToggleError(null)} aria-label="Dismiss error" className="text-red-400 hover:text-red-700 font-bold shrink-0"><CrossIcon /></button>
         </div>
       )}
       {gaps.length === 0 ? (
@@ -474,7 +474,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
                   <button
                     onClick={() => toggleResolved(gap)}
                     disabled={toggling === gap.id}
-                    className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+                    className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
                       gap.isResolved
                         ? "border-slate-200 text-slate-500 hover:bg-slate-50"
                         : "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
@@ -491,9 +491,9 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
               <button
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={clampedPage === 0}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
               >
-                ← Prev
+                <ArrowRightIcon className="rotate-180" /> Prev
               </button>
               <span className="text-xs text-slate-500">
                 Page {clampedPage + 1} of {totalPages} · {gaps.length} gaps
@@ -501,9 +501,9 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
               <button
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 disabled={clampedPage >= totalPages - 1}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
               >
-                Next →
+                Next <ArrowRightIcon />
               </button>
             </div>
           ) : gaps.length > 5 && (
@@ -1842,7 +1842,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           const pct = partial.totalChunks > 0 ? Math.round((partial.completedChunks / partial.totalChunks) * 100) : null;
           return (
             <div className="mb-2 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              <span className="text-amber-500">⚠</span>
+              <WarningIcon className="text-amber-500" />
               <span>
                 Previous analysis was interrupted
                 {pct !== null ? ` at ${pct}% (${partial.completedChunks}/${partial.totalChunks} chunks)` : ""}.
@@ -1876,26 +1876,28 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
             </button>
           )}
           <button onClick={handleRunEngine} disabled={engineRunning}
-            title={engineRunning && engineStepMessage ? engineStepMessage : undefined}
-            className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+            title={engineRunning && engineStepMessage ? engineStepMessage : "Run the tender engine to extract requirements and generate expert/project matches"}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
+            <PlayIcon />
             {engineRunning
               ? (engineStepMessage ? `${engineStepMessage.slice(0, 32)}${engineStepMessage.length > 32 ? "…" : ""}` : "Running…")
               : "Run Engine"}
           </button>
           <button onClick={handleGenerateDocs} disabled={generatingDocs || !canGenerateDocs}
-            title={generateDisabledReason}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
+            title={generateDisabledReason ?? "Generate submission documents from the tender requirements"}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-60">
             <BoltIcon />
             {generatingDocs ? "Generating…" : "Generate Docs"}
           </button>
           <button onClick={handleValidate} disabled={validating}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-50">
+            title="Validate generated documents against tender requirements"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-60">
             <CheckIcon />
             {validating ? "Validating…" : "Validate"}
           </button>
           {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
             <button onClick={handleStatusAdvance} disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60">
               <ArrowRightIcon />
               {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
             </button>
@@ -1903,7 +1905,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           <button onClick={downloadZip}
             disabled={!!zipDisabledReason}
             title={zipDisabledReason ?? "Download the final ZIP package"}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
             <DownloadIcon /> ZIP Package
           </button>
           <button onClick={() => downloadDoc("proposal")}
@@ -2023,7 +2025,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
             <div className="flex-1">
               <p className="font-medium">{error}</p>
               {/api key|anthropic|gemini|unauthorized/i.test(error) && (
-                <p className="mt-1 text-xs text-red-600">Check your AI provider API keys in Settings → AI Configuration.</p>
+                <p className="mt-1 text-xs text-red-600">Check your AI provider API keys in Settings, then AI Configuration.</p>
               )}
               {/rate limit|429|quota/i.test(error) && (
                 <p className="mt-1 text-xs text-red-600">AI provider rate limit hit. Wait 60 seconds and retry.</p>
@@ -2035,7 +2037,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                 <p className="mt-1 text-xs text-red-600">Check your internet connection and retry.</p>
               )}
             </div>
-            <button onClick={() => setError("")} aria-label="Dismiss error" className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
+            <button onClick={() => setError("")} aria-label="Dismiss error" className="shrink-0 text-red-400 hover:text-red-600 text-xs"><CrossIcon /></button>
           </div>
         </div>
       )}
@@ -2248,7 +2250,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                 </details>
               )}
             </div>
-            <button onClick={() => setAnalyzeResult(null)} aria-label="Dismiss" className="shrink-0 text-slate-400 hover:text-slate-600 text-xs">✕</button>
+            <button onClick={() => setAnalyzeResult(null)} aria-label="Dismiss" className="shrink-0 text-slate-400 hover:text-slate-600 text-xs"><CrossIcon /></button>
           </div>
         </div>
       )}
@@ -2406,12 +2408,12 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
             <p className={`mt-1 text-3xl font-bold ${proposalQuality.qualityScore >= 80 ? "text-green-600" : proposalQuality.qualityScore >= 60 ? "text-amber-500" : "text-red-500"}`}>
               {proposalQuality.qualityScore}/100
             </p>
-            <p className={`mt-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
-              {proposalQuality.verdict === "BENCHMARK_READY" ? "Benchmark ready ✓" : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
+            <p className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
+              {proposalQuality.verdict === "BENCHMARK_READY" ? <><CheckIcon /> Benchmark ready</> : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
             </p>
             {proposalQuality.repairAddendaApplied && (
-              <span className="mt-1.5 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="One or more critical sections (Compliance Matrix, Evaluator Mirror, Win Themes, Self-Score) were auto-injected by the quality repair engine because they were missing from the generated draft.">
-                Auto-repaired ↑
+              <span className="mt-1.5 inline-flex items-center gap-0.5 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="One or more critical sections (Compliance Matrix, Evaluator Mirror, Win Themes, Self-Score) were auto-injected by the quality repair engine because they were missing from the generated draft.">
+                <CheckIcon /> Auto-repaired
               </span>
             )}
             {axisScores && (() => {
@@ -2459,7 +2461,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
 
       {lowQualityBanner && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
-          <span className="mt-0.5 text-amber-500 text-lg">⚠</span>
+          <WarningIcon className="mt-0.5 text-amber-500 text-lg" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-amber-800">Proposal quality is low ({lowQualityBanner.score}/100)</p>
             <p className="mt-1 text-xs text-amber-700">Add more expert CVs or project references, ensure all requirements are extracted, then regenerate to improve the score.</p>
@@ -2528,7 +2530,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                       <span className="ml-2 text-xs text-slate-400 font-normal">(p.{tender.clientNameSourcePage})</span>
                     )}
                     {tender.metadataContaminated && (
-                      <span className="ml-2 inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">⚠ Contaminated</span>
+                      <span className="ml-2 inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"><WarningIcon /> Contaminated</span>
                     )}
                   </dd>
                   {tender.clientNameSourceQuote && (
@@ -2841,7 +2843,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                         uploading
                       </span>
                     )}
-                    {item.status === "done" && <span className="text-xs text-green-600">✓ done</span>}
+                    {item.status === "done" && <span className="inline-flex items-center gap-1 text-xs text-green-600"><CheckIcon /> done</span>}
                     {item.status === "error" && <span className="max-w-[140px] truncate text-xs text-red-600">{item.error}</span>}
                   </li>
                 ))}
@@ -2891,13 +2893,13 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                           )}
                         </div>
                         {file.isScannedPlaceholder && (
-                          <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
-                            ⚠ Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.
+                          <p className="mt-1 inline-flex items-start gap-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
+                            <WarningIcon className="mt-0.5 shrink-0" /> <span>Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.</span>
                           </p>
                         )}
                         {!file.isScannedPlaceholder && file.extractionScore != null && file.extractionScore < 45 && (
-                          <p className="mt-1 text-xs text-red-700 bg-red-50 rounded px-2 py-1">
-                            ✗ Low extraction quality ({Math.round(file.extractionScore)}/100) — re-upload or run OCR before AI Analysis.
+                          <p className="mt-1 inline-flex items-start gap-1 text-xs text-red-700 bg-red-50 rounded px-2 py-1">
+                            <CrossIcon className="mt-0.5 shrink-0" /> <span>Low extraction quality ({Math.round(file.extractionScore)}/100) — re-upload or run OCR before AI Analysis.</span>
                           </p>
                         )}
                       </div>
@@ -2905,16 +2907,16 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                         <button
                           onClick={() => handleDownloadFile(file.id, file.originalFileName)}
                           aria-label={`Download ${file.originalFileName}`}
-                          className="rounded border px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
+                          className="inline-flex items-center justify-center rounded border px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
                         >
-                          ↓
+                          <DownloadIcon />
                         </button>
                         <button
                           onClick={() => handleDeleteFile(file.id)}
                           aria-label={`Delete ${file.originalFileName}`}
-                          className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                          className="inline-flex items-center justify-center rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                         >
-                          ✕
+                          <CrossIcon />
                         </button>
                       </div>
                     </div>
@@ -3044,7 +3046,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Review experts to unblock generation →
+                    Review experts to unblock generation
                   </a>
                 )}
               </div>
@@ -3115,7 +3117,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Review projects to unblock generation →
+                    Review projects to unblock generation
                   </a>
                 )}
               </div>
@@ -3245,26 +3247,26 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                   <button
                     onClick={() => void handleBatchApproveAll()}
                     disabled={batchApproving || confirmApproveAll}
-                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                     title="Mark all generated documents as Ready for Export in one action"
                   >
-                    {batchApproving ? "Approving…" : "✓ Approve All"}
+                    <CheckCircleIcon /> {batchApproving ? "Approving…" : "Approve All"}
                   </button>
                 )}
                 {tender.generatedDocuments.some((d) => d.documentType === "EXPERT_CV_PACKAGE" && d.generationStatus === "GENERATED") && (
                   <button
                     onClick={() => void handleRegenerateCvs()}
                     disabled={regeneratingCvs}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                     title="Regenerate Expert CV documents to remove any trace artifacts"
                   >
-                    {regeneratingCvs ? "Regenerating…" : "↻ Regen CVs"}
+                    <RefreshIcon /> {regeneratingCvs ? "Regenerating…" : "Regen CVs"}
                   </button>
                 )}
-                <button onClick={() => void handleLoadDeepReasoning()} disabled={loadingDeepReasoning} className="text-xs text-purple-600 hover:underline disabled:opacity-50">
-                  {loadingDeepReasoning ? "Loading…" : deepReasoningOpen ? "▲ AI Reasoning" : "▼ AI Reasoning"}
+                <button onClick={() => void handleLoadDeepReasoning()} disabled={loadingDeepReasoning} className="inline-flex items-center gap-1 text-xs text-purple-600 hover:underline disabled:opacity-60">
+                  <ChevronDownIcon className={deepReasoningOpen ? "rotate-180" : ""} /> {loadingDeepReasoning ? "Loading…" : "AI Reasoning"}
                 </button>
-                <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+                <button onClick={() => downloadDoc("compliance")} className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"><DownloadIcon /> Compliance Report</button>
               </div>
             </div>
             {deepReasoningOpen && deepReasoningReport && (
@@ -3372,8 +3374,8 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                                     </span>
                                   )}
                                   {q.benchmarkScore > 0 && (
-                                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.verdict === "BENCHMARK_READY" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                                      Benchmark {q.benchmarkScore}/100{q.verdict === "BENCHMARK_READY" ? " ✓" : ""}
+                                    <span className={`inline-flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded-md ${q.verdict === "BENCHMARK_READY" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                                      Benchmark {q.benchmarkScore}/100{q.verdict === "BENCHMARK_READY" ? <CheckIcon /> : ""}
                                     </span>
                                   )}
                                 </div>
@@ -3416,11 +3418,11 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                           <button
                             onClick={() => void handleRegenerateSection(doc.id, doc.documentType)}
                             disabled={regeneratingSection === doc.id}
-                            className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded px-2 py-0.5 disabled:opacity-50"
+                            className="inline-flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded px-2 py-0.5 disabled:opacity-60"
                             title="Regenerate this section only (~20s)"
                             aria-label={`Regenerate ${doc.name}`}
                           >
-                            {regeneratingSection === doc.id ? "Regenerating…" : "↺"}
+                            <RefreshIcon /> {regeneratingSection === doc.id ? "Regenerating…" : ""}
                           </button>
                         )}
                         {doc.generationStatus === "GENERATED" && (
@@ -3432,7 +3434,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                           </button>
                         )}
                         {doc.generationStatus === "GENERATED" && (
-                          <button onClick={() => downloadDocById(doc.id)} aria-label={`Download ${doc.name}`} className="text-xs text-blue-600 hover:underline">↓</button>
+                          <button onClick={() => downloadDocById(doc.id)} aria-label={`Download ${doc.name}`} className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"><DownloadIcon /></button>
                         )}
                       </div>
                     </div>
@@ -3477,8 +3479,8 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       {validationReport && (
         <div className={`rounded-2xl border p-6 shadow-sm ${validationReport.passed ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
           <div className="flex items-center justify-between mb-4">
-            <h2 className={`text-lg font-semibold ${validationReport.passed ? "text-green-800" : "text-red-800"}`}>
-              {validationReport.passed ? "✓ Validation Passed — Ready for Export" : "✗ Validation Failed"}
+            <h2 className={`inline-flex items-center gap-1.5 text-lg font-semibold ${validationReport.passed ? "text-green-800" : "text-red-800"}`}>
+              {validationReport.passed ? <><CheckCircleIcon /> Validation Passed — Ready for Export</> : <><CrossIcon /> Validation Failed</>}
             </h2>
             <button onClick={() => setValidationReport(null)} className="text-sm text-slate-400 hover:text-slate-600">Dismiss</button>
           </div>
@@ -3490,8 +3492,8 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               </p>
               <ul className="space-y-1.5">
                 {validationReport.issues.filter((i) => i.severity === "BLOCK").map((issue) => (
-                  <li key={issue.code} className="rounded-lg border border-red-200 bg-red-100 px-3 py-2 text-sm text-red-800">
-                    <span className="font-medium">✗ </span>{issue.message}
+                  <li key={issue.code} className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-100 px-3 py-2 text-sm text-red-800">
+                    <CrossIcon className="mt-0.5 shrink-0 font-medium" /> <span>{issue.message}</span>
                   </li>
                 ))}
               </ul>
@@ -3505,8 +3507,8 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               </p>
               <ul className="space-y-1.5">
                 {validationReport.issues.filter((i) => i.severity !== "BLOCK").map((issue) => (
-                  <li key={issue.code} className="rounded-lg border border-amber-200 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-                    <span className="font-medium">⚠ </span>{issue.message}
+                  <li key={issue.code} className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-100 px-3 py-2 text-sm text-amber-800">
+                    <WarningIcon className="mt-0.5 shrink-0 font-medium" /> <span>{issue.message}</span>
                   </li>
                 ))}
               </ul>
@@ -3514,13 +3516,13 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           )}
           {/* ── Passed checks ─────────────────────────────────────────────── */}
           {validationReport.passed && validationReport.issues.length === 0 && (
-            <div className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-800">
-              ✓ All checks passed. This tender package is ready for export.
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-800">
+              <CheckIcon /> All checks passed. This tender package is ready for export.
             </div>
           )}
           {validationReport.passed && validationReport.issues.length > 0 && (
-            <div className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-700">
-              ✓ No blocking issues — {validationReport.issues.length} advisory warning(s) only.
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-700">
+              <CheckIcon /> No blocking issues — {validationReport.issues.length} advisory warning(s) only.
             </div>
           )}
         </div>
@@ -3538,8 +3540,8 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                   await handleGenerateFullPackage();
                 }}
                 disabled={generating}
-                className="rounded-lg bg-blue-900 px-3 py-1.5 text-xs text-white hover:bg-blue-800 disabled:opacity-50">
-                {generating ? "Generating…" : "⚡ Save & Generate Full DOCX"}
+                className="inline-flex items-center gap-1 rounded-lg bg-blue-900 px-3 py-1.5 text-xs text-white hover:bg-blue-800 disabled:opacity-60">
+                <BoltIcon /> {generating ? "Generating…" : "Save & Generate Full DOCX"}
               </button>
               <button onClick={() => { setForm((c) => ({ ...c, intakeSummary: aiProposal })); setAiProposal(""); }}
                 className="rounded-lg bg-black px-3 py-1.5 text-xs text-white hover:bg-slate-800">
@@ -3566,11 +3568,11 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
 
       {/* Toast notification — bottom-right fixed */}
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl px-4 py-3 shadow-lg text-sm font-medium ${
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl px-4 py-3 shadow-lg text-sm font-medium ${
           toast.type === "success" ? "bg-emerald-700 text-white" : "bg-red-700 text-white"
         }`}>
-          {toast.type === "success" ? "✓" : "✗"} {toast.message}
-          <button onClick={() => setToast(null)} aria-label="Dismiss notification" className="ml-1 opacity-70 hover:opacity-100">✕</button>
+          {toast.type === "success" ? <CheckIcon /> : <CrossIcon />} <span>{toast.message}</span>
+          <button onClick={() => setToast(null)} aria-label="Dismiss notification" className="ml-1 opacity-70 hover:opacity-100"><CrossIcon /></button>
         </div>
       )}
     </div>

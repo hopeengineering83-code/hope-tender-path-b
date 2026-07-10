@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { ShareIcon, RefreshIcon, CheckIcon, CrossIcon } from "./icons";
 
 interface ShareEntry {
   id: string;
@@ -111,8 +112,9 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
         aria-expanded={open}
       >
-        <span className="min-w-0">
-          <span className="block text-base font-semibold text-slate-800">↗ Share Tender</span>
+        <span className="min-w-0 inline-flex items-center gap-1.5">
+          <ShareIcon className="text-slate-700" />
+          <span className="block text-base font-semibold text-slate-800">Share Tender</span>
           <span className="block text-xs text-slate-400">{loading ? "Loading share links…" : shares.length > 0 ? `${shares.length} active share link(s)` : "No active share links"}</span>
         </span>
         <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{open ? "Hide" : noLinks ? "Generate" : "Show"}</span>
@@ -123,9 +125,10 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
           <button
             onClick={handleGenerate}
             disabled={generating}
-            className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+            className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
+            title="Generate a new share link"
           >
-            {generating ? "Generating…" : "Generate Share Link"}
+            <ShareIcon /> {generating ? "Generating…" : "Generate Share Link"}
           </button>
 
           {newShareUrl && (
@@ -138,8 +141,8 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
                 className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-xs text-slate-700 focus:outline-none"
                 onClick={(e) => (e.target as HTMLInputElement).select()}
               />
-              <button onClick={handleCopy} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50">
-                {copied ? "Copied!" : "Copy"}
+              <button onClick={handleCopy} className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50" title="Copy share link to clipboard">
+                {copied ? <><CheckIcon /> Copied!</> : "Copy"}
               </button>
             </div>
           )}
@@ -157,8 +160,8 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
                     <p className="text-xs text-slate-400">Created {new Date(share.createdAt).toLocaleDateString()}{share.expiresAt ? ` · Expires ${new Date(share.expiresAt).toLocaleDateString()}` : ""}</p>
                   </div>
                   {canMutate && (
-                  <button onClick={() => handleRevoke(share.id)} disabled={revoking === share.id} className="shrink-0 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50">
-                    {revoking === share.id ? "…" : "Revoke"}
+                  <button onClick={() => handleRevoke(share.id)} disabled={revoking === share.id} className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60" title="Revoke this share link">
+                    <CrossIcon /> {revoking === share.id ? "…" : "Revoke"}
                   </button>
                   )}
                 </div>

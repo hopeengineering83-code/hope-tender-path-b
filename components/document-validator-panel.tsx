@@ -13,6 +13,7 @@
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
+import { CheckIcon, WarningIcon, CrossIcon } from "./icons";
 // Inline document-level pattern checks (superset of metadata patterns).
 // Kept here rather than importing from validate.ts to avoid pulling in
 // the full DB-coupled validateTender function.
@@ -110,9 +111,9 @@ function validationBadge(status: string | null) {
 }
 
 function scoreBadge(score: "GOOD" | "WARNING" | "BLOCKED") {
-  if (score === "GOOD") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">✓ Clean</span>;
-  if (score === "WARNING") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">⚠ Review</span>;
-  return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">✗ Blocked</span>;
+  if (score === "GOOD") return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700"><CheckIcon /> Clean</span>;
+  if (score === "WARNING") return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"><WarningIcon /> Review</span>;
+  return <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"><CrossIcon /> Blocked</span>;
 }
 
 export async function DocumentValidatorPanel({ tenderId }: { tenderId: string }) {
@@ -206,7 +207,7 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
             </div>
 
             {!check.hasContent && (
-              <p className="mt-2 text-xs text-red-700 font-medium">⚠ This document has no content yet. Click &ldquo;Generate&rdquo; to create it from the tender requirements, or &ldquo;Attach&rdquo; to upload an existing file.</p>
+              <p className="mt-2 inline-flex items-start gap-1 text-xs text-red-700 font-medium"><WarningIcon className="mt-0.5 shrink-0" /> <span>This document has no content yet. Click &ldquo;Generate&rdquo; to create it from the tender requirements, or &ldquo;Attach&rdquo; to upload an existing file.</span></p>
             )}
 
             {check.placeholders.length > 0 && (
@@ -237,7 +238,7 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
             )}
 
             {check.qualityWarnings.map((w) => (
-              <p key={w} className="mt-1 text-xs text-amber-700">⚠ {w}</p>
+              <p key={w} className="mt-1 inline-flex items-start gap-1 text-xs text-amber-700"><WarningIcon className="mt-0.5 shrink-0" /> <span>{w}</span></p>
             ))}
 
             {check.score === "GOOD" && check.hasContent && (

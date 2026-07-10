@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CheckIcon, WarningIcon, ClockIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -187,7 +188,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       if (!res.ok || data.error) throw new Error(data.error ?? `Auto-finalize failed (${res.status})`);
       const remaining = data.remainingCount ?? 0;
       setAutoFinalizeRemaining(remaining > 0 ? remaining : null);
-      setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${remaining}. ${data.readinessOk ? "Export gate passed ✓" : remaining > 0 ? `${remaining} doc(s) still need finalization — click Auto-finalize again.` : "Re-check to refresh the gate."}`);
+      setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${remaining}. ${data.readinessOk ? "Export gate passed" : remaining > 0 ? `${remaining} doc(s) still need finalization — click Auto-finalize again.` : "Re-check to refresh the gate."}`);
       await refresh();
     } catch (err) {
       setError("Auto-finalize failed. Refresh to retry.");
@@ -465,26 +466,26 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             </span>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void generateMissingPlanned()} disabled={busy} className="rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-50" title="Convert PLANNED document rows into draft control records so the export gate can proceed.">
-              {generatingMissing ? "Generating…" : "Generate missing planned docs"}
+            <button type="button" onClick={() => void generateMissingPlanned()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-60" title="Convert PLANNED document rows into draft control records so the export gate can proceed.">
+              <BoltIcon /> {generatingMissing ? "Generating…" : "Generate missing planned docs"}
             </button>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
             <div className="flex flex-col items-start gap-1">
-              <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50">
-                {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
+              <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-60" title="Auto-finalize documents for print/submission">
+                <CheckCircleIcon /> {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
               </button>
               <p className="text-[10px] text-slate-500 max-w-xs">Auto-finalize cleans 1–3 documents per click. Click multiple times until remaining = 0. Official original files still require manual attachment.</p>
             </div>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void repair()} disabled={busy} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50" title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually.">
-              {repairing ? "Repairing…" : "Repair safe document gaps"}
+            <button type="button" onClick={() => void repair()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-60" title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually.">
+              <RefreshIcon /> {repairing ? "Repairing…" : "Repair safe document gaps"}
             </button>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void linkVaultEvidence()} disabled={busy} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50">
-              {linkingVault ? "Linking vault…" : "Use vault evidence"}
+            <button type="button" onClick={() => void linkVaultEvidence()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-60" title="Link vault evidence to strengthen mandatory requirement coverage">
+              <PaperclipIcon /> {linkingVault ? "Linking vault…" : "Use vault evidence"}
             </button>
           )}
           {canMutate && readiness && !ok && (
@@ -492,10 +493,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               type="button"
               onClick={() => void repairSourceGrounding()}
               disabled={busy}
-              className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-2 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-60"
               title="Extract source page/section/quote for mandatory requirements that lack traceability."
             >
-              {repairingSource ? "Repairing…" : "Repair source references"}
+              <RefreshIcon /> {repairingSource ? "Repairing…" : "Repair source references"}
             </button>
           )}
           {canMutate && readiness && !ok && (
@@ -503,10 +504,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               type="button"
               onClick={() => void reclassifyDocuments()}
               disabled={busy}
-              className="rounded-lg bg-violet-700 px-3 py-2 text-xs font-medium text-white hover:bg-violet-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-700 px-3 py-2 text-xs font-medium text-white hover:bg-violet-800 disabled:opacity-60"
               title="Reclassify mistyped documents (e.g. financial evidence marked as TECHNICAL_PROPOSAL)."
             >
-              {reclassifying ? "Reclassifying…" : "Fix document types"}
+              <RefreshIcon /> {reclassifying ? "Reclassifying…" : "Fix document types"}
             </button>
           )}
           {canMutate && readiness && !ok && (
@@ -514,31 +515,30 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               type="button"
               onClick={() => void deduplicateDocuments()}
               disabled={busy}
-              className="rounded-lg bg-orange-700 px-3 py-2 text-xs font-medium text-white hover:bg-orange-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-orange-700 px-3 py-2 text-xs font-medium text-white hover:bg-orange-800 disabled:opacity-60"
               title="Find and supersede duplicate document rows (same name+type, multiple versions)."
             >
-              {deduplicating ? "Deduplicating…" : "Clean duplicate rows"}
+              <RefreshIcon /> {deduplicating ? "Deduplicating…" : "Clean duplicate rows"}
             </button>
           )}
-          {/* Repair prohibited assets button — only show when prohibited assets exist */}
-          {readiness?.summary && (readiness.summary as { prohibitedAssetCount?: number }).prohibitedAssetCount && (readiness.summary as { prohibitedAssetCount?: number }).prohibitedAssetCount! > 0 && (
+          {readiness && readiness.tenderLevelBlockers.some((b) => b.category === "PROHIBITED_ASSET") && (
             <button
               type="button"
               onClick={() => void repairExportPolicyAssets()}
               disabled={busy}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
               title="Check for prohibited branding/signature/stamp in generated documents and mark affected docs for regeneration."
             >
-              {repairingAssets ? "Checking…" : "Repair prohibited assets"}
+              <WarningIcon /> {repairingAssets ? "Checking…" : "Repair prohibited assets"}
             </button>
           )}
           {readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50">
-              {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
+            <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60" title="Exclude outside-plan files from the final submission">
+              <BanIcon /> {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
             </button>
           )}
-          <button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
-            {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
+          <button type="button" onClick={() => void refresh()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" title="Re-check the export readiness gate">
+            <RefreshIcon /> {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
           </button>
           {/* Download affordance — ONLY renders a real <a href> when the
               canonical gate is open. When blocked, render a disabled
@@ -548,10 +548,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             <a
               href={`/api/tenders/${tenderId}/download?type=zip`}
               download
-              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
               title="All blockers cleared — download the final submission ZIP."
             >
-              ⬇ Download Final ZIP
+              <DownloadIcon /> Download Final ZIP
             </a>
           )}
           {readiness && ok && strictTwoEnvelope && (
@@ -559,27 +559,27 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <a
                 href={`/api/tenders/${tenderId}/download?type=zip&envelope=technical`}
                 download
-                className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"
                 title="Two-envelope tender — download the TECHNICAL ZIP only."
               >
-                ⬇ Technical ZIP
+                <DownloadIcon /> Technical ZIP
               </a>
               <a
                 href={`/api/tenders/${tenderId}/download?type=zip&envelope=financial`}
                 download
-                className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800"
                 title="Two-envelope tender — download the FINANCIAL ZIP separately."
               >
-                ⬇ Financial ZIP
+                <DownloadIcon /> Financial ZIP
               </a>
               {(envelopeBreakdown?.ADMIN ?? 0) > 0 && (
                 <a
                   href={`/api/tenders/${tenderId}/download?type=zip&envelope=admin`}
                   download
-                  className="rounded-lg bg-slate-600 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-600 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"
                   title="Two-envelope tender — admin/eligibility ZIP."
                 >
-                  ⬇ Admin ZIP
+                  <DownloadIcon /> Admin ZIP
                 </a>
               )}
             </div>
@@ -589,10 +589,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               type="button"
               disabled
               aria-disabled="true"
-              className="cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-400"
+              className="inline-flex items-center gap-1.5 cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-500"
               title={`Download blocked — resolve all ${readiness.summary.totalBlockers} blocker(s) above, then re-check.`}
             >
-              Download blocked — resolve blockers first
+              <LockIcon /> Download blocked — resolve blockers first
             </button>
           )}
         </div>
@@ -617,7 +617,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             <strong>{autoFinalizeRemaining} document{autoFinalizeRemaining === 1 ? "" : "s"}</strong> still need finalization.
             Click <strong>Auto-finalize for print/submission</strong> again to continue — each run processes up to 3 documents.
           </p>
-          <button type="button" onClick={() => setAutoFinalizeRemaining(null)} aria-label="Dismiss auto-finalize notice" className="shrink-0 text-amber-600 hover:text-amber-800 text-xs font-medium">✕</button>
+          <button type="button" onClick={() => setAutoFinalizeRemaining(null)} aria-label="Dismiss auto-finalize notice" className="inline-flex items-center shrink-0 text-amber-600 hover:text-amber-800 text-xs font-medium"><CrossIcon /></button>
         </div>
       )}
 
@@ -716,29 +716,30 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               </ul>
               {readiness.tenderLevelBlockers.some((b) => b.category === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED") && (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                  <p className="mb-2 text-xs font-semibold text-amber-800">⚠ Regex fallback analysis — recovery actions:</p>
+                  <p className="mb-2 inline-flex items-center gap-1 text-xs font-semibold text-amber-800"><WarningIcon /> Regex fallback analysis — recovery actions:</p>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => void retryAiAnalysis()}
                       disabled={busy}
-                      className="rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                      title="Re-run AI Analysis with all available providers"
                     >
-                      {retryingAnalysis ? "Retrying…" : "↺ Retry AI Analysis"}
+                      <RefreshIcon /> {retryingAnalysis ? "Retrying…" : "Retry AI Analysis"}
                     </button>
                     <button
                       type="button"
                       onClick={() => void approveRegexFallback()}
                       disabled={busy}
-                      className="rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
                       title="Manually review and approve the regex-extracted tender requirements. Only use this if the extracted requirements are accurate."
                     >
-                      ✓ Approve fallback analysis (manual review)
+                      <CheckIcon /> Approve fallback analysis (manual review)
                     </button>
                   </div>
                   {providerCooldownWarning && (
-                    <p className="mt-2 text-[10px] text-amber-800 bg-amber-100 rounded px-2 py-1">
-                      {providerCooldownWarning} Wait a moment then retry.
+                    <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-amber-800 bg-amber-100 rounded px-2 py-1">
+                      <ClockIcon /> {providerCooldownWarning} Wait a moment then retry.
                     </p>
                   )}
                   <p className="mt-1 text-[10px] text-amber-700">
