@@ -57,6 +57,7 @@ export type CanonicalWorkflowDecision = {
 
   // Requirements / compliance
   mandatoryRequirementCount: number;
+  mandatoryTracedCount: number;
   mandatoryComplianceRowsCount: number;
   mandatoryFullOrSubstantialCoverageCount: number;
 
@@ -318,7 +319,13 @@ export function buildCanonicalWorkflowDecision(input: {
   stageAvailability["FIX_EXTRACTION"] = input.hasFiles && !input.extractionUnsafe;
 
   // AI Analyze
-  if (isSuppressed("AI_ANALYZE_NOT_RUN")) {
+  // RUN_AI_ANALYZE is the ACTION that resolves PARTIAL_AI_ANALYSIS,
+  // STALE_ANALYSIS, and AI_ANALYZE_NOT_RUN. It is only BLOCKED_BY_PRIOR_STEP
+  // when the blocker is BEFORE the AI analyze stage (NO_TENDER_FILE or
+  // EXTRACTION_UNSAFE). When the blocker IS an AI-stage blocker, RUN_AI_ANALYZE
+  // is IN_PROGRESS (partial) / BLOCKED (stale, needs re-run) / READY (not run).
+  const aiStageSuppressed = currentBlockingStage === "NO_TENDER_FILE" || currentBlockingStage === "EXTRACTION_UNSAFE";
+  if (aiStageSuppressed) {
     stageStates["RUN_AI_ANALYZE"] = "BLOCKED_BY_PRIOR_STEP";
     stageAvailability["RUN_AI_ANALYZE"] = false;
   } else if (input.aiAnalysisPartial) {
@@ -422,6 +429,7 @@ export function buildCanonicalWorkflowDecision(input: {
     staleAnalysis: input.aiAnalysisStale,
     confirmedBuildPlanExists: input.confirmedBuildPlanExists,
     mandatoryRequirementCount: input.mandatoryRequirementCount,
+    mandatoryTracedCount: input.mandatoryTracedCount,
     mandatoryComplianceRowsCount: input.mandatoryComplianceRowsCount,
     mandatoryFullOrSubstantialCoverageCount: input.mandatoryFullOrSubstantialCoverageCount,
     requiredDocumentsTotal: input.requiredDocumentsTotal,
@@ -430,4 +438,225 @@ export function buildCanonicalWorkflowDecision(input: {
     pdfRequiredButUnavailable: input.pdfRequiredButUnavailable,
     finalExportAllowed: input.finalExportAllowed,
   };
+}
+
+// ─── DB-bound resolver ───────────────────────────────────────────────────────
+//
+// buildCanonicalWorkflowDecision is pure — it cannot call Prisma. This async
+// wrapper gathers every input the pure helper needs (snapshot + generated-doc
+// validation/approval state + compliance gaps) and forwards them to the pure
+// helper. Every consumer that lives inside a server route or server component
+// MUST call this resolver instead of recomputing local truth — that is the
+// whole point of "one canonical workflow decision across all panels".
+
+import type { PrismaClient } from "@prisma/client";
+import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
+
+export async function getCanonicalTenderWorkflowDecision(
+  prisma: PrismaClient,
+  userId: string,
+  tenderId: string,
+): Promise<CanonicalWorkflowDecision | null> {
+  const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId);
+  if (!snapshot) return null;
+
+  // ─── Analysis state ─────────────────────────────────────────────────────
+  // The snapshot's analysis.state is the canonical analysis state machine.
+  // - PARTIAL_NEEDS_RESUME: AI ran but some chunks are pending/failed and resumable
+  // - REGEX_FALLBACK_UNAPPROVED / HUMAN_APPROVED_FALLBACK: untrusted
+  // - AI_SUCCEEDED + contentHashMatch: trusted & current
+  // - AI_SUCCEEDED + !contentHashMatch: stale (content changed since analysis)
+  const analysisState = snapshot.analysis.state;
+  const aiAnalysisExists = analysisState !== "NOT_STARTED";
+  const aiAnalysisPartial =
+    analysisState === "PARTIAL_NEEDS_RESUME" ||
+    analysisState === "RUNNING" ||
+    analysisState === "QUEUED";
+  const aiAnalysisStale =
+    aiAnalysisExists &&
+    analysisState === "AI_SUCCEEDED" &&
+    !snapshot.analysis.contentHashMatch;
+  const aiAnalysisTrusted =
+    analysisState === "AI_SUCCEEDED" &&
+    !!snapshot.analysis.canonicalJobId &&
+    snapshot.analysis.contentHashMatch;
+
+  // Resumable analysis: any partial OR a failed job with succeeded chunks.
+  // The NextActionPanel already queries this separately; for the canonical
+  // decision we treat PARTIAL_NEEDS_RESUME as resumable.
+  const resumableAnalysisAvailable = analysisState === "PARTIAL_NEEDS_RESUME";
+
+  // ─── Tender Details (metadata) ──────────────────────────────────────────
+  // METADATA IS NO LONGER A HARD BLOCKER per the unified runtime model —
+  // snapshot.metadata.gateValid is always true. We mirror that here so the
+  // canonical decision never blocks on metadata. (If metadata regains
+  // blocker status in the future, this is the single place to change.)
+  const criticalTenderDetailsValid = true;
+
+  // ─── Requirements ───────────────────────────────────────────────────────
+  const mandatoryRequirementCount = snapshot.requirements.mandatory;
+  const mandatoryTracedCount = snapshot.requirements.groundedMandatory;
+  // Compliance matrix rows: count of mandatory requirements with ANY compliance row
+  // (the snapshot doesn't expose the raw count, so derive from evidence.covered
+  // when possible — covered = mandatory reqs with FULL/SUBSTANTIAL/COMPLIANT/STRONG).
+  // For "any row" we need a separate query, but the snapshot's evidence.covered
+  // already tells us FULL/SUBSTANTIAL coverage count.
+  const mandatoryComplianceRowsCount = await (async () => {
+    // Quick count of mandatory requirements with ANY complianceMatrixRow.
+    const anyRowCount = await prisma.tenderRequirement.count({
+      where: {
+        tenderId,
+        priority: { in: ["MANDATORY", "CRITICAL"] },
+        complianceMatrixRows: { some: {} },
+      },
+    }).catch(() => 0);
+    return anyRowCount;
+  })();
+  const mandatoryFullOrSubstantialCoverageCount = snapshot.evidence.covered;
+  const requirementsTrusted =
+    snapshot.requirements.total > 0 &&
+    snapshot.requirements.allMandatoryGrounded;
+
+  // ─── Build Plan ─────────────────────────────────────────────────────────
+  // Use the GATE-ALIGNED strict validity (snapshot.buildPlan.gateValid) —
+  // it mirrors the generation gate exactly. The count-based valid flag is
+  // retained only for backward UI display and CANNOT be the canonical truth.
+  const confirmedBuildPlanExists = snapshot.buildPlan.gateValid;
+
+  // ─── Generated Documents ────────────────────────────────────────────────
+  // Fetch generated docs (non-SUPERSEDED) with validation + review status.
+  const generatedDocs = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    select: {
+      id: true,
+      generationStatus: true,
+      validationStatus: true,
+      reviewStatus: true,
+      exactFileName: true,
+    },
+  }).catch(() => [] as { id: string; generationStatus: string; validationStatus: string | null; reviewStatus: string | null; exactFileName: string | null }[]);
+
+  const generatedDocumentsTotal = generatedDocs.filter(
+    (d) => d.generationStatus === "GENERATED",
+  ).length;
+
+  // Required documents total: derive from the build plan items (count where required).
+  // Fall back to generatedDocs.length when no plan exists yet.
+  let requiredDocumentsTotal = 0;
+  try {
+    const buildPlanRow = await prisma.buildPlan.findUnique({
+      where: { tenderId },
+      select: { itemsJson: true },
+    });
+    if (buildPlanRow?.itemsJson) {
+      const items = JSON.parse(buildPlanRow.itemsJson) as Array<{ required?: boolean }>;
+      requiredDocumentsTotal = items.filter((i) => i.required !== false).length;
+    }
+  } catch {
+    requiredDocumentsTotal = 0;
+  }
+  // If no plan yet but docs exist, use the doc count so the "X/Y required" reads sanely.
+  if (requiredDocumentsTotal === 0 && generatedDocumentsTotal > 0) {
+    requiredDocumentsTotal = generatedDocumentsTotal;
+  }
+
+  // Documents validated: every generated doc has validationStatus PASSED/VALIDATED.
+  const documentsValidated =
+    generatedDocumentsTotal > 0 &&
+    generatedDocs
+      .filter((d) => d.generationStatus === "GENERATED")
+      .every((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED");
+
+  // Documents approved / export-ready: every generated doc has reviewStatus APPROVED or READY_FOR_EXPORT.
+  const documentsApproved =
+    documentsValidated &&
+    generatedDocs
+      .filter((d) => d.generationStatus === "GENERATED")
+      .every((d) => d.reviewStatus === "APPROVED" || d.reviewStatus === "READY_FOR_EXPORT");
+
+  // Export-ready count: generated + validated + approved.
+  const exportReadyDocumentsTotal = generatedDocs.filter(
+    (d) =>
+      d.generationStatus === "GENERATED" &&
+      (d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED") &&
+      (d.reviewStatus === "APPROVED" || d.reviewStatus === "READY_FOR_EXPORT"),
+  ).length;
+
+  // ─── PDF required but unavailable ───────────────────────────────────────
+  // Detect via the existing export-format-policy helpers. If the tender
+  // requires PDF output and no PDF has been generated, this is a blocker.
+  // PR #1034 may refine this with FINALIZE_REQUIRED_PDF wording — the
+  // canonical decision's priority chain is structured so #1034 can update
+  // the wording/action without changing the priority order.
+  let pdfRequiredButUnavailable = false;
+  try {
+    const policyModule: typeof import("./export-format-policy") = await import("./export-format-policy");
+    // Fetch the tender row (lightweight) for policy detection.
+    const tenderRow = await prisma.tender.findUnique({
+      where: { id: tenderId },
+      select: {
+        id: true, title: true, description: true, intakeSummary: true,
+        exactFileNaming: true, requestedFormats: true,
+        files: { select: { originalFileName: true, extractedText: true } },
+      },
+    });
+    if (tenderRow) {
+      const policy = policyModule.detectTenderFormatPolicy(tenderRow as any);
+      // Map generated docs to extensions.
+      const extensions = generatedDocs.map((d) => {
+        const name = (d.exactFileName ?? "").toLowerCase();
+        if (name.endsWith(".pdf")) return "pdf";
+        if (name.endsWith(".docx") || name.endsWith(".doc")) return "docx";
+        if (name.endsWith(".xlsx") || name.endsWith(".xls")) return "xlsx";
+        return "";
+      }).filter(Boolean);
+      const coverage = policyModule.checkTenderFormatCoverage(policy, extensions);
+      if (!coverage.ok && coverage.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE") {
+        pdfRequiredButUnavailable = true;
+      }
+    }
+  } catch {
+    pdfRequiredButUnavailable = false;
+  }
+
+  // ─── Authority / quality blockers ───────────────────────────────────────
+  // Any unresolved CRITICAL compliance gap, or any export blocker that isn't
+  // a generation/plan/extraction blocker (i.e. quality/authority blockers).
+  const authorityOrQualityBlockers =
+    snapshot.exportBlockers.length > 0 && !snapshot.generationEligible
+      ? false // generation blockers exist — authority/quality not yet relevant
+      : snapshot.exportBlockers.length > snapshot.generationBlockers.length;
+
+  // ─── Final export allowed ───────────────────────────────────────────────
+  // The snapshot's finalZipEligible is the gate-aligned, fail-closed flag.
+  // It already incorporates generation + export + final ZIP gates.
+  const finalExportAllowed = snapshot.finalZipEligible;
+
+  return buildCanonicalWorkflowDecision({
+    hasFiles: snapshot.extraction.activeFileCount > 0,
+    extractionUnsafe: !snapshot.extraction.overallOk,
+    extractionCorrupted: snapshot.extraction.files.some((f) => f.corrupted),
+    ocrRequired: false, // snapshot doesn't expose OCR flag separately; extraction.blocker covers it
+    aiAnalysisExists,
+    aiAnalysisTrusted,
+    aiAnalysisPartial,
+    aiAnalysisStale,
+    resumableAnalysisAvailable,
+    criticalTenderDetailsValid,
+    requirementsExist: snapshot.requirements.total > 0,
+    requirementsTrusted,
+    mandatoryRequirementCount,
+    mandatoryTracedCount,
+    mandatoryComplianceRowsCount,
+    mandatoryFullOrSubstantialCoverageCount,
+    confirmedBuildPlanExists,
+    requiredDocumentsTotal,
+    generatedDocumentsTotal,
+    exportReadyDocumentsTotal,
+    documentsValidated,
+    documentsApproved,
+    pdfRequiredButUnavailable,
+    finalExportAllowed,
+    authorityOrQualityBlockers,
+  });
 }

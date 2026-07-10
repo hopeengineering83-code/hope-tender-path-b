@@ -271,3 +271,257 @@ describe("Canonical workflow decision helper", () => {
     assert.equal(typeof decision.finalExportAllowed, "boolean");
   });
 });
+
+// ─── 11. DB-bound resolver exists ───────────────────────────────────────────
+
+describe("Canonical workflow decision — DB-bound resolver", () => {
+  it("getCanonicalTenderWorkflowDecision is exported", () => {
+    const src = read("lib/engine/canonical-workflow-decision.ts");
+    assert.ok(
+      src.includes("export async function getCanonicalTenderWorkflowDecision"),
+      "must export getCanonicalTenderWorkflowDecision async resolver",
+    );
+  });
+
+  it("resolver calls getTenderReleaseSnapshot and buildCanonicalWorkflowDecision", () => {
+    const src = read("lib/engine/canonical-workflow-decision.ts");
+    assert.ok(src.includes("getTenderReleaseSnapshot"), "must call getTenderReleaseSnapshot");
+    assert.ok(src.includes("buildCanonicalWorkflowDecision"), "must call buildCanonicalWorkflowDecision");
+  });
+});
+
+// ─── 12. NextActionPanel consumes the canonical decision ────────────────────
+
+describe("NextActionPanel — wired to canonical workflow decision", () => {
+  it("imports getCanonicalTenderWorkflowDecision", () => {
+    const src = read("components/next-action-panel.tsx");
+    assert.ok(
+      src.includes("getCanonicalTenderWorkflowDecision"),
+      "NextActionPanel must import and call getCanonicalTenderWorkflowDecision",
+    );
+  });
+
+  it("does NOT use the legacy resolveTenderNextAction resolver", () => {
+    const src = read("components/next-action-panel.tsx");
+    assert.ok(
+      !src.includes("resolveTenderNextAction"),
+      "NextActionPanel must not compute local truth via resolveTenderNextAction",
+    );
+  });
+
+  it("does NOT hardcode documents.stale: false", () => {
+    const src = read("components/next-action-panel.tsx");
+    assert.ok(
+      !src.includes("stale: false"),
+      "NextActionPanel must not hardcode documents.stale: false (the screenshot-contradiction bug)",
+    );
+  });
+
+  it("does NOT show 'Generate proposal documents' as the next-action headline when upstream blockers exist", () => {
+    // The screenshot contradiction: partial AI + no build plan + no compliance rows
+    // + PDF required — the panel must NOT show "Generate proposal documents" as
+    // the headline action. The canonical decision returns RESUME_AI_ANALYZE for
+    // this fixture, which the panel renders as the headline.
+    const decision = buildCanonicalWorkflowDecision(screenshotFixtureInput());
+    assert.notEqual(decision.nextRequiredAction, "GENERATE_DOCUMENTS");
+    assert.equal(decision.nextRequiredAction, "RESUME_AI_ANALYZE");
+  });
+
+  it("panel reads decision.nextRequiredActionLabel / nextRequiredActionReason / blockerDetails", () => {
+    const src = read("components/next-action-panel.tsx");
+    assert.ok(src.includes("decision.nextRequiredActionLabel"), "must read decision.nextRequiredActionLabel");
+    assert.ok(src.includes("decision.nextRequiredActionReason"), "must read decision.nextRequiredActionReason");
+    assert.ok(src.includes("decision.blockerDetails"), "must read decision.blockerDetails");
+    assert.ok(src.includes("decision.currentBlockingStage"), "must read decision.currentBlockingStage");
+  });
+});
+
+// ─── 13. workflow-center consumes the canonical decision ────────────────────
+
+describe("workflow-center — wired to canonical workflow decision for every stage", () => {
+  it("imports getCanonicalTenderWorkflowDecision", () => {
+    const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    assert.ok(
+      src.includes("getCanonicalTenderWorkflowDecision"),
+      "workflow-center must import and call getCanonicalTenderWorkflowDecision",
+    );
+  });
+
+  it("does NOT hardcode status: \"PENDING\" for Match Evidence", () => {
+    const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    // The old code had `status: "PENDING"` for stage 7. The new code must
+    // drive that stage from decision.stageStates["MATCH_EVIDENCE"].
+    // Confirm the canonical-stage lookup is used for Match Evidence.
+    assert.ok(
+      src.includes('ds["MATCH_EVIDENCE"]'),
+      "Match Evidence status must come from decision.stageStates[\"MATCH_EVIDENCE\"]",
+    );
+  });
+
+  it("does NOT hardcode status: \"PENDING\" for Validate and Approve", () => {
+    const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    assert.ok(
+      src.includes('ds["VALIDATE_DOCS"]'),
+      "Validate and Approve status must come from decision.stageStates[\"VALIDATE_DOCS\"]",
+    );
+  });
+
+  it("uses stageStatusFromCanonical helper for every gated stage", () => {
+    const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    assert.ok(
+      src.includes("stageStatusFromCanonical("),
+      "must use stageStatusFromCanonical helper to map canonical stage states",
+    );
+  });
+
+  it("returns the canonical decision in the response payload", () => {
+    const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    assert.ok(
+      src.includes("decision: decision"),
+      "workflow-center response must include the canonical decision so the client and server agree",
+    );
+  });
+});
+
+// ─── 14. NextActionPanel and workflow-center agree ──────────────────────────
+
+describe("NextActionPanel and workflow-center agreement", () => {
+  it("both consume the SAME canonical decision helper", () => {
+    const panelSrc = read("components/next-action-panel.tsx");
+    const routeSrc = read("app/api/tenders/[id]/workflow-center/route.ts");
+    assert.ok(panelSrc.includes("getCanonicalTenderWorkflowDecision"));
+    assert.ok(routeSrc.includes("getCanonicalTenderWorkflowDecision"));
+  });
+
+  it("screenshot fixture: NextActionPanel step is RUN_AI_ANALYZE (not GENERATE_DOCUMENTS)", () => {
+    // The screenshot fixture: partial AI + stale + no build plan + no compliance
+    // rows + PDF required. The canonical decision returns RESUME_AI_ANALYZE,
+    // which NextActionPanel maps to the RUN_AI_ANALYZE step. workflow-center's
+    // stage 3 (AI Analyze) shows IN_PROGRESS (or BLOCKED) — never "complete".
+    const decision = buildCanonicalWorkflowDecision(screenshotFixtureInput());
+    assert.equal(decision.nextRequiredAction, "RESUME_AI_ANALYZE");
+    assert.equal(decision.stageStates["RUN_AI_ANALYZE"], "IN_PROGRESS");
+    assert.equal(decision.stageStates["GENERATE_DOCUMENTS"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["EXPORT_ZIP"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["VALIDATE_DOCS"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["MATCH_EVIDENCE"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["BUILD_SUBMISSION_PLAN"], "BLOCKED_BY_PRIOR_STEP");
+  });
+});
+
+// ─── 15. Later panels are precondition-gated ────────────────────────────────
+
+describe("Later panels are precondition-gated (BLOCKED_BY_PRIOR_STEP)", () => {
+  it("when AI is partial, every downstream stage is BLOCKED_BY_PRIOR_STEP", () => {
+    const decision = buildCanonicalWorkflowDecision(screenshotFixtureInput());
+    const downstreamStages = [
+      "BUILD_SUBMISSION_PLAN",
+      "MATCH_EVIDENCE",
+      "GENERATE_DOCUMENTS",
+      "VALIDATE_DOCS",
+      "EXPORT_ZIP",
+    ];
+    for (const stage of downstreamStages) {
+      assert.equal(
+        decision.stageStates[stage],
+        "BLOCKED_BY_PRIOR_STEP",
+        `${stage} must be BLOCKED_BY_PRIOR_STEP when AI is partial`,
+      );
+    }
+  });
+
+  it("when no confirmed Build Plan, Match Evidence / Generate / Validate / Export are BLOCKED_BY_PRIOR_STEP", () => {
+    const decision = buildCanonicalWorkflowDecision({
+      ...screenshotFixtureInput(),
+      aiAnalysisPartial: false,
+      aiAnalysisStale: false,
+    });
+    assert.equal(decision.currentBlockingStage, "NO_CONFIRMED_BUILD_PLAN");
+    assert.equal(decision.stageStates["MATCH_EVIDENCE"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["GENERATE_DOCUMENTS"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["VALIDATE_DOCS"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["EXPORT_ZIP"], "BLOCKED_BY_PRIOR_STEP");
+  });
+
+  it("when mandatory requirements have no compliance rows, Generate / Validate / Export are BLOCKED_BY_PRIOR_STEP", () => {
+    const decision = buildCanonicalWorkflowDecision({
+      ...screenshotFixtureInput(),
+      aiAnalysisPartial: false,
+      aiAnalysisStale: false,
+      confirmedBuildPlanExists: true,
+    });
+    assert.equal(decision.currentBlockingStage, "MANDATORY_NO_COMPLIANCE_ROWS");
+    assert.equal(decision.stageStates["GENERATE_DOCUMENTS"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["VALIDATE_DOCS"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageStates["EXPORT_ZIP"], "BLOCKED_BY_PRIOR_STEP");
+  });
+});
+
+// ─── 16. Required PDF blocker is lower priority than AI / plan / compliance ─
+
+describe("Required PDF blocker priority", () => {
+  it("PDF_REQUIRED_UNAVAILABLE is NOT the current blocker when AI is partial", () => {
+    const decision = buildCanonicalWorkflowDecision(screenshotFixtureInput());
+    assert.notEqual(decision.currentBlockingStage, "PDF_REQUIRED_UNAVAILABLE");
+    assert.notEqual(decision.nextRequiredAction, "GENERATE_DOCUMENTS");
+  });
+
+  it("PDF_REQUIRED_UNAVAILABLE is NOT the current blocker when no Build Plan", () => {
+    const decision = buildCanonicalWorkflowDecision({
+      ...screenshotFixtureInput(),
+      aiAnalysisPartial: false,
+      aiAnalysisStale: false,
+    });
+    assert.notEqual(decision.currentBlockingStage, "PDF_REQUIRED_UNAVAILABLE");
+    assert.equal(decision.currentBlockingStage, "NO_CONFIRMED_BUILD_PLAN");
+  });
+
+  it("PDF_REQUIRED_UNAVAILABLE is NOT the current blocker when no compliance rows", () => {
+    const decision = buildCanonicalWorkflowDecision({
+      ...screenshotFixtureInput(),
+      aiAnalysisPartial: false,
+      aiAnalysisStale: false,
+      confirmedBuildPlanExists: true,
+    });
+    assert.notEqual(decision.currentBlockingStage, "PDF_REQUIRED_UNAVAILABLE");
+    assert.equal(decision.currentBlockingStage, "MANDATORY_NO_COMPLIANCE_ROWS");
+  });
+});
+
+// ─── 17. Final export remains fail-closed ───────────────────────────────────
+
+describe("Final export fail-closed (re-affirmed for live UI wiring)", () => {
+  it("finalExportAllowed is false for the screenshot fixture", () => {
+    const decision = buildCanonicalWorkflowDecision(screenshotFixtureInput());
+    assert.equal(decision.finalExportAllowed, false);
+    assert.equal(decision.stageStates["EXPORT_ZIP"], "BLOCKED_BY_PRIOR_STEP");
+  });
+
+  it("EXPORT_ZIP stage is never READY when any upstream blocker exists", () => {
+    const decision = buildCanonicalWorkflowDecision(screenshotFixtureInput());
+    assert.notEqual(decision.stageStates["EXPORT_ZIP"], "READY");
+  });
+});
+
+// ─── 18. No user-facing "metadata" wording ──────────────────────────────────
+
+describe("No user-facing 'metadata' wording in wired panels", () => {
+  it("NextActionPanel does not surface a user-facing 'metadata' label", () => {
+    const src = read("components/next-action-panel.tsx");
+    // The panel uses "Tender Details" (not "metadata") for user-facing copy.
+    assert.ok(
+      !/>.*[Mm]etadata.*</.test(src),
+      "NextActionPanel must not contain a user-facing 'metadata' label",
+    );
+  });
+
+  it("workflow-center route does not surface a user-facing 'metadata' label in stage labels", () => {
+    const src = read("app/api/tenders/[id]/workflow-center/route.ts");
+    // Stage 5 is labeled "Tender Details" — never "metadata" — in user-facing strings.
+    assert.ok(src.includes("Tender Details"), "stage 5 must be labeled 'Tender Details'");
+    assert.ok(
+      !/label:.*[Mm]etadata/.test(src),
+      "no stage label may say 'metadata' (use 'Tender Details')",
+    );
+  });
+});
