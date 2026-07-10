@@ -373,8 +373,11 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
               {traceability.warnings.map((w) => <li key={w} className="inline-flex items-start gap-1"><WarningIcon className="mt-0.5 shrink-0" /> <span>{w}</span></li>)}
             </ul>
           )}
-          {traceability.warnings.length === 0 && (
+          {traceability.warnings.length === 0 && coveragePct > 0 && (
             <p className="mt-2 text-xs text-green-700">All requirements and selected evidence have acceptable traceability.</p>
+          )}
+          {traceability.warnings.length === 0 && coveragePct === 0 && (
+            <p className="mt-2 text-xs text-amber-700">No compliance coverage has been confirmed yet. Source traceability may be acceptable, but requirement coverage is not yet confirmed.</p>
           )}
         </div>
       )}

@@ -282,20 +282,56 @@ test("Snapshot: both panels receive identical metadata.hasExportBlocker flag and
   // No panel should synthesize data; all comes from snapshot
 });
 
-test("workflow-center stage 5 (Confirm Metadata) blocks on metadata.gateValid, not just the valid-field ratio", () => {
-  // The >80%-valid ratio alone could show READY with blocked critical fields
-  // (e.g. 22/26 valid = 84% with 4 blocked criticals). The stage must consult
-  // the gate-aligned metadata.gateValid first — no green-but-blocked stages.
+test("workflow-center stage 5 (Tender Details) reflects the unified runtime model — metadata is advisory, not a hard blocker", () => {
+  // Per the unified runtime model (see tender-release-snapshot.ts lines 534-546):
+  // "METADATA IS NO LONGER A HARD BLOCKER. The snapshot's metadata.gateValid
+  // is ALWAYS true — metadata cannot block the workflow."
+  //
+  // The old stage-5 code had `!snapshot.metadata.gateValid ? "BLOCKED" : ...`
+  // which was dead code (gateValid is always true). The new stage-5 code
+  // (after PR #1035 canonical-workflow-decision wiring) uses the valid-field
+  // ratio to distinguish READY from WARNING — metadata is advisory only.
+  //
+  // Safety property preserved: stage 5 NEVER shows READY when critical fields
+  // are invalid (the ratio drops below 80% → WARNING).
   const src = readFileSync("app/api/tenders/[id]/workflow-center/route.ts", "utf8");
-  assert.ok(src.includes("!snapshot.metadata.gateValid"), "stage 5 must gate on metadata.gateValid");
-  assert.ok(src.includes("snapshot.metadata.gateBlocker"), "stage 5 must surface the gate blocker");
+  assert.ok(
+    src.includes("snapshot.metadata.validFields") && src.includes("snapshot.metadata.totalFields"),
+    "stage 5 must compute the valid-field ratio from snapshot.metadata",
+  );
+  assert.ok(
+    src.includes("? \"READY\" : \"WARNING\""),
+    "stage 5 must show WARNING (not READY) when the ratio is below threshold",
+  );
+  assert.ok(
+    src.includes("Tender Details"),
+    "stage 5 must be labeled 'Tender Details' (not 'metadata')",
+  );
 });
 
 test("workflow-center stage 6 (Verified Submission Plan) uses gate-aligned buildPlan.gateValid, not the count-based valid", () => {
   // buildPlan.valid is count-based (>=1 non-SUPERSEDED GeneratedDocument) and
   // explicitly does NOT agree with the generation gate.
+  //
+  // PR #1035 wiring: stage 6 now reads decision.stageStates["BUILD_SUBMISSION_PLAN"]
+  // via stageStatusFromCanonical, with a fallback that uses gateValid. When the
+  // plan is confirmed, the stage is COMPLETE (done) — not READY (waiting).
+  // The safety property (gateValid, not count-based valid) is preserved.
   const src = readFileSync("app/api/tenders/[id]/workflow-center/route.ts", "utf8");
-  assert.ok(src.includes('snapshot.buildPlan.gateValid ? "READY" : "BLOCKED"'), "stage 6 status must come from gateValid");
-  assert.ok(!src.includes('snapshot.buildPlan.valid ? "READY"'), "stage 6 must not derive status from count-based valid");
-  assert.ok(src.includes("snapshot.buildPlan.gateBlocker"), "stage 6 must surface the gate blocker");
+  assert.ok(
+    src.includes("snapshot.buildPlan.gateValid"),
+    "stage 6 must gate on buildPlan.gateValid (gate-aligned, not count-based)",
+  );
+  assert.ok(
+    !src.includes('snapshot.buildPlan.valid ? "READY"'),
+    "stage 6 must not derive status from count-based valid",
+  );
+  assert.ok(
+    src.includes("snapshot.buildPlan.gateBlocker"),
+    "stage 6 must surface the gate blocker",
+  );
+  assert.ok(
+    src.includes('ds["BUILD_SUBMISSION_PLAN"]'),
+    "stage 6 status must come from the canonical decision's stageStates",
+  );
 });

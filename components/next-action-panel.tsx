@@ -1,25 +1,27 @@
 // Next Required Action panel — server component.
 //
-// Shows the current workflow step + the single most important action the
-// user must take next. Uses the shared tender-next-action resolver so visible
-// UI guidance cannot contradict extraction/analysis readiness.
+// CONSUMES THE CANONICAL WORKFLOW DECISION. This panel must NOT compute its
+// own "next action" truth — every other panel (workflow-center, generation
+// action, export readiness, submission plan, requirement coverage, authority
+// review) reads the same `getCanonicalTenderWorkflowDecision` result so the
+// user sees ONE primary blocker, ONE next action, and a coherent set of
+// per-stage states.
+//
+// If you need to add a new stage or change the blocker priority, edit
+// `lib/engine/canonical-workflow-decision.ts` — do not branch the truth here.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { assessExtractionQuality } from "../lib/extraction-quality";
-import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
-import { resolveCurrentAnalysisBinding } from "../lib/engine/generation-readiness-gate";
-import { safeParseJsonArray } from "../lib/safe-json";
-import { hasResumableAiAnalyzeCheckpoint, resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
+import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 
 const STEPS = [
   "Upload Tender",
   "Fix Extraction",
   "Run AI Analyze",
-  // "Confirm Tender Details" is not a separate workflow stage — tender details are advisory during draft
   "Confirm Requirements",
   "Build Plan",
+  "Match Evidence",
   "Generate Docs",
   "Validate & Approve Docs",
   "Review Manifest",
@@ -30,9 +32,9 @@ type WorkflowStep =
   | "UPLOAD_TENDER"
   | "FIX_EXTRACTION"
   | "RUN_AI_ANALYZE"
-  | "CONFIRM_METADATA"
   | "CONFIRM_REQUIREMENTS"
   | "BUILD_PLAN"
+  | "MATCH_EVIDENCE"
   | "GENERATE_DOCUMENTS"
   | "VALIDATE_DOCUMENTS"
   | "REVIEW_MANIFEST"
@@ -43,9 +45,9 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   UPLOAD_TENDER: 0,
   FIX_EXTRACTION: 1,
   RUN_AI_ANALYZE: 2,
-  CONFIRM_METADATA: 3,
-  CONFIRM_REQUIREMENTS: 4,
-  BUILD_PLAN: 5,
+  CONFIRM_REQUIREMENTS: 3,
+  BUILD_PLAN: 4,
+  MATCH_EVIDENCE: 5,
   GENERATE_DOCUMENTS: 6,
   VALIDATE_DOCUMENTS: 7,
   REVIEW_MANIFEST: 8,
@@ -57,33 +59,37 @@ const STEP_TARGETS = [
   "#tender-files",
   "#tender-files",
   "#ai-analyze-section",
-  "#tender-edit-form",
   "#requirement-coverage",
   "#submission-plan",
+  "#requirement-coverage",
   "#generated-documents",
   "#generated-documents",
   "#final-package-manifest",
   "#export-readiness",
 ] as const;
 
-function stepFromPrimary(primary: TenderNextActionPrimary): WorkflowStep {
-  switch (primary) {
+// Map the canonical decision's nextRequiredAction to the panel's step index.
+// This MUST agree with workflow-center's stageStates — both read the same
+// decision object, so they cannot disagree.
+function stepFromCanonicalAction(action: string): WorkflowStep {
+  switch (action) {
     case "UPLOAD_TENDER": return "UPLOAD_TENDER";
     case "FIX_EXTRACTION": return "FIX_EXTRACTION";
     case "RESUME_AI_ANALYZE":
     case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
-    case "EDIT_METADATA": return "CONFIRM_METADATA";
     case "REVIEW_REQUIREMENTS": return "CONFIRM_REQUIREMENTS";
     case "BUILD_SUBMISSION_PLAN": return "BUILD_PLAN";
+    case "LINK_VAULT_EVIDENCE": return "MATCH_EVIDENCE";
     case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
     case "FIX_EXPORT_BLOCKERS": return "VALIDATE_DOCUMENTS";
     case "EXPORT_READY": return "EXPORT_ZIP";
+    default: return "UPLOAD_TENDER";
   }
 }
 
 function stepColor(step: WorkflowStep) {
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return "border-emerald-200 bg-emerald-50";
-  if (step === "RUN_AI_ANALYZE" || step === "BUILD_PLAN" || step === "GENERATE_DOCUMENTS" || step === "REVIEW_MANIFEST") return "border-amber-200 bg-amber-50";
+  if (step === "RUN_AI_ANALYZE" || step === "BUILD_PLAN" || step === "GENERATE_DOCUMENTS" || step === "REVIEW_MANIFEST" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
   if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return "border-red-200 bg-red-50";
   return "border-amber-200 bg-amber-50";
 }
@@ -100,106 +106,33 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   await prismaReady;
 
+  // Tender is fetched only for metadata advisory (deadline). The canonical
+  // decision is the SINGLE source of workflow truth — no local decision logic.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
       id: true, title: true, status: true,
-      analysisSummary: true, analysisExtractionStatus: true,
-      metadataContaminated: true,
       clientName: true, procuringEntityName: true, country: true,
       clientContactName: true, clientContactEmail: true,
       submissionAddress: true, submissionEmails: true,
       submissionMethod: true, deadline: true, currency: true,
-      exactFileNaming: true,
-      metadataOverrides: {
-        select: { field: true, fieldState: true, overrideValue: true },
-      },
-      files: {
-        select: {
-          extractedText: true, originalFileName: true, fileName: true,
-          totalPages: true, extractedPages: true, ocrPages: true,
-          failedPages: true, extractionScore: true,
-        },
-      },
-      requirements: {
-        select: {
-          id: true, priority: true,
-          sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true,
-        },
-      },
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, generationStatus: true, validationStatus: true },
-      },
-      complianceGaps: {
-        where: { isResolved: false, severity: "CRITICAL" },
-        select: { id: true },
-      },
+      metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
     },
   }).catch(() => null);
 
   if (!tender) return null;
 
-  const currentAnalysisBinding = await resolveCurrentAnalysisBinding(prisma, tenderId, userId)
-    .catch(() => ({ jobId: null, contentHash: null }));
+  const decision = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
+  if (!decision) return null;
 
-  const resumableAnalysisJob = await prisma.aiJob.findFirst({
-    // Align with createAnalysisJob: only the current content-hash job can be
-    // re-armed. FAILED jobs qualify only when a succeeded chunk exists.
-    where: {
-      tenderId,
-      userId,
-      jobType: "AI_ANALYZE",
-      analysisInputHash: currentAnalysisBinding.contentHash ?? "__NO_CURRENT_ANALYSIS_HASH__",
-      OR: [
-        { status: "PARTIAL_SUCCESS" },
-        {
-          status: "FAILED",
-          analyzeChunks: { some: { status: "SUCCEEDED" } },
-          OR: [
-            { retryState: { is: null } },
-            { retryState: { is: { nonRetryable: false } } },
-          ],
-        },
-      ],
-    },
-    orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }, { createdAt: "desc" }],
-    select: {
-      id: true,
-      status: true,
-      _count: { select: { analyzeChunks: { where: { status: "SUCCEEDED" } } } },
-    },
-  }).catch(() => null);
+  const step = stepFromCanonicalAction(decision.nextRequiredAction);
+  const label = decision.nextRequiredActionLabel;
+  const reason = decision.nextRequiredActionReason;
+  const blockers = decision.blockerDetails;
+  const currentIndex = STEP_INDEX[step];
 
-  const hasFiles = tender.files.length > 0;
-  const fileQuality = tender.files.map((f) => {
-    const q = assessExtractionQuality(f.extractedText, f.originalFileName || f.fileName);
-    const totalPages = f.totalPages ?? 0;
-    const extractedPages = f.extractedPages ?? 0;
-    const failedPages = f.failedPages ?? 0;
-    const pageCoveragePercent = totalPages > 0 ? Math.round((extractedPages / totalPages) * 100) : null;
-    return {
-      corrupted: f.extractedText ? isExtractionCorrupted(f.extractedText) : false,
-      failed: q.severity === "FAILED" || failedPages > 0,
-      weak: q.severity === "POOR" || q.severity === "WARNING",
-      score: Math.min(f.extractionScore ?? q.score, q.score),
-      pageCoveragePercent,
-      partialCoverage: totalPages > 0 && extractedPages < totalPages,
-    };
-  });
-  const anyCorrupted = fileQuality.some((f) => f.corrupted);
-  const anyFailed = fileQuality.some((f) => f.failed);
-  const anyWeak = fileQuality.some((f) => f.weak);
-  const anyPartialCoverage = fileQuality.some((f) => f.partialCoverage);
-  const avgScore = fileQuality.length > 0
-    ? Math.round(fileQuality.reduce((s, f) => s + f.score, 0) / fileQuality.length)
-    : 0;
-  const pageCoverageValues = fileQuality
-    .map((f) => f.pageCoveragePercent)
-    .filter((v): v is number => typeof v === "number");
-  const minPageCoveragePercent = pageCoverageValues.length > 0 ? Math.min(...pageCoverageValues) : undefined;
-
-  const aiAnalyzed = Boolean(tender.analysisSummary);
+  // Metadata advisory — never a blocker per the unified runtime model, but
+  // still surfaced so the user knows a deadline is approaching/passed.
   const metaReport = assessTenderMetadataCompleteness({
     clientName: (tender.clientName || tender.procuringEntityName) ?? null,
     country: tender.country ?? null,
@@ -211,76 +144,8 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     deadline: tender.deadline ?? null,
     currency: tender.currency ?? null,
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
-    requirementCount: tender.requirements.length,
+    requirementCount: 0,
   }, tender.metadataOverrides);
-  const metadataOk = metaReport.missingCritical.length === 0 &&
-    metaReport.placeholderCount === 0 &&
-    !tender.metadataContaminated;
-
-  const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
-  const tracedReqs = mandatoryReqs.filter(
-    (r) => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0,
-  );
-  const allTracedReqs = tender.requirements.filter(
-    (r) => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0,
-  );
-
-  const planFiles = safeParseJsonArray(tender.exactFileNaming);
-  const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
-
-  const generatedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED");
-  const hasGeneratedDocs = generatedDocs.length > 0;
-  const validationPassed = generatedDocs.every(
-    (d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED",
-  );
-
-  const decision = resolveTenderNextAction({
-    hasFiles,
-    extraction: {
-      corrupted: anyCorrupted || tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED",
-      poor: anyFailed || anyWeak || avgScore < 80,
-      ocrRequired: tender.analysisExtractionStatus === "OCR_REQUIRED",
-      partial: anyPartialCoverage || tender.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED",
-      pageCoveragePercent: minPageCoveragePercent,
-      averageScore: avgScore,
-    },
-    resumableAnalysisAvailable: hasResumableAiAnalyzeCheckpoint(resumableAnalysisJob
-      ? { status: resumableAnalysisJob.status, succeededChunkCount: resumableAnalysisJob._count.analyzeChunks }
-      : null),
-    aiAnalysis: {
-      exists: aiAnalyzed,
-      trusted: aiAnalyzed && tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED",
-      status: tender.analysisExtractionStatus ?? null,
-      regexFallback: tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
-      partial: tender.analysisExtractionStatus === "AI_ANALYSIS_PARTIAL",
-    },
-    metadata: {
-      trusted: metadataOk,
-      missingFields: metaReport.missingCritical.map((f) => f.field),
-      contaminated: tender.metadataContaminated,
-      placeholderCount: metaReport.placeholderCount,
-    },
-    requirements: {
-      rawCount: tender.requirements.length,
-      trustedTracedCount: allTracedReqs.length,
-      mandatoryCount: mandatoryReqs.length,
-      mandatoryTracedCount: tracedReqs.length,
-    },
-    submissionPlanBuilt: hasPlan,
-    documents: {
-      current: hasGeneratedDocs && validationPassed,
-      hasGeneratedDocuments: hasGeneratedDocs,
-      stale: false,
-    },
-    exportBlockersCount: tender.complianceGaps.length + (validationPassed ? 0 : 1),
-    exported: tender.status === "EXPORTED",
-  });
-
-  const step = stepFromPrimary(decision.primary);
-  const label = decision.label;
-  const reason = decision.reason;
-  const blockers = decision.blockers;
-  const currentIndex = STEP_INDEX[step];
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
@@ -303,10 +168,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         {STEPS.map((s, i) => {
           const done = i < currentIndex;
           const active = i === currentIndex;
-          const doneClass = decision.primary === "FIX_EXTRACTION" || decision.primary === "REVIEW_REQUIREMENTS"
-            ? "bg-slate-100 text-slate-500 hover:bg-slate-200"
-            : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200";
-          const baseClass = done ? doneClass :
+          const baseClass = done ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" :
             active ? "bg-slate-900 text-white hover:bg-slate-800" :
             "bg-slate-100 text-slate-500 hover:bg-slate-200";
           return (
@@ -323,15 +185,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         })}
       </nav>
 
-      {decision.rawVsTrustedRequirements && (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
-          <p className="text-xs font-semibold uppercase">Requirement trust split</p>
-          <p className="mt-1 text-xs">
-            Raw fallback requirements: {decision.rawVsTrustedRequirements.raw} · Trusted traced requirements: {decision.rawVsTrustedRequirements.trusted} · Mandatory traced: {decision.rawVsTrustedRequirements.mandatoryTraced}/{decision.rawVsTrustedRequirements.mandatory}
-          </p>
-        </div>
-      )}
-
       {blockers.length > 0 && (
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">
           <p className="text-xs font-semibold uppercase text-red-700">Blockers to resolve</p>
@@ -341,19 +194,31 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       )}
 
-      {decision.primary === "FIX_EXTRACTION" && (
+      {/* Requirement trust split — surfaces raw-vs-trusted distinction without
+          recomputing local truth. The counts come from the canonical decision,
+          which itself reads the snapshot's gate-aligned grounding check. */}
+      {decision.mandatoryRequirementCount > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
+          <p className="text-xs font-semibold uppercase">Requirement trust split</p>
+          <p className="mt-1 text-xs">
+            Trusted traced requirements (mandatory): {decision.mandatoryTracedCount}/{decision.mandatoryRequirementCount} · Compliance rows: {decision.mandatoryComplianceRowsCount} · FULL/SUBSTANTIAL coverage: {decision.mandatoryFullOrSubstantialCoverageCount}/{decision.mandatoryRequirementCount}
+          </p>
+        </div>
+      )}
+
+      {decision.currentBlockingStage === "EXTRACTION_UNSAFE" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
           <strong>Fix Extraction First.</strong> Run OCR, re-extract, or upload a clearer PDF before running AI Analyze. AI analysis on weak extraction can produce incomplete requirements and unsafe downstream guidance.
         </div>
       )}
 
-      {decision.primary === "GENERATE_DOCUMENTS" && (
+      {decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
           <strong>All pre-generation gates pass.</strong> You can now generate the proposal. Draft generation proceeds with available data. Optional tender details are omitted from output. Final submission requires strict validation.
         </div>
       )}
 
-      {decision.primary === "EXPORT_READY" && (
+      {decision.currentBlockingStage === "EXPORT_ZIP_READY" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
           <strong>Export ready.</strong> Review the Final Package Manifest below, then click Export to create the submission ZIP.
         </div>

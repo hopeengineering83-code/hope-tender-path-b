@@ -98,21 +98,32 @@ describe("visible wording contract", () => {
   it("next action panel exposes Fix Extraction First and raw/trusted requirement split", () => {
     const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
     assert.match(source, /Fix Extraction First/);
-    assert.match(source, /Raw fallback requirements/);
-    assert.match(source, /Trusted traced requirements/);
+    // The panel now consumes the canonical workflow decision, which exposes
+    // the mandatory-traced / compliance-rows / FULL-SUBSTANTIAL-coverage counts.
+    // These replace the old raw-vs-trusted split with a more accurate
+    // gate-aligned grounding view (same UX intent — surface requirement trust).
+    assert.match(source, /Requirement trust split/);
+    assert.match(source, /mandatoryTracedCount/);
+    assert.match(source, /mandatoryComplianceRowsCount/);
+    assert.match(source, /mandatoryFullOrSubstantialCoverageCount/);
   });
 
-  it("next action panel treats failed checkpointed analysis jobs as resumable", () => {
+  it("next action panel delegates partial-AI / resumable-analysis detection to the canonical decision (no local truth)", () => {
     const source = readFileSync(resolve(process.cwd(), "components/next-action-panel.tsx"), "utf8");
-    assert.match(source, /resolveCurrentAnalysisBinding/);
-    assert.match(source, /analysisInputHash:\s*currentAnalysisBinding\.contentHash/);
-    assert.match(source, /OR:\s*\[/);
-    assert.match(source, /status:\s*"PARTIAL_SUCCESS"/);
-    assert.match(source, /status:\s*"FAILED"/);
-    assert.match(source, /analyzeChunks:\s*\{\s*some:\s*\{\s*status:\s*"SUCCEEDED"/);
-    assert.match(source, /nonRetryable:\s*false/);
-    assert.match(source, /hasResumableAiAnalyzeCheckpoint/);
-    assert.doesNotMatch(source, /take:\s*5/);
+    // The panel MUST NOT query AiJob directly — that was the screenshot
+    // contradiction bug (local truth diverged from the snapshot's analysis
+    // state machine). Partial-AI / resumable detection now lives in
+    // getCanonicalTenderWorkflowDecision → getTenderReleaseSnapshot →
+    // resolveTenderAnalysisState (the canonical analysis state machine).
+    assert.match(source, /getCanonicalTenderWorkflowDecision/);
+    assert.doesNotMatch(source, /resolveCurrentAnalysisBinding/);
+    assert.doesNotMatch(source, /prisma\.aiJob\.findFirst/);
+    assert.doesNotMatch(source, /hasResumableAiAnalyzeCheckpoint/);
+    // The canonical decision's screenshot-fixture behavior is verified in
+    // tests/canonical-workflow-truth-precondition-gates.test.ts:
+    //   - partial AI → nextRequiredAction = RESUME_AI_ANALYZE
+    //   - stale AI → nextRequiredAction = RUN_AI_ANALYZE (re-run)
+    //   - downstream stages BLOCKED_BY_PRIOR_STEP
   });
 
   it("untrusted sector warning is visible in the analysis quality panel", () => {
