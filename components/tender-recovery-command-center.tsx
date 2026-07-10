@@ -432,12 +432,12 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
     try {
       const res = await fetch(`/api/tenders/${tenderId}/lifecycle`);
       const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error ?? "Failed to load lifecycle");
+      if (!res.ok || !json.ok) throw new Error("Failed to load lifecycle state");
       const result = json as LifecycleResult;
       setData(result);
       return result;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load lifecycle");
+    } catch {
+      setError("Failed to load lifecycle state. Refresh to retry.");
       return null;
     } finally {
       setLoading(false);

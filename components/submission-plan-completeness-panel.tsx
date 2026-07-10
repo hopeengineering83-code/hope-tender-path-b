@@ -318,7 +318,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <button type="button" onClick={() => void buildPlan()} aria-label={building ? "Building submission plan" : classifying ? "Auto-classifying documents" : "Build submission plan"} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building || classifying}>
-            {building ? "Building…" : classifying ? "Classifying…" : "⚡ Build Plan"}
+            {building ? "Building…" : classifying ? "Classifying…" : "Build Plan"}
           </button>
           <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission plan" : "Re-check submission plan"} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" disabled={loading || building || classifying}>
             {loading ? "Checking…" : "Re-check"}
