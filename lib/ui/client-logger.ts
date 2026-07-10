@@ -13,19 +13,16 @@ const isDev = process.env.NODE_ENV !== "production";
 export const clientLogger = {
   error: (msg: string, context?: Record<string, unknown>) => {
     if (isDev) {
-      // eslint-disable-next-line no-console
       console.error(`[client] ${msg}`, context ?? "");
     }
   },
   warn: (msg: string, context?: Record<string, unknown>) => {
     if (isDev) {
-      // eslint-disable-next-line no-console
       console.warn(`[client] ${msg}`, context ?? "");
     }
   },
   info: (msg: string, context?: Record<string, unknown>) => {
     if (isDev) {
-      // eslint-disable-next-line no-console
       console.info(`[client] ${msg}`, context ?? "");
     }
   },

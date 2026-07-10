@@ -62,18 +62,14 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
   const canonicalReadinessLabel = canonical?.ok ? "Export readiness: OPEN" : `Export readiness: BLOCKED (${canonicalBlockedCount})`;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
     where: { tenderId: id },
     orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
     take: 25,
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const openHigh = objections.filter((o: any) => o.status === "OPEN" && o.severity === "HIGH");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const openMedium = objections.filter((o: any) => o.status === "OPEN" && o.severity === "MEDIUM");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const proposalVersions: any[] = await (prisma as any).proposalVersion.findMany({
     where: { tenderId: id },
     orderBy: { version: "desc" },
@@ -82,13 +78,11 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   });
   const latestVersion = proposalVersions[0];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const workbook: any = await (prisma as any).pricingWorkbook.findUnique({
     where: { tenderId: id },
     include: { lines: true },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recentJobs: any[] = await (prisma as any).aiJob.findMany({
     where: { OR: [{ tenderId: id }, { userId }] },
     orderBy: { createdAt: "desc" },

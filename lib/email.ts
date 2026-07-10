@@ -26,7 +26,6 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryRes
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
     const nodemailer = require("nodemailer") as any;
     const transporter = nodemailer.createTransport({
       host,

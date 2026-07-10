@@ -52,7 +52,6 @@ export default function ActivityPage() {
     }
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(1, ""); }, []);
 
   function handleFilter(action: string) {

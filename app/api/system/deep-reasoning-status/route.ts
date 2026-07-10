@@ -60,7 +60,6 @@ export async function GET() {
   if (claudeConfigured) {
     try {
       // Check the SDK is importable without actually loading it permanently.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       require.resolve("@anthropic-ai/sdk");
       toolUseAvailable = true;
     } catch {

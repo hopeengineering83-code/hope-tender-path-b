@@ -123,7 +123,6 @@ async function main() {
   const results = [];
   for (const p of PROVIDERS) {
     // Sequential — never run providers in parallel (mirrors runtime policy).
-    // eslint-disable-next-line no-await-in-loop
     results.push(await testProvider(p));
   }
   for (const r of results) {

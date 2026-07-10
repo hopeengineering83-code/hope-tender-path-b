@@ -25,11 +25,8 @@
  *   npm run electron               # dev launch (hosted mode)
  *   npm run build:desktop          # produce installers (Win/Mac/Linux)
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require("path");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { exec } = require("child_process");
 
 let mainWindow;

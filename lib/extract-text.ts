@@ -301,7 +301,6 @@ function decodeHtmlEntities(s: string): string {
 }
 
 async function extractPdfWithPdfParse(buffer: Buffer): Promise<{ text: string; pages: number }> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require("pdf-parse");
   let text = "";
   let pages = 0;
@@ -345,7 +344,6 @@ async function extractPdfWithPdfParse(buffer: Buffer): Promise<{ text: string; p
 }
 
 async function extractPdfWithPdf2Json(buffer: Buffer): Promise<{ text: string; pages: number }> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const PDFParser = require("pdf2json");
   const parser = new PDFParser();
 
@@ -507,7 +505,6 @@ const PDF_OCR_MAX_CONTINUATIONS = (() => {
 async function splitPdfIntoChunks(buffer: Buffer, chunkSize: number): Promise<Array<{ startPage: number; buffer: Buffer }>> {
   if (chunkSize <= 0) return [{ startPage: 1, buffer }];
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PDFDocument } = require("pdf-lib") as typeof import("pdf-lib");
     const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
     const total = src.getPageCount();
@@ -635,7 +632,6 @@ async function extractPdfWithClaudeVision(buffer: Buffer, pageCount: number | "u
 
   let Anthropic: { new (config: { apiKey: string; timeout?: number }): unknown };
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
   } catch (err) {
     logger.warn("[extract-text] @anthropic-ai/sdk not available for OCR fallback:", { detail: err });
@@ -1177,7 +1173,6 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
 }
 
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const XLSX = require("@e965/xlsx") as typeof import("@e965/xlsx");
   const workbook = XLSX.read(buffer, { type: "buffer", cellText: true, cellDates: true });
   const parts: string[] = [];
