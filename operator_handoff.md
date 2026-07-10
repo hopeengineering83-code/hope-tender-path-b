@@ -75,79 +75,14 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
-### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+### 2026-07-10 UTC — Claude Code
 
-- **Mode:** second follow-up hardening after review dissatisfaction; removed oversized audit baselines and fixed concrete public terminology/raw-error leaks.
-- **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR update pending.
-- **Scope:**
-  - Deleted the giant metadata-language and raw-error baseline JSON files; audits now pass without broad baselines by focusing on public-facing strings and JSON response contexts.
-  - Tightened `audit-no-user-facing-metadata` and `audit-safe-api-errors` to fail new public leaks while allowing internal schema identifiers/logging.
-  - Replaced remaining public/user-facing metadata copy in workflow/recovery/human-label/upload/extract text paths with Tender Details / Tender Facts language.
-  - Sanitized `facts-ledger` POST failure responses with a safe public message and `diagnosticId`, while logging raw details server-side.
-  - Updated regression tests to prove audits run without committed giant baselines and adjusted extract-text source-shape test for the renamed internal step message.
-- **Files changed:** `app/api/tenders/[id]/facts-ledger/route.ts`, `app/api/tenders/[id]/files/[fileId]/re-extract/route.ts`, `app/api/tenders/[id]/re-extract-metadata/route.ts`, `app/api/tenders/[id]/workflow-center/route.ts`, `docs/RELEASE_GUARDRAILS.md`, `docs/legacy-tender-facts-compatibility-map.md`, `lib/ai-job-handlers.ts`, `lib/analysis-quality.ts`, `lib/engine/workflow/workflow-state.ts`, `lib/recovery-command-actions.ts`, `lib/tender-next-action.ts`, `lib/tender-upload-first.ts`, `lib/ui/human-labels.ts`, `scripts/audit-no-user-facing-metadata.mjs`, `scripts/audit-safe-api-errors.mjs`, `tests/extract-text-job.test.ts`, `tests/regression-audit-scripts.test.ts`; deleted `scripts/audit-allowlists/no-user-facing-metadata-baseline.json` and `scripts/audit-allowlists/safe-api-errors-baseline.json`.
-- **Tests actually run:**
-  - `node scripts/audit-no-user-facing-metadata.mjs` — PASS (1104 files checked, no broad baseline).
-  - `node scripts/audit-safe-api-errors.mjs` — PASS (165 API routes checked, no broad baseline).
-  - `node scripts/audit-workflow-state-consistency.mjs` — PASS in warning-only mode; still reports independent-readiness warnings in `lib/engine/tender-control-suggestions.ts` and `lib/tender-next-action.ts`.
-  - `npx tsx --test tests/regression-audit-scripts.test.ts tests/final-export-safety-invariants.test.ts tests/api-contract-public-safety.test.ts tests/extract-text-job.test.ts tests/ui-workflow-polish.test.ts tests/recovery-command-center-actions.test.ts` — PASS (108/108; local env warnings only).
-  - `npx tsc --noEmit --pretty false` — PASS.
-  - `npm run lint` — PASS.
-  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` — PASS (warnings only for missing optional provider/cron/Sentry envs).
-- **CI/deployment status:** local only; no Vercel preview or production deployment triggered.
-- **Known risks / assumptions:** This necessarily touched a small number of files listed as PR #1012/#1013 overlap because the prior baseline approach was unacceptable and concrete leaks were present there; changes were minimal string/safe-error edits. Full DB-backed `npm test` was not rerun after these changes; the previous run failed only DB integration precondition suites.
-- **Next action:** run CI/DB-backed integration with `RUN_DB_INTEGRATION=true` and coordinate any merge conflicts with #1012/#1013.
-- **Merge status:** not reviewed — substantially safer than prior baseline version, but still sequence with #1012/#1013 and CI.
-
-
-### 2026-07-10 UTC — ChatGPT (GPT-5.5)
-
-- **Mode:** follow-up release-hardening after PR review dissatisfaction; converted shallow/failing guardrails into baseline-aware audits with regression coverage.
-- **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR update pending.
-- **Scope:**
-  - Reworked metadata-language and raw API error audits to be baseline-aware: existing legacy overlap findings are explicit JSON entries; any new unbaselined finding fails the script.
-  - Added regression tests that execute all three audit scripts and assert the baselines remain explicit cleanup scaffolding.
-  - Documented that audit baselines are temporary and must shrink as PR #1012/#1013 and follow-up cleanup land.
-  - Preserved non-overlap with #1012/#1013 by not directly editing selected UI/API routes; raw-error and wording risks in those areas are now captured by baselines instead of force-fixed here.
-- **Files changed:** `docs/RELEASE_GUARDRAILS.md`, `docs/legacy-tender-facts-compatibility-map.md`, `scripts/audit-no-user-facing-metadata.mjs`, `scripts/audit-safe-api-errors.mjs`, `scripts/audit-allowlists/no-user-facing-metadata-baseline.json`, `scripts/audit-allowlists/safe-api-errors-baseline.json`, `tests/regression-audit-scripts.test.ts`, `operator_handoff.md`.
-- **Tests actually run:**
-  - `node scripts/audit-no-user-facing-metadata.mjs` — PASS (937 currently baselined findings; new findings fail).
-  - `node scripts/audit-safe-api-errors.mjs` — PASS (8 currently baselined findings; new findings fail).
-  - `node scripts/audit-workflow-state-consistency.mjs` — PASS in warning-only mode; still reports independent-readiness warnings in `lib/engine/tender-control-suggestions.ts` and `lib/tender-next-action.ts`.
-  - `npx tsx --test tests/regression-audit-scripts.test.ts tests/final-export-safety-invariants.test.ts tests/api-contract-public-safety.test.ts` — PASS (17/17; local env warnings only).
-  - `npx tsc --noEmit --pretty false` — PASS.
-  - `npm run lint` — PASS.
-  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` — PASS (warnings only for missing optional provider/cron/Sentry envs).
-  - `npm test` — FAIL/WARN due environment/config: 6690 pass, 8 fail, all failing files require `RUN_DB_INTEGRATION=true` / DB-backed integration (`ai-promotion-evidence-persistence`, build-plan DB/route integration, database-safety, metadata-evidence-proof, re-extract-page-provenance-route, release-blockers-integration, unified-snapshot-integration).
-- **CI/deployment status:** local only; no Vercel preview or production deployment triggered.
-- **Known risks / assumptions:** Baseline counts are intentionally large because this branch is not allowed to rewrite #1012/#1013 overlap; merge readiness depends on shrinking/removing baseline entries as those PRs land.
-- **Next action:** After #1012/#1013 merge, remove resolved baseline entries and rerun all audits plus DB-backed integration with `RUN_DB_INTEGRATION=true`.
-- **Merge status:** not reviewed — not merge-safe until baseline entries are actively reviewed and DB-backed integration is run in CI.
-
-
-### 2026-07-10 UTC — ChatGPT (GPT-5.5)
-
-- **Mode:** release-hardening guardrails, regression-prevention audits, and legacy Tender Facts compatibility mapping.
-- **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR pending.
-- **Scope:**
-  - Added static audit scripts for user-facing metadata language, raw API error exposure, and warning-only workflow/readiness state consistency.
-  - Added test-only public API safety helper plus product/error term constants.
-  - Added focused final-export/API contract safety regression tests that document fail-closed public blocker-code expectations without touching #1012/#1013 UI/API files.
-  - Added `docs/RELEASE_GUARDRAILS.md` and `docs/legacy-tender-facts-compatibility-map.md`; no risky legacy route/file renames were performed.
-  - Updated `package.json` with manual audit script aliases.
-- **Files changed:** `package.json`, `docs/RELEASE_GUARDRAILS.md`, `docs/legacy-tender-facts-compatibility-map.md`, `lib/assert-public-api-safe.ts`, `lib/product-terms.ts`, `lib/public-error-messages.ts`, `scripts/audit-allowlists/legacy-tender-facts-internal.json`, `scripts/audit-no-user-facing-metadata.mjs`, `scripts/audit-safe-api-errors.mjs`, `scripts/audit-workflow-state-consistency.mjs`, `tests/api-contract-public-safety.test.ts`, `tests/final-export-safety-invariants.test.ts`, `operator_handoff.md`.
-- **Tests actually run:**
-  - `npx tsc --noEmit --pretty false` — PASS.
-  - `npm run lint` — PASS.
-  - `npx tsx --test tests/final-export-safety-invariants.test.ts tests/api-contract-public-safety.test.ts` — PASS (14/14; environment warnings for missing local env only).
-  - `node scripts/audit-safe-api-errors.mjs` — PASS.
-  - `node scripts/audit-workflow-state-consistency.mjs` — PASS in warning-only mode; reported independent-readiness warnings in `lib/engine/tender-control-suggestions.ts` and `lib/tender-next-action.ts`.
-  - `node scripts/audit-no-user-facing-metadata.mjs` — FAIL on current main baseline, as expected before PR #1012/#1013 UI copy cleanup and broader legacy route language cleanup; findings were not force-fixed to avoid overlap.
-- **CI/deployment status:** local only; no Vercel preview or production deployment triggered.
-- **Known risks / assumptions:** #1012/#1013 changed-file lists were inspected from GitHub web because `gh` is unavailable and no `origin` remote is configured locally; this branch intentionally avoids their touched files. Full `npm test` and `npm run build` were not run in this session.
-- **Next action:** after #1012/#1013 merge, re-run `node scripts/audit-no-user-facing-metadata.mjs` and either remove resolved baseline findings or add narrow legacy-internal allowlist entries.
-- **Merge status:** not reviewed — merge-safe only after #1012/#1013 sequencing and the metadata-language audit baseline are reconciled.
-
+- **Mode:** production release-acceptance suite (branch `fix/e2e-release-acceptance-and-output-quality`, PR #1017; superseded `perfect/*` #1016 which failed the controlled-route branch-name check). Scoped to gaps NOT covered by open PRs #1012 (metadata-wording/error sanitization), #1013 (UI contradictions/panels/icons), #1014 (guardrail audits + docs/RELEASE_GUARDRAILS.md). Avoided all their files; only NEW test files + a distinct doc added.
+- **Added:** `docs/FINAL_RELEASE_ACCEPTANCE_CHECKLIST.md`; `tests/release-acceptance-final-package.test.ts` (ZIP/manifest — stale/zero-byte exclusion fail-closed, safe filenames, stable fingerprint, path-traversal/duplicate/missing-bytes refusal, manifest==reopened-ZIP); `tests/release-acceptance-document-quality.test.ts` (validateDocumentQuality blocks AI traces / empty / technical↔financial envelope leakage); `tests/release-acceptance-provider-fallback-order.test.ts` (canonical Z.ai→…→Anthropic order + registry-derived preferred provider; no live calls).
+- **Production code changed:** none (test/docs only). All new tests exercise real helpers.
+- **Tests:** final-package 6/6, document-quality 5/5, provider-order 4/4; `tsc` clean; `eslint` clean.
+- **Deferred (overlap with #1012/#1013/#1014):** UI wording, panel error fallbacks, raw-error sanitization, static metadata audits — covered by those PRs; not duplicated here. Rebase this branch after they merge.
+- **Merge status:** DO NOT MERGE — draft.
 
 ### 2026-07-09 UTC — ChatGPT (GPT-5.5)
 
