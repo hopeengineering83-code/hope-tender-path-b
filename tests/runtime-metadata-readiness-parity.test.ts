@@ -288,7 +288,7 @@ describe("no raw Prisma error in UI", () => {
   it("health score panel catches errors safely", () => {
     const src = read("components/tender-health-score-panel.tsx");
     assert.ok(src.length > 0, "tender-health-score-panel.tsx must be readable");
-    assert.ok(src.includes("Panel is loading"), "must show safe 'Panel is loading' message on error");
+    assert.ok(src.includes("PanelErrorFallback"), "must use PanelErrorFallback for safe error handling");
     assert.ok(src.includes("catch"), "must catch errors");
   });
 
