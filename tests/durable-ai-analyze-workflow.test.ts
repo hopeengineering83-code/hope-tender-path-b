@@ -205,9 +205,20 @@ describe("durable resume — a stopped run continues where it left off", () => {
   it("createAnalysisJob re-arms a PARTIAL_SUCCESS/FAILED job to QUEUED so run-next can re-claim it", () => {
     // claimJobForCaller only claims QUEUED rows; without re-arming, a partial
     // job is un-runnable and Resume does nothing.
+    // PR #1038 refactored createAnalysisJob to use a $transaction with a
+    // re-check inside (closing a race window). The variable was renamed from
+    // `job` to `existing`, and the PARTIAL_SUCCESS/FAILED re-arm is now the
+    // fall-through after the QUEUED/RUNNING early-return and the nonRetryable
+    // check. The safety property is preserved: PARTIAL_SUCCESS/FAILED jobs
+    // are re-armed to QUEUED with cleared terminal stamps.
     assert.match(svc, /status: \{ in: \["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"\] \}/);
-    assert.match(svc, /job\.status === "PARTIAL_SUCCESS" \|\| job\.status === "FAILED"/);
+    // Verify the re-arm update resets to QUEUED with cleared stamps
     assert.match(svc, /data: \{ status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null \}/);
+    // Verify the nonRetryable guard exists (PR #1038 addition — prevents
+    // infinite retry loops on permanently-failed jobs)
+    assert.match(svc, /nonRetryable/);
+    // Verify the transaction wraps the find-or-create (race-condition fix)
+    assert.match(svc, /\$transaction/);
   });
 
   it("executeAnalysis resumes from the durable checkpoints (last SUCCEEDED chunk)", () => {

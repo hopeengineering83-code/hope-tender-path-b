@@ -94,12 +94,22 @@ describe("Spec Test 4-6 — Stale analysis blocks downstream", () => {
     );
   });
 
-  it("next-action-panel computes analysisStale by comparing hashes", () => {
+  it("next-action-panel delegates stale detection to the canonical workflow decision (no local truth)", () => {
+    // PR #1035 rewrote NextActionPanel to consume getCanonicalTenderWorkflowDecision.
+    // Stale analysis detection now lives in the canonical decision's async resolver
+    // (getCanonicalTenderWorkflowDecision), which reads snapshot.analysis.contentHashMatch.
+    // The panel must NOT compute its own stale truth — that was the screenshot
+    // contradiction bug (local truth diverged from the snapshot's analysis state).
     const src = read("components/next-action-panel.tsx");
-    assert.ok(src.includes("analysisStale"), "must compute analysisStale");
-    assert.ok(src.includes("latestSucceededJob"), "must query latest SUCCEEDED job");
-    assert.ok(src.includes("analysisInputHash !== currentAnalysisBinding.contentHash"), "must compare hashes");
-    assert.ok(src.includes("stale: analysisStale"), "must pass stale to resolveTenderNextAction");
+    assert.ok(src.includes("getCanonicalTenderWorkflowDecision"), "must delegate to canonical decision");
+    assert.ok(!src.includes("resolveTenderNextAction"), "must NOT use legacy resolveTenderNextAction");
+    assert.ok(!src.includes("latestSucceededJob"), "must NOT query AiJob directly (canonical decision handles it)");
+    // The canonical decision's aiAnalysisStale field drives the STALE_ANALYSIS
+    // blocker, which maps to RUN_AI_ANALYZE with 'Re-run AI Analyze' label.
+    // This is verified in tests/canonical-workflow-truth-precondition-gates.test.ts.
+    const decisionSrc = read("lib/engine/canonical-workflow-decision.ts");
+    assert.ok(decisionSrc.includes("aiAnalysisStale"), "canonical decision must compute aiAnalysisStale");
+    assert.ok(decisionSrc.includes("STALE_ANALYSIS"), "canonical decision must have STALE_ANALYSIS blocker");
   });
 });
 
@@ -249,9 +259,20 @@ describe("Spec Test 16 — Route/panel agreement", () => {
     assert.ok(src.includes("RERUN_AI_ANALYZE"), "must register RERUN_AI_ANALYZE action");
   });
 
-  it("next-action-panel passes stale flag to resolveTenderNextAction", () => {
+  it("next-action-panel delegates stale handling to the canonical workflow decision", () => {
+    // PR #1035: the panel no longer passes a stale flag to resolveTenderNextAction.
+    // Instead, it calls getCanonicalTenderWorkflowDecision, which internally
+    // computes aiAnalysisStale from snapshot.analysis.contentHashMatch and
+    // returns STALE_ANALYSIS as the currentBlockingStage when stale.
     const src = read("components/next-action-panel.tsx");
-    assert.ok(src.includes("stale: analysisStale"), "must pass stale flag");
+    assert.ok(src.includes("getCanonicalTenderWorkflowDecision"), "must use canonical decision");
+    assert.ok(src.includes("decision.currentBlockingStage"), "must read decision.currentBlockingStage");
+    // The STALE_ANALYSIS blocker maps to RUN_AI_ANALYZE action with 'Re-run AI Analyze' label.
+    const decisionSrc = read("lib/engine/canonical-workflow-decision.ts");
+    assert.ok(
+      decisionSrc.includes('STALE_ANALYSIS: { action: "RUN_AI_ANALYZE"'),
+      "canonical decision must map STALE_ANALYSIS to RUN_AI_ANALYZE",
+    );
   });
 });
 
