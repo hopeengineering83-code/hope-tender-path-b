@@ -77,6 +77,31 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-10 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** follow-up release-hardening after PR review dissatisfaction; converted shallow/failing guardrails into baseline-aware audits with regression coverage.
+- **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR update pending.
+- **Scope:**
+  - Reworked metadata-language and raw API error audits to be baseline-aware: existing legacy overlap findings are explicit JSON entries; any new unbaselined finding fails the script.
+  - Added regression tests that execute all three audit scripts and assert the baselines remain explicit cleanup scaffolding.
+  - Documented that audit baselines are temporary and must shrink as PR #1012/#1013 and follow-up cleanup land.
+  - Preserved non-overlap with #1012/#1013 by not directly editing selected UI/API routes; raw-error and wording risks in those areas are now captured by baselines instead of force-fixed here.
+- **Files changed:** `docs/RELEASE_GUARDRAILS.md`, `docs/legacy-tender-facts-compatibility-map.md`, `scripts/audit-no-user-facing-metadata.mjs`, `scripts/audit-safe-api-errors.mjs`, `scripts/audit-allowlists/no-user-facing-metadata-baseline.json`, `scripts/audit-allowlists/safe-api-errors-baseline.json`, `tests/regression-audit-scripts.test.ts`, `operator_handoff.md`.
+- **Tests actually run:**
+  - `node scripts/audit-no-user-facing-metadata.mjs` — PASS (937 currently baselined findings; new findings fail).
+  - `node scripts/audit-safe-api-errors.mjs` — PASS (8 currently baselined findings; new findings fail).
+  - `node scripts/audit-workflow-state-consistency.mjs` — PASS in warning-only mode; still reports independent-readiness warnings in `lib/engine/tender-control-suggestions.ts` and `lib/tender-next-action.ts`.
+  - `npx tsx --test tests/regression-audit-scripts.test.ts tests/final-export-safety-invariants.test.ts tests/api-contract-public-safety.test.ts` — PASS (17/17; local env warnings only).
+  - `npx tsc --noEmit --pretty false` — PASS.
+  - `npm run lint` — PASS.
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` — PASS (warnings only for missing optional provider/cron/Sentry envs).
+  - `npm test` — FAIL/WARN due environment/config: 6690 pass, 8 fail, all failing files require `RUN_DB_INTEGRATION=true` / DB-backed integration (`ai-promotion-evidence-persistence`, build-plan DB/route integration, database-safety, metadata-evidence-proof, re-extract-page-provenance-route, release-blockers-integration, unified-snapshot-integration).
+- **CI/deployment status:** local only; no Vercel preview or production deployment triggered.
+- **Known risks / assumptions:** Baseline counts are intentionally large because this branch is not allowed to rewrite #1012/#1013 overlap; merge readiness depends on shrinking/removing baseline entries as those PRs land.
+- **Next action:** After #1012/#1013 merge, remove resolved baseline entries and rerun all audits plus DB-backed integration with `RUN_DB_INTEGRATION=true`.
+- **Merge status:** not reviewed — not merge-safe until baseline entries are actively reviewed and DB-backed integration is run in CI.
+
+
+### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** release-hardening guardrails, regression-prevention audits, and legacy Tender Facts compatibility mapping.
 - **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR pending.
 - **Scope:**
