@@ -20,3 +20,7 @@ This map prevents risky mass-renames while the product language moves from legac
 - Legacy route names may remain stable for callers, but responses must not return user-facing metadata wording.
 - Any future alias route should be implemented as a thin wrapper around the existing handler to avoid diverging behavior.
 - File renames should happen only after PR #1012 and PR #1013 merge to avoid conflicts with their UI/API cleanup.
+
+## Audit baseline cleanup rule
+
+The static audit baselines are temporary compatibility scaffolding. When a PR removes a legacy metadata-named UI label, route response, or raw-error response, remove the matching baseline entry in the same PR. Do not add new baseline entries unless the usage is demonstrably internal compatibility and documented here.
