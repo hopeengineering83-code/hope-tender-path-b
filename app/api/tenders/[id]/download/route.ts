@@ -408,6 +408,33 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
 
+  // ── Required-format hard gate ──────────────────────────────────────────────
+  // The generation-readiness warning promises "final export will block with
+  // PDF_REQUIRED_CONVERSION_UNAVAILABLE" — this is that gate. It previously
+  // existed only in the validate route, so hitting /download?type=zip directly
+  // skipped it: a tender requiring "Technical Proposal.pdf" could ship a final
+  // ZIP containing only DOCX files. Runs against the FULL active document set
+  // (before envelope scoping) so an envelope query cannot bypass it, and only
+  // counts documents that actually have bytes — PLANNED/contentless rows never
+  // satisfy a required format.
+  const { detectTenderFormatPolicy, checkTenderFormatCoverage } = await import("../../../../../lib/engine/export-format-policy");
+  const zipFormatPolicy = detectTenderFormatPolicy({
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    requirements: (tender.requirements ?? []).map((r: any) => ({ exactFileName: r.exactFileName ?? null })),
+  });
+  const generatedExtensions = docs
+    .filter((d) => d.fileContent || d.storagePath)
+    .map((d) => (d.exactFileName ?? d.name ?? "").split(".").pop() ?? "")
+    .filter(Boolean);
+  const formatCoverage = checkTenderFormatCoverage(zipFormatPolicy, generatedExtensions);
+  if (!formatCoverage.ok) {
+    return err(`Final ZIP blocked: ${formatCoverage.reason}`, 422, {
+      code: formatCoverage.code,
+      missing: formatCoverage.missing,
+    });
+  }
+
   // Runtime revalidation: Download always builds a fresh ZIP (does not serve
   // a stored package), so it always re-checks readiness, central gate, and
   // source file existence. There is no stale-package risk for ZIP downloads.
@@ -628,48 +655,57 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     : docs.find((d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "")) ?? docs[0];
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
 
-  // Quality gate on PDF target — block if document has placeholders, AI traces, or envelope mismatches.
-  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
-  const pdfQuality = validateDocumentQuality({
-    name: target.name,
-    documentType: target.documentType,
-    fileContent: target.fileContent ?? null,
-    storagePath: target.storagePath ?? null,
-  });
-  if (pdfQuality.status === "BLOCKED") {
-    return err(
-      "PDF generation blocked: target document has quality issues (placeholders, AI traces, or envelope mismatches). Fix and regenerate before exporting.",
-      409,
-      { code: "QUALITY_VALIDATION_BLOCKED", document: target.exactFileName ?? target.name },
-    );
-  }
-
-  // Read the DOCX content and extract text using mammoth
+  // Load the source bytes (inline or storage-backed) before finalization.
   const contentResult = await readContentOrError(asReadyDoc(target));
   if (!contentResult.ok) return contentResult.response;
   const content = contentResult.content;
 
-  let markdown = "";
-  try {
-    const mammoth = await import("mammoth");
-    const result = await mammoth.extractRawText({ buffer: content.buffer });
-    markdown = result.value ?? "";
-  } catch {
-    // Fallback: use contentSummary if mammoth fails
-    markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
-  }
-  if (!markdown.trim()) markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
-
-  const { generateProposalPdf } = await import("../../../../../lib/engine/proposal-pdf");
-  const pdfBytes = await generateProposalPdf({
-    title: tender.title ?? "Technical Proposal",
-    clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,
-    reference: tender.reference ?? null,
-    markdown,
+  // Resolve the tender-required exact PDF filename (e.g. "Technical
+  // Proposal.pdf") for this source document. When the tender names no
+  // matching required PDF, fall back to a generic safe name — the generic
+  // file never claims to satisfy a required exact filename.
+  const { finalizeRequiredPdf, resolveRequiredPdfFileName } = await import("../../../../../lib/engine/workflow/pdf-finalizer");
+  const { detectTenderFormatPolicy } = await import("../../../../../lib/engine/export-format-policy");
+  const pdfPolicy = detectTenderFormatPolicy({
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    requirements: (tender.requirements ?? []).map((r: any) => ({ exactFileName: r.exactFileName ?? null })),
   });
+  const safeBase = (tender.title ?? "proposal").replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().slice(0, 60) || "proposal";
+  const pdfName = resolveRequiredPdfFileName(pdfPolicy, target) ?? `${safeBase}-proposal.pdf`;
 
-  const safeBase = (tender.title ?? "proposal").replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().slice(0, 60);
-  const pdfName = `${safeBase}-proposal.pdf`;
+  // Fail-closed finalization: real DOCX visible-text extraction, quality gate
+  // on the extracted text, %PDF byte validation, structured safe errors. The
+  // old path fell back to contentSummary/title as the PDF body when
+  // extraction failed — that could ship a near-empty "successful" PDF.
+  const finalized = await finalizeRequiredPdf({
+    requiredFileName: pdfName,
+    tender: {
+      title: tender.title ?? null,
+      clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,
+      reference: tender.reference ?? null,
+    },
+    sourceDocument: {
+      id: String(target.id),
+      name: target.name ?? null,
+      // Fall back to the normalized content filename so legacy docs without
+      // an exactFileName still pass the finalizer's DOCX detection.
+      exactFileName: target.exactFileName ?? content.filename,
+      documentType: target.documentType ?? null,
+      format: target.format ?? null,
+      generationStatus: target.generationStatus ?? null,
+      validationStatus: target.validationStatus ?? null,
+      reviewStatus: target.reviewStatus ?? null,
+      fileContent: content.base64,
+      storagePath: target.storagePath ?? null,
+    },
+  });
+  if (!finalized.ok) {
+    const status = finalized.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE" ? 422 : 409;
+    return err(finalized.publicMessage, status, { code: finalized.code, document: target.exactFileName ?? target.name });
+  }
+  const pdfBytes = finalized.bytes;
+
   await logAction({
     userId,
     action: "EXPORT_PACKAGE_DOWNLOAD",
@@ -677,10 +713,10 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     entityId: target.id,
     description: `Downloaded PDF export of "${target.name ?? target.exactFileName}" for tender "${tender.title}"`,
   });
-  return new NextResponse(Buffer.from(pdfBytes), {
+  return new NextResponse(new Uint8Array(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${pdfName}"`,
+      "Content-Disposition": `attachment; filename="${finalized.fileName}"`,
     },
   });
 }

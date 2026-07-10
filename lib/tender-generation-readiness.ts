@@ -650,7 +650,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (formatPolicy.requiresPdf) {
     warnings.push({
       code: "TENDER_REQUIRES_PDF",
-      message: `Tender submission plan requires PDF output (${formatPolicy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName).join(", ")}). In-engine PDF conversion is not yet implemented — final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE unless a PDF is uploaded.`,
+      message: `Tender submission plan requires PDF output (${formatPolicy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName).join(", ")}). Final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE until the required PDF is finalized from an approved source document (Finalize PDF) or the tender-issued PDF is uploaded.`,
       nextAction: "OPEN_TENDER_DETAIL",
     });
   }
