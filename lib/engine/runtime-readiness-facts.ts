@@ -38,6 +38,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { getEffectiveTenderFacts, type EffectiveTenderFactsResult } from "./effective-tender-facts";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -285,10 +286,35 @@ async function buildAnalysisState(
   tenderId: string,
   tender: any,
 ): Promise<RuntimeReadinessFacts["analysis"]> {
-  // Compute current source hash from active file content
-  const currentSourceHash = tender?.files?.length
-    ? tender.files.map((f: any) => f.contentHash || f.extractedText?.length || 0).join("|")
-    : null;
+  // BUG FIX: Previously currentSourceHash used a completely different algorithm
+  // (|`-joined contentHash || extractedText.length per file) that could NEVER
+  // match the canonical analysisInputHash (16-char sha256 hex). This caused
+  // hasGoodAnalysisForCurrentSource to always be false and contentChangedWarningOnly
+  // to always be true, even for fresh analyses. Now we use the canonical
+  // computeAnalysisContentHash(buildTenderAnalysisContent(...)) — the SAME
+  // function used by generation-readiness-gate.ts and the ai-analyze route.
+  let currentSourceHash: string | null = null;
+  if (tender?.files?.length) {
+    try {
+      const analysisContent = buildTenderAnalysisContent({
+        title: tender.title ?? "",
+        description: tender.description ?? null,
+        intakeSummary: tender.intakeSummary ?? null,
+        files: tender.files
+          .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+          .map((f: any) => ({
+            id: f.id,
+            originalFileName: f.originalFileName ?? f.fileName ?? "",
+            extractedText: f.extractedText ?? null,
+            createdAt: f.createdAt,
+          })),
+      });
+      currentSourceHash = computeAnalysisContentHash(analysisContent);
+    } catch {
+      // If hash computation fails, fall back to null (same as no files)
+      currentSourceHash = null;
+    }
+  }
 
   // Check for latest good analysis
   const latestJob = await (prisma as any).aiJob.findFirst({
