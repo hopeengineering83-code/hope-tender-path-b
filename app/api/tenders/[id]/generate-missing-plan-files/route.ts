@@ -190,6 +190,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
     return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_WEAK_EXTRACTION", error: "AI analysis was produced from weak extraction; re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
   }
+  if (analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_PARTIAL_EXTRACTION", error: "AI analysis ran on partial extraction; re-extract and re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
+  }
 
   // Client/procuring entity must be present (a document set with no client is
   // never exportable).

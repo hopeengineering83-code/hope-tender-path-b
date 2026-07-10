@@ -572,6 +572,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       // ── Central generation readiness gate ──────────────────────────────
       // Persisting a GENERATED GeneratedDocument is a generation act and
+      // Block on PARTIAL_EXTRACTION_AI_ANALYZED
+      if (tender.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+        return NextResponse.json({ success: false, ok: false, error: "Cannot persist AI proposal: AI analysis ran on partial extraction. Re-extract and re-run AI Analyze.", code: "ANALYSIS_FROM_PARTIAL_EXTRACTION" }, { status: 422 });
+      }
+
       // must pass the SAME central gate as /generate and the
       // PROPOSAL_GENERATION background handler. Without this, the
       // interactive AI-proposal path could create a GENERATED document

@@ -13,6 +13,7 @@ import { validateFileSignature } from "../../../../../lib/engine/export-format-p
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
+import { verifySourceFilesNotDeleted } from "../../../../../lib/engine/package-revision-safety";
 import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
@@ -388,6 +389,20 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
+
+  // Runtime revalidation: Download always builds a fresh ZIP (does not serve
+  // a stored package), so it always re-checks readiness, central gate, and
+  // source file existence. There is no stale-package risk for ZIP downloads.
+  // For single-document downloads, the central gate + checkExportReadiness
+  // provide the same revalidation.
+  //
+  // Runtime revalidation: verify source files have not been deleted since
+  // the package was prepared. If grounding source files are gone, the
+  // package is stale and must not be downloaded.
+  const sourceCheck = await verifySourceFilesNotDeleted(prisma, tender.id);
+  if (!sourceCheck.ok) {
+    return err("Source files required for grounding have been deleted. Regenerate documents before exporting.", 409, { code: "SOURCE_FILES_DELETED" });
+  }
 
   // Annotate each doc with its envelope and filter when ?envelope= is set.
   const docEnvelopes = new Map(docs.map((d) => [d.id, inferEnvelope(d.documentType ?? "TECHNICAL", d.exactFileName ?? d.name ?? "")]));
