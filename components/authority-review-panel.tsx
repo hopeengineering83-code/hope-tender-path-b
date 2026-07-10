@@ -186,11 +186,18 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
   }, [fetchReview]);
 
   const isReady = result?.status === "AUTHORITY_READY";
+  // Precondition check: if there are no generated documents or no confirmed
+  // build plan, authority review is in precondition-blocked mode — it should
+  // not present final authority scoring as the main state.
+  const hasGeneratedDocs = (result?.documentScores ?? []).some((d) => d.blockers.length > 0 || d.warnings.length > 0 || d.score > 0);
+  const preconditionBlocked = !loading && !error && !hasGeneratedDocs && result && result.status !== "AUTHORITY_READY";
   const borderClass = isReady
     ? "border-green-200 bg-green-50"
-    : result?.status === "NEEDS_REVIEW"
-      ? "border-amber-200 bg-amber-50"
-      : "border-red-200 bg-red-50";
+    : preconditionBlocked
+      ? "border-slate-200 bg-slate-50"
+      : result?.status === "NEEDS_REVIEW"
+        ? "border-amber-200 bg-amber-50"
+        : "border-red-200 bg-red-50";
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${result ? borderClass : "border-slate-200 bg-white"}`}>
@@ -204,15 +211,18 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
               ? "Running authority review…"
               : error
                 ? "Authority review unavailable"
-                : result?.status === "AUTHORITY_READY"
-                  ? "Document authority review passed"
-                  : result?.status === "NEEDS_REVIEW"
-                    ? "Issues require review before export"
-                    : "Authority review blocked — fix issues before export"}
+                : preconditionBlocked
+                  ? "Authority review unavailable — prerequisites not met"
+                  : result?.status === "AUTHORITY_READY"
+                    ? "Document authority review passed"
+                    : result?.status === "NEEDS_REVIEW"
+                      ? "Issues require review before export"
+                      : "Authority review blocked — fix issues before export"}
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Scans all generated documents for AI traces, placeholders, internal notes, envelope
-            mismatches, and manifest inconsistencies.
+            {preconditionBlocked
+              ? "Final authority review is unavailable until required documents are generated and validated. Complete earlier workflow stages first."
+              : "Scans all generated documents for AI traces, placeholders, internal notes, envelope mismatches, and manifest inconsistencies."}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -237,10 +247,15 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
 
       {result && (
         <>
-          {/* Overall score */}
+          {/* Overall score — labeled as preliminary when preconditions not met */}
           <div className="mt-4 rounded-xl border bg-white p-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-900">Overall authority score</p>
+              <p className="text-sm font-semibold text-slate-900">
+                Overall authority score
+                {preconditionBlocked && (
+                  <span className="ml-2 text-xs font-normal text-amber-700">Preliminary only — final authority review unavailable until required documents are generated and validated.</span>
+                )}
+              </p>
               <span className="text-2xl font-bold text-slate-900">{result.overallScore}/100</span>
             </div>
             <ScoreBar score={result.overallScore} />
