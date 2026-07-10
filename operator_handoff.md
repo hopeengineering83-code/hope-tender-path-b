@@ -44,11 +44,9 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| GLM (Super Z) | `fix/main-gaps-and-doc-updates` | Doc updates (provider order, stale priorities, session log) + main gap audit | `operator_handoff.md`, `CLAUDE.md`, `CLAUDE_TASKS.md`, `AGENTS.md` | Active | Push + create DRAFT PR |
-| Claude Code | `claude/short-honest-feedback-gaps-vyh8dv` (PR #961) | #793 boundary cuts + reference validator | `lib/engine/tender-field-extractors.ts`, `lib/engine/metadata-validators.ts` | DRAFT, not merged | Await Hope's review |
-| Claude Code | `claude/fix-clusters-A-E-off-961` | Clusters A-E repair + health route | 47 files | DRAFT, partially superseded by main #964/#965 | Await Hope's review |
-| GLM (Super Z) | `hotfix/metadata-ledger-completion-v2` | Tender facts ledger classification helpers | 6 files | DRAFT, tsc fixed | Await Hope's review |
-| GLM (Super Z) | `fix/metadata-ledger-completion` | Universal tender facts ledger completion | 8 files | DRAFT, tsc fixed | Await Hope's review |
+| GLM (Super Z) | `fix/buildplan-document-generation-pipeline` (PR #1030) | Backend pipeline: bulk-review gates, validate fail-closed, DOCX visible-text extraction, OUTSIDE_PLAN_DOCUMENTS blocker | bulk-review, validate, export-readiness.ts, document-quality-validator.ts, final-submission-readiness.ts, download route | Open, CI green | Await Hope's review |
+| Codex | `codex/add-route-driven-verification-tests` (PR #1031) | Normalize panel readiness payloads with shared public envelope | lib/engine/public-readiness-envelope.ts, lifecycle/readiness-score/generation-readiness/export-readiness/workflow-status routes | Open | Await Hope's review |
+| GLM (Super Z) | `fix/main-app-gaps-dead-code-contradictions` (this PR) | Real bugs: orchestrator metadata branch, dead code, format-policy fallback, document-output-state regex, stale docs | tender-lifecycle-orchestrator.ts, download route, export-format-policy.ts, document-output-state.ts, runtime-readiness-facts.ts, generation-readiness-gate.ts, CLAUDE.md, AGENTS.md | Open | Await Hope's review |
 
 ### Lock rules
 

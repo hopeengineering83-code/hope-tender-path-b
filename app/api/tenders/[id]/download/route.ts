@@ -306,7 +306,10 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   // Additional to the Phase 4 quality validation check above.
   // Detects AI traces, placeholders, Bid-Team stubs, envelope cross-contamination,
   // and documents not in the Final Package Manifest.
-  let zipAuthorityNeedsReview = false;
+  // NOTE: The previous `zipAuthorityNeedsReview` variable was dead code — it
+  // was always false (the authority review block always returns err() on
+  // NEEDS_REVIEW/BLOCKED, never setting it to true). The X-Authority-Review-Status
+  // header branch at the end was therefore unreachable. Removed per audit.
   {
     const authorityDocs = tender.generatedDocuments
       .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED")
@@ -386,10 +389,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         },
       );
     }
-    zipAuthorityNeedsReview = false;
   }
-  // (zipAuthorityNeedsReview is set inside the block above; it propagates to
-  //  the response headers at the end of zipPackage.)
+  // (Authority review gate complete — any NEEDS_REVIEW/BLOCKED status
+  //  already returned err() above. No header propagation needed.)
 
   // Strict two-envelope tenders: the canonical helper sets
   // summary.strictTwoEnvelope when the tender requires SEPARATE technical
@@ -587,9 +589,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   if (hasFinancialDocs && !envelopeFilter) {
     responseHeaders["X-Envelope-Note"] =
       "FINANCIAL documents are included. If this tender requires separate technical and financial envelopes, submit the financial files in a separate sealed package per the tender instructions.";
-  }
-  if (zipAuthorityNeedsReview) {
-    responseHeaders["X-Authority-Review-Status"] = "NEEDS_REVIEW";
   }
   // PERF-003: stream the ZIP back to the client instead of returning a single
   // monolithic buffer. JSZip still materializes the full archive in memory

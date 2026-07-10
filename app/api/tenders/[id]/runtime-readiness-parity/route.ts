@@ -60,6 +60,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       executiveSnapshot: facts.buildPlan.exportReadyAllowed ? "ready" : "blocked",
       canonicalReadiness: facts.metadata.deadline.resolved && facts.metadata.submissionMethod.resolved ? "ok" : "blocked",
       bidControl: facts.analysis.contentChangedHardBlock ? "blocked" : "ok",
+      // NOTE: facts.finalPackage.exportReady is always false (the runtime
+      // facts builder does not call the expensive getFinalSubmissionReadiness).
+      // This is intentionally fail-closed — the actual export-ready verdict
+      // is computed by the /export-readiness and /download routes. Do NOT
+      // change this to call getFinalSubmissionReadiness here without profiling
+      // (it loads full tender data + generated docs).
       finalSubmission: facts.finalPackage.exportReady ? "ready" : "blocked",
     };
 

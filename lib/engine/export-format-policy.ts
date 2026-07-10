@@ -24,14 +24,28 @@ type TenderLike = {
 function collectExactFilenames(tender: TenderLike): string[] {
   const out = new Set<string>();
   for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
-    try {
-      const parsed = safeParseJsonArray(raw ?? "[]");
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
-        }
+    if (!raw || raw.trim() === "") continue;
+    // Try JSON array first (canonical storage format).
+    const parsed = safeParseJsonArray(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      for (const item of parsed) {
+        if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
       }
-    } catch { /* malformed JSON — skip */ }
+      continue;
+    }
+    // BUG FIX: Fall back to plain-text newline/comma-separated parsing.
+    // Previously, if `exactFileNaming` was a plain string like
+    // "Technical Proposal.pdf\nFinancial Proposal.xlsx" (not JSON),
+    // safeParseJsonArray returned [] and zero filenames were collected.
+    // This silently disabled the PDF/DOCX/XLSX format coverage check.
+    // parseRequiredFileList in export-readiness.ts already handles this
+    // fallback — now we match it here for consistency.
+    if (!raw.trim().startsWith("[")) {
+      for (const item of raw.split(/\n|,/)) {
+        const s = item.trim();
+        if (s.length > 0) out.add(s);
+      }
+    }
   }
   for (const req of tender.requirements ?? []) {
     const name = req.exactFileName?.trim();

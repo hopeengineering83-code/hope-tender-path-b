@@ -115,8 +115,16 @@ export type RuntimeReadinessFacts = {
     exportReadyAllowed: boolean;
   };
   finalPackage: {
+    /** True when the final-submission-readiness module loaded successfully.
+     *  Does NOT mean export is ready — the caller MUST call
+     *  getFinalSubmissionReadiness() for the actual readiness verdict. */
     modelAvailable: boolean;
+    /** Always false here — the actual export-ready verdict requires calling
+     *  getFinalSubmissionReadiness() with full tender data. Kept in the shape
+     *  for backwards compatibility but consumers should NOT trust this field. */
     exportReady: boolean;
+    /** Always empty here — actual blockers come from
+     *  getFinalSubmissionReadiness(). Kept for backwards compatibility. */
     blockers: string[];
   };
   contradictions: RuntimeContradiction[];
