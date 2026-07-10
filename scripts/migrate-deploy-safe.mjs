@@ -73,6 +73,52 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Pre-warm the database connection before running `prisma migrate deploy`.
+ *
+ * Neon (and other serverless Postgres providers) auto-suspend their compute
+ * after inactivity. The first connection has to wake the compute, which can
+ * take 2–5 seconds and exceed Prisma's default `connect_timeout` — surfacing
+ * as `P1001` / `P1002` in the build logs. The existing retry logic in
+ * `deploy()` handles this, but each retry re-runs the FULL `migrate deploy`
+ * command (heavier than needed). This prewarm runs a trivial `SELECT 1` via
+ * `prisma db execute --stdin` to wake the compute cheaply. If it succeeds,
+ * `migrate deploy` connects to an already-warm database and never hits
+ * P1001/P1002.
+ *
+ * If prewarm fails (e.g. database truly down), we don't throw — `deploy()`
+ * still has its own retry logic. Prewarm is an optimization, not a gate.
+ */
+function prewarm(attempt = 1) {
+  const sql = "SELECT 1;";
+  const executable = process.platform === "win32" ? "npx.cmd" : "npx";
+  try {
+    execFileSync(executable, ["prisma", "db", "execute", "--stdin"], {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      input: sql,
+    });
+    return true;
+  } catch (error) {
+    const message = errorText(error);
+    const isReachable = DB_REACH_ERROR_CODES.some((code) => message.includes(code));
+    if (isReachable && attempt < MAX_DB_REACH_ATTEMPTS) {
+      const delayMs = Math.min(2000 * 2 ** (attempt - 1), 16000);
+      console.warn(
+        `Pre-warm: database unreachable (P1001/P1002) on attempt ${attempt}/${MAX_DB_REACH_ATTEMPTS}. ` +
+          `Waiting ${delayMs}ms for the compute to wake, then retrying...`,
+      );
+      sleepSync(delayMs);
+      return prewarm(attempt + 1);
+    }
+    // Don't throw — let deploy() try with its own retry logic.
+    console.warn("Pre-warm did not succeed; proceeding to migrate deploy (which has its own retry).");
+    return false;
+  }
+}
+
 function deploy(attempt = 1) {
   try {
     prisma(["migrate", "deploy"], { capture: true });
@@ -142,6 +188,17 @@ function recoverFailedInit() {
     const msg = errorText(err);
     if (!/already recorded|already applied/i.test(msg)) throw err;
   }
+}
+
+// Pre-warm the database connection so `migrate deploy` connects to an
+// already-wake compute and doesn't hit P1001/P1002 cold-start timeouts.
+// This is especially important on Neon, which auto-suspends idle computes.
+console.log("Pre-warming database connection (SELECT 1)...");
+const prewarmOk = prewarm();
+if (prewarmOk) {
+  console.log("Pre-warm succeeded — database is warm.");
+} else {
+  console.log("Pre-warm did not succeed — migrate deploy will retry if needed.");
 }
 
 const initialResult = deploy();
