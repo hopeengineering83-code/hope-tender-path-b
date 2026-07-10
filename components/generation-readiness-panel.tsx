@@ -95,24 +95,41 @@ export async function GenerationReadinessPanel({
     const { blockers, fullProposalBlockers, warnings, score } = readiness;
     const fullProposalReady = Boolean(readiness.fullProposalReady);
     const supportPackageReady = Boolean(readiness.supportPackageReady);
-    const panelClass = fullProposalReady
+    // If there are full-proposal blockers, the proposal is NOT ready regardless
+    // of what fullProposalReady says — the canonical gate (consumed by the
+    // Generation Action panel) is authoritative. This prevents the contradiction
+    // where this panel says "Ready" while the action panel says "not ready".
+    const hasFullProposalBlockers = (fullProposalBlockers ?? []).length > 0;
+    // Also check for no confirmed build plan — without it, generation cannot
+    // proceed safely. The readiness API includes this in blockers, but we
+    // double-check here to ensure the UI never shows "Ready" without a plan.
+    const hasNoConfirmedPlan = blockers.some((b: { code?: string }) =>
+      b.code === "BUILD_PLAN_MISSING" || b.code === "BUILD_PLAN_STALE" ||
+      b.code === "BUILD_PLAN_NOT_CONFIRMED" || b.code === "BUILD_PLAN_ITEMS_INVALID"
+    );
+    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan;
+    const panelClass = effectivelyReady
       ? "border-green-200 bg-green-50"
       : "border-red-200 bg-red-50";
-    const statusClass = fullProposalReady ? "text-green-700" : "text-red-700";
+    const statusClass = effectivelyReady ? "text-green-700" : "text-red-700";
 
     return (
       <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className={`text-xs font-semibold uppercase tracking-wide ${statusClass}`}>Generation readiness</p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">{fullProposalReady ? "Ready to generate full proposal" : "Full proposal generation blocked"}</h2>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">{effectivelyReady ? "Ready to generate full proposal" : "Full proposal generation blocked"}</h2>
             <p className="mt-1 text-sm text-slate-600">The server gate is authoritative. The numeric score is informational and cannot override blockers.</p>
-            {supportPackageReady && !fullProposalReady && (
+            {hasNoConfirmedPlan && (
+              <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan. Build and confirm the submission plan before generating.</p>
+            )}
+            {supportPackageReady && !effectivelyReady && (
               <p className="mt-1 text-sm text-amber-700">Support packages may be generated, but the full proposal remains blocked.</p>
             )}
           </div>
           <div className="flex items-center gap-3">
-            <ScoreGauge score={score} />
+            {/* When blockers exist, visually de-emphasize the score — it's misleading to show a high score next to "blocked" */}
+            <ScoreGauge score={effectivelyReady ? score : Math.min(score, 45)} />
           </div>
         </div>
 
@@ -143,9 +160,18 @@ export async function GenerationReadinessPanel({
           </div>
         )}
 
-        {warnings.length > 0 && (
+        {(() => {
+          // Deduplicate: suppress warnings whose message already appears in
+          // blockers or fullProposalBlockers — showing the same text twice
+          // (once as red blocker, once as amber warning) is confusing.
+          const blockerMessages = new Set<string>();
+          for (const b of blockers) blockerMessages.add(b.message);
+          if (fullProposalBlockers) for (const b of fullProposalBlockers) blockerMessages.add(b.message);
+          const dedupedWarnings = warnings.filter((w: { message: string }) => !blockerMessages.has(w.message));
+          if (dedupedWarnings.length === 0) return null;
+          return (
           <div className="mt-4 space-y-2">
-            {warnings.slice(0, 5).map((item, index) => (
+            {dedupedWarnings.slice(0, 5).map((item, index) => (
               <div key={`${item.code}-${index}`} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{item.message}</span>
@@ -154,7 +180,8 @@ export async function GenerationReadinessPanel({
               </div>
             ))}
           </div>
-        )}
+          );
+        })()}
       </section>
     );
   } catch (error) {

@@ -111,6 +111,31 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         submissionPlanBuilt,
         analysisTrusted,
         documentsCurrent,
+        // ── Structured blocker information ──────────────────────────────
+        // The export-readiness panel needs structured blockers, not just a
+        // generic "failed" message. These fields give the panel everything
+        // it needs to show actionable guidance.
+        primaryBlockerReason: (() => {
+          if (!submissionPlanBuilt) return "No confirmed Build Plan. Build and confirm the submission plan first.";
+          const ungenerated = finalPackage.documents.missingRequired.length;
+          if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
+          if (finalPackageDocumentBlockers > 0) return `${finalPackageDocumentBlockers} document blocker(s) remain.`;
+          if (reconciledTenderBlockers.length > 0) return reconciledTenderBlockers[0]?.title ?? "Tender-level blockers remain.";
+          if (!readiness.ok) return "Export gate is not satisfied.";
+          return null;
+        })(),
+        primaryFixAction: (() => {
+          if (!submissionPlanBuilt) return "Build/confirm submission plan.";
+          const ungenerated = finalPackage.documents.missingRequired.length;
+          if (ungenerated > 0) return "Generate required documents.";
+          if (finalPackageDocumentBlockers > 0) return "Resolve document blockers.";
+          if (reconciledTenderBlockers.length > 0) return reconciledTenderBlockers[0]?.recommendedAction ?? "Resolve tender-level blockers.";
+          if (!readiness.ok) return "Resolve all export gate blockers.";
+          return null;
+        })(),
+        requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
+        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+        plannedRequiredDocuments: finalPackage.documents.planned.length,
       },
     });
   } catch (error) {
