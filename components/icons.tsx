@@ -12,6 +12,7 @@
 // layout changes.
 
 import type { SVGProps } from "react";
+import * as React from "react";
 
 type IconProps = SVGProps<SVGSVGElement> & { title?: string };
 
