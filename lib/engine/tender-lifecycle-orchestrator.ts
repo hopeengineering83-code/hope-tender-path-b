@@ -50,6 +50,7 @@ import {
 import {
   buildProviderDiagnosticsSnapshot,
 } from "../ai-provider-health";
+import { newDiagnosticId } from "./safe-api-error";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -67,12 +68,25 @@ export type LifecycleState =
   | "SUBMISSION_PLAN_REQUIRED"
   | "SUBMISSION_PLAN_READY"
   | "EVIDENCE_MATCHING_REQUIRED"
+  // Engine has run but no compliance/matching rows were produced — vault
+  // inputs likely missing. Distinct from EVIDENCE_MATCHING_REQUIRED (engine
+  // has genuinely never run) so the UI can stop telling the user to
+  // re-run Engine endlessly when the real fix is reviewing vault inputs.
+  | "EVIDENCE_MATCHING_EMPTY"
+  // Engine ran and matching rows exist, but no FULL/SUBSTANTIAL evidence
+  // covers mandatory requirements. Primary action becomes
+  // LINK_VAULT_EVIDENCE, not Run Engine.
+  | "EVIDENCE_MATCHING_UNCONFIRMED"
   | "EVIDENCE_MATCHED"
   | "DOCUMENT_GENERATION_REQUIRED"
   | "DOCUMENTS_GENERATED"
   | "OFFICIAL_ORIGINALS_REQUIRED"
   | "QUALITY_REVIEW_REQUIRED"
   | "AUTO_FINALIZE_REQUIRED"
+  // AI Analyze job is in PARTIAL_NEEDS_RESUME — some chunks succeeded,
+  // some failed, and the analysis is resumable. Generation and export
+  // remain blocked until the analysis is resumed or retried.
+  | "PARTIAL_AI_ANALYSIS_BLOCKED"
   | "EXPORT_READINESS_BLOCKED"
   | "EXPORT_READY"
   | "ZIP_READY"
@@ -83,6 +97,7 @@ export type PrimaryNextAction =
   | "CONFIGURE_AI_PROVIDER"
   | "RUN_AI_ANALYZE"
   | "RETRY_AI_ANALYZE"
+  | "RESUME_AI_ANALYZE"
   | "APPROVE_FALLBACK_WITH_NOTE"
   | "REVIEW_ANALYSIS"
   | "COMPLETE_METADATA"
@@ -96,7 +111,8 @@ export type PrimaryNextAction =
   | "AUTO_FINALIZE"
   | "RESOLVE_EXPORT_BLOCKERS"
   | "DOWNLOAD_FINAL_ZIP"
-  | "RECONCILE_OUTSIDE_PLAN_DOCS";
+  | "RECONCILE_OUTSIDE_PLAN_DOCS"
+  | "REVIEW_MATCHING_INPUTS";
 
 export type AllowedAction =
   | "AI_ANALYZE"
@@ -161,6 +177,11 @@ export type TenderLifecycleResult = {
     source: AnalysisSource;
     hasText: boolean;
     score: number | null;
+    /** Canonical state from resolveTenderAnalysisState. Used to distinguish
+     *  PARTIAL_NEEDS_RESUME from AI_SUCCEEDED so the orchestrator can
+     *  recommend RESUME_AI_ANALYZE instead of treating partial AI as
+     *  full success. */
+    canonicalState?: string;
   };
   metadataStatus: {
     completenessRatio: number;
@@ -179,7 +200,14 @@ export type TenderLifecycleResult = {
     totalOutsidePlan: number;
     totalOfficialOriginalsRequired: number;
   };
-  evidenceStatus: EvidenceCoverageReport;
+  evidenceStatus: EvidenceCoverageReport & {
+    /** True when at least one ENGINE_RUN AiJob has reached a terminal
+     *  status (SUCCEEDED / PARTIAL_SUCCESS / FAILED). Used to distinguish
+     *  "Engine has genuinely never run" (false) from "Engine ran but
+     *  produced no/weak matching rows" (true) so the orchestrator no
+     *  longer tells the user to re-run Engine endlessly. */
+    engineHasRun: boolean;
+  };
   documentStatus: {
     total: number;
     generated: number;
@@ -204,6 +232,11 @@ export type TenderLifecycleResult = {
   blockers: Array<{ code: string; message: string; action: string }>;
   warnings: Array<{ code: string; message: string }>;
   advisoryWarnings: Array<{ code: string; message: string }>;
+
+  /** Stable diagnostic id for log correlation. Always present so the
+   *  Recovery Command Center can surface it when finalSubmissionStatus
+   *  is BLOCKED and the user needs to file a support request. */
+  diagnosticId: string;
 };
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -292,7 +325,7 @@ export async function computeTenderLifecycle(
   userId?: string,
 ): Promise<TenderLifecycleResult | null> {
   // Load tender + related data in parallel
-  const [tender, files, requirements, generatedDocs, complianceRows] =
+  const [tender, files, requirements, generatedDocs, complianceRows, engineJobCount] =
     await Promise.all([
       client.tender.findFirst({
         where: { id: tenderId, ...(userId ? { userId } : {}) },
@@ -319,6 +352,7 @@ export async function computeTenderLifecycle(
           intakeSummary: true,
           description: true,
           metadataContaminated: true,
+          userId: true,
         },
       }),
       client.tenderFile.findMany({
@@ -369,9 +403,54 @@ export async function computeTenderLifecycle(
         },
       }),
       client.complianceMatrix.count({ where: { tenderId, ...(userId ? { tender: { userId } } : {}) } }),
+      // Durable signal: count terminal ENGINE_RUN AiJobs so the orchestrator
+      // can distinguish "Engine has genuinely never run" (false) from
+      // "Engine ran but produced no/weak matching rows" (true). Without
+      // this, the orchestrator kept recommending RUN_ENGINE even after
+      // Engine had completed but produced no compliance rows — the user
+      // ended up in a loop of re-running Engine with no effect.
+      client.aiJob.count({
+        where: {
+          tenderId,
+          jobType: "ENGINE_RUN",
+          status: { in: ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"] },
+        },
+      }),
     ]);
 
   if (!tender) return null;
+
+  // ── Canonical analysis state ──────────────────────────────────────────────
+  // resolveTenderAnalysisState looks at AiJob + AiAnalyzeChunk rows (not
+  // just tender.notes) and exposes a PARTIAL_NEEDS_RESUME state that the
+  // notes-based detectAnalysisSourceWithApproval cannot see. We use it
+  // ONLY to detect the partial-AI case — the existing analysisSource
+  // variable continues to drive the rest of the orchestrator so we don't
+  // accidentally weaken the regex-fallback audit-only guard.
+  let canonicalAnalysisState: string | null = null;
+  try {
+    const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
+    const detail = await resolveTenderAnalysisState(
+      client,
+      tenderId,
+      tender.userId ?? userId ?? "",
+    );
+    canonicalAnalysisState = detail?.state ?? null;
+  } catch {
+    // The canonical resolver is best-effort. If it fails (e.g. missing
+    // Prisma client in unit-test harness), we fall back to the existing
+    // notes-based detection — the partial-AI branch simply won't fire.
+    canonicalAnalysisState = null;
+  }
+  const analysisPartialNeedsResume = canonicalAnalysisState === "PARTIAL_NEEDS_RESUME";
+  // engineHasRun: durable signal that Engine has executed at least once.
+  // Combined with complianceRows below to distinguish the four matching
+  // states the spec requires:
+  //   1. never ran        → complianceRows === 0 && !engineHasRun
+  //   2. ran, no rows     → complianceRows === 0 && engineHasRun
+  //   3. ran, weak rows   → complianceRows > 0 && !mandatoryEvidenceReady
+  //   4. ran, strong rows → complianceRows > 0 && mandatoryEvidenceReady
+  const engineHasRun = engineJobCount > 0;
 
   // Effective extraction metrics — combine the stored per-file score with a
   // freshly recomputed score and keep the more conservative (lower) value so a
@@ -548,6 +627,26 @@ export async function computeTenderLifecycle(
     lifecycleState = "AI_ANALYSIS_REQUIRED";
     primaryNextAction = "RUN_AI_ANALYZE";
   }
+  // 4b. AI Analyze is partial — needs resume. The notes-based detector
+  //     above treats this as "AI" (hasAnalysis=true) because tender.notes
+  //     contains "Analysis source: AI", but the canonical resolver can see
+  //     that the underlying AiJob is PARTIAL_SUCCESS / PARTIAL_NEEDS_RESUME.
+  //     Generation and export remain blocked until the analysis is resumed
+  //     or retried — so this MUST be checked BEFORE the regex-fallback
+  //     branch (which only fires when analysisSource is REGEX_FALLBACK_*).
+  //     Per spec rule 4: primary action must become RESUME_AI_ANALYZE,
+  //     not Run Engine.
+  else if (analysisPartialNeedsResume) {
+    lifecycleState = "PARTIAL_AI_ANALYSIS_BLOCKED";
+    primaryNextAction = providers.hasAnyProvider ? "RESUME_AI_ANALYZE" : "CONFIGURE_AI_PROVIDER";
+    blockers.push({
+      code: "ANALYSIS_PARTIAL_NEEDS_RESUME",
+      message: "AI Analyze is partial — some chunks failed. Generation and export are blocked until the analysis is resumed or retried with healthy providers.",
+      action: providers.hasAnyProvider
+        ? "Resume AI Analyze to complete the failed chunks. The resumable job will skip already-succeeded chunks."
+        : "Add an AI provider key in environment settings, then resume AI Analyze.",
+    });
+  }
   // 5. Analysis used regex fallback and is not human-approved
   else if (analysisSource === "REGEX_FALLBACK_AI_ERROR") {
     lifecycleState = "ANALYSIS_FALLBACK_UNAPPROVED";
@@ -610,11 +709,47 @@ export async function computeTenderLifecycle(
     primaryNextAction = "BUILD_SUBMISSION_PLAN";
     warnings.push({ code: "NO_SUBMISSION_PLAN", message: "No explicit submission plan exists. Generated documents cannot be validated against tender requirements." });
   }
-  // 9. Evidence matching needed
-  else if (requirements.length > 0 && complianceRows === 0) {
+  // 9. Evidence matching needed — DURABLE SIGNAL SPLIT.
+  //    The orchestrator now distinguishes four matching states (spec rule 1):
+  //      9a. Engine has genuinely never run  → RUN_ENGINE (only valid case)
+  //      9b. Engine ran but produced no rows → REVIEW_MATCHING_INPUTS
+  //      9c. Engine ran, rows exist, no FULL/SUBSTANTIAL → LINK_VAULT_EVIDENCE
+  //    Without this split, the orchestrator kept recommending RUN_ENGINE
+  //    even after Engine had completed but produced no compliance rows —
+  //    the user ended up in a loop of re-running Engine with no effect.
+  else if (requirements.length > 0 && complianceRows === 0 && !engineHasRun) {
     lifecycleState = "EVIDENCE_MATCHING_REQUIRED";
     primaryNextAction = "RUN_ENGINE";
-    blockers.push({ code: "EVIDENCE_NOT_ASSESSED", message: "Requirements exist but the compliance/evidence matrix is empty.", action: "Run Engine to create requirement-evidence links." });
+    blockers.push({ code: "EVIDENCE_NOT_ASSESSED", message: "Requirements exist but the compliance/evidence matrix is empty — Engine has never run for this tender.", action: "Run Engine to create requirement-evidence links." });
+  }
+  // 9b. Engine has run but produced zero compliance rows. Re-running Engine
+  //     is unlikely to help — the real issue is missing vault inputs
+  //     (no reviewed experts/projects, no compliance records). Primary
+  //     action becomes REVIEW_MATCHING_INPUTS, not Run Engine.
+  else if (requirements.length > 0 && complianceRows === 0 && engineHasRun) {
+    lifecycleState = "EVIDENCE_MATCHING_EMPTY";
+    primaryNextAction = "REVIEW_MATCHING_INPUTS";
+    blockers.push({
+      code: "ENGINE_RAN_NO_MATCHES",
+      message: "Engine has already run but produced no matching rows. Re-running Engine without fixing vault inputs will not help.",
+      action: "Review vault experts/projects and compliance records on the Matching page, then re-run Engine.",
+    });
+  }
+  // 9c. Engine ran and matching rows exist, but no FULL/SUBSTANTIAL
+  //     evidence covers mandatory requirements. Per spec rule 2: primary
+  //     action must become LINK_VAULT_EVIDENCE, not Run Engine. This MUST
+  //     be checked BEFORE step 11 (DOCUMENT_GENERATION_REQUIRED) so that
+  //     evidence gaps take priority over doc-generation gaps — per spec
+  //     rule 6, the primary next action is the first blocker-resolving
+  //     action.
+  else if (requirements.length > 0 && mandatoryReqs.length > 0 && !mandatoryEvidenceReady && complianceRows > 0) {
+    lifecycleState = "EVIDENCE_MATCHING_UNCONFIRMED";
+    primaryNextAction = "LINK_VAULT_EVIDENCE";
+    blockers.push({
+      code: "MANDATORY_EVIDENCE_WEAK",
+      message: `Engine has run and ${complianceRows} matching row(s) exist, but ${mandatoryReqs.length - (evidenceStatus.fullyCoveredMandatory ?? 0)}/${mandatoryReqs.length} mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence.`,
+      action: "Link vault evidence or confirm existing evidence to strengthen mandatory coverage before generating documents.",
+    });
   }
   // 10. Outside-plan docs need reconciliation before export
   else if (counts.outsidePlanRows > 0 && counts.finalExportCandidates > 0) {
@@ -622,7 +757,10 @@ export async function computeTenderLifecycle(
     primaryNextAction = "RECONCILE_OUTSIDE_PLAN_DOCS";
     warnings.push({ code: "OUTSIDE_PLAN_DOCS", message: `${counts.outsidePlanRows} document(s) are outside the submission plan and must be mapped or superseded before final export.` });
   }
-  // 11. Documents need generation
+  // 11. Documents need generation — per spec rule 3: primary action must
+  //     become GENERATE_REQUIRED_DOCUMENTS, not Run Engine. This branch
+  //     fires only when evidence is already strong (or no mandatory reqs)
+  //     because step 9c above takes priority for weak evidence.
   else if (counts.plannedMissingDocs > 0 || (plan.totalRequired > 0 && counts.finalExportCandidates === 0)) {
     lifecycleState = "DOCUMENT_GENERATION_REQUIRED";
     primaryNextAction = "GENERATE_REQUIRED_DOCUMENTS";
@@ -650,10 +788,16 @@ export async function computeTenderLifecycle(
     lifecycleState = "EXPORT_READY";
     primaryNextAction = "DOWNLOAD_FINAL_ZIP";
   }
-  // Default: analysis approved, beginning workflow
+  // Default: analysis approved, beginning workflow. Per spec rule 1, Run
+  // Engine is no longer the default when requirements.length === 0 — Run
+  // Engine does NOT extract requirements (AI Analyze does). If we land
+  // here with zero requirements, the user needs to (re-)run AI Analyze,
+  // not Run Engine. If requirements exist, the user should link vault
+  // evidence. This closes the "Endless Run Engine loop" bug from the
+  // screenshot: Analysis Approved + final BLOCKED + primary Run Engine.
   else {
     lifecycleState = "ANALYSIS_APPROVED";
-    primaryNextAction = requirements.length === 0 ? "RUN_ENGINE" : "LINK_VAULT_EVIDENCE";
+    primaryNextAction = requirements.length === 0 ? "RUN_AI_ANALYZE" : "LINK_VAULT_EVIDENCE";
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -794,6 +938,12 @@ export async function computeTenderLifecycle(
   }
 
   // ── Final submission status ────────────────────────────────────────────────
+  // Per spec rule 5 & 7: when final status is BLOCKED, the Recovery
+  // Command Center must never display "all good" / release-ready language.
+  // BLOCKED is returned whenever any blocker exists OR there are no final
+  // export candidates. PARTIAL is reserved for the in-between case (no
+  // hard blockers, but not yet ready). This keeps the fail-closed
+  // behavior intact — the bar for READY is unchanged.
   const finalSubmissionStatus: TenderLifecycleResult["finalSubmissionStatus"] =
     finalExportReady
       ? "READY"
@@ -801,10 +951,21 @@ export async function computeTenderLifecycle(
         ? "BLOCKED"
         : "PARTIAL";
 
+  // Stable diagnostic id for log correlation. Always present so the
+  // Recovery Command Center can surface it when finalSubmissionStatus is
+  // BLOCKED and the user needs to file a support request. The lifecycle
+  // route never returns raw error.message — instead it returns this id.
+  const diagnosticId = newDiagnosticId("lifecycle");
+
   return {
     lifecycleState: lifecycleState ?? "ANALYSIS_APPROVED",
     finalSubmissionStatus,
-    primaryNextAction: primaryNextAction ?? "RUN_ENGINE",
+    // Fallback is LINK_VAULT_EVIDENCE (not RUN_ENGINE) so a future code
+    // path that forgets to set primaryNextAction can never resurrect the
+    // "Endless Run Engine loop" bug from the screenshot. Run Engine is
+    // only appropriate when Engine has genuinely never run, which is
+    // explicitly checked in step 9a above.
+    primaryNextAction: primaryNextAction ?? "LINK_VAULT_EVIDENCE",
     allowedActions: allowed,
     blockedActions: blocked,
     counts,
@@ -815,6 +976,7 @@ export async function computeTenderLifecycle(
       // Legacy DB score retained only as workflow progress context; it is not
       // used to decide finalSubmissionStatus or DOWNLOAD_ZIP availability.
       score: tender.readinessScore,
+      canonicalState: canonicalAnalysisState ?? undefined,
     },
     metadataStatus: {
       completenessRatio: meta.overallRatio,
@@ -833,7 +995,7 @@ export async function computeTenderLifecycle(
       totalOutsidePlan: plan.totalOutsidePlan,
       totalOfficialOriginalsRequired: plan.totalOfficialOriginalsRequired,
     },
-    evidenceStatus,
+    evidenceStatus: { ...evidenceStatus, engineHasRun },
     documentStatus: {
       total: docsSnap.length,
       generated: plan.totalGenerated,
@@ -856,5 +1018,6 @@ export async function computeTenderLifecycle(
     blockers,
     warnings,
     advisoryWarnings,
+    diagnosticId,
   };
 }

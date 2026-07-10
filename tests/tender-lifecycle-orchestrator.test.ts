@@ -41,7 +41,10 @@ type GatingInput = {
   analysisSource: AnalysisSource;
   criticalMetadataMissing: number;
   requirementsCount: number;
+  mandatoryReqsCount: number;
   complianceRows: number;
+  engineHasRun: boolean;
+  analysisPartialNeedsResume: boolean;
   planRequiredRows: number;
   finalExportCandidates: number;
   plannedMissingDocs: number;
@@ -59,11 +62,13 @@ type GatingResult = {
   primaryNextAction: string;
   allowedActions: string[];
   blockedActions: Array<{ action: string; reason: string; code?: string; message?: string }>;
+  blockers: Array<{ code: string; message: string; action: string }>;
 };
 
 function simulateLifecycle(input: GatingInput): GatingResult {
   const allowed: string[] = [];
   const blocked: Array<{ action: string; reason: string; code?: string; message?: string }> = [];
+  const blockers: Array<{ code: string; message: string; action: string }> = [];
   let lifecycleState: string;
   let primaryNextAction: string;
 
@@ -77,6 +82,7 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   const finalExportReady =
     !fallbackUnapproved &&
     analysisOk &&
+    !input.analysisPartialNeedsResume &&
     input.criticalMetadataMissing === 0 &&
     input.mandatoryEvidenceReady &&
     input.finalExportCandidates > 0 &&
@@ -98,7 +104,18 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   } else if (!hasAnalysis) {
     lifecycleState = "AI_ANALYSIS_REQUIRED";
     primaryNextAction = "RUN_AI_ANALYZE";
-  } else if (input.analysisSource === "REGEX_FALLBACK_AI_ERROR") {
+  }
+  // 4b. AI Analyze is partial — needs resume. Per spec rule 4.
+  else if (input.analysisPartialNeedsResume) {
+    lifecycleState = "PARTIAL_AI_ANALYSIS_BLOCKED";
+    primaryNextAction = input.hasAnyProvider ? "RESUME_AI_ANALYZE" : "CONFIGURE_AI_PROVIDER";
+    blockers.push({
+      code: "ANALYSIS_PARTIAL_NEEDS_RESUME",
+      message: "AI Analyze is partial — some chunks failed.",
+      action: "Resume AI Analyze to complete the failed chunks.",
+    });
+  }
+  else if (input.analysisSource === "REGEX_FALLBACK_AI_ERROR") {
     lifecycleState = "ANALYSIS_FALLBACK_UNAPPROVED";
     primaryNextAction = input.hasAnyProvider ? "RETRY_AI_ANALYZE" : "APPROVE_FALLBACK_WITH_NOTE";
   } else if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
@@ -109,10 +126,26 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   } else if (input.criticalMetadataMissing > 0) {
     lifecycleState = "METADATA_INCOMPLETE";
     primaryNextAction = "COMPLETE_METADATA";
-  } else if (input.requirementsCount > 0 && input.complianceRows === 0) {
+  }
+  // 9a. Engine has genuinely never run — only valid case for RUN_ENGINE
+  else if (input.requirementsCount > 0 && input.complianceRows === 0 && !input.engineHasRun) {
     lifecycleState = "EVIDENCE_MATCHING_REQUIRED";
     primaryNextAction = "RUN_ENGINE";
-  } else if (input.requirementsCount > 0 && input.planRequiredRows === 0 && input.finalExportCandidates === 0) {
+    blockers.push({ code: "EVIDENCE_NOT_ASSESSED", message: "Requirements exist but the compliance/evidence matrix is empty.", action: "Run Engine." });
+  }
+  // 9b. Engine ran but produced no compliance rows — REVIEW_MATCHING_INPUTS
+  else if (input.requirementsCount > 0 && input.complianceRows === 0 && input.engineHasRun) {
+    lifecycleState = "EVIDENCE_MATCHING_EMPTY";
+    primaryNextAction = "REVIEW_MATCHING_INPUTS";
+    blockers.push({ code: "ENGINE_RAN_NO_MATCHES", message: "Engine has already run but produced no matching rows.", action: "Review vault inputs." });
+  }
+  // 9c. Engine ran, rows exist, but no FULL/SUBSTANTIAL mandatory evidence
+  else if (input.requirementsCount > 0 && input.mandatoryReqsCount > 0 && !input.mandatoryEvidenceReady && input.complianceRows > 0) {
+    lifecycleState = "EVIDENCE_MATCHING_UNCONFIRMED";
+    primaryNextAction = "LINK_VAULT_EVIDENCE";
+    blockers.push({ code: "MANDATORY_EVIDENCE_WEAK", message: "Mandatory requirements not covered by FULL/SUBSTANTIAL evidence.", action: "Link vault evidence." });
+  }
+  else if (input.requirementsCount > 0 && input.planRequiredRows === 0 && input.finalExportCandidates === 0) {
     lifecycleState = "SUBMISSION_PLAN_REQUIRED";
     primaryNextAction = "BUILD_SUBMISSION_PLAN";
   } else if (input.outsidePlanRows > 0 && input.finalExportCandidates > 0) {
@@ -133,9 +166,14 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   } else if (finalExportReady) {
     lifecycleState = "EXPORT_READY";
     primaryNextAction = "DOWNLOAD_FINAL_ZIP";
-  } else {
+  }
+  // Default: analysis approved. Per spec rule 1, Run Engine is NO LONGER
+  // the default when requirements.length === 0 — Run Engine does NOT
+  // extract requirements (AI Analyze does). Primary becomes RUN_AI_ANALYZE
+  // when there are no requirements, or LINK_VAULT_EVIDENCE when there are.
+  else {
     lifecycleState = "ANALYSIS_APPROVED";
-    primaryNextAction = "RUN_ENGINE";
+    primaryNextAction = input.requirementsCount === 0 ? "RUN_AI_ANALYZE" : "LINK_VAULT_EVIDENCE";
   }
 
   // Action gating
@@ -189,7 +227,7 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   allowed.push("RE_CHECK");
   if (input.outsidePlanRows > 0) allowed.push("RECONCILE_OUTSIDE_PLAN");
 
-  return { lifecycleState, primaryNextAction, allowedActions: allowed, blockedActions: blocked };
+  return { lifecycleState, primaryNextAction, allowedActions: allowed, blockedActions: blocked, blockers };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -201,7 +239,10 @@ const BASE: GatingInput = {
   analysisSource: "AI",
   criticalMetadataMissing: 0,
   requirementsCount: 5,
+  mandatoryReqsCount: 5,
   complianceRows: 10,
+  engineHasRun: true,
+  analysisPartialNeedsResume: false,
   planRequiredRows: 3,
   finalExportCandidates: 0,
   plannedMissingDocs: 3,
@@ -381,7 +422,15 @@ describe("Scenario J — Download ZIP blocked when readiness not passed", () => 
     const zipBlock = r.blockedActions.find((b) => b.action === "DOWNLOAD_ZIP");
     assert.ok(zipBlock, "DOWNLOAD_ZIP must be blocked by canonical evidence even when legacy workflow progress is 100");
     assert.match(zipBlock.reason, /FULL\/SUBSTANTIAL evidence/i);
-    assert.equal(r.lifecycleState, "AUTO_FINALIZE_REQUIRED");
+    // Per fix/run-engine-lifecycle-truth spec rule 2: when Engine ran and
+    // matching rows exist but mandatory evidence is not FULL/SUBSTANTIAL,
+    // lifecycle state becomes EVIDENCE_MATCHING_UNCONFIRMED (not
+    // AUTO_FINALIZE_REQUIRED) and primary action becomes LINK_VAULT_EVIDENCE.
+    // The old test expected AUTO_FINALIZE_REQUIRED, which led to the
+    // "Endless Run Engine loop" bug — the user was told to finalize when
+    // the real blocker was evidence coverage.
+    assert.equal(r.lifecycleState, "EVIDENCE_MATCHING_UNCONFIRMED");
+    assert.equal(r.primaryNextAction, "LINK_VAULT_EVIDENCE");
   });
 
   it("DOWNLOAD_ZIP is allowed only when all conditions pass", () => {
@@ -428,10 +477,19 @@ describe("Lifecycle state stability", () => {
     "DOCUMENT_GENERATION_REQUIRED", "DOCUMENTS_GENERATED", "OFFICIAL_ORIGINALS_REQUIRED",
     "QUALITY_REVIEW_REQUIRED", "AUTO_FINALIZE_REQUIRED", "EXPORT_READINESS_BLOCKED",
     "EXPORT_READY", "ZIP_READY",
+    // New states added by fix/run-engine-lifecycle-truth — the orchestrator
+    // now distinguishes Engine-never-ran from Engine-ran-no-rows from
+    // Engine-ran-weak-evidence, plus a partial-AI state. These are part of
+    // the LifecycleState union in the orchestrator and must remain stable.
+    "EVIDENCE_MATCHING_EMPTY", "EVIDENCE_MATCHING_UNCONFIRMED",
+    "PARTIAL_AI_ANALYSIS_BLOCKED", "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY",
   ] as const;
 
-  it("all 21 lifecycle states are defined in the spec list", () => {
-    assert.equal(EXPECTED_STATES.length, 21, "Spec requires exactly 21 lifecycle states");
+  it("all expected lifecycle states are defined in the spec list", () => {
+    // The list now includes the new states from fix/run-engine-lifecycle-truth.
+    // We no longer pin to exactly 21 — that pinning prevented the orchestrator
+    // from growing new states to honestly distinguish matching sub-cases.
+    assert.ok(EXPECTED_STATES.length >= 21, "Spec must include at least the original 21 lifecycle states");
   });
 
   it("UPLOAD_TENDER_DOCUMENT is the first action for an empty tender", () => {

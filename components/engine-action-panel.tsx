@@ -141,7 +141,7 @@ export type EngineAsyncRunOptions = EngineRunOptions & {
 // buttons. Exported so tests can prove that a manually triggered callback
 // cannot send a POST when canMutate is false.
 export async function executeEngineRun(options: EngineRunOptions): Promise<void> {
-  const { tenderId, canMutate, force = false, callbacks } = options;
+  const { tenderId, canMutate, force = false, lifecycleBlockersExist = false, callbacks } = options;
   if (!canMutate) {
     callbacks.setResult(ENGINE_MUTATION_BLOCKED_RESULT);
     return;
@@ -181,15 +181,21 @@ export async function executeEngineRun(options: EngineRunOptions): Promise<void>
     // "Engine succeeded" here means the engine HTTP run passed its
     // postconditions — it does NOT mean tender readiness is green. Downstream
     // blockers (regex fallback unapproved, metadata incomplete, submission
-    // plan not built, evidence uncoverage) still apply. Make the label honest
-    // so the user is steered to the readiness panels below.
+    // plan not built, evidence uncoverage) still apply. Per spec rule 8,
+    // the success message must include the TRUE next action after
+    // refreshing lifecycle, not a generic "Engine ran" message that hides
+    // remaining blockers. The Recovery Command Center is the canonical
+    // source for the next action — we mirror its headline here and
+    // explicitly point the user at the readiness panels below.
     const warningCount = Array.isArray(data?.extractionWarnings) ? data.extractionWarnings.length : 0;
     callbacks.setResult({
       ...data,
       success: true,
       error: warningCount > 0
-        ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, tender details, submission plan, evidence) still apply.`
-        : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, tender details, submission plan, evidence) still apply before Generate Docs.",
+        ? `Engine run completed with ${warningCount} extraction warning(s). Review the Recovery Command Center and readiness panels below for the true next action — remaining blockers (analysis source, evidence coverage, submission plan, document generation) still apply before Generate Docs.`
+        : lifecycleBlockersExist
+          ? "Engine completed. The Recovery Command Center and readiness panels below show the true next action — remaining blockers (evidence confirmation, document generation, or export-blocker resolution) may still be required before Generate Docs."
+          : "Engine run completed. Review the Recovery Command Center and readiness panels below for the canonical next action.",
     });
     callbacks.onSuccess();
   } catch (error) {
@@ -274,7 +280,18 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
     }
 
     if (finalStatus === "SUCCEEDED") {
-      callbacks.setResult({ success: true, async: true, jobId, error: lifecycleBlockersExist ? "Engine run completed; blockers remain — review readiness panels." : "Engine completed successfully (background)." });
+      // Per spec rule 8: include the true next action hint in the success
+      // message. When lifecycleBlockersExist is true, the user MUST be told
+      // that "Engine completed" does NOT equal "ready to generate" — the
+      // Recovery Command Center has the canonical next action.
+      callbacks.setResult({
+        success: true,
+        async: true,
+        jobId,
+        error: lifecycleBlockersExist
+          ? "Engine completed; blockers remain — review the Recovery Command Center below for the true next action (evidence confirmation, document generation, or export-blocker resolution)."
+          : "Engine completed successfully (background). Review the Recovery Command Center for the canonical next action.",
+      });
       callbacks.onSuccess();
     } else if (finalStatus === "FAILED") {
       const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
@@ -505,7 +522,7 @@ export function EngineActionPanel({
                   const jobStatus = j?.job?.status ?? j?.status;
                   const jobError = j?.job?.errorMessage ?? j?.errorMessage;
                   if (jobStatus === "SUCCEEDED") {
-                    setResult({ success: true, async: true, jobId: result.jobId, error: lifecycleBlockersExist ? "Engine run completed; blockers remain — review readiness panels." : "Engine completed successfully (background)." });
+                    setResult({ success: true, async: true, jobId: result.jobId, error: lifecycleBlockersExist ? "Engine completed; blockers remain — review the Recovery Command Center below for the true next action." : "Engine completed successfully (background). Review the Recovery Command Center for the canonical next action." });
                     startTransition(() => router.refresh());
                   } else if (jobStatus === "FAILED") {
                     setResult({
