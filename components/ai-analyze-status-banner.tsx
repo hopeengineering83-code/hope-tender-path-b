@@ -1,5 +1,7 @@
 "use client";
 
+import { CheckCircleIcon, WarningIcon, PlayIcon, RefreshIcon } from "./icons";
+
 type ChunkProgress = {
   total: number;
   completed: number;
@@ -25,7 +27,7 @@ export function AiAnalyzeStatusBanner({ chunks, jobId, isAnalyzing, onContinue, 
     // All chunks complete — show compact green success state
     return (
       <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-2.5 flex items-center gap-3">
-        <span className="text-green-600 text-sm font-medium">✓ AI analysis complete</span>
+        <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium"><CheckCircleIcon /> AI analysis complete</span>
         <span className="text-xs text-green-700">
           {completed} of {total} chunks analyzed
         </span>
@@ -43,7 +45,7 @@ export function AiAnalyzeStatusBanner({ chunks, jobId, isAnalyzing, onContinue, 
     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-amber-700 font-medium text-sm">⚠ Analysis partially complete</span>
+          <span className="inline-flex items-center gap-1 text-amber-700 font-medium text-sm"><WarningIcon /> Analysis partially complete</span>
           <span className="text-xs text-amber-700">
             {completed} of {total} chunks analyzed{detailStr}
           </span>
@@ -52,16 +54,18 @@ export function AiAnalyzeStatusBanner({ chunks, jobId, isAnalyzing, onContinue, 
           <button
             onClick={onContinue}
             disabled={isAnalyzing}
-            className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+            title="Continue the partial AI Analyze job from where it left off"
           >
-            {isAnalyzing ? "Analyzing…" : "Continue AI Analyze"}
+            <PlayIcon /> {isAnalyzing ? "Analyzing…" : "Continue AI Analyze"}
           </button>
           <button
             onClick={onRetry}
             disabled={isAnalyzing}
-            className="text-xs text-amber-700 underline hover:text-amber-900 disabled:opacity-50"
+            className="inline-flex items-center gap-1 text-xs text-amber-700 underline hover:text-amber-900 disabled:opacity-60"
+            title="Retry AI Analyze from scratch"
           >
-            Retry from scratch
+            <RefreshIcon /> Retry from scratch
           </button>
         </div>
       </div>

@@ -12,6 +12,7 @@ import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { CanonicalStatusBadge, CanonicalStatusIcon } from "./canonical-status-badge";
+import { ArrowRightIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleKey } from "../lib/engine/canonical-readiness-state";
@@ -314,8 +315,8 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
             {scoreBar(d.score, d.max)}
             <p className="mt-1 text-[10px] text-slate-500 truncate" title={d.detail}>{d.detail}</p>
             {d.actionLabel && d.actionHref && (
-              <a href={d.actionHref} className={`mt-1.5 inline-block text-[10px] font-medium underline ${d.status === "FAIL" ? "text-red-600 hover:text-red-800" : "text-amber-600 hover:text-amber-800"}`}>
-                {d.actionLabel} →
+              <a href={d.actionHref} className={`mt-1.5 inline-flex items-center gap-0.5 text-[10px] font-medium underline ${d.status === "FAIL" ? "text-red-600 hover:text-red-800" : "text-amber-600 hover:text-amber-800"}`}>
+                {d.actionLabel} <ArrowRightIcon />
               </a>
             )}
           </div>

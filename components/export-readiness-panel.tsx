@@ -767,7 +767,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                           {isOriginalRequired(blocker) && (
                             <div className="shrink-0">
                               <input ref={(el) => { fileInputs.current[blocker.documentId] = el; }} type="file" accept=".doc,.docx,.pdf,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={(event) => void attachOriginal(blocker, event.target.files?.[0] ?? null)} />
-                              <button type="button" onClick={() => fileInputs.current[blocker.documentId]?.click()} disabled={busy} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" title="Attach the exact tender-issued original form/template. This does not regenerate the form.">
+                              <button type="button" onClick={() => fileInputs.current[blocker.documentId]?.click()} disabled={busy} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60" title="Attach the exact tender-issued original form/template. This does not regenerate the form.">
                                 {attachingDocId === blocker.documentId ? "Attaching…" : "Attach official original"}
                               </button>
                             </div>
@@ -805,7 +805,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                               type="button"
                               disabled={busy || resolvingAdvisory === advisory.category}
                               onClick={() => void resolveAdvisory(advisory.category, opt.value)}
-                              className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[10px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                              className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[10px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
                               title={`Mark this advisory as ${opt.label} (does not affect blockers).`}
                             >
                               {resolvingAdvisory === advisory.category ? "…" : opt.label}

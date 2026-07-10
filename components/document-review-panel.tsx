@@ -21,6 +21,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowRightIcon } from "./icons";
 
 type Reviewer = {
   id: string;
@@ -297,7 +298,7 @@ export function DocumentReviewPanel({
                   <span className="font-medium">{r.action}</span>
                   <span className="text-slate-400">·</span>
                   <span className="text-slate-500">{r.priorStatus.replace(/_/g, " ")}</span>
-                  <span className="text-slate-400">→</span>
+                  <span className="text-slate-400"><ArrowRightIcon /></span>
                   <span className="text-slate-700 font-medium">{r.newStatus.replace(/_/g, " ")}</span>
                 </div>
                 {r.notes && <p className="mt-1.5 italic text-slate-600">&ldquo;{r.notes}&rdquo;</p>}

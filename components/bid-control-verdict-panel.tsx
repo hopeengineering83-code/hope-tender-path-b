@@ -129,7 +129,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   const planLabel = (() => {
     if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "Not detected";
     if (planStatus === "NO_PLAN_NO_DOCS") return "Not detected";
-    if (planStatus === "PLAN_MATCHED") return "Plan matched ✓";
+    if (planStatus === "PLAN_MATCHED") return "Plan matched";
     if (planStatus === "PLAN_MISSING_DOCS") return "Missing docs";
     if (planStatus === "PLAN_EXTRA_DOCS") return "Extra docs";
     if (planStatus === "DERIVED_PLAN_UNCONFIRMED") return "Derived plan";

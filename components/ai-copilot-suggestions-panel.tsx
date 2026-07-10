@@ -60,7 +60,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       (tender.analysisExtractionStatus.includes("PARTIAL") || tender.analysisExtractionStatus.includes("WEAK"))
     ) {
       suggestions.push({
-        icon: "⚠",
+        icon: "⚠️",
         title: "Re-run AI Analyze on weak extraction",
         detail: "Analysis ran on partial extraction. Re-uploading a cleaner PDF and re-running will improve requirement coverage.",
         priority: "HIGH",

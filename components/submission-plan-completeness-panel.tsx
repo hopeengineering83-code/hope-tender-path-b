@@ -7,8 +7,9 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DocumentIcon, RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon } from "./icons";
 
 type Status =
   | "GENERATED"
@@ -66,16 +67,16 @@ type Response = {
   warnings: string[];
 };
 
-const STATUS_BADGE: Record<Status, { label: string; tone: "ok" | "warn" | "bad" | "neutral" }> = {
-  GENERATED: { label: "GENERATED", tone: "ok" },
-  GENERATED_NEEDS_REVIEW: { label: "REVIEW NEEDED", tone: "warn" },
-  GENERATED_QUALITY_FAILED: { label: "QUALITY FAILED", tone: "bad" },
-  PLANNED: { label: "PLANNED", tone: "warn" },
-  OFFICIAL_ORIGINAL_REQUIRED: { label: "ATTACH ORIGINAL", tone: "warn" },
-  REPLACE_WITH_ORIGINAL: { label: "REPLACE WITH ORIGINAL", tone: "warn" },
-  MISSING: { label: "MISSING", tone: "bad" },
-  OUTSIDE_PLAN: { label: "OUTSIDE PLAN", tone: "warn" },
-  SUPERSEDED: { label: "HISTORICAL", tone: "neutral" },
+const STATUS_BADGE: Record<Status, { label: string; tone: "ok" | "warn" | "bad" | "neutral"; icon: React.ReactNode }> = {
+  GENERATED: { label: "GENERATED", tone: "ok", icon: <CheckCircleIcon /> },
+  GENERATED_NEEDS_REVIEW: { label: "REVIEW NEEDED", tone: "warn", icon: <WarningIcon /> },
+  GENERATED_QUALITY_FAILED: { label: "QUALITY FAILED", tone: "bad", icon: <BanIcon /> },
+  PLANNED: { label: "PLANNED", tone: "warn", icon: <ClockIcon /> },
+  OFFICIAL_ORIGINAL_REQUIRED: { label: "ATTACH ORIGINAL", tone: "warn", icon: <WarningIcon /> },
+  REPLACE_WITH_ORIGINAL: { label: "REPLACE WITH ORIGINAL", tone: "warn", icon: <WarningIcon /> },
+  MISSING: { label: "MISSING", tone: "bad", icon: <BanIcon /> },
+  OUTSIDE_PLAN: { label: "OUTSIDE PLAN", tone: "warn", icon: <WarningIcon /> },
+  SUPERSEDED: { label: "HISTORICAL", tone: "neutral", icon: <ClockIcon /> },
 };
 
 function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
@@ -109,7 +110,8 @@ function RowActionButton({ label, busy, disabled, onClick }: { label: string; bu
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="whitespace-nowrap rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      title={disabled ? "Action unavailable — resolve blockers first" : label}
     >
       {busy ? "Working…" : label}
     </button>
@@ -317,11 +319,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button type="button" onClick={() => void buildPlan()} aria-label={building ? "Building submission plan" : classifying ? "Auto-classifying documents" : "Build submission plan"} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building || classifying}>
-            {building ? "Building…" : classifying ? "Classifying…" : "Build Plan"}
+          <button type="button" onClick={() => void buildPlan()} aria-label={building ? "Building submission plan" : classifying ? "Auto-classifying documents" : "Build submission plan"} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60" disabled={loading || building || classifying} title="Build the submission plan from extracted requirements">
+            <DocumentIcon /> {building ? "Building…" : classifying ? "Classifying…" : "Build Plan"}
           </button>
-          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission plan" : "Re-check submission plan"} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" disabled={loading || building || classifying}>
-            {loading ? "Checking…" : "Re-check"}
+          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission plan" : "Re-check submission plan"} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" disabled={loading || building || classifying} title="Re-check the submission plan status">
+            <RefreshIcon /> {loading ? "Checking…" : "Re-check"}
           </button>
           {data.summary.totalSuperseded > 0 && (
             <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500">
@@ -425,7 +427,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
                   </td>
                   <td className="px-2 py-2 text-[10px] font-medium text-slate-600">{row.envelope}</td>
                   <td className="px-2 py-2">
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${toneClass(badge.tone)}`}>{badge.label}</span>
+                    <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${toneClass(badge.tone)}`}>{badge.icon} {badge.label}</span>
                     {row.officialOriginal && <p className="mt-1 text-[10px] text-amber-600">Official original</p>}
                   </td>
                   <td className="px-2 py-2 text-slate-600">{row.recommendedAction}</td>

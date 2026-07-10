@@ -336,12 +336,12 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
               onClick={() => void confirmAllSafe()}
               style={canMutate ? undefined : { display: "none" }}
               disabled={confirmingAll}
-              className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
+              className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-60"
             >
               {confirmingAll ? "Confirming…" : "Confirm all as partial"}
             </button>
           )}
-          <button type="button" onClick={() => void loadTraceability()} disabled={traceLoading} aria-expanded={traceOpen} aria-controls="traceability-panel" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+          <button type="button" onClick={() => void loadTraceability()} disabled={traceLoading} aria-expanded={traceOpen} aria-controls="traceability-panel" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-60">
             {traceLoading ? "…" : <><ChevronDownIcon className={traceOpen ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} /> Traceability</>}
           </button>
           <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} aria-controls="req-coverage-list" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
@@ -597,7 +597,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                                     void applyCoverageAction(row.id, action);
                                   }
                                 }}
-                                className={`rounded px-2 py-0.5 text-[10px] font-medium disabled:opacity-50 ${
+                                className={`rounded px-2 py-0.5 text-[10px] font-medium disabled:opacity-60 ${
                                   action === "CONFIRM_FULL"
                                     ? "bg-green-100 text-green-800 hover:bg-green-200"
                                     : action === "CONFIRM_SUBSTANTIAL"
@@ -654,7 +654,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                   setNaReasonPrompt(null);
                   void applyCoverageAction(requirementId, "MARK_NA", naReasonValue.trim());
                 }}
-                className="rounded bg-gray-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                className="rounded bg-gray-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-60"
               >
                 Confirm N/A
               </button>

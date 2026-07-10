@@ -14,6 +14,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
 
 const STEPS = [
   "Upload Tender",
@@ -95,9 +96,11 @@ function stepColor(step: WorkflowStep) {
 }
 
 function stepIcon(step: WorkflowStep) {
-  if (step === "COMPLETE" || step === "EXPORT_ZIP") return "✓";
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return "⚠";
-  return "→";
+  // SVG icons replace raw Unicode (✓ ⚠ →) for consistent rendering across
+  // all browsers and font stacks. Per spec rule 3 & 7.
+  if (step === "COMPLETE" || step === "EXPORT_ZIP") return <CheckCircleIcon />;
+  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return <WarningIcon />;
+  return <ArrowRightIcon />;
 }
 
 export async function NextActionPanel({ tenderId }: { tenderId: string }) {
@@ -179,7 +182,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${baseClass}`}
               title={`Go to ${s}`}
             >
-              <span aria-hidden="true">{done ? "✓ " : active ? "→ " : ""}</span>{s}
+              <span aria-hidden="true" className="inline-flex items-center">{done ? <CheckCircleIcon className="mr-0.5" /> : active ? <ArrowRightIcon className="mr-0.5" /> : null}</span>{s}
             </a>
           );
         })}

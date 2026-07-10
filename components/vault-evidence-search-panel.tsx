@@ -3,6 +3,7 @@
 // so the tender detail page stays compact on desktop, tablet, and mobile.
 
 import { getSession } from "../lib/auth";
+import { CheckIcon } from "./icons";
 import { prisma, prismaReady } from "../lib/prisma";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import Link from "next/link";
@@ -42,7 +43,7 @@ function TrustBadge({ level }: { level: string }) {
 
 function SelectionDot({ selected }: { selected: boolean }) {
   return selected ? (
-    <span title="Selected for this tender" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">✓</span>
+    <span title="Selected for this tender" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckIcon /></span>
   ) : (
     <span title="Available — not yet selected for this tender" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-100 text-[10px] text-slate-400">○</span>
   );

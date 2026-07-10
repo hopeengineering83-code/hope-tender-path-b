@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { CrossIcon } from "./icons";
 
 type Decision = "BID" | "BID_WITH_CONDITIONS" | "NO_BID";
 
@@ -102,7 +103,7 @@ export function BidDecisionForm({ tenderId }: { tenderId: string }) {
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-semibold text-slate-900">Record Bid Decision</p>
-            <button onClick={() => setOpen(false)} className="text-xs text-slate-400 hover:text-slate-600">✕ Close</button>
+            <button onClick={() => setOpen(false)} className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600"><CrossIcon /> Close</button>
           </div>
 
           {evaluating && (
