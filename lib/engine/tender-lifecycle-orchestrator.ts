@@ -51,6 +51,7 @@ import {
   buildProviderDiagnosticsSnapshot,
 } from "../ai-provider-health";
 import { newDiagnosticId } from "./safe-api-error";
+import { resolveCurrentAnalysisBinding } from "./generation-readiness-gate";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -182,6 +183,13 @@ export type TenderLifecycleResult = {
      *  recommend RESUME_AI_ANALYZE instead of treating partial AI as
      *  full success. */
     canonicalState?: string;
+    /** True when the current tender source content differs from the
+     *  analysis binding hash — the analysis is stale and must be re-run
+     *  before downstream steps can proceed. */
+    stale?: boolean;
+    /** True when the AI Analyze job is PARTIAL_NEEDS_RESUME — some chunks
+     *  succeeded, some failed, and the analysis is resumable. */
+    partial?: boolean;
   };
   metadataStatus: {
     completenessRatio: number;
@@ -501,6 +509,26 @@ export async function computeTenderLifecycle(
     analysisSource === "AI" ||
     analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK" ||
     analysisSource === "REGEX_FALLBACK_AI_ERROR";
+
+  // Stale analysis detection: compare the latest SUCCEEDED AI Analyze job's
+  // content hash to the current tender source content hash. If they differ,
+  // the analysis is stale and must be re-run before downstream steps proceed.
+  let analysisIsStale = false;
+  if (hasAnalysis && !analysisPartialNeedsResume && canonicalAnalysisState === "AI_SUCCEEDED") {
+    try {
+      const binding = await resolveCurrentAnalysisBinding(client, tenderId, tender.userId ?? userId ?? "");
+      const latestSucceeded = await client.aiJob.findFirst({
+        where: { tenderId, jobType: "AI_ANALYZE", status: "SUCCEEDED" },
+        orderBy: { finishedAt: "desc" },
+        select: { analysisInputHash: true },
+      });
+      if (latestSucceeded && binding.contentHash && latestSucceeded.analysisInputHash !== binding.contentHash) {
+        analysisIsStale = true;
+      }
+    } catch {
+      // Best-effort — if hash computation fails, don't flag as stale
+    }
+  }
 
   // ── Provider health ────────────────────────────────────────────────────────
   const providers = providerSummary();
@@ -1056,6 +1084,11 @@ export async function computeTenderLifecycle(
       // used to decide finalSubmissionStatus or DOWNLOAD_ZIP availability.
       score: tender.readinessScore,
       canonicalState: canonicalAnalysisState ?? undefined,
+      // Forward stale/partial flags so the Recovery Command Center and other
+      // panels can show "Stale — re-run required" or "PARTIAL — resume" instead
+      // of a green "AI" check when the analysis is not actually current.
+      stale: analysisIsStale,
+      partial: analysisPartialNeedsResume,
     },
     metadataStatus: {
       completenessRatio: meta.overallRatio,

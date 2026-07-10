@@ -33,7 +33,17 @@ export async function GET(
     }
 
     const envelope = buildPublicReadinessEnvelope({
-      ok: result.finalSubmissionStatus !== "BLOCKED",
+      // BUG FIX: Previously `ok` was set to `result.finalSubmissionStatus !== "BLOCKED"`,
+      // which meant every BLOCKED tender (the normal mid-workflow state) got
+      // `ok: false` on a HTTP 200 response. The client (tender-recovery-command-center)
+      // checked `!json.ok` and threw "Failed to load lifecycle state" — showing
+      // a red error panel for the most common workflow state.
+      //
+      // Now `ok` means "HTTP transport succeeded" — it is ALWAYS true on a 200
+      // response. The readiness state is carried by `status` (READY/PARTIAL/
+      // BLOCKED) and `blockers[]`, which the client renders as a normal
+      // blocked/partial UI, NOT as an error.
+      ok: true,
       status: result.finalSubmissionStatus === "READY" ? "READY" : result.finalSubmissionStatus === "PARTIAL" ? "PARTIAL" : "BLOCKED",
       blockers: result.blockers,
       warnings: result.warnings,

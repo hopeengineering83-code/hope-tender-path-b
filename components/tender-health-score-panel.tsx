@@ -53,7 +53,7 @@ const DIMENSION_MODULE: Record<string, CanonicalModuleKey> = {
   Compliance: "compliance",
 };
 
-export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: { tenderId: string; canonicalReadiness?: CanonicalTenderReadiness | null }) {
+export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, analysisStale = false, mandatoryComplianceRowsCount, mandatoryRequirementCount }: { tenderId: string; canonicalReadiness?: CanonicalTenderReadiness | null; analysisStale?: boolean; mandatoryComplianceRowsCount?: number; mandatoryRequirementCount?: number }) {
   const userId = await getSession();
   if (!userId) return null;
 
@@ -151,9 +151,13 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
   }
 
   // ── 2. AI Analysis (15 pts) ──────────────────────────────────────────────
+  // Per spec: AI Analysis dimension cannot be green when analysis is stale.
   const hasAnalysis = Boolean(tender.analysisSummary);
   const analysisStatus = tender.analysisExtractionStatus ?? "";
-  const analysisScore = !hasAnalysis ? 0
+  // If analysis is stale, score 0 regardless of extraction status — a stale
+  // analysis is NOT trusted and must not show green.
+  const analysisScore = analysisStale ? 0
+    : !hasAnalysis ? 0
     : analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" ? 15
     : analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" ? 10
     : analysisStatus.includes("CORRUPTED") ? 0
@@ -163,9 +167,9 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
     label: "AI Analysis",
     score: analysisScore,
     max: 15,
-    detail: !hasAnalysis ? "Not run" : analysisStatus || "Analyzed",
+    detail: analysisStale ? "Stale — re-run required" : !hasAnalysis ? "Not run" : analysisStatus || "Analyzed",
     status: analysisStatusLabel,
-    ...(analysisStatusLabel !== "PASS" ? { actionLabel: "Run AI Analyze", actionHref: "#ai-analyze-section" } : {}),
+    ...(analysisStatusLabel !== "PASS" ? { actionLabel: analysisStale ? "Re-run AI Analyze" : "Run AI Analyze", actionHref: "#ai-analyze-section" } : {}),
   });
 
   // ── 3. Metadata completeness (15 pts) ────────────────────────────────────
@@ -259,15 +263,29 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: {
   });
 
   // ── 7. Compliance gaps (10 pts) ──────────────────────────────────────────
+  // Per spec: Compliance dimension cannot be 10/10 when compliance rows = 0.
+  // The old code only counted open compliance GAP rows, not compliance MATRIX
+  // rows linked to mandatory requirements. A tender with zero gaps but zero
+  // matrix rows scored 10/10 PASS — directly contradicting the canonical
+  // decision's MANDATORY_NO_COMPLIANCE_ROWS blocker.
   const criticalGaps = tender.complianceGaps.filter((g) => g.severity === "CRITICAL").length;
   const totalGaps = tender.complianceGaps.length;
-  const gapScore = criticalGaps > 0 ? 0 : totalGaps === 0 ? 10 : 5;
+  // If mandatory requirements exist but compliance matrix rows = 0, this is
+  // a hard fail — the MANDATORY_NO_COMPLIANCE_ROWS blocker is active.
+  const hasNoComplianceRows = typeof mandatoryComplianceRowsCount === "number"
+    && typeof mandatoryRequirementCount === "number"
+    && mandatoryRequirementCount > 0
+    && mandatoryComplianceRowsCount === 0;
+  const gapScore = criticalGaps > 0 || hasNoComplianceRows ? 0 : totalGaps === 0 ? 10 : 5;
+  const complianceDetail = hasNoComplianceRows
+    ? "No compliance matrix rows — run Engine to create evidence links"
+    : criticalGaps > 0 ? `${criticalGaps} critical gap(s)` : totalGaps === 0 ? "No open gaps" : `${totalGaps} non-critical gap(s)`;
   dimensions.push({
     label: "Compliance",
     score: gapScore,
     max: 10,
-    detail: criticalGaps > 0 ? `${criticalGaps} critical gap(s)` : totalGaps === 0 ? "No open gaps" : `${totalGaps} non-critical gap(s)`,
-    status: criticalGaps > 0 ? "FAIL" : totalGaps === 0 ? "PASS" : "WARN",
+    detail: complianceDetail,
+    status: criticalGaps > 0 || hasNoComplianceRows ? "FAIL" : totalGaps === 0 ? "PASS" : "WARN",
   });
 
   const totalScore = dimensions.reduce((s, d) => s + d.score, 0);
