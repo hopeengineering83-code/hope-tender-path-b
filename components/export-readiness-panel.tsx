@@ -520,15 +520,18 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               {deduplicating ? "Deduplicating…" : "Clean duplicate rows"}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => void repairExportPolicyAssets()}
-            disabled={busy}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            title="Check for prohibited branding/signature/stamp in generated documents and mark affected docs for regeneration."
-          >
-            {repairingAssets ? "Checking…" : "Repair prohibited assets (if any)"}
-          </button>
+          {/* Repair prohibited assets button — only show when prohibited assets exist */}
+          {readiness?.summary && (readiness.summary as { prohibitedAssetCount?: number }).prohibitedAssetCount && (readiness.summary as { prohibitedAssetCount?: number }).prohibitedAssetCount! > 0 && (
+            <button
+              type="button"
+              onClick={() => void repairExportPolicyAssets()}
+              disabled={busy}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              title="Check for prohibited branding/signature/stamp in generated documents and mark affected docs for regeneration."
+            >
+              {repairingAssets ? "Checking…" : "Repair prohibited assets"}
+            </button>
+          )}
           {readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50">
               {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
@@ -596,6 +599,17 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       </div>
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
+      {/* Structured blocker display — shows when export readiness returns ok:false
+          with primaryBlockerReason. This replaces the generic failure message
+          with actionable guidance. */}
+      {readiness && !readiness.ok && (readiness as { primaryBlockerReason?: string | null }).primaryBlockerReason && !error && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
+          <p className="font-semibold text-red-700">Primary blocker: {(readiness as { primaryBlockerReason?: string | null }).primaryBlockerReason}</p>
+          {(readiness as { primaryFixAction?: string | null }).primaryFixAction && (
+            <p className="mt-0.5 text-red-600">Next action: {(readiness as { primaryFixAction?: string | null }).primaryFixAction}</p>
+          )}
+        </div>
+      )}
       {repairMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">{repairMessage}</div>}
       {autoFinalizeRemaining !== null && autoFinalizeRemaining > 0 && !ok && (
         <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
