@@ -730,7 +730,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
         await recordStep(ctx.jobId, {
           stepName: "extract.enriched",
-          message: `Metadata enrichment applied (${Object.keys(patch).length} cols). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
+          message: `Tender detail enrichment applied (${Object.keys(patch).length} cols). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
           status: "RUNNING",
         });
       }
@@ -739,7 +739,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       // metadata enrichment failed. The user can run AI Analyze or
       // repair-metadata to recover.
       const msg = enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
-      await recordStep(ctx.jobId, { stepName: "extract.enrich-failed", message: `Metadata enrichment failed (non-fatal): ${msg.slice(0, 200)}`, status: "RUNNING" });
+      await recordStep(ctx.jobId, { stepName: "extract.enrich-failed", message: `Tender detail enrichment failed (non-fatal): ${msg.slice(0, 200)}`, status: "RUNNING" });
     }
 
     await recordStep(ctx.jobId, {

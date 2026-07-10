@@ -65,11 +65,9 @@ export async function POST() {
       });
       reextracted += 1;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error(`[reimport] re-extract failed for ${doc.originalFileName}:`, { detail: err });
-      // Collect failed files so the user can see WHICH files failed and WHY
-      // (previously: only logged, not surfaced in the response body).
-      failedFiles.push({ name: doc.originalFileName, error: errorMsg.slice(0, 200) });
+      // Surface WHICH files failed (not the raw error text)
+      failedFiles.push({ name: doc.originalFileName, error: "Processing failed" });
     }
   }
 

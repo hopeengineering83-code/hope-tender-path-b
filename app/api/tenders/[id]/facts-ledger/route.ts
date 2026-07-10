@@ -28,6 +28,7 @@
 //   - Full source text, full file bytes, provider keys, prompts, or secrets
 //   - Full source quotes (only a truncated preview ≤80 chars)
 
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -39,6 +40,7 @@ import {
   supersedeTenderFact,
   AUTHORITY_STATE,
 } from "../../../../../lib/engine/tender-facts-ledger-service";
+import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -255,11 +257,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return NextResponse.json({ error: "Unhandled action" }, { status: 400 });
     }
   } catch (err) {
-    return NextResponse.json({
-      ok: false,
-      error: err instanceof Error ? err.message : "Ledger mutation failed",
+    const diagnosticId = randomUUID();
+    logger.error("[facts-ledger:POST]", {
+      tenderId,
       action: body.action,
       semanticKey,
+      diagnosticId,
+      errorClass: err instanceof Error ? err.constructor.name : "UnknownError",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json({
+      ok: false,
+      error: "Facts ledger update failed. Refresh to retry.",
+      action: body.action,
+      semanticKey,
+      diagnosticId,
     }, { status: 500 });
   }
 }

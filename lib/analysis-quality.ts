@@ -209,7 +209,7 @@ export function assessTenderAnalysisQuality(params: {
     metadataIssues.push("clientContactName extracted but appears to be a fragment — advisory only");
   }
   if (metadataIssues.length > 0) {
-    warnings.push(`Metadata has ${metadataIssues.length} validation issue(s): ${metadataIssues.join("; ")}`);
+    warnings.push(`Tender Details have ${metadataIssues.length} validation issue(s): ${metadataIssues.join("; ")}`);
     recommendations.push("Open Tender Detail and re-extract metadata, or correct the fields manually before generation.");
   }
 

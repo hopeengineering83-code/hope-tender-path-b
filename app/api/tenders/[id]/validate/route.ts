@@ -155,8 +155,7 @@ export async function POST(
       ...validationResults,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error(`validation failed: ${message}`);
-    return jsonError(`Validation error: ${message}`, 500);
+    logger.error("[validate] failed", { detail: err });
+    return jsonError("Validation failed. Refresh to retry.", 500);
   }
 }

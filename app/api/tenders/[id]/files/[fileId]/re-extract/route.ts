@@ -2,7 +2,7 @@
  * Repair Extraction — re-reads the original TenderFile from storage and
  * re-runs text extraction + OCR.
  *
- * This is NOT "Refresh Metadata" (which only re-runs regex on existing text).
+ * This is NOT the legacy internal compatibility refresh action (which only re-runs regex on existing text).
  * This retrieves the original file bytes and re-runs the full extraction pipeline.
  *
  * Requires ADMIN or PROPOSAL_MANAGER. Enforces tenant ownership + rate limits.
@@ -148,8 +148,7 @@ export async function POST(
       message: `Re-extraction complete. Score: ${quality.score}. ${ocrOutcome !== "OCR_NOT_ATTEMPTED" ? `OCR: ${ocrOutcome}.` : ""}`,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("[repair-extraction] Failed", { tenderId, fileId, detail: message });
-    return err(`Re-extraction failed: ${message.slice(0, 200)}`, 500, "REPAIR_EXTRACTION_FAILED");
+    logger.error("[repair-extraction] Failed", { tenderId, fileId, detail: error });
+    return err("Re-extraction failed. Refresh to retry. If the problem persists, contact admin.", 500, "REPAIR_EXTRACTION_FAILED");
   }
 }

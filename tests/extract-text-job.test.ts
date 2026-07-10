@@ -121,7 +121,7 @@ describe("EXTRACT_TEXT job — handler registration", () => {
   it("EXTRACT_TEXT handler wraps metadata enrichment in try/catch (best-effort)", () => {
     const src = read("lib/ai-job-handlers.ts");
     assert.ok(src.includes("extract.enrich-failed"), "must record enrichment failures");
-    assert.ok(src.includes("Metadata enrichment failed (non-fatal)"), "must log enrichment failures as non-fatal");
+    assert.ok(src.includes("Tender detail enrichment failed (non-fatal)"), "must log enrichment failures as non-fatal");
   });
 });
 

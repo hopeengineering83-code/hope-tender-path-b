@@ -252,7 +252,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           numberOfCopiesRequired: metadata.numberOfCopiesRequired,
           technicalWeight: metadata.technicalWeight,
           financialWeight: metadata.financialWeight,
-          notes: `Created from ${storedUploads.length} validated tender source file(s). ${meaningfulUploads.length === 0 ? "Files were stored, but text extraction requires review or OCR before AI Analyze." : "Extracted metadata must be reviewed before final submission."}`,
+          notes: `Created from ${storedUploads.length} validated tender source file(s). ${meaningfulUploads.length === 0 ? "Files were stored, but text extraction requires review or OCR before AI Analyze." : "Extracted Tender Details must be reviewed before final submission."}`,
           status: "DRAFT",
           stage: "TENDER_INTAKE",
           userId: actor.id,

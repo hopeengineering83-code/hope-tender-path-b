@@ -227,8 +227,7 @@ export async function POST(
       documents: perDocument,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error(`document-quality-check failed: ${message}`);
-    return jsonError(`Document quality check error: ${message}`, 500);
+    logger.error("[document-quality-check] failed", { detail: err });
+    return jsonError("Document quality check failed. Refresh to retry.", 500);
   }
 }
