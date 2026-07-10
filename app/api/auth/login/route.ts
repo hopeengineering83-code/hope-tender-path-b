@@ -37,26 +37,9 @@ function safeMessage(error: unknown): string {
  *   bootstrap password, the existing row (if password is empty) gets
  *   a hash written so first-time `npm run dev` flows still work.
  */
-async function repairBootstrapAdminIfNeeded(email: string, password: string) {
-  if (email !== BOOTSTRAP_ADMIN_EMAIL) return;
-  const policy = resolveBootstrapAdminPolicy();
-  if (!policy.allowRepair) return;
-  if (password !== policy.password) return;
-
-  const authColumn = '"password' + 'Hash"';
-  const rows = await prisma.$queryRawUnsafe<Array<{ id: string; hash: string | null }>>(
-    `SELECT "id", ${authColumn} AS "hash" FROM "User" WHERE "email" = $1 LIMIT 1`,
-    email,
-  );
-  const row = rows[0];
-  if (!row || row.hash) return;
-
-  const hashed = await bcrypt.hash(password, 10);
-  await prisma.$executeRawUnsafe(
-    `UPDATE "User" SET ${authColumn} = $1, "role" = 'ADMIN', "name" = COALESCE(NULLIF("name", ''), 'Admin'), "updatedAt" = NOW() WHERE "id" = $2`,
-    hashed,
-    row.id,
-  );
+/** @deprecated login-time bootstrap repair is permanently disabled in lib/bootstrap-admin-policy.ts */
+async function repairBootstrapAdminIfNeeded(_email: string, _password: string) {
+  return;
 }
 
 // Use the shared getClientIp helper from lib/request-ip.ts — gates on

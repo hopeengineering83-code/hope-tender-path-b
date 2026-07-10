@@ -160,7 +160,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   log.info("ai_rematch_started", { applySelections, poolLimit: PRE_FILTER_LIMIT, iterations: PORTFOLIO_ITERATIONS, perspectives: 12 });
 
   const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId: actor.id },
+    where: actor.role === "ADMIN" ? { id: tenderId } : { id: tenderId, userId: actor.id },
     include: {
       requirements: {
         select: {

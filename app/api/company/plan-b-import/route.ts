@@ -1,7 +1,7 @@
 import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
-import { getSession } from "../../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
@@ -365,8 +365,23 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
 }
 
 export async function POST(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
+  const userId = actor.id;
+
+  // Resource guarding: reject oversized payloads before parsing to prevent OOM/DoS.
+  // 10MB is a generous cap for structured JSON (≈1000 experts + 1000 projects).
+  const contentLength = Number(req.headers.get("content-length"));
+  if (contentLength > 10 * 1024 * 1024) {
+    return NextResponse.json(
+      { error: "Payload too large", detail: "Plan B JSON import is capped at 10MB." },
+      { status: 413 }
+    );
+  }
 
   const rl = await rateLimitPersistent(`plan-b-import:${userId}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
