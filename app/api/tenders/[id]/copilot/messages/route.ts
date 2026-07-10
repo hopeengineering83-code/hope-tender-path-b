@@ -24,12 +24,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   try {
-    const messages = await prisma.tenderCopilotMessage.findMany({
+    // Fetch the LATEST 50 messages (desc + take), then reverse to chronological
+    // order for the client. The old `orderBy: asc + take: 50` returned the
+    // OLDEST 50 — permanently hiding everything past message 50 in long chats.
+    const messagesDesc = await prisma.tenderCopilotMessage.findMany({
       where: { tenderId: id, userId: actor.id },
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: "desc" },
       take: 50,
       select: { id: true, role: true, content: true, citations: true, createdAt: true },
     });
+    const messages = messagesDesc.reverse();
     return NextResponse.json({ success: true, messages });
   } catch (err) {
     logger.error("[copilot/messages GET]", { detail: err });

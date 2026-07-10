@@ -24,7 +24,7 @@ export async function executeTenderDeletion(
   tx: Prisma.TransactionClient,
   tenderId: string,
   correlationId: string,
-): Promise<void> {
+): Promise<{ generatedDocPaths: Array<{ storagePath: string | null; fileContent: string | null; exactFileName: string | null }> }> {
   const logPhase = (phase: string, model: string) => {
     const msg = `[tender-delete] Phase: ${phase} | Model: ${model}`;
     console.log(`${msg} | tenderId: ${tenderId} | correlationId: ${correlationId}`);
@@ -66,7 +66,11 @@ export async function executeTenderDeletion(
   await tx.$executeRaw`SELECT set_config('app.tender_deletion_context', ${tenderId}, true)`;
 
   // Layer 1: GeneratedDocument + nested children
-  const generatedDocs = await tx.generatedDocument.findMany({ where: { tenderId }, select: { id: true } });
+  // Read storagePath BEFORE deleting so we can clean up blob storage after
+  // the transaction commits (mirrors the TenderFile pattern in the DELETE
+  // route). Without this, generated DOCX/PDF blobs are orphaned in Vercel
+  // Blob storage — a cost leak and PII retention issue.
+  const generatedDocs = await tx.generatedDocument.findMany({ where: { tenderId }, select: { id: true, storagePath: true, fileContent: true, exactFileName: true } });
   if (generatedDocs.length > 0) {
     const docIds = generatedDocs.map((d) => d.id);
     await wrapDelete("DocumentReview", tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }));
@@ -138,4 +142,13 @@ export async function executeTenderDeletion(
 
   // Layer 10: Final Tender deletion
   await wrapDelete("Tender", tx.tender.delete({ where: { id: tenderId } }));
+
+  // Return generated doc paths for post-transaction blob cleanup.
+  return {
+    generatedDocPaths: generatedDocs.map((d) => ({
+      storagePath: d.storagePath,
+      fileContent: d.fileContent,
+      exactFileName: d.exactFileName,
+    })),
+  };
 }

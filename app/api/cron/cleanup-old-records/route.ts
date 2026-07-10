@@ -69,6 +69,51 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Clean up old SUPERSEDED ExportPackage rows — each /export POST creates a
+    // new READY row and marks the prior as SUPERSEDED. Without this, old
+    // package records accumulate indefinitely (cost + clutter).
+    const deletedExportPackages = await prisma.exportPackage.deleteMany({
+      where: {
+        status: "SUPERSEDED",
+        createdAt: { lt: thirtyDaysAgo },
+      },
+    }).catch(() => ({ count: 0 }));
+
+    // Clean up old SUPERSEDED GeneratedDocument rows AND their blob storage.
+    // Each engine re-run supersedes all active docs, but the old rows —
+    // including their fileContent blobs — persist forever without this.
+    // Read storagePath BEFORE deleting so we can clean up blob storage too.
+    const supersededDocs = await prisma.generatedDocument.findMany({
+      where: {
+        generationStatus: "SUPERSEDED",
+        updatedAt: { lt: thirtyDaysAgo },
+      },
+      select: { id: true, storagePath: true, fileContent: true, exactFileName: true },
+    }).catch(() => []);
+
+    const deletedSupersededDocs = await prisma.generatedDocument.deleteMany({
+      where: {
+        generationStatus: "SUPERSEDED",
+        updatedAt: { lt: thirtyDaysAgo },
+      },
+    }).catch(() => ({ count: 0 }));
+
+    // Best-effort blob cleanup for superseded generated documents.
+    if (supersededDocs.length > 0) {
+      const storage = getStorageAdapter();
+      for (const doc of supersededDocs) {
+        if (doc.storagePath || doc.fileContent) {
+          storage.deleteFile({
+            storagePath: doc.storagePath,
+            fileContent: doc.fileContent,
+            fileName: doc.exactFileName ?? doc.id,
+          }).catch((err) => {
+            logger.warn(`[cleanup-old-records] generated doc blob cleanup failed for ${doc.exactFileName ?? doc.id}`, { detail: err instanceof Error ? err.message : String(err) });
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
       deleted: {
         aiJobs: deletedAiJobs.count,
@@ -76,6 +121,9 @@ export async function GET(req: NextRequest) {
         copilotMessages: deletedCopilotMessages.count,
         tenderFiles: deletedTenderFiles.count,
         blobsCleaned: filesToDelete.length,
+        exportPackages: deletedExportPackages.count,
+        supersededDocs: deletedSupersededDocs.count,
+        supersededDocBlobsCleaned: supersededDocs.length,
       },
     });
   } catch (error) {

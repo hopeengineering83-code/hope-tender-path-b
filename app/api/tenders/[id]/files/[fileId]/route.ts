@@ -99,6 +99,22 @@ export async function DELETE(
           data: { [col]: null } as any,
         });
       }
+      // Nullify TenderFactsLedger entries that reference this file — without
+      // this, ledger facts still claim SOURCE_GROUNDED against a deleted file,
+      // and the canonical resolver may surface them as grounded evidence.
+      await (tx as any).tenderFactsLedger.updateMany({
+        where: { tenderId, sourceFileId: fileId },
+        data: { sourceFileId: null, sourcePage: null, sourceQuote: null, authorityState: "EXTRACTED_UNVERIFIED" },
+      }).catch(() => {});
+      // Nullify ExtractionQualityOverride entries that reference this file
+      await (tx as any).extractionQualityOverride.deleteMany({
+        where: { tenderFileId: fileId },
+      }).catch(() => {});
+      // Nullify TenderSubmissionEmail entries that reference this file
+      await (tx as any).tenderSubmissionEmail.updateMany({
+        where: { tenderId, sourceFileId: fileId },
+        data: { sourceFileId: null, sourcePage: null, sourceQuote: null },
+      }).catch(() => {});
       await tx.tenderFile.delete({ where: { id: fileId } });
     });
   } catch {

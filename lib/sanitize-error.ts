@@ -7,13 +7,42 @@ import { getCurrentRequestId } from "./request-id";
 
 export function sanitizeError(input: unknown, maxLength = 200): string {
   const raw = input instanceof Error ? input.message : String(input ?? "Unknown error");
-  return raw
+  const redacted = raw
+    // Redact database connection strings
     .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
     .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]")
+    // Redact API keys and bearer tokens
     .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
     .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
     .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
-    .slice(0, maxLength);
+    // Redact Anthropic keys
+    .replace(/ant-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    // Redact OpenAI keys
+    .replace(/org-[a-zA-Z0-9]{20,}/g, "[KEY_REDACTED]")
+    .replace(/proj-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    // Redact GitHub PATs
+    .replace(/ghp_[a-zA-Z0-9]{36,}/g, "[KEY_REDACTED]")
+    .replace(/github_pat_[a-zA-Z0-9_]{20,}/g, "[KEY_REDACTED]")
+    // Redact JWTs
+    .replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]*/g, "[JWT_REDACTED]")
+    // Redact Vercel Blob tokens
+    .replace(/vercel_blob_[a-zA-Z0-9_-]{20,}/gi, "[KEY_REDACTED]")
+    // Redact Prisma invocation text
+    .replace(/Invalid\s+`prisma\.[^`]+`\s+invocation:\s*\{[^]*?\}\s*$/s, "Database query failed")
+    .replace(/Invalid\s+`prisma\.[^`]+`\s+invocation:/gi, "Database query failed:")
+    // Redact UUIDs (internal tender/user IDs)
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[ID_REDACTED]")
+    // Redact PrismaClient error class names
+    .replace(/PrismaClient\w*Error/g, "DatabaseError")
+    // Redact raw SQL patterns
+    .replace(/SELECT\s+.*?\s+FROM\s+\w+/gi, "[SQL_REDACTED]")
+    .replace(/INSERT\s+INTO\s+\w+/gi, "[SQL_REDACTED]")
+    .replace(/UPDATE\s+\w+\s+SET/gi, "[SQL_REDACTED]");
+  // If the redacted message still contains query-like patterns, replace entirely
+  if (/where:\s*\{|select:\s*\{|include:\s*\{|orderBy:\s*\{/.test(redacted)) {
+    return "Database query failed";
+  }
+  return redacted.slice(0, maxLength);
 }
 
 /**
