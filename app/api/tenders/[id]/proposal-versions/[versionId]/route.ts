@@ -54,11 +54,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   // Authorization: owner-scoped by default. Only ADMIN can fall back to the
   // unscoped lookup (for cross-tenant operator access). PROPOSAL_MANAGER is
   // restricted to their own tenders — prevents cross-tenant content mutation.
-  const ownerTender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
-  let tender = ownerTender;
-  if (!tender && actor.role === "ADMIN") {
-    tender = await prisma.tender.findFirst({ where: { id }, select: { id: true } });
-  }
+  // Two-tier ownership: owner-scoped by default; ONLY an ADMIN may fall back
+  // to the global lookup — same rule as the GET sibling above.
+  const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   await prisma.proposalVersion.deleteMany({
@@ -91,11 +89,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // unscoped lookup (for cross-tenant operator access). PROPOSAL_MANAGER is
   // restricted to their own tenders — prevents cross-tenant content mutation
   // (restore writes GeneratedDocument.fileContent).
-  const ownerTender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
-  let tender = ownerTender;
-  if (!tender && actor.role === "ADMIN") {
-    tender = await prisma.tender.findFirst({ where: { id }, select: { id: true } });
-  }
+  // Two-tier ownership: owner-scoped by default; ONLY an ADMIN may fall back
+  // to the global lookup — same rule as the GET sibling above.
+  const tender = await requireTenderAccess(id, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // PR XX-A — typed access via Prisma model.

@@ -36,7 +36,14 @@ export async function GET(req: Request) {
 
   const where: Record<string, unknown> = { action: "TENDER_DEEP_REASONING_RUN" };
   if (tenderIdFilter) where.entityId = tenderIdFilter;
-  if (userIdFilter) where.userId = userIdFilter;
+
+  // Cross-tenant protection: PROPOSAL_MANAGER is restricted to their own runs.
+  // ADMIN can filter by any userId.
+  if (actor.role === "ADMIN") {
+    if (userIdFilter) where.userId = userIdFilter;
+  } else {
+    where.userId = actor.id;
+  }
 
   const rows = await prisma.auditLog.findMany({
     where,

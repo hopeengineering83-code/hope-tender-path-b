@@ -24,7 +24,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch {
     return unauthorizedResponse();
   }
-  if (!["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role)) return forbiddenResponse();
+  if (!["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)) return forbiddenResponse();
 
   const rl = await rateLimitPersistent(`copilot:${actor.id}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
@@ -41,7 +41,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const tender = await prisma.tender.findFirst({
-    where: { id, userId: actor.id },
+    where: actor.role === "ADMIN" ? { id } : { id, userId: actor.id },
     include: {
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" }, select: { severity: true, title: true, description: true, mitigationPlan: true } },

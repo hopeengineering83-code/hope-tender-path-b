@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../../lib/prisma";
 import { logAction } from "../../../../../../../lib/audit";
+import { requireTenderAccess } from "../../../../../../../lib/tender-ownership";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../../../lib/request-id";
 
@@ -66,14 +67,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const rawNote = typeof (body as { note?: unknown }).note === "string" ? (body as { note: string }).note.trim() : "";
   const note = rawNote.slice(0, 300);
 
-  // Authorization: owner-scoped by default. Only ADMIN can fall back to the
-  // unscoped lookup (mirrors proposal-versions/[versionId]/route.ts pattern).
-  // PROPOSAL_MANAGER is restricted to their own tenders.
-  const ownerTender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true, title: true } });
-  let tender = ownerTender;
-  if (!tender && actor.role === "ADMIN") {
-    tender = await prisma.tender.findFirst({ where: { id: tenderId }, select: { id: true, title: true } });
-  }
+  // Two-tier ownership: owner-scoped by default; ONLY an ADMIN may fall back
+  // to the global lookup — same rule as the GET sibling above.
+  const tender = await requireTenderAccess(tenderId, actor.id, actor.role);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   await logAction({
