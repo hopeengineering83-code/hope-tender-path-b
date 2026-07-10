@@ -148,7 +148,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error("[cleanup-old-records] failed", { detail: error });
+    return NextResponse.json({ error: "Cleanup failed. Check server logs." }, { status: 500 });
   }
 }

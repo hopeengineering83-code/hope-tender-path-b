@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
       rearmedJobIds,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[ai-analyze-retry] failed", error);
+    return NextResponse.json({ error: "Retry failed. Check server logs." }, { status: 500 });
   }
 }

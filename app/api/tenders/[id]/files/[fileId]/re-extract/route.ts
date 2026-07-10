@@ -148,8 +148,7 @@ export async function POST(
       message: `Re-extraction complete. Score: ${quality.score}. ${ocrOutcome !== "OCR_NOT_ATTEMPTED" ? `OCR: ${ocrOutcome}.` : ""}`,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("[repair-extraction] Failed", { tenderId, fileId, detail: message });
-    return err(`Re-extraction failed: ${message.slice(0, 200)}`, 500, "REPAIR_EXTRACTION_FAILED");
+    logger.error("[repair-extraction] Failed", { tenderId, fileId, detail: error });
+    return err("Re-extraction failed. Refresh to retry. If the problem persists, contact admin.", 500, "REPAIR_EXTRACTION_FAILED");
   }
 }

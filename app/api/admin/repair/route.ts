@@ -118,11 +118,11 @@ export async function POST(req: Request) {
         if (meaningful) success++; else skipped++;
       } catch (err) {
         failed++;
-        const errMsg = err instanceof Error ? err.message : String(err);
-        details.push({ name: doc.originalFileName, chars: 0, status: "error", error: errMsg.slice(0, 200) });
+        logger.error("[admin/repair] document failed", { docId: doc.id, errorClass: err instanceof Error ? err.constructor.name : "UnknownError" });
+        details.push({ name: doc.originalFileName, chars: 0, status: "error", error: "Processing failed" });
         await prisma.companyDocument.update({
           where: { id: doc.id },
-          data: { aiExtractionStatus: "FAILED", aiExtractionError: errMsg.slice(0, 500), updatedAt: new Date() },
+          data: { aiExtractionStatus: "FAILED", aiExtractionError: "Processing failed", updatedAt: new Date() },
         });
       }
     }
