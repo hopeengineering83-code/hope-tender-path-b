@@ -104,9 +104,9 @@ export async function GET(
         status: !snapshot.metadata.gateValid
           ? "BLOCKED"
           : snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
-        explanation: `Metadata: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
+        explanation: `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
         blocker: !snapshot.metadata.gateValid ? (snapshot.metadata.gateBlocker ?? "Critical metadata evidence is invalid or ungrounded.") : undefined,
-        actionLabel: "Edit Metadata",
+        actionLabel: "Edit Tender Details",
         actionName: "EDIT_TENDER_METADATA",
         actionKind: isMutationAction("EDIT_TENDER_METADATA") ? "mutation" as const : "readonly" as const,
       },
