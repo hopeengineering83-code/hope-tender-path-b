@@ -724,7 +724,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                   </div>
                   {providerCooldownWarning && (
                     <p className="mt-2 text-[10px] text-amber-800 bg-amber-100 rounded px-2 py-1">
-                      ⏳ {providerCooldownWarning} Wait a moment then retry.
+                      {providerCooldownWarning} Wait a moment then retry.
                     </p>
                   )}
                   <p className="mt-1 text-[10px] text-amber-700">

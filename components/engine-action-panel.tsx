@@ -445,8 +445,8 @@ export function EngineActionPanel({
             {running && asyncStatus
               ? "Running in background…"
               : isLargeVault
-                ? "⚡ Run Engine (Safe Mode)"
-                : "⏳ Run in background"}
+                ? "Run Engine (Safe Mode)"
+                : "Run in background"}
           </button>
           )}
           {!canMutate && (
