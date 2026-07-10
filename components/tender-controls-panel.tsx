@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { ChevronDownIcon, RefreshIcon } from "./icons";
 
 type ControlType =
   | "ADDENDUM"
@@ -351,7 +352,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh controls">↻</button>
+          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh controls"><RefreshIcon /></button>
           <button
             type="button"
             onClick={() => { setShowForm((v) => !v); setSubmitError(null); }}
@@ -362,7 +363,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
             + Add control
           </button>
           <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} aria-controls="controls-ledger-list" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
-            {expanded ? "▲ Collapse" : "▼ Show ledger"}
+            {expanded ? <><ChevronDownIcon className="rotate-180" /> Collapse</> : <><ChevronDownIcon /> Show ledger</>}
           </button>
         </div>
       </div>
@@ -639,7 +640,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
                       </p>
                     )}
                   </div>
-                  <span className="shrink-0 text-gray-400">{isOpen ? "▲" : "▼"}</span>
+                  <span className="shrink-0 text-gray-400"><ChevronDownIcon className={isOpen ? "rotate-180" : ""} /></span>
                 </button>
 
                 {isOpen && (

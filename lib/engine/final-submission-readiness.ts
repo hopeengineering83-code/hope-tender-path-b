@@ -139,6 +139,14 @@ export type FinalReadinessSummary = {
   ungeneratedPlannedRequired: number;
   /** List of exact missing critical metadata field names. */
   missingCriticalMetadataFields: string[];
+  /** Total required documents — includes confirmed-plan items AND ungenerated PLANNED docs. */
+  requiredDocumentsTotal: number;
+  /** Documents that are export-ready (GENERATED + validated + approved, not SUPERSEDED/PLANNED). */
+  exportReadyDocumentsTotal: number;
+  /** The single most important blocker reason (human-readable), or null if no blockers. */
+  primaryBlockerReason: string | null;
+  /** The recommended fix action for the primary blocker, or null. */
+  primaryFixAction: string | null;
 };
 
 export type FinalSubmissionReadiness = {
@@ -1139,6 +1147,41 @@ export async function getFinalSubmissionReadiness(
     readinessCapScore: readinessScoreResult.appliedCap?.capScore ?? null,
     ungeneratedPlannedRequired: generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length,
     missingCriticalMetadataFields: [], // METADATA IS ADVISORY ONLY — do not populate missingCriticalMetadataFields
+    // ── Canonical required-document counts ────────────────────────────────
+    // requiredDocumentsTotal must include BOTH confirmed-plan required items
+    // AND ungenerated PLANNED docs. When there's no confirmed plan but PLANNED
+    // docs exist (e.g. derived plan was used to create stubs), the PLANNED docs
+    // ARE the required total — showing 0/0 when 10 PLANNED docs exist is the
+    // bug this fixes.
+    requiredDocumentsTotal: Math.max(requiredPlanCount, generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length),
+    // exportReadyDocumentsTotal = docs that are GENERATED, not SUPERSEDED/PLANNED,
+    // and pass the export-candidate filter. This is the numerator for the tile.
+    exportReadyDocumentsTotal: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    // ── Primary blocker reason + fix action ──────────────────────────────
+    // Priority order: planned-not-generated > no-export-ready > evidence >
+    // source-grounding > validation > quality > submission-facts > export-gate
+    primaryBlockerReason: (() => {
+      const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
+      if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
+      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "No export-ready documents. Generate required documents first.";
+      const exportReady = finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length;
+      if (finalCandidates.length > 0 && exportReady === 0) return "No documents are validated and approved for export.";
+      if (documentBlockers.length > 0) return documentBlockers[0]?.name ?? documentBlockers[0]?.reasons?.[0] ?? "Document blockers exist.";
+      if (tenderLevelBlockers.length > 0) return tenderLevelBlockers[0]?.title ?? "Tender-level blockers exist.";
+      if (!readiness.ok) return "Export gate is not satisfied.";
+      return null;
+    })(),
+    primaryFixAction: (() => {
+      const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
+      if (ungenerated > 0) return "Generate required documents.";
+      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "Generate required documents.";
+      const exportReady = finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length;
+      if (finalCandidates.length > 0 && exportReady === 0) return "Validate and approve documents for export.";
+      if (documentBlockers.length > 0) return documentBlockers[0]?.nextActions?.[0] ?? "Resolve document blockers.";
+      if (tenderLevelBlockers.length > 0) return tenderLevelBlockers[0]?.recommendedAction ?? "Resolve tender-level blockers.";
+      if (!readiness.ok) return "Resolve all export gate blockers.";
+      return null;
+    })(),
   };
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;

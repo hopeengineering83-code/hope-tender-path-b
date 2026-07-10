@@ -67,7 +67,7 @@ export async function GET(req: Request) {
           modelTestResults.push({ model: testModel, status: "FAILED", httpCode: res.status, error: body.slice(0, 300) });
         }
       } catch (err) {
-        modelTestResults.push({ model: testModel, status: "ERROR", error: err instanceof Error ? err.message : String(err) });
+        modelTestResults.push({ model: testModel, status: "ERROR", error: "Provider diagnostic failed" });
       }
     }
   }
