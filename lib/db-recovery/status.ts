@@ -57,10 +57,11 @@ export type DbRecoveryStatus = {
 
 async function tableExists(prisma: PrismaClient, table: string): Promise<boolean> {
   try {
-    const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
-      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1) AS "exists"`,
-      table,
-    );
+    // $queryRaw tagged template — the ${table} placeholder is bound as a
+    // parameter, so this is injection-safe even if REQUIRED_TABLES is ever
+    // sourced from non-constant data.
+    const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ${table}) AS "exists"`;
     return Boolean(rows?.[0]?.exists);
   } catch {
     return false;
@@ -81,7 +82,7 @@ export async function getDbRecoveryStatus(prisma: PrismaClient, userId: string):
   // 1. Reachability — a trivial read. On failure everything downstream is UNKNOWN.
   let reachable = false;
   try {
-    await prisma.$queryRawUnsafe(`SELECT 1`);
+    await prisma.$queryRaw`SELECT 1`;
     reachable = true;
   } catch {
     reachable = false;

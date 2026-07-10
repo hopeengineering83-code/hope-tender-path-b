@@ -28,8 +28,10 @@ export async function GET() {
     const status = await getDbRecoveryStatus(prisma, actor.id);
     const repairPreview = buildRepairPreview(status);
     return NextResponse.json({ status, repairPreview });
-  } catch {
-    // Even the error path must not leak connection details.
+  } catch (error) {
+    // Log the error TYPE for monitoring — never the connection details.
+    console.error("[db-recovery] status check failed:", error instanceof Error ? error.message : "unknown error");
+    // The error path must also not leak connection details.
     return NextResponse.json(
       { status: { reachable: false, schemaCompatibility: "UNKNOWN" }, error: "Database recovery status is temporarily unavailable." },
       { status: 503 },

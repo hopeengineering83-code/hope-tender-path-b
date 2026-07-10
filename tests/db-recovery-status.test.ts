@@ -19,9 +19,12 @@ type MockOpts = {
 function makeMockPrisma(opts: MockOpts) {
   const present = new Set(REQUIRED_TABLES.filter((t) => !(opts.missingTables ?? []).includes(t)));
   return {
-    $queryRawUnsafe: async (sql: string, arg?: string) => {
+    // $queryRaw is a tagged template: (strings, ...values). Reachability calls it
+    // with just "SELECT 1"; tableExists binds the table name as values[0].
+    $queryRaw: async (strings: TemplateStringsArray | string[], ...values: unknown[]) => {
       if (!opts.reachable) throw new Error("ECONNREFUSED");
-      if (sql.includes("information_schema")) return [{ exists: present.has(arg as string) }];
+      const sql = Array.isArray(strings) ? strings.join(" ") : String(strings);
+      if (sql.includes("information_schema")) return [{ exists: present.has(values[0] as string) }];
       return [{ "?column?": 1 }];
     },
     appSettings: {
