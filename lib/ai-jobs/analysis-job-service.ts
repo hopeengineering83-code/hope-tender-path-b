@@ -62,19 +62,59 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   // Create or reuse resumable job. FAILED is included so a provider-exhausted
   // or partially-completed run can be retried/resumed against the SAME job and
   // its durable checkpoints, rather than spawning a duplicate.
-  let job = await prisma.aiJob.findFirst({
-    where: {
-      tenderId,
-      userId,
-      jobType: "AI_ANALYZE",
-      analysisInputHash: contentHash,
-      status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  //
+  // BUG FIX: Previously findFirst + create was NOT atomic — two concurrent
+  // POSTs could both see no existing job and both create one. Now we use a
+  // transaction with a re-check inside to close the race window. We also
+  // check retryState.nonRetryable before re-arming a FAILED job — previously
+  // a non-retryable FAILED job was re-armed unconditionally, causing an
+  // infinite retry loop bounded only by MAX_RETRY_COUNT.
+  let job = await prisma.$transaction(async (tx) => {
+    // Re-check inside the transaction to close the race window
+    const existing = await tx.aiJob.findFirst({
+      where: {
+        tenderId,
+        userId,
+        jobType: "AI_ANALYZE",
+        analysisInputHash: contentHash,
+        status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      include: { retryState: { select: { nonRetryable: true, failureCategory: true } } },
+    });
 
-  if (!job) {
-    job = await prisma.aiJob.create({
+    if (existing) {
+      // If the job is QUEUED or RUNNING, return it as-is — another caller
+      // already has an active job for this content hash. This is the
+      // idempotent path: double-click or two-tab scenarios return the
+      // SAME job instead of creating a duplicate.
+      if (existing.status === "QUEUED" || existing.status === "RUNNING") {
+        return existing;
+      }
+
+      // PARTIAL_SUCCESS or FAILED — check nonRetryable before re-arming.
+      // A non-retryable FAILED job must NOT be re-armed here; the user
+      // must be told to re-run with fresh content or contact support.
+      if (existing.status === "FAILED" && existing.retryState?.nonRetryable === true) {
+        throw new Error(`AI_ANALYZE_NON_RETRYABLE:${existing.retryState.failureCategory ?? "UNKNOWN"}`);
+      }
+
+      // Re-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
+      // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
+      // un-runnable and "Run/Resume AI Analyze" would do nothing. We reset it to
+      // QUEUED and clear the terminal stamps; the completed AiAnalyzeChunk rows
+      // (SUCCEEDED) and AiJob.output are preserved, so the next run continues
+      // from the last successful chunk instead of restarting. A RUNNING/QUEUED
+      // job is left untouched (this branch never resets the actively-claimed job
+      // that executeAnalysis re-resolves mid-run).
+      return await tx.aiJob.update({
+        where: { id: existing.id },
+        data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
+      });
+    }
+
+    // No existing job — create a new one inside the transaction
+    return await tx.aiJob.create({
       data: {
         tenderId,
         userId,
@@ -85,20 +125,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         runId: require("crypto").randomUUID()
       },
     });
-  } else if (job.status === "PARTIAL_SUCCESS" || job.status === "FAILED") {
-    // RE-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
-    // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
-    // un-runnable and "Run/Resume AI Analyze" would do nothing. We reset it to
-    // QUEUED and clear the terminal stamps; the completed AiAnalyzeChunk rows
-    // (SUCCEEDED) and AiJob.output are preserved, so the next run continues
-    // from the last successful chunk instead of restarting. A RUNNING/QUEUED
-    // job is left untouched (this branch never resets the actively-claimed job
-    // that executeAnalysis re-resolves mid-run).
-    job = await prisma.aiJob.update({
-      where: { id: job.id },
-      data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
-    });
-  }
+  });
 
   const chunks = aiChunkTenderContent(tenderText);
   const totalChunks = chunks.length;

@@ -13,6 +13,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
+import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
 import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
 import { locateQuoteProvenPage } from "../../../../../lib/engine/page-provenance";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
@@ -2018,14 +2019,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         { status: 503 },
       );
     }
+    // Check for non-retryable error thrown by createAnalysisJob
+    if (error instanceof Error && error.message.startsWith("AI_ANALYZE_NON_RETRYABLE:")) {
+      const failureCategory = error.message.split(":")[1] ?? "UNKNOWN";
+      const diagnosticId = newDiagnosticId("ai-analyze");
+      logger.error("Analysis route error (non-retryable):", { diagnosticId, failureCategory, detail: error });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `AI Analyze cannot be retried automatically (${failureCategory}). The tender content or configuration has changed in a way that requires a fresh analysis run. If the issue persists, contact support with the Diagnostic ID.`,
+          code: "AI_ANALYZE_NON_RETRYABLE",
+          failureCategory,
+          diagnosticId,
+        },
+        { status: 422 },
+      );
+    }
+    // BUG FIX: Previously the catch block used incomplete regex sanitization
+    // that could leak Prisma SQL, internal file paths, PII, and org- keys.
+    // Now we use safeApiError which logs the raw error server-side (keyed by
+    // diagnosticId) and returns a safe generic message + diagnosticId to the
+    // client. Per spec rule 8: never expose raw provider/server/Prisma errors.
     logger.error("Analysis route error:", { detail: error });
-    const raw = error instanceof Error ? error.message : "Analysis failed";
-    // Sanitize before returning — strip API keys and truncate stack detail
-    const safe = raw
-      .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
-      .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
-      .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
-      .slice(0, 300);
-    return NextResponse.json({ error: safe }, { status: 500 });
+    return safeApiError("ai-analyze", error, {
+      status: 500,
+      message: "AI analysis failed. Refresh to retry. If the problem persists, contact support with the Diagnostic ID.",
+    });
   }
 }

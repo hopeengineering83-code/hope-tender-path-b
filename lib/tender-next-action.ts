@@ -3,6 +3,7 @@ export type TenderNextActionPrimary =
   | "FIX_EXTRACTION"
   | "RESUME_AI_ANALYZE"
   | "RUN_AI_ANALYZE"
+  | "RERUN_AI_ANALYZE"
   | "EDIT_METADATA"
   | "REVIEW_REQUIREMENTS"
   | "BUILD_SUBMISSION_PLAN"
@@ -52,6 +53,10 @@ export type TenderNextActionInput = {
     status?: string | null;
     regexFallback?: boolean;
     partial?: boolean;
+    /** True when the current tender source content differs from the
+     *  analysis binding hash — the analysis is stale and must be re-run
+     *  before downstream steps can proceed. */
+    stale?: boolean;
   };
   metadata: {
     trusted: boolean;
@@ -124,6 +129,21 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
       reason: "A previous AI Analyze run has saved partial progress. Resume it so completed chunks are reused instead of starting from zero.",
       blockers: [],
       tone: "amber",
+    };
+  }
+
+  // Stale analysis check: if the tender source content has changed since
+  // the last analysis run, the existing analysis is stale and must be
+  // re-run before any downstream step can proceed. This is critical for
+  // safety — stale analysis must NOT enable Build Plan, generation,
+  // validation, or export. Per spec rule 2.
+  if (input.aiAnalysis.exists && input.aiAnalysis.stale) {
+    return {
+      primary: "RERUN_AI_ANALYZE",
+      label: "Re-run AI Analyze",
+      reason: "Tender source content has changed since the last AI analysis. The existing analysis is stale and must be re-run before Build Plan, generation, or export can proceed safely.",
+      blockers: ["Analysis is stale — tender source content changed since last analysis"],
+      tone: "red",
     };
   }
 
