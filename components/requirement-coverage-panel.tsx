@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { ChevronDownIcon, RefreshIcon } from "./icons";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 
@@ -328,7 +329,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh coverage">↻</button>
+          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh coverage"><RefreshIcon /></button>
           {data && data.rows.some((r) => r.evidenceLinks.some((l) => l.autoLinked && !actionStates[`${r.id}-${l.id}`]?.success)) && (
             <button
               type="button"
@@ -341,10 +342,10 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
             </button>
           )}
           <button type="button" onClick={() => void loadTraceability()} disabled={traceLoading} aria-expanded={traceOpen} aria-controls="traceability-panel" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
-            {traceLoading ? "…" : traceOpen ? "▲ Traceability" : "▼ Traceability"}
+            {traceLoading ? "…" : <><ChevronDownIcon className={traceOpen ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} /> Traceability</>}
           </button>
           <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} aria-controls="req-coverage-list" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
-            {expanded ? "▲ Collapse" : "▼ Show requirements"}
+            {expanded ? <><ChevronDownIcon className="rotate-180" /> Collapse</> : <><ChevronDownIcon /> Show requirements</>}
           </button>
         </div>
       </div>
@@ -453,7 +454,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                       <p className="mt-0.5 text-xs text-gray-500">{row.nextAction}</p>
                     )}
                   </div>
-                  <span className="shrink-0 text-gray-400">{isOpen ? "▲" : "▼"}</span>
+                  <span className="shrink-0 text-gray-400"><ChevronDownIcon className={isOpen ? "rotate-180" : ""} /></span>
                 </button>
 
                 {isOpen && (

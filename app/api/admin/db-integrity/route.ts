@@ -34,7 +34,7 @@ async function safeCount(tableName: string): Promise<{ table: string; count: num
     return {
       table: tableName,
       count: null,
-      error: err instanceof Error ? err.message.slice(0, 200) : "query failed",
+      error: "Query failed",
     };
   }
 }

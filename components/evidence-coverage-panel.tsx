@@ -10,6 +10,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { inferSectionRequirementIds } from "../lib/engine/section-evidence-map";
 import { normalizeSupportLevel } from "../lib/engine/requirement-evidence-profile";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { PanelErrorFallback } from "./panel-error-fallback";
 
 function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;
@@ -267,10 +268,6 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
   );
   } catch (err) {
     clientLogger.error("[EvidenceCoveragePanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
-    return (
-      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-amber-700">Panel is loading — refresh to retry if this persists.</p>
-      </section>
-    );
+    return <PanelErrorFallback panelName="Evidencecoveragepanel" />
   }
 }

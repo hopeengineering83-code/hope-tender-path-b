@@ -15,6 +15,7 @@ import {
 } from "../lib/engine/document-output-state";
 import { clientLogger } from "@/lib/ui/client-logger";
 import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
+import { PanelErrorFallback } from "./panel-error-fallback";
 
 type DocRow = {
   id: string;
@@ -265,10 +266,6 @@ No final-package submission plan files are currently detected by the shared read
     );
   } catch (err) {
     clientLogger.error("[FinalPackageManifestPanel] render error:", err instanceof Error ? { message: err.message } : { error: String(err) });
-    return (
-      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-amber-700">Panel is loading — refresh to retry if this persists.</p>
-      </section>
-    );
+    return <PanelErrorFallback panelName="FinalPackageManifestPanel" />
   }
 }
