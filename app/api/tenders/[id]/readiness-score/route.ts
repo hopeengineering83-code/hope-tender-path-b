@@ -23,6 +23,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -43,9 +44,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id });
     if (!readiness) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
+    const envelope = buildPublicReadinessEnvelope({
+      ok: readiness.ok,
+      blockers: [...readiness.documentBlockers, ...readiness.tenderLevelBlockers],
+      warnings: readiness.advisoryWarnings,
+      primaryBlockerReason: readiness.summary.primaryBlockerReason,
+      primaryFixAction: readiness.summary.primaryFixAction,
+      requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
+      generatedDocumentsTotal: readiness.summary.finalExportCandidates,
+      exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
+    });
+
     return NextResponse.json({
       success: true,
-      ok: readiness.ok,
+      ...envelope,
       score: readiness.summary.readinessScore,
       severity: readiness.summary.readinessScore >= 80 ? "READY" : readiness.summary.readinessScore >= 50 ? "PARTIAL" : "BLOCKED",
       capReason: readiness.summary.readinessCapReason,

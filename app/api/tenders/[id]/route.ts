@@ -13,6 +13,7 @@ import { detectMetadataContamination } from "../../../../lib/engine/tender-metad
 import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
 import { Prisma } from "@prisma/client";
 import { executeTenderDeletion } from "../../../../lib/tender/delete-tender";
+import { buildPublicReadinessEnvelope } from "../../../../lib/engine/public-readiness-envelope";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -173,7 +174,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const aiAnalyzeCheckpointProgress = await getLatestAnalyzeCheckpointProgress(id, userId).catch(() => null);
     const payload = await withDashboardPayload(tender as any);
-    return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo, aiAnalyzeCheckpointProgress });
+    const requiredDocumentsTotal = Math.max(payload.requirements.length, payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "PLANNED").length);
+    const generatedDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED").length;
+    const exportReadyDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && /READY_FOR_EXPORT|APPROVED/i.test(doc.reviewStatus ?? "")).length;
+    const detailBlockers = requiredDocumentsTotal > 0 && exportReadyDocumentsTotal < requiredDocumentsTotal
+      ? [{ code: "REQUIRED_DOCUMENTS_NOT_EXPORT_READY", message: `${exportReadyDocumentsTotal}/${requiredDocumentsTotal} required documents are export-ready.`, nextAction: "Open export readiness." }]
+      : [];
+    const envelope = buildPublicReadinessEnvelope({
+      ok: detailBlockers.length === 0,
+      blockers: detailBlockers,
+      warnings: [],
+      requiredDocumentsTotal,
+      generatedDocumentsTotal,
+      exportReadyDocumentsTotal,
+    });
+    return NextResponse.json({
+      ...envelope,
+      ...payload,
+      latestPartialAnalysisJob: partialJobInfo,
+      aiAnalyzeCheckpointProgress,
+    });
   } catch (error) {
     logger.error("[GET /api/tenders/[id]] failed:", { detail: error });
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
