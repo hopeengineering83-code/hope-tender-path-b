@@ -473,11 +473,9 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
     prisma.expert.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }, sourceDocumentId: { in: expertDocIds } } }),
     prisma.project.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }, sourceDocumentId: { in: projectDocIds } } }),
     ...(expertsPayload.length
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ? [prisma.expert.createMany({ data: expertsPayload as any, skipDuplicates: true })]
       : []),
     ...(projectsPayload.length
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ? [prisma.project.createMany({ data: projectsPayload as any, skipDuplicates: true })]
       : []),
   ]);

@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-globals */
 // Temporary production stability service worker.
 //
 // The previous PWA worker cached navigation pages and static assets. After many

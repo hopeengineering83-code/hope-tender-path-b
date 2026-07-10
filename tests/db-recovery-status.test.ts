@@ -39,7 +39,6 @@ function makeMockPrisma(opts: MockOpts) {
     user: { count: async () => 3 },
     tender: { count: async () => 5 },
     generatedDocument: { count: async () => 7 },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
 

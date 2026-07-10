@@ -383,7 +383,6 @@ export type SubmissionPlanCheckResult = {
 };
 
 export async function hasValidSubmissionPlan(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
   tenderId: string,
 ): Promise<SubmissionPlanCheckResult> {
