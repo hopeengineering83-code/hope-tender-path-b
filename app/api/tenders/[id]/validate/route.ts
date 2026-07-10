@@ -37,7 +37,7 @@ export async function POST(
       where: { id },
       include: {
         files: true,
-        requirements: { select: { title: true, description: true, priority: true, requirementType: true, sectionReference: true } },
+        requirements: { select: { title: true, description: true, priority: true, requirementType: true, sectionReference: true, exactFileName: true } },
         generatedDocuments: {
           where: { generationStatus: { not: "SUPERSEDED" } },
         },
@@ -149,14 +149,37 @@ export async function POST(
     // BEFORE the user attempts export. This gives an earlier, clearer
     // error than waiting for the document output state machine to catch
     // the mismatch at download time.
+    //
+    // Defect 1 fix: Also check TenderRequirement.exactFileName values for
+    // required PDF filenames — the tender-level exactFileNaming may be empty
+    // while individual requirements specify "Technical Proposal.pdf".
+    //
+    // Defect 3 fix: Only count extensions from GENERATED docs with real content
+    // or storage — PLANNED/PENDING rows must never satisfy format coverage.
     let pdfCoverageBlocker: { code: string; missing: string[]; reason: string } | null = null;
     try {
       const { detectTenderFormatPolicy, checkTenderFormatCoverage } = await import("../../../../../lib/engine/export-format-policy");
+
+      // Collect requirement-level exact filenames that end in .pdf
+      const requirementPdfNames = (tender.requirements ?? [])
+        .map((r: { exactFileName?: string | null }) => r.exactFileName ?? "")
+        .filter((name: string) => name.trim().toLowerCase().endsWith(".pdf"));
+
+      // Combine tender-level + requirement-level filenames for policy detection
+      const allRequiredNames = [
+        ...(tender.exactFileNaming ? tender.exactFileNaming.split(/[;,\n]/).map((s: string) => s.trim()).filter(Boolean) : []),
+        ...requirementPdfNames,
+      ];
+      const combinedFileNaming = allRequiredNames.length > 0 ? allRequiredNames.join("\n") : tender.exactFileNaming;
+
       const policy = detectTenderFormatPolicy({
-        exactFileNaming: tender.exactFileNaming,
+        exactFileNaming: combinedFileNaming,
         exactFileOrder: tender.exactFileOrder,
       });
+
+      // Defect 3: Only count extensions from GENERATED docs with real content/storage
       const generatedExtensions = docs
+        .filter((d) => d.generationStatus === "GENERATED" && (d.fileContent || d.storagePath))
         .map((d) => (d.exactFileName ?? d.name ?? "").split(".").pop() ?? "")
         .filter(Boolean);
       const coverage = checkTenderFormatCoverage(policy, generatedExtensions);
@@ -164,7 +187,7 @@ export async function POST(
         pdfCoverageBlocker = { code: coverage.code, missing: coverage.missing, reason: coverage.reason };
       }
     } catch (err) {
-      logger.warn(`PDF format coverage check failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`PDF format coverage check failed (non-fatal): ${err instanceof Error ? err.constructor.name : "UnknownError"}`);
     }
 
     // Log the validation action
