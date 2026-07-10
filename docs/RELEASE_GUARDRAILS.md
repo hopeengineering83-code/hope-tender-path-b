@@ -30,7 +30,7 @@ Do not trigger manual preview or production deploys unless explicitly requested.
 
 ## Local guardrail commands
 
-The metadata-language and safe-error audits are baseline-aware while PR #1012/#1013 and follow-up cleanup are in flight. New findings fail; existing baseline entries must be removed as cleanup lands, not expanded casually.
+The metadata-language and safe-error audits are intentionally narrow: they scan public-facing strings and JSON-response contexts, not every internal schema identifier. New findings fail without a giant committed baseline.
 
 ```bash
 node scripts/audit-no-user-facing-metadata.mjs

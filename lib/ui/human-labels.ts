@@ -51,7 +51,7 @@ export const FIELD_LABELS: Record<string, string> = {
   exactFileNaming: "Exact file naming",
   exactFileOrder: "Exact file order",
   sectionReference: "Section reference",
-  metadataContaminated: "Metadata contaminated",
+  metadataContaminated: "Tender Details contaminated",
   analysisExtractionStatus: "Extraction status",
 };
 
@@ -73,7 +73,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   BLOCKED_LEGACY_ANALYSIS: "Analysis is outdated — re-run AI analysis",
   BLOCKED_UNPROMOTED: "AI analysis has not been promoted — promote the latest result",
   BLOCKED_FALLBACK_UNAPPROVED: "Fallback analysis requires approval",
-  BLOCKED_UNGROUNDED_CRITICAL: "Critical metadata lacks source evidence",
+  BLOCKED_UNGROUNDED_CRITICAL: "Critical Tender Details lack source evidence",
   BLOCKED_UNGROUNDED_MANDATORY: "Mandatory requirements lack source evidence",
   FALLBACK_NOT_ALLOWED: "Fallback analysis is not allowed for this tender",
   LEGACY_ANALYSIS_BLOCKED: "Legacy analysis is blocked — re-run AI analysis",

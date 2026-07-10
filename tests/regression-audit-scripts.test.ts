@@ -1,30 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 function run(command: string[]): string {
   return execFileSync(command[0], command.slice(1), { encoding: "utf8" });
 }
 
-test("metadata-language audit passes only against its explicit legacy baseline", () => {
+test("metadata-language audit runs without a giant committed baseline", () => {
   const output = JSON.parse(run(["node", "scripts/audit-no-user-facing-metadata.mjs"]));
   assert.equal(output.ok, true);
-  assert.equal(typeof output.checkedFindings, "number");
-  assert.equal(typeof output.baselinedFindings, "number");
-  const baseline = readFileSync("scripts/audit-allowlists/no-user-facing-metadata-baseline.json", "utf8");
-  assert.match(baseline, /Do not add entries casually/);
-  assert.match(baseline, /PR #1012\/#1013/);
+  assert.equal(typeof output.checkedFiles, "number");
+  assert.equal(existsSync("scripts/audit-allowlists/no-user-facing-metadata-baseline.json"), false);
+  const script = readFileSync("scripts/audit-no-user-facing-metadata.mjs", "utf8");
+  assert.match(script, /userFacingHints|publicContext/);
+  assert.match(script, /Complete Metadata/);
 });
 
-test("safe API error audit catches raw response risks through an explicit baseline", () => {
+test("safe API error audit runs without a raw-error baseline", () => {
   const output = JSON.parse(run(["node", "scripts/audit-safe-api-errors.mjs"]));
   assert.equal(output.ok, true);
   assert.equal(typeof output.checkedRoutes, "number");
-  assert.equal(typeof output.baselinedFindings, "number");
+  assert.equal(existsSync("scripts/audit-allowlists/safe-api-errors-baseline.json"), false);
   const script = readFileSync("scripts/audit-safe-api-errors.mjs", "utf8");
   assert.match(script, /responseDepth/);
-  assert.match(script, /err\|error/);
+  assert.match(script, /rawErrorExpression/);
 });
 
 test("workflow-state audit remains warning-only and reports actionable files", () => {

@@ -2,7 +2,7 @@
  * Repair Extraction — re-reads the original TenderFile from storage and
  * re-runs text extraction + OCR.
  *
- * This is NOT "Refresh Metadata" (which only re-runs regex on existing text).
+ * This is NOT the legacy internal compatibility refresh action (which only re-runs regex on existing text).
  * This retrieves the original file bytes and re-runs the full extraction pipeline.
  *
  * Requires ADMIN or PROPOSAL_MANAGER. Enforces tenant ownership + rate limits.

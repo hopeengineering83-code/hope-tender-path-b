@@ -164,12 +164,12 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
   if (!input.metadata.trusted) {
     return {
       primary: "EDIT_METADATA",
-      label: "Edit metadata",
-      reason: "Critical tender metadata is missing, contaminated, or contains placeholder values.",
+      label: "Edit Tender Details",
+      reason: "Critical Tender Details are missing, contaminated, or contain placeholder values.",
       blockers: [
         ...(input.metadata.missingFields ?? []).slice(0, 4).map((field) => `Missing: ${field}`),
-        ...(input.metadata.contaminated ? ["Metadata appears contaminated by portal/noise text"] : []),
-        ...((input.metadata.placeholderCount ?? 0) > 0 ? [`${input.metadata.placeholderCount} metadata field(s) contain placeholder text`] : []),
+        ...(input.metadata.contaminated ? ["Tender Details appear contaminated by portal/noise text"] : []),
+        ...((input.metadata.placeholderCount ?? 0) > 0 ? [`${input.metadata.placeholderCount} Tender Detail field(s) contain placeholder text`] : []),
       ],
       tone: "amber",
     };
@@ -206,7 +206,7 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
     return {
       primary: "BUILD_SUBMISSION_PLAN",
       label: "Build submission plan",
-      reason: "Extraction, analysis, metadata, and requirements are ready. Build the submission plan before generating documents.",
+      reason: "Extraction, analysis, Tender Details, and requirements are ready. Build the submission plan before generating documents.",
       blockers: ["No submission plan"],
       tone: "amber",
     };

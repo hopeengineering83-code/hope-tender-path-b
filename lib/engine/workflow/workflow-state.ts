@@ -176,7 +176,7 @@ export async function getCanonicalTenderWorkflowState(
     reason = readiness.blockers.find(b => /analysis|extraction/i.test(b)) ?? "Tender needs AI analysis.";
   } else if (canonicalModules.metadata !== "READY") {
     nextAction = "EDIT_METADATA";
-    label = "Edit Metadata";
+    label = "Edit Tender Details";
     reason = "Tender metadata is incomplete.";
   } else if (mandatoryRequirements.length > 0 && !completeTraceability) {
     nextAction = "REVIEW_REQUIREMENTS";

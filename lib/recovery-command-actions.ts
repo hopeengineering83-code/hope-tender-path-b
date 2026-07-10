@@ -123,10 +123,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     aliases: ["REVIEW_ANALYSIS"],
   },
   COMPLETE_METADATA: {
-    label: "Complete Metadata",
+    label: "Complete Tender Details",
     kind: "scroll",
     anchorId: "tender-edit-form",
-    message: "Open the Tender Metadata form and complete missing critical fields.",
+    message: "Open the Tender Details form and complete missing critical fields.",
   },
   REPAIR_SOURCE_REFERENCES: {
     label: "Repair Source References",
@@ -243,13 +243,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Edit Tender",
     kind: "scroll",
     anchorId: "tender-edit-form",
-    message: "Open the Tender Metadata form and fill in missing critical fields.",
+    message: "Open the Tender Details form and fill in missing critical fields.",
   },
   EDIT_TENDER_METADATA: {
-    label: "Edit Tender Metadata",
+    label: "Edit Tender Details",
     kind: "scroll",
     anchorId: "tender-edit-form",
-    message: "Open the Tender Metadata form and correct the client/procuring entity details.",
+    message: "Open the Tender Details form and correct the client/procuring entity details.",
   },
   CHANGE_BID_DECISION: {
     label: "Change Bid Decision",
@@ -272,13 +272,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   },
   // Metadata repair / re-extraction ─────────────────────────────────────────
   REPAIR_METADATA: {
-    label: "Repair Metadata",
+    label: "Repair Tender Facts",
     kind: "api",
     method: "POST",
     path: "/api/tenders/{tenderId}/repair-metadata",
   },
   RE_EXTRACT_METADATA: {
-    label: "Re-extract Metadata",
+    label: "Re-extract Tender Details",
     kind: "api",
     method: "POST",
     path: "/api/tenders/{tenderId}/re-extract-metadata",
@@ -396,10 +396,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   },
   // Fill / review metadata (auto-finalize and generate route nextAction codes) ──
   FILL_CLIENT_METADATA: {
-    label: "Fill Client Metadata",
+    label: "Fill Client Facts",
     kind: "scroll",
     anchorId: "tender-edit-form",
-    message: "Open the Tender Metadata form and fill in the missing client name and procuring entity details.",
+    message: "Open the Tender Details form and fill in the missing client name and procuring entity details.",
     aliases: ["REVIEW_METADATA"],
   },
   // Re-check export readiness after auto-finalize completes ─────────────────

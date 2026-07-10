@@ -77,6 +77,31 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-10 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** second follow-up hardening after review dissatisfaction; removed oversized audit baselines and fixed concrete public terminology/raw-error leaks.
+- **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR update pending.
+- **Scope:**
+  - Deleted the giant metadata-language and raw-error baseline JSON files; audits now pass without broad baselines by focusing on public-facing strings and JSON response contexts.
+  - Tightened `audit-no-user-facing-metadata` and `audit-safe-api-errors` to fail new public leaks while allowing internal schema identifiers/logging.
+  - Replaced remaining public/user-facing metadata copy in workflow/recovery/human-label/upload/extract text paths with Tender Details / Tender Facts language.
+  - Sanitized `facts-ledger` POST failure responses with a safe public message and `diagnosticId`, while logging raw details server-side.
+  - Updated regression tests to prove audits run without committed giant baselines and adjusted extract-text source-shape test for the renamed internal step message.
+- **Files changed:** `app/api/tenders/[id]/facts-ledger/route.ts`, `app/api/tenders/[id]/files/[fileId]/re-extract/route.ts`, `app/api/tenders/[id]/re-extract-metadata/route.ts`, `app/api/tenders/[id]/workflow-center/route.ts`, `docs/RELEASE_GUARDRAILS.md`, `docs/legacy-tender-facts-compatibility-map.md`, `lib/ai-job-handlers.ts`, `lib/analysis-quality.ts`, `lib/engine/workflow/workflow-state.ts`, `lib/recovery-command-actions.ts`, `lib/tender-next-action.ts`, `lib/tender-upload-first.ts`, `lib/ui/human-labels.ts`, `scripts/audit-no-user-facing-metadata.mjs`, `scripts/audit-safe-api-errors.mjs`, `tests/extract-text-job.test.ts`, `tests/regression-audit-scripts.test.ts`; deleted `scripts/audit-allowlists/no-user-facing-metadata-baseline.json` and `scripts/audit-allowlists/safe-api-errors-baseline.json`.
+- **Tests actually run:**
+  - `node scripts/audit-no-user-facing-metadata.mjs` — PASS (1104 files checked, no broad baseline).
+  - `node scripts/audit-safe-api-errors.mjs` — PASS (165 API routes checked, no broad baseline).
+  - `node scripts/audit-workflow-state-consistency.mjs` — PASS in warning-only mode; still reports independent-readiness warnings in `lib/engine/tender-control-suggestions.ts` and `lib/tender-next-action.ts`.
+  - `npx tsx --test tests/regression-audit-scripts.test.ts tests/final-export-safety-invariants.test.ts tests/api-contract-public-safety.test.ts tests/extract-text-job.test.ts tests/ui-workflow-polish.test.ts tests/recovery-command-center-actions.test.ts` — PASS (108/108; local env warnings only).
+  - `npx tsc --noEmit --pretty false` — PASS.
+  - `npm run lint` — PASS.
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` — PASS (warnings only for missing optional provider/cron/Sentry envs).
+- **CI/deployment status:** local only; no Vercel preview or production deployment triggered.
+- **Known risks / assumptions:** This necessarily touched a small number of files listed as PR #1012/#1013 overlap because the prior baseline approach was unacceptable and concrete leaks were present there; changes were minimal string/safe-error edits. Full DB-backed `npm test` was not rerun after these changes; the previous run failed only DB integration precondition suites.
+- **Next action:** run CI/DB-backed integration with `RUN_DB_INTEGRATION=true` and coordinate any merge conflicts with #1012/#1013.
+- **Merge status:** not reviewed — substantially safer than prior baseline version, but still sequence with #1012/#1013 and CI.
+
+
+### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** follow-up release-hardening after PR review dissatisfaction; converted shallow/failing guardrails into baseline-aware audits with regression coverage.
 - **Branch / PR:** `perfect/regression-guardrails-and-legacy-cleanup` / PR update pending.
 - **Scope:**

@@ -357,7 +357,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: "TENDER_UPDATE",
     entityType: "Tender",
     entityId: id,
-    description: `${actor.email} re-extracted metadata on "${tender.title}" — auto-filled ${updatedCount} field(s)${overwrittenInvalid.length > 0 ? `; OVERWROTE ${overwrittenInvalid.length} invalid value(s): ${overwrittenInvalid.join(", ")}` : ""}`,
+    description: `${actor.email} re-extracted Tender Details on "${tender.title}" — auto-filled ${updatedCount} field(s)${overwrittenInvalid.length > 0 ? `; OVERWROTE ${overwrittenInvalid.length} invalid value(s): ${overwrittenInvalid.join(", ")}` : ""}`,
     metadata: { tenderId: id, updatedCount, fields: Object.keys(update), overwrittenInvalid, ...(ocrProvider ? { ocrProvider } : {}) },
   });
 
