@@ -14,7 +14,6 @@ const RUN_DB = process.env.RUN_DB_INTEGRATION === "true";
 const dbDescribe = RUN_DB ? describe : describe.skip;
 
 dbDescribe("release-acceptance D — requireTenderAccess cross-user isolation", () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { prisma } = require("../lib/prisma");
   const { requireTenderAccess } = require("../lib/tender-ownership");
 

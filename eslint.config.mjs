@@ -39,6 +39,8 @@ const eslintConfig = [
       // Playwright reports
       "playwright-report/**",
       "test-results/**",
+      // Config files that use anonymous default exports (standard pattern)
+      "postcss.config.mjs",
     ],
   },
 ];

@@ -100,7 +100,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pv = (prisma as any).proposalVersion;
   const [base, next] = await Promise.all([
     pv.findFirst({ where: { id: versionId, tenderId: id }, select: { id: true, version: true, markdown: true } }) as Promise<{ id: string; version: number; markdown: string | null } | null>,
