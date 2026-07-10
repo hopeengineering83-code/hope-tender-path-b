@@ -39,14 +39,15 @@ function analysisSourceFromNotes(notes: string | null | undefined): string {
 export async function BidControlVerdictPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
-  await prismaReady;
+
+  try {
+    await prismaReady;
 
   const [generationReadiness, canonical, finalPackage, tender] = await Promise.all([
     getTenderGenerationReadinessStrict(prisma, userId, tenderId).catch((error) => {
       clientLogger.error("[BidControlVerdictPanel] generation readiness failed", {
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-        message: error instanceof Error ? error.message : String(error),
       });
       return null;
     }),
@@ -54,7 +55,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
       clientLogger.error("[BidControlVerdictPanel] final readiness failed", {
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-        message: error instanceof Error ? error.message : String(error),
       });
       return null;
     }),
@@ -62,7 +62,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
       clientLogger.error("[BidControlVerdictPanel] final package readiness failed", {
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-        message: error instanceof Error ? error.message : String(error),
       });
       return null;
     }),
@@ -209,4 +208,17 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
       <BidDecisionForm tenderId={tenderId} />
     </section>
   );
+  } catch (error) {
+    // Never expose raw Prisma errors to the UI — log server-side, show safe fallback.
+    clientLogger.error("[BidControlVerdictPanel] unhandled error", {
+      tenderId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return (
+      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+        <p className="font-semibold">Bid control verdict unavailable</p>
+        <p className="mt-1 text-xs">Refresh to retry. If the problem persists, contact admin.</p>
+      </section>
+    );
+  }
 }
