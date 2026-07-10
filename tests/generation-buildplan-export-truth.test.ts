@@ -152,9 +152,11 @@ describe("Export Readiness panel — structured blocker display", () => {
 
   it("Repair prohibited assets button only shows when prohibited assets exist", () => {
     const src = read("components/export-readiness-panel.tsx");
+    // The repair button must be conditional — either via prohibitedAssetCount
+    // or via tenderLevelBlockers PROHIBITED_ASSET category check.
     assert.ok(
-      src.includes("prohibitedAssetCount"),
-      "must check prohibitedAssetCount before showing repair button",
+      src.includes("prohibitedAssetCount") || src.includes("PROHIBITED_ASSET"),
+      "must check for prohibited assets before showing repair button (prohibitedAssetCount or PROHIBITED_ASSET category)",
     );
     // The old unconditional button must NOT be present
     assert.ok(
