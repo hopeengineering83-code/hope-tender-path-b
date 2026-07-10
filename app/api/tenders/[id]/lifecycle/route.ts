@@ -4,6 +4,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma } from "../../../../../lib/prisma";
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
 import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,22 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ ok: true, ...result });
+    const envelope = buildPublicReadinessEnvelope({
+      ok: result.finalSubmissionStatus !== "BLOCKED",
+      status: result.finalSubmissionStatus === "READY" ? "READY" : result.finalSubmissionStatus === "PARTIAL" ? "PARTIAL" : "BLOCKED",
+      blockers: result.blockers,
+      warnings: result.warnings,
+      primaryBlockerReason: result.blockers[0]?.message ?? null,
+      primaryFixAction: result.blockers[0]?.action ?? null,
+      requiredDocumentsTotal: result.planStatus.totalRequired,
+      generatedDocumentsTotal: result.planStatus.totalGenerated,
+      exportReadyDocumentsTotal: result.counts.finalExportCandidates,
+    });
+
+    return NextResponse.json({
+      ...result,
+      ...envelope,
+    });
   } catch (error) {
     // Per spec rule 9: never return raw error.message. Use safeApiError to
     // log the raw error server-side (keyed by diagnosticId) and return a

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 import { safeApiError } from "../../../../../lib/engine/safe-api-error";
@@ -62,8 +63,36 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const analysisTrusted = analysisSource === "AI";
     const documentsCurrent = submissionPlanBuilt && analysisTrusted && readiness.summary.planStatus === "PLAN_MATCHED";
 
-    return NextResponse.json({
+    const publicBlockers = [
+      ...finalPackage.documents.blockers,
+      ...finalPackage.export.blockers,
+      ...reconciledTenderBlockers.map((blocker) => ({
+        code: blocker.category,
+        message: blocker.title,
+        nextAction: blocker.recommendedAction ?? "Resolve tender-level blocker",
+        severity: blocker.severity,
+      })),
+    ];
+    const publicWarnings = readiness.advisoryWarnings.map((warning) => ({
+      code: warning.code ?? warning.category,
+      message: warning.title,
+      nextAction: warning.recommendedAction ?? null,
+      severity: warning.severity,
+    }));
+
+    const envelope = buildPublicReadinessEnvelope({
       ok: reconciledOk,
+      blockers: publicBlockers,
+      warnings: publicWarnings,
+      primaryBlockerReason: readiness.summary.primaryBlockerReason,
+      primaryFixAction: readiness.summary.primaryFixAction,
+      requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
+    });
+
+    return NextResponse.json({
+      ...envelope,
       success: true,
       exportReadiness: {
         ok: reconciledOk,

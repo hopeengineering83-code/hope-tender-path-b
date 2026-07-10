@@ -527,7 +527,7 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
       exactFileOrder: true,
       pageLimit: true,
       submissionMethod: true,
-      tenderCategory: true,
+      category: true,
       analysisExtractionStatus: true,
       requirements: { include: { complianceMatrixRows: true } },
       generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },

@@ -6,6 +6,7 @@ import { getTenderGenerationReadinessStrict } from "../../../../../lib/tender-ge
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { safeParseJsonArray } from "../../../../../lib/safe-json";
 import { randomUUID } from "node:crypto";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export async function GET(
       getTenderGenerationReadinessStrict(prisma, userId, tenderId),
       prisma.tender.findFirst({
         where: { id: tenderId, userId },
-        select: { notes: true, exactFileNaming: true, exactFileOrder: true, _count: { select: { requirements: true } } },
+        select: { notes: true, exactFileNaming: true, exactFileOrder: true, generatedDocuments: { select: { generationStatus: true, reviewStatus: true } }, _count: { select: { requirements: true } } },
       }),
     ]);
     if (!readiness || !tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
@@ -36,6 +37,10 @@ export async function GET(
     const orderEntries = safeParseJsonArray(tender.exactFileOrder);
     const submissionPlanBuilt = (Array.isArray(planEntries) && planEntries.length > 0) || (Array.isArray(orderEntries) && orderEntries.length > 0);
     const requirementsExist = (tender._count.requirements ?? 0) > 0;
+    const plannedDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "PLANNED").length;
+    const requiredDocumentsTotal = Math.max(planEntries.length, orderEntries.length, tender._count.requirements ?? 0, plannedDocumentsTotal);
+    const generatedDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED").length;
+    const exportReadyDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && /READY_FOR_EXPORT|APPROVED/i.test(doc.reviewStatus ?? "")).length;
 
     // Use the canonical helper which checks both tender.notes AND the
     // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap so a human-approved
@@ -88,9 +93,19 @@ export async function GET(
 
     const readyForFullProposalFinal = readyForFullProposal && submissionPlanBlocker.length === 0;
 
+    const publicBlockers = [...readiness.blockers, ...fullProposalBlockers];
+    const envelope = buildPublicReadinessEnvelope({
+      ok: readyForFullProposalFinal,
+      blockers: publicBlockers,
+      warnings,
+      requiredDocumentsTotal,
+      generatedDocumentsTotal,
+      exportReadyDocumentsTotal,
+    });
+
     return NextResponse.json({
       ...readiness,
-      warnings,
+      ...envelope,
       fullProposalBlockers,
       supportPackageReady: readyForSupportPackage,
       fullProposalReady: readyForFullProposalFinal,
@@ -122,7 +137,7 @@ export async function GET(
       tenderId,
       diagnosticId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
+      message: error instanceof Error ? error.message : "Non-Error throwable",
     });
     return NextResponse.json({
       error: "Generation readiness panel failed to load.",
