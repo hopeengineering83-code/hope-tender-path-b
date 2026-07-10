@@ -325,7 +325,7 @@ export async function computeTenderLifecycle(
   userId?: string,
 ): Promise<TenderLifecycleResult | null> {
   // Load tender + related data in parallel
-  const [tender, files, requirements, generatedDocs, complianceRows, engineJobCount] =
+  const [tender, files, requirements, generatedDocs, complianceRows, engineJobCount, engineAuditCount] =
     await Promise.all([
       client.tender.findFirst({
         where: { id: tenderId, ...(userId ? { userId } : {}) },
@@ -403,7 +403,7 @@ export async function computeTenderLifecycle(
         },
       }),
       client.complianceMatrix.count({ where: { tenderId, ...(userId ? { tender: { userId } } : {}) } }),
-      // Durable signal: count terminal ENGINE_RUN AiJobs so the orchestrator
+      // Durable signal 1: count terminal ENGINE_RUN AiJobs so the orchestrator
       // can distinguish "Engine has genuinely never run" (false) from
       // "Engine ran but produced no/weak matching rows" (true). Without
       // this, the orchestrator kept recommending RUN_ENGINE even after
@@ -414,6 +414,21 @@ export async function computeTenderLifecycle(
           tenderId,
           jobType: "ENGINE_RUN",
           status: { in: ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"] },
+        },
+      }),
+      // Durable signal 2: count TENDER_ENGINE_RUN_STARTED audit log entries.
+      // The sync engine route (POST /api/tenders/[id]/engine) calls
+      // runTenderEngine directly WITHOUT creating an AiJob — so the AiJob
+      // count alone misses sync engine runs. runTenderEngine writes
+      // TENDER_ENGINE_RUN_STARTED to the AuditLog at the start of EVERY
+      // run (sync and async), making it the most reliable durable signal.
+      // The AuditLog has @@index([action]) and @@index([entityType, entityId])
+      // so this query is efficient.
+      client.auditLog.count({
+        where: {
+          entityId: tenderId,
+          entityType: "Tender",
+          action: "TENDER_ENGINE_RUN_STARTED",
         },
       }),
     ]);
@@ -450,7 +465,15 @@ export async function computeTenderLifecycle(
   //   2. ran, no rows     → complianceRows === 0 && engineHasRun
   //   3. ran, weak rows   → complianceRows > 0 && !mandatoryEvidenceReady
   //   4. ran, strong rows → complianceRows > 0 && mandatoryEvidenceReady
-  const engineHasRun = engineJobCount > 0;
+  // We check TWO durable signals:
+  //   - engineJobCount: terminal ENGINE_RUN AiJobs (async path)
+  //   - engineAuditCount: TENDER_ENGINE_RUN_STARTED audit log entries
+  //     (sync path — the sync engine route calls runTenderEngine directly
+  //     without creating an AiJob, but runTenderEngine ALWAYS writes the
+  //     audit log entry). This closes the gap where a sync engine run
+  //     was invisible to the orchestrator, causing it to recommend
+  //     RUN_ENGINE even after Engine had already run synchronously.
+  const engineHasRun = engineJobCount > 0 || engineAuditCount > 0;
 
   // Effective extraction metrics — combine the stored per-file score with a
   // freshly recomputed score and keep the more conservative (lower) value so a
@@ -956,6 +979,56 @@ export async function computeTenderLifecycle(
   // BLOCKED and the user needs to file a support request. The lifecycle
   // route never returns raw error.message — instead it returns this id.
   const diagnosticId = newDiagnosticId("lifecycle");
+
+  // ── Spec rule 5 & 6 invariant: primaryNextAction must never contradict
+  //    blockedActions. If final is BLOCKED, the primary next action must be
+  //    a blocker-resolving action — never a generic repeated action that is
+  //    itself blocked. This is a defensive check: the state machine above
+  //    already ensures this, but a future code path could break the
+  //    invariant. We catch it here and fall back to the first blocker's
+  //    resolving action (or LINK_VAULT_EVIDENCE as a safe default).
+  if (finalSubmissionStatus === "BLOCKED" && primaryNextAction) {
+    const primaryActionName = primaryNextAction as string;
+    // Map PrimaryNextAction to AllowedAction for the blocked lookup.
+    // Most PrimaryNextAction values map 1:1 to AllowedAction names, but a
+    // few differ (e.g. GENERATE_REQUIRED_DOCUMENTS → GENERATE_DOCS,
+    // RETRY_AI_ANALYZE → AI_ANALYZE, RESUME_AI_ANALYZE → AI_ANALYZE).
+    const allowedActionForPrimary: Record<string, AllowedAction> = {
+      GENERATE_REQUIRED_DOCUMENTS: "GENERATE_DOCS",
+      RETRY_AI_ANALYZE: "AI_ANALYZE",
+      RESUME_AI_ANALYZE: "AI_ANALYZE",
+      RUN_AI_ANALYZE: "AI_ANALYZE",
+      REVIEW_MATCHING_INPUTS: "LINK_VAULT_EVIDENCE",
+    };
+    const blockedActionName = allowedActionForPrimary[primaryActionName] ?? primaryActionName;
+    const isBlocked = blocked.some((b) => b.action === blockedActionName);
+    if (isBlocked) {
+      // Contradiction detected. Fall back to the first blocker's action.
+      // Each blocker has a `code` that maps to a known recovery action.
+      const blockerToAction: Record<string, PrimaryNextAction> = {
+        NO_FILES: "UPLOAD_TENDER_DOCUMENT",
+        NO_EXTRACTED_TEXT: "RUN_AI_ANALYZE",
+        NO_AI_PROVIDER: "CONFIGURE_AI_PROVIDER",
+        ANALYSIS_REGEX_FALLBACK_UNAPPROVED: "RETRY_AI_ANALYZE",
+        ANALYSIS_FALLBACK_AUDIT_ONLY: "RETRY_AI_ANALYZE",
+        ANALYSIS_PARTIAL_NEEDS_RESUME: "RESUME_AI_ANALYZE",
+        EVIDENCE_NOT_ASSESSED: "RUN_ENGINE",
+        ENGINE_RAN_NO_MATCHES: "REVIEW_MATCHING_INPUTS",
+        MANDATORY_EVIDENCE_WEAK: "LINK_VAULT_EVIDENCE",
+        DOCUMENTS_NOT_GENERATED: "GENERATE_REQUIRED_DOCUMENTS",
+        OFFICIAL_ORIGINALS_MISSING: "ATTACH_OFFICIAL_ORIGINALS",
+        QUALITY_GATE_FAILED: "REPAIR_DOCUMENT_QUALITY",
+      };
+      const firstBlocker = blockers[0];
+      if (firstBlocker && blockerToAction[firstBlocker.code]) {
+        primaryNextAction = blockerToAction[firstBlocker.code];
+      } else {
+        // Safe fallback — LINK_VAULT_EVIDENCE is allowed whenever
+        // requirements exist, and is never blocked by the state machine.
+        primaryNextAction = "LINK_VAULT_EVIDENCE";
+      }
+    }
+  }
 
   return {
     lifecycleState: lifecycleState ?? "ANALYSIS_APPROVED",

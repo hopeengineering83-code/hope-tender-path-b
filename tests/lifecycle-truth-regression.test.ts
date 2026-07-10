@@ -737,3 +737,90 @@ describe("Spec invariant — New PrimaryNextAction values resolve in the registr
     assert.ok(existsSync(resolve(process.cwd(), "app", spec!.path!.replace(/^\//, ""))));
   });
 });
+
+// ─── Spec invariant: engineHasRun checks BOTH AiJob and AuditLog ─────────────
+// The sync engine route (POST /api/tenders/[id]/engine) calls runTenderEngine
+// directly WITHOUT creating an AiJob. The orchestrator must also check the
+// AuditLog for TENDER_ENGINE_RUN_STARTED entries to catch sync engine runs.
+// Without this, a sync engine run would be invisible to the orchestrator,
+// causing it to recommend RUN_ENGINE even after Engine had already run.
+
+describe("Spec invariant — engineHasRun checks both AiJob and AuditLog", () => {
+  it("orchestrator source queries both aiJob.count and auditLog.count", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "lib/engine/tender-lifecycle-orchestrator.ts"),
+      "utf8",
+    );
+    assert.ok(src.includes('jobType: "ENGINE_RUN"'), "orchestrator must query ENGINE_RUN AiJobs");
+    assert.ok(src.includes('action: "TENDER_ENGINE_RUN_STARTED"'), "orchestrator must query TENDER_ENGINE_RUN_STARTED audit log entries");
+    assert.ok(src.includes("engineJobCount > 0 || engineAuditCount > 0"), "engineHasRun must combine both signals with OR");
+  });
+
+  it("orchestrator comments explain WHY the audit log check is needed", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "lib/engine/tender-lifecycle-orchestrator.ts"),
+      "utf8",
+    );
+    // The comment must explain that the sync engine route does not create
+    // an AiJob — this is the key insight that justifies the audit log check.
+    assert.ok(src.includes("sync engine route"), "orchestrator must document the sync engine route gap");
+    assert.ok(src.includes("without creating an AiJob"), "orchestrator must explain why the audit log check is needed");
+  });
+});
+
+// ─── Spec rule 5 & 6: primaryNextAction never contradicts blockedActions ────
+// When final is BLOCKED, the primary next action must be a blocker-resolving
+// action — never a generic repeated action that is itself blocked.
+
+describe("Spec rule 5 & 6 — primaryNextAction never contradicts blockedActions", () => {
+  it("orchestrator source includes the contradiction-check invariant", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "lib/engine/tender-lifecycle-orchestrator.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("Spec rule 5 & 6 invariant"),
+      "orchestrator must include the spec rule 5 & 6 invariant check",
+    );
+    assert.ok(
+      src.includes("Contradiction detected"),
+      "orchestrator must detect and fix contradictions",
+    );
+  });
+
+  it("orchestrator maps blocker codes to resolving primary actions", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "lib/engine/tender-lifecycle-orchestrator.ts"),
+      "utf8",
+    );
+    // The blockerToAction map must cover all blocker codes the state
+    // machine can emit when final is BLOCKED.
+    const expectedMappings: Array<[string, string]> = [
+      ["EVIDENCE_NOT_ASSESSED", "RUN_ENGINE"],
+      ["ENGINE_RAN_NO_MATCHES", "REVIEW_MATCHING_INPUTS"],
+      ["MANDATORY_EVIDENCE_WEAK", "LINK_VAULT_EVIDENCE"],
+      ["DOCUMENTS_NOT_GENERATED", "GENERATE_REQUIRED_DOCUMENTS"],
+      ["ANALYSIS_PARTIAL_NEEDS_RESUME", "RESUME_AI_ANALYZE"],
+    ];
+    for (const [code, action] of expectedMappings) {
+      assert.ok(
+        src.includes(`${code}: "${action}"`),
+        `blockerToAction must map ${code} → ${action}`,
+      );
+    }
+  });
+
+  it("orchestrator safe-fallback is LINK_VAULT_EVIDENCE (not RUN_ENGINE)", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "lib/engine/tender-lifecycle-orchestrator.ts"),
+      "utf8",
+    );
+    // The contradiction-check fallback must be LINK_VAULT_EVIDENCE, never
+    // RUN_ENGINE — this prevents a future code path from resurrecting the
+    // "Endless Run Engine loop" bug.
+    assert.ok(
+      src.includes('primaryNextAction = "LINK_VAULT_EVIDENCE"'),
+      "contradiction-check fallback must be LINK_VAULT_EVIDENCE",
+    );
+  });
+});

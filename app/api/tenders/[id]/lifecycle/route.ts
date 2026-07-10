@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
-import { safeApiError } from "../../../../../lib/engine/safe-api-error";
+import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +21,12 @@ export async function GET(
     const result = await computeTenderLifecycle(prisma, tenderId, actor.id);
 
     if (!result) {
+      // 404 is NOT an error condition — it's a legitimate "not found"
+      // response. But we still include a diagnosticId so the user can
+      // reference it in support requests if they believe the tender
+      // should exist.
       return NextResponse.json(
-        { ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId: `lifecycle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
+        { ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId: newDiagnosticId("lifecycle") },
         { status: 404 },
       );
     }
