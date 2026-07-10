@@ -648,11 +648,39 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   //     OFF or re-generate without the asset; the download route's
   //     409 BRANDING_POLICY_CONFLICT is the hard gate.
   if (formatPolicy.requiresPdf) {
-    warnings.push({
-      code: "TENDER_REQUIRES_PDF",
-      message: `Tender submission plan requires PDF output (${formatPolicy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName).join(", ")}). Final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE until the required PDF is finalized from an approved source document (Finalize PDF) or the tender-issued PDF is uploaded.`,
-      nextAction: "OPEN_TENDER_DETAIL",
-    });
+    // Truthful warning: once every required PDF filename has an active
+    // GENERATED document with real bytes, the warning must clear — otherwise
+    // operators keep seeing "final export will block" after they have already
+    // finalized or uploaded the PDF. Defensive genDocModel access mirrors the
+    // derived-draft counts above so lightweight test mocks stay supported
+    // (a mock without generatedDocument keeps the warning, fail-closed).
+    const requiredPdfNames = formatPolicy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName);
+    const pdfDocModel = (client as unknown as Record<string, unknown>).generatedDocument as
+      | undefined
+      | { findMany: (q: unknown) => Promise<Array<{ exactFileName: string | null }>> };
+    const activePdfRows = pdfDocModel?.findMany
+      ? await pdfDocModel
+          .findMany({
+            where: {
+              tenderId,
+              generationStatus: "GENERATED",
+              OR: [{ fileContent: { not: null } }, { storagePath: { not: null } }],
+            },
+            select: { exactFileName: true },
+          })
+          .catch(() => [] as Array<{ exactFileName: string | null }>)
+      : [];
+    const coveredPdfNames = new Set(
+      (activePdfRows ?? []).map((row) => (row.exactFileName ?? "").trim().toLowerCase()).filter(Boolean),
+    );
+    const missingPdfNames = requiredPdfNames.filter((name) => !coveredPdfNames.has(name.trim().toLowerCase()));
+    if (missingPdfNames.length > 0) {
+      warnings.push({
+        code: "TENDER_REQUIRES_PDF",
+        message: `Tender submission plan requires PDF output (${missingPdfNames.join(", ")}). Final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE until the required PDF is finalized from an approved source document (Finalize PDF) or the tender-issued PDF is uploaded.`,
+        nextAction: "FINALIZE_REQUIRED_PDF",
+      });
+    }
   }
   if (!exportAssetStatus.brandingAllowed && exportAssetStatus.brandingApplied === false && (appSettingsRow?.allowBrandingDefault ?? true)) {
     // Tender prohibits branding AND firm setting would apply it (the

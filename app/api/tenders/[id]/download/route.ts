@@ -5,7 +5,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
-import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
+import { checkExportReadiness, exportReadinessError, isReadyForFinalExport, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
 import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
 import { assembleFinalSubmissionZip, FINAL_ZIP_MAX_INPUT_BYTES } from "../../../../../lib/engine/final-zip-assembly";
@@ -660,6 +660,39 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
       ?? docs.find((d: any) => technicalMatch(d))
       ?? docs[0];
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
+
+  // Serve an already-finalized PDF document directly. When the target is a
+  // .pdf document (explicit docId, or no convertible DOCX source exists),
+  // conversion is not applicable: serve its bytes when it is validated +
+  // approved and the bytes really carry the %PDF signature — otherwise fail
+  // closed with the precise blocker instead of a confusing conversion error.
+  const targetFileName = (target.exactFileName ?? target.name ?? "").toLowerCase();
+  if (targetFileName.endsWith(".pdf")) {
+    if (!isReadyForFinalExport(asReadyDoc(target))) {
+      return err(
+        "This PDF document exists but is not yet validated and approved for export. Run Validate and complete the review before downloading it.",
+        409,
+        { code: "PDF_DOC_NOT_EXPORT_READY", document: target.exactFileName ?? target.name },
+      );
+    }
+    const pdfContent = await readContentOrError(asReadyDoc(target));
+    if (!pdfContent.ok) return pdfContent.response;
+    const sig = validateFileSignature(pdfContent.content.filename, pdfContent.content.base64);
+    if (!sig.ok) return err(`File signature mismatch on ${pdfContent.content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
+    await logAction({
+      userId,
+      action: "EXPORT_PACKAGE_DOWNLOAD",
+      entityType: "GeneratedDocument",
+      entityId: target.id,
+      description: `Downloaded finalized PDF "${pdfContent.content.filename}" for tender "${tender.title}"`,
+    });
+    return new NextResponse(new Uint8Array(pdfContent.content.buffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${pdfContent.content.filename}"`,
+      },
+    });
+  }
 
   // Load the source bytes (inline or storage-backed) before finalization.
   const contentResult = await readContentOrError(asReadyDoc(target));

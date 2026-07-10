@@ -278,6 +278,38 @@ test("tender generation readiness surfaces TENDER_REQUIRES_PDF warning when subm
   assert.match(pdfWarning!.message, /PDF_REQUIRED_CONVERSION_UNAVAILABLE/);
   // Diagnostic field is populated for the UI.
   assert.equal(readiness.formatPolicy.requiresPdf, true);
+  // The warning points at the Finalize Required PDF recovery action.
+  assert.equal(pdfWarning!.nextAction, "FINALIZE_REQUIRED_PDF");
+});
+
+test("TENDER_REQUIRES_PDF warning clears once an active generated PDF covers the required filename", async () => {
+  const client = fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      exactFileNaming: JSON.stringify(["Technical-Proposal.pdf"]),
+      exactFileOrder: JSON.stringify(["Technical-Proposal.pdf"]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" }, rationale: "Auto-selected ≥75%." }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" }, rationale: "Auto-selected ≥75%." }],
+    },
+  }) as unknown as Record<string, unknown>;
+  // An active GENERATED "Technical-Proposal.pdf" with bytes now exists.
+  client.generatedDocument = {
+    count: async () => 0,
+    findMany: async () => [{ exactFileName: "Technical-Proposal.pdf" }],
+  };
+
+  const readiness = await getTenderGenerationReadiness(client as never, "user-1", "tender-1");
+  assert.ok(readiness);
+  const pdfWarning = readiness.warnings.find((w) => w.code === "TENDER_REQUIRES_PDF");
+  assert.equal(pdfWarning, undefined, `warning must clear when the required PDF is generated; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+  assert.equal(readiness.formatPolicy.requiresPdf, true, "format policy still reports the PDF requirement");
 });
 
 test("tender generation readiness surfaces TENDER_PROHIBITS_BRANDING warning when intake notes prohibit branding", async () => {

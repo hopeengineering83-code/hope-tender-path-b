@@ -293,6 +293,26 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       assert.ok(!downloadSrc.includes("mammoth"), "contentSummary-fallback mammoth path must be gone");
     });
 
+    it("type=pdf serves an already-finalized PDF only when validated + approved, with byte revalidation", () => {
+      assert.ok(downloadSrc.includes("PDF_DOC_NOT_EXPORT_READY"), "unready PDF doc must fail closed with a precise blocker");
+      const servePath = downloadSrc.slice(downloadSrc.indexOf("PDF_DOC_NOT_EXPORT_READY"));
+      assert.ok(
+        servePath.indexOf("validateFileSignature(pdfContent.content.filename") < servePath.indexOf('"Content-Type": "application/pdf"'),
+        "served PDF bytes must be signature-revalidated before the response",
+      );
+    });
+
+    it("Finalize Required PDF is wired as a recovery action for the blocker code", async () => {
+      const { getRecoveryCommandActionSpec, isMutationAction } = await import("../lib/recovery-command-actions");
+      const spec = getRecoveryCommandActionSpec("PDF_REQUIRED_CONVERSION_UNAVAILABLE");
+      assert.ok(spec, "blocker code must resolve to a recovery action");
+      assert.equal(spec!.kind, "api");
+      assert.equal(spec!.method, "POST");
+      assert.equal(spec!.path, "/api/tenders/{tenderId}/finalize-pdf");
+      assert.equal(getRecoveryCommandActionSpec("TENDER_REQUIRES_PDF")?.path, "/api/tenders/{tenderId}/finalize-pdf");
+      assert.equal(isMutationAction("FINALIZE_REQUIRED_PDF"), true, "must be classified as a mutation (hidden from REVIEWER)");
+    });
+
     it("finalize-pdf route persists the PDF as PENDING (no validation/approval bypass) behind the central gate", () => {
       assert.ok(finalizeSrc.includes("assertTenderReadyForGenerationAndExport"), "central gate must run first");
       assert.ok(finalizeSrc.includes('validationStatus: "PENDING"'), "finalized PDF must NOT be auto-validated");
