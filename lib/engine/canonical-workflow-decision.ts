@@ -208,7 +208,7 @@ export function buildCanonicalWorkflowDecision(input: {
     (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && input.mandatoryFullOrSubstantialCoverageCount >= input.mandatoryRequirementCount));
   if (complianceOK && input.pdfRequiredButUnavailable) {
     blockerCodes.push("PDF_REQUIRED_UNAVAILABLE");
-    blockerDetails.push("Required PDF output is unavailable. Upload a PDF or enable PDF conversion.");
+    blockerDetails.push("Required PDF output is unavailable. Finalize the required PDF or upload the tender-issued PDF.");
   }
 
   // ── Priority 12: Required docs not generated ─────────────────────────
@@ -288,7 +288,7 @@ export function buildCanonicalWorkflowDecision(input: {
     NO_CONFIRMED_BUILD_PLAN: { action: "BUILD_SUBMISSION_PLAN", label: "Build submission plan", reason: "No current confirmed Build Plan. Build and confirm the submission plan." },
     MANDATORY_NO_COMPLIANCE_ROWS: { action: "LINK_VAULT_EVIDENCE", label: "Link evidence to requirements", reason: `${input.mandatoryRequirementCount} mandatory requirements have no compliance matrix rows. Run Engine to link evidence.` },
     MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Confirm evidence coverage", reason: `${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage.` },
-    PDF_REQUIRED_UNAVAILABLE: { action: "GENERATE_DOCUMENTS", label: "Generate documents (PDF required)", reason: "Required PDF output is unavailable. Upload a PDF or enable PDF conversion." },
+    PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
     REQUIRED_DOCS_NOT_GENERATED: { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
     DOCS_NOT_APPROVED_EXPORT_READY: { action: "FIX_EXPORT_BLOCKERS", label: "Approve documents for export", reason: "Documents are validated but not approved for export." },

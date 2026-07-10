@@ -525,3 +525,80 @@ describe("No user-facing 'metadata' wording in wired panels", () => {
     );
   });
 });
+
+// ─── 19. PDF blocker wording alignment with PR #1034 (FINALIZE_REQUIRED_PDF) ─
+
+describe("PDF blocker wording aligned with #1034 (FINALIZE_REQUIRED_PDF)", () => {
+  it("PDF_REQUIRED_UNAVAILABLE maps to FINALIZE_REQUIRED_PDF action (not GENERATE_DOCUMENTS)", () => {
+    const src = read("lib/engine/canonical-workflow-decision.ts");
+    // PR #1034 introduces the FINALIZE_REQUIRED_PDF recovery action and the
+    // finalize-pdf route. The canonical decision must point users at that
+    // action (not the generic GENERATE_DOCUMENTS) when PDF is the highest
+    // blocker — otherwise the UI would tell users to "generate documents"
+    // when they actually need to finalize a required PDF.
+    assert.ok(
+      src.includes('PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF"'),
+      "PDF_REQUIRED_UNAVAILABLE must map to FINALIZE_REQUIRED_PDF action",
+    );
+    assert.ok(
+      !src.includes('PDF_REQUIRED_UNAVAILABLE: { action: "GENERATE_DOCUMENTS"'),
+      "PDF_REQUIRED_UNAVAILABLE must NOT map to GENERATE_DOCUMENTS (stale pre-#1034 wording)",
+    );
+  });
+
+  it("PDF blocker reason says 'Finalize the required PDF or upload the tender-issued PDF'", () => {
+    const src = read("lib/engine/canonical-workflow-decision.ts");
+    // PR #1034 introduces in-engine PDF finalization. The old wording
+    // ("Upload a PDF or enable PDF conversion") is stale — in-engine
+    // finalization now exists, so the correct action is "Finalize the
+    // required PDF or upload the tender-issued PDF".
+    assert.ok(
+      src.includes("Finalize the required PDF"),
+      "PDF blocker reason must say 'Finalize the required PDF'",
+    );
+    assert.ok(
+      src.includes("upload the tender-issued PDF"),
+      "PDF blocker reason must mention 'upload the tender-issued PDF'",
+    );
+    assert.ok(
+      !src.includes("Upload a PDF or enable PDF conversion"),
+      "PDF blocker reason must NOT use the stale 'Upload a PDF or enable PDF conversion' wording",
+    );
+  });
+
+  it("canonical decision returns FINALIZE_REQUIRED_PDF when PDF is the highest blocker", () => {
+    // Build a fixture where PDF is the highest blocker: all upstream gates pass,
+    // but PDF is required and unavailable.
+    const decision = buildCanonicalWorkflowDecision({
+      hasFiles: true,
+      extractionUnsafe: false,
+      extractionCorrupted: false,
+      ocrRequired: false,
+      aiAnalysisExists: true,
+      aiAnalysisTrusted: true,
+      aiAnalysisPartial: false,
+      aiAnalysisStale: false,
+      resumableAnalysisAvailable: false,
+      criticalTenderDetailsValid: true,
+      requirementsExist: true,
+      requirementsTrusted: true,
+      mandatoryRequirementCount: 2,
+      mandatoryTracedCount: 2,
+      mandatoryComplianceRowsCount: 2,
+      mandatoryFullOrSubstantialCoverageCount: 2,
+      confirmedBuildPlanExists: true,
+      requiredDocumentsTotal: 3,
+      generatedDocumentsTotal: 3,
+      exportReadyDocumentsTotal: 0,
+      documentsValidated: true,
+      documentsApproved: true,
+      pdfRequiredButUnavailable: true, // PDF is the blocker
+      finalExportAllowed: false,
+      authorityOrQualityBlockers: false,
+    });
+    assert.equal(decision.currentBlockingStage, "PDF_REQUIRED_UNAVAILABLE");
+    assert.equal(decision.nextRequiredAction, "FINALIZE_REQUIRED_PDF");
+    assert.equal(decision.nextRequiredActionLabel, "Finalize required PDF");
+    assert.ok(decision.nextRequiredActionReason.includes("Finalize the required PDF"));
+  });
+});
