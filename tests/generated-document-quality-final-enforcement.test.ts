@@ -70,7 +70,7 @@ describe("1-3. Quality-gate enforcer", () => {
     assert.equal(typeof checkDocumentQualityGate, "function");
   });
 
-  it("2. checkDocumentQualityGate blocks export when okForFinal is false (AI trace)", () => {
+  it("2. checkDocumentQualityGate blocks export when okForFinal is false (AI trace)", async () => {
     const ctx = makeContext();
     const docs = [{
       id: "doc1",
@@ -85,14 +85,14 @@ describe("1-3. Quality-gate enforcer", () => {
       fileContent: "Cover Letter\nUnderstanding of the Assignment\nTechnical Approach and Methodology\nWork Plan\nTeam Composition\nCompliance Matrix\nSubmission Checklist\n\nAs an AI, I think this proposal is good. TODO: add more details. Bid-Team to confirm the price.",
       storagePath: null,
     }];
-    const failures = checkDocumentQualityGate(docs, ctx, {
+    const failures = await checkDocumentQualityGate(docs, ctx, {
       TECHNICAL_PROPOSAL: ["Cover Letter", "Understanding of the Assignment", "Technical Approach and Methodology", "Work Plan", "Team Composition", "Compliance Matrix", "Submission Checklist"],
     }, ctx.mandatoryRequirements);
     assert.ok(failures.length > 0, "must block when AI trace + TODO + Bid-Team present");
     assert.ok(failures.some((f) => f.reasons.some((r) => r.includes("As an AI"))), "must surface AI trace blocker");
   });
 
-  it("3. checkDocumentQualityGate does NOT block when okForFinal is true (clean content)", () => {
+  it("3. checkDocumentQualityGate does NOT block when okForFinal is true (clean content)", async () => {
     const ctx = makeContext();
     const cleanContent = "Cover Letter\nUnderstanding of the Assignment\nTechnical Approach and Methodology\nWork Plan\nTeam Composition\nCompliance Matrix\nSubmission Checklist\n\nWe are pleased to submit our proposal. Our team has 15 years of experience delivering similar projects.";
     const docs = [{
@@ -108,7 +108,7 @@ describe("1-3. Quality-gate enforcer", () => {
       fileContent: cleanContent,
       storagePath: null,
     }];
-    const failures = checkDocumentQualityGate(docs, ctx, {
+    const failures = await checkDocumentQualityGate(docs, ctx, {
       TECHNICAL_PROPOSAL: ["Cover Letter", "Understanding of the Assignment", "Technical Approach and Methodology", "Work Plan", "Team Composition", "Compliance Matrix", "Submission Checklist"],
     }, []);
     assert.equal(failures.length, 0, "must NOT block clean content");

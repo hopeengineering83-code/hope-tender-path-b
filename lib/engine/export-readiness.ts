@@ -739,16 +739,33 @@ export async function checkFullExportReadiness(opts: { tenderId: string; docs: E
  * @param requiredSectionsByType - Map of document type → required section titles.
  * @param mandatoryRequirements - Mandatory tender requirements that must be covered.
  */
-export function checkDocumentQualityGate(
+export async function checkDocumentQualityGate(
   docs: ExportReadyDocument[],
   ctx: TenderDocumentGenerationContext,
   requiredSectionsByType: Record<string, string[]>,
   mandatoryRequirements: string[],
-): ExportReadinessFailure[] {
+): Promise<ExportReadinessFailure[]> {
   const failures: ExportReadinessFailure[] = [];
   for (const doc of docs) {
-    // Only validate documents that have visible text content
-    const text = doc.fileContent ?? null;
+    // Determine the visible text to validate. For base64 DOCX content we
+    // must extract the visible text from the DOCX zip — otherwise the
+    // quality gate would silently skip all generated DOCX files (their
+    // fileContent is base64, not plain text, so looksLikePlainText returns
+    // false and the `continue` below would skip the quality check entirely).
+    // Per spec rule 6: validation must not approve empty content, placeholder
+    // content, AI traces, or pricing leakage. The quality gate is what
+    // enforces these checks, so it MUST run on the extracted visible text.
+    let text: string | null = doc.fileContent ?? null;
+    const fileName = documentFileName(doc);
+    if (text && !looksLikePlainText(text)) {
+      // Try to extract visible text from base64 DOCX. If extraction fails
+      // (corrupt zip, not a DOCX, etc.), fall back to null — the quality
+      // gate will skip the doc but the DOCX hygiene check
+      // (checkDocxHygieneReadiness) will still run and catch issues.
+      const extracted = await extractDocxVisibleText(text, fileName);
+      if (extracted) text = extracted;
+      else continue; // Not a DOCX or extraction failed — skip quality gate
+    }
     if (!text || !looksLikePlainText(text)) continue;
 
     const documentType = doc.documentType ?? "";
@@ -802,7 +819,7 @@ export async function checkFullExportReadinessWithQualityGate(opts: {
   const base = await checkFullExportReadiness(opts);
   const requiredSectionsByType = opts.requiredSectionsByType ?? DEFAULT_REQUIRED_SECTIONS_BY_TYPE;
   const mandatoryRequirements = opts.mandatoryRequirements ?? opts.ctx.mandatoryRequirements ?? [];
-  const qualityFailures = checkDocumentQualityGate(opts.docs, opts.ctx, requiredSectionsByType, mandatoryRequirements);
+  const qualityFailures = await checkDocumentQualityGate(opts.docs, opts.ctx, requiredSectionsByType, mandatoryRequirements);
   const allFailures = mergeFailures(base.failures, qualityFailures);
   return {
     ok: allFailures.length === 0 && (base.tenderLevelBlockers?.length ?? 0) === 0,

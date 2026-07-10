@@ -27,13 +27,29 @@ export function validateDocumentQuality(doc: {
   documentType: string | null;
   fileContent: string | null;
   storagePath: string | null;
+  /**
+   * Pre-extracted visible text from the document content. When provided,
+   * this is used instead of fileContent for regex-based quality checks
+   * (placeholders, AI traces, boilerplate, envelope mismatch). Callers
+   * that have base64 DOCX/PDF content should extract the visible text
+   * first (e.g. via extractDocxVisibleText) and pass it here — otherwise
+   * the quality checks are silently skipped because base64 content does
+   * not look like plain text.
+   */
+  visibleText?: string | null;
 }): DocumentValidationResult {
   const hasContent = Boolean(
     (doc.fileContent ?? "").trim().length > 0 || (doc.storagePath ?? "").trim().length > 0,
   );
 
   const isBase64Like = /^[A-Za-z0-9+/]{40,}={0,2}$/.test((doc.fileContent ?? "").slice(0, 500));
-  const text = isBase64Like ? "" : (doc.fileContent ?? "");
+  // If the caller pre-extracted visible text, use it. Otherwise fall back
+  // to fileContent only when it is NOT base64 (base64 content would cause
+  // false negatives — the regex checks would run against base64 gibberish
+  // and never match, silently skipping placeholder/AI-trace detection).
+  // Per spec rule 6: validation must not approve empty content, placeholder
+  // content, AI traces, pricing leakage, or wrong envelope files.
+  const text = doc.visibleText ?? (isBase64Like ? "" : (doc.fileContent ?? ""));
 
   const placeholders = hasContent && text
     ? PLACEHOLDER_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))

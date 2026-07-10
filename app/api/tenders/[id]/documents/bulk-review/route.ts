@@ -3,6 +3,7 @@ import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
+import { generatedDocumentHasContent } from "../../../../../../lib/generated-document-content";
 
 const VALID_STATUSES = ["APPROVED", "REJECTED", "PENDING", "NEEDS_REVISION", "READY_FOR_EXPORT", "CHANGES_REQUESTED"];
 const MAX_BULK_DOCUMENTS = 200;
@@ -101,10 +102,19 @@ export async function POST(
     }
   }
 
+  // When the target review status is READY_FOR_EXPORT or APPROVED, we must
+  // only operate on documents that are actually GENERATED (not PLANNED) and
+  // have real content. PLANNED/empty rows must never be marked export-ready.
+  // Per spec rules 6 & 7: validation must not approve empty/placeholder
+  // content, and approval must not mark docs export-ready if validation
+  // failed or content is missing.
+  const requiresContentGate = reviewStatus === "READY_FOR_EXPORT" || reviewStatus === "APPROVED";
+
   const docs = await prisma.generatedDocument.findMany({
     where: {
       tenderId,
       generationStatus: { not: "SUPERSEDED" },
+      ...(requiresContentGate ? { generationStatus: "GENERATED" } : {}),
       ...(onlyDocumentIds ? { id: { in: onlyDocumentIds } } : {}),
     },
     take: MAX_BULK_DOCUMENTS,
@@ -114,11 +124,48 @@ export async function POST(
       reviewStatus: true,
       exactFileName: true,
       generationStatus: true,
+      validationStatus: true,
+      storagePath: true,
+      fileContent: true,
     },
   });
 
   if (docs.length === 0) {
     return NextResponse.json({ updated: 0, skipped: 0, results: [], note: "No active documents to update." });
+  }
+
+  // Per spec rule 7: READY_FOR_EXPORT requires validation passed AND content
+  // exists. Reject the entire batch if any doc fails these checks — fail
+  // closed rather than partially approving a batch with mixed states.
+  if (reviewStatus === "READY_FOR_EXPORT") {
+    const rejected: Array<{ id: string; name: string; reason: string; code: string }> = [];
+    for (const doc of docs) {
+      if (doc.generationStatus !== "GENERATED") {
+        rejected.push({ id: doc.id, name: doc.name, reason: `Document generationStatus is ${doc.generationStatus ?? "null"}, not GENERATED.`, code: "GENERATION_REQUIRED_BEFORE_EXPORT" });
+        continue;
+      }
+      if (!generatedDocumentHasContent(doc)) {
+        rejected.push({ id: doc.id, name: doc.name, reason: "Document has no content (fileContent and storagePath are both empty). Generate the document first.", code: "CONTENT_REQUIRED_BEFORE_EXPORT" });
+        continue;
+      }
+      // validationStatus must be VALIDATED or PASSED (or empty for legacy
+      // docs that predate the validationStatus field). PENDING, FAILED,
+      // NEEDS_REVALIDATION, and SUPERSEDED all block READY_FOR_EXPORT.
+      const vs = (doc.validationStatus ?? "").toUpperCase();
+      if (vs && vs !== "VALIDATED" && vs !== "PASSED") {
+        rejected.push({ id: doc.id, name: doc.name, reason: `Document validationStatus is ${vs}, not VALIDATED. Run validation first.`, code: "VALIDATION_REQUIRED_BEFORE_EXPORT" });
+        continue;
+      }
+    }
+    if (rejected.length > 0) {
+      return NextResponse.json({
+        error: `Cannot mark ${rejected.length} document(s) READY_FOR_EXPORT: validation/generation/content checks failed.`,
+        code: "VALIDATION_REQUIRED_BEFORE_EXPORT",
+        rejected,
+        rejectedCount: rejected.length,
+        totalCandidates: docs.length,
+      }, { status: 422 });
+    }
   }
 
   const results: Array<{ id: string; name: string; priorStatus: string; newStatus: string; action: "UPDATED" | "SKIPPED" }> = [];
