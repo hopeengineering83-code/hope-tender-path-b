@@ -1863,14 +1863,14 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           {aiEnabled && (
             <button onClick={handleDurableAnalyze} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-60">
               <SparklesIcon />
               {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "Resume AI Analyze" : "Run AI Analyze"}
             </button>
           )}
           {aiEnabled && (
             <button onClick={handleAIProposal} disabled={generating}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-100 px-3 py-2 text-sm text-purple-800 hover:bg-purple-200 disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-100 px-3 py-2 text-sm text-purple-800 hover:bg-purple-200 disabled:opacity-60">
               <SparklesIcon />
               {generating ? "Generating..." : "AI Proposal"}
             </button>
@@ -1920,7 +1920,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
             {editing ? "Cancel" : "Edit"}
           </button>
           <button onClick={handleDelete} disabled={deleting}
-            className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">
+            className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60">
             {deleting ? "..." : "Delete"}
           </button>
         </div>
@@ -2054,7 +2054,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               <button
                 onClick={handleAIAnalyze}
                 disabled={analyzing}
-                className="inline-flex items-center gap-1.5 rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-60"
               >
                 <SparklesIcon />
                 {analyzing ? "Analyzing…" : "Run OCR / Re-extract before AI Analyze"}
@@ -2072,7 +2072,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               <button
                 onClick={handleApproveFallback}
                 disabled={approvingFallback || !fallbackNote.trim()}
-                className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50 shrink-0"
+                className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60 shrink-0"
               >
                 {approvingFallback ? "Approving…" : "Approve Fallback"}
               </button>
@@ -2117,7 +2117,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                       <button
                         onClick={() => { cancelAutoRetry(); void handleDurableAnalyze(); }}
                         disabled={analyzing}
-                        className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
                         title="Retry now and resume from the last completed chunk"
                       >
                         Retry now
@@ -2174,7 +2174,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                     <button
                       onClick={handleApproveFallback}
                       disabled={approvingFallback}
-                      className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50 shrink-0"
+                      className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60 shrink-0"
                     >
                       {approvingFallback ? "Approving…" : "Approve Fallback"}
                     </button>
@@ -2186,7 +2186,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                   <button
                     onClick={handleContinueAnalysis}
                     disabled={analyzing}
-                    className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   >
                     {analyzing ? "Continuing…" : "Continue Analysis"}
                   </button>
@@ -2468,7 +2468,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
             <button
               onClick={() => { setLowQualityBanner(null); handleGenerateDocs(); }}
               disabled={generatingDocs}
-              className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
             >
               {generatingDocs ? "Regenerating…" : "Regenerate now"}
             </button>
@@ -2508,7 +2508,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                 <textarea value={form.evaluationMethodology} onChange={(e) => setForm({ ...form, evaluationMethodology: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={4} placeholder="Evaluation methodology — how to score maximum points on each evaluation criterion (AI-extracted or manually added)" />
                 <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={3} placeholder="Internal notes" />
                 <div className="flex items-center gap-3">
-                  <button onClick={handleSave} disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                  <button onClick={handleSave} disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
                     {saving ? "Saving..." : "Save Changes"}
                   </button>
                   {autoSavedAt && !saving && (
@@ -2779,7 +2779,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                       <button
                         onClick={saveBidOutcome}
                         disabled={savingOutcome}
-                        className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                        className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-60"
                       >
                         {savingOutcome ? "Saving..." : "Save Outcome"}
                       </button>
@@ -2804,7 +2804,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="rounded-lg bg-slate-100 px-3 py-2 text-sm hover:bg-slate-200 disabled:opacity-50"
+                className="rounded-lg bg-slate-100 px-3 py-2 text-sm hover:bg-slate-200 disabled:opacity-60"
               >
                 {uploading ? "Uploading…" : "+ Upload files"}
               </button>
@@ -3088,7 +3088,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                         <button
                           onClick={() => toggleMatchSelection(match.id, "expert", match.isSelected)}
                           disabled={togglingMatchId === match.id}
-                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-green-100 text-green-700 hover:bg-green-200"} disabled:opacity-50`}
+                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-green-100 text-green-700 hover:bg-green-200"} disabled:opacity-60`}
                         >
                           {togglingMatchId === match.id ? "…" : match.isSelected ? "Deselect" : "Select"}
                         </button>
@@ -3146,7 +3146,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                         <button
                           onClick={() => toggleMatchSelection(match.id, "project", match.isSelected)}
                           disabled={togglingMatchId === match.id}
-                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-blue-100 text-blue-700 hover:bg-blue-200"} disabled:opacity-50`}
+                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-blue-100 text-blue-700 hover:bg-blue-200"} disabled:opacity-60`}
                         >
                           {togglingMatchId === match.id ? "…" : match.isSelected ? "Deselect" : "Select"}
                         </button>
@@ -3459,9 +3459,9 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                           onChange={(e) => setReviewNote(e.target.value)}
                         />
                         <div className="flex gap-1.5">
-                          <button onClick={() => { void submitReview(doc.id, "APPROVED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">{submittingReviewDocId === doc.id ? "Saving…" : "Approve"}</button>
-                          <button onClick={() => { void submitReview(doc.id, "NEEDS_REVISION"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600 disabled:opacity-50">Needs Revision</button>
-                          <button onClick={() => { void submitReview(doc.id, "REJECTED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50">Reject</button>
+                          <button onClick={() => { void submitReview(doc.id, "APPROVED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-60">{submittingReviewDocId === doc.id ? "Saving…" : "Approve"}</button>
+                          <button onClick={() => { void submitReview(doc.id, "NEEDS_REVISION"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600 disabled:opacity-60">Needs Revision</button>
+                          <button onClick={() => { void submitReview(doc.id, "REJECTED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-60">Reject</button>
                           <button onClick={() => setReviewingDocId(null)} className="rounded border px-2.5 py-1 text-xs">Cancel</button>
                         </div>
                       </div>

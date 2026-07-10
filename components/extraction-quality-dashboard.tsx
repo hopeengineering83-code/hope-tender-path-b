@@ -2,6 +2,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { scoreToSeverity, severityBadgeClasses, severityBgClass, severityTextClass, severityBorderClass } from "../lib/ui-tokens";
+import { CheckIcon, WarningIcon } from "./icons";
 
 type FileStatus = "GOOD" | "ACCEPTABLE" | "POOR";
 
@@ -45,7 +46,7 @@ function pageList(nums: number[], maxInline = 12): string {
 function sectionCountLabel(count: number | null, documentLevel: boolean) {
   if (count === null) return "—";
   if (count <= 0) return "0";
-  return documentLevel ? "✓" : `${count}p`;
+  return documentLevel ? "All pages" : `${count}p`;
 }
 
 export async function ExtractionQualityDashboard({ tenderId }: { tenderId: string }) {
@@ -390,18 +391,18 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
 
                   <div className="mt-2 space-y-1">
                     {file.corrupted && (
-                      <p className="text-xs text-red-700">
-                        ⚠ Text appears corrupted — enable OCR or upload a clearer scan
+                      <p className="inline-flex items-start gap-1 text-xs text-red-700">
+                        <WarningIcon className="mt-0.5 shrink-0" /> <span>Text appears corrupted — enable OCR or upload a clearer scan</span>
                       </p>
                     )}
                     {!file.corrupted && file.failedPageNums.length > 0 && (
-                      <p className="text-xs text-red-700">
-                        ⚠ {file.failedPageNums.length} page(s) failed extraction — {pageList(file.failedPageNums)}
+                      <p className="inline-flex items-start gap-1 text-xs text-red-700">
+                        <WarningIcon className="mt-0.5 shrink-0" /> <span>{file.failedPageNums.length} page(s) failed extraction — {pageList(file.failedPageNums)}</span>
                       </p>
                     )}
                     {!file.corrupted && file.failedPageNums.length === 0 && file.failedPages !== null && file.failedPages > 0 && (
-                      <p className="text-xs text-red-700">
-                        ⚠ {file.failedPages} page(s) failed extraction
+                      <p className="inline-flex items-start gap-1 text-xs text-red-700">
+                        <WarningIcon className="mt-0.5 shrink-0" /> <span>{file.failedPages} page(s) failed extraction</span>
                       </p>
                     )}
                     {!file.corrupted && file.blankPageNums.length > 0 && (
@@ -410,8 +411,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       </p>
                     )}
                     {!file.corrupted && file.lowDensityPageNums.length > 0 && (
-                      <p className="text-xs text-amber-700">
-                        ⚠ Low-confidence pages ({file.lowDensityPageNums.length}): {pageList(file.lowDensityPageNums)}
+                      <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                        <WarningIcon className="mt-0.5 shrink-0" /> <span>Low-confidence pages ({file.lowDensityPageNums.length}): {pageList(file.lowDensityPageNums)}</span>
                       </p>
                     )}
                     {!file.corrupted && file.tableHeavyPageNums.length > 0 && (
@@ -427,14 +428,13 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     {!file.corrupted &&
                       file.coverage !== null &&
                       file.coverage < 95 && (
-                        <p className="text-xs text-amber-700">
-                          ⚠ Only {file.coverage}% of pages extracted — submission
-                          instructions may be missing
+                        <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                          <WarningIcon className="mt-0.5 shrink-0" /> <span>Only {file.coverage}% of pages extracted — submission instructions may be missing</span>
                         </p>
                       )}
                     {!file.corrupted && !file.notYetExtracted && file.submissionPages === 0 && file.score >= 45 && (
-                      <p className="text-xs text-amber-700">
-                        ⚠ No submission instructions detected — deadline and submission method may be missing
+                      <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                        <WarningIcon className="mt-0.5 shrink-0" /> <span>No submission instructions detected — deadline and submission method may be missing</span>
                       </p>
                     )}
                     {!file.corrupted && !file.notYetExtracted && file.evaluationPages === 0 && file.score >= 45 && (
@@ -443,8 +443,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       </p>
                     )}
                     {!file.corrupted && !file.notYetExtracted && file.clientDetailPages === 0 && file.score >= 45 && (
-                      <p className="text-xs text-amber-700">
-                        ⚠ No client/contact detail pages detected — procuring entity name, submission contact, and address may be missing
+                      <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                        <WarningIcon className="mt-0.5 shrink-0" /> <span>No client/contact detail pages detected — procuring entity name, submission contact, and address may be missing</span>
                       </p>
                     )}
                   </div>

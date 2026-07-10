@@ -283,3 +283,58 @@ export function SettingsIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** Link / chain — link evidence, match evidence. */
+export function LinkIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
+/** Code / brackets — diagnostics, JSON, technical detail. */
+export function CodeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+/** List / bullet list — submission plan items, requirement lists. */
+export function ListIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  );
+}
+
+/** Document with bolt — generate document action. */
+export function DocumentGenerateIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 2h8l6 6v14H6z" />
+      <path d="M14 2v6h6" />
+      <path d="M13 11l-3 4h3l-1 4 3-4h-3z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** Hourglass / waiting — pending, waiting on prior step. */
+export function WaitingIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 2h12M6 22h12" />
+      <path d="M6 2v4c0 3 2 5 6 6 4-1 6-3 6-6V2" />
+      <path d="M6 22v-4c0-3 2-5 6-6 4 1 6 3 6 6v4" />
+    </svg>
+  );
+}

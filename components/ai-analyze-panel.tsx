@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { SparklesIcon, RefreshIcon } from "./icons";
+import { SparklesIcon, RefreshIcon, CheckIcon, CrossIcon } from "./icons";
 
 type JobStatus = "QUEUED" | "RUNNING" | "PARTIAL_SUCCESS" | "SUCCEEDED" | "FAILED" | "CANCELED";
 
@@ -307,7 +307,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
                   {diag.perProvider.map((p) => (
                     <li key={p.provider} className="flex items-start gap-2 text-xs">
                       <span className={`mt-0.5 ${p.ok ? "text-emerald-600" : p.configured ? "text-red-600" : "text-slate-400"}`}>
-                        {p.ok ? "✓" : p.configured ? "✗" : "—"}
+                        {p.ok ? <CheckIcon /> : p.configured ? <CrossIcon /> : "—"}
                       </span>
                       <span className="font-medium text-slate-700">{p.provider}</span>
                       <span className="text-slate-500">

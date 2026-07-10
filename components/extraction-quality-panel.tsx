@@ -3,6 +3,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality, assessExtractionQualityPerPage, buildReportFromStoredPages, type PageQualityEntry, type PerPageExtractionReport } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { ArrowRightIcon } from "./icons";
 
 const EXTRACTION_STATUS_LABELS: Record<string, string> = {
   FULL_EXTRACTION_AI_ANALYZED: "Full extraction",
@@ -174,7 +175,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
               {EXTRACTION_STATUS_LABELS[analysisStatus] ?? analysisStatus}
             </span>
           )}
-          {!ready && <a href="#tender-edit-form" className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-100">Re-extract / review ↓</a>}
+          {!ready && <a href="#tender-edit-form" className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-100">Re-extract / review <ArrowRightIcon /></a>}
         </div>
       </div>
 

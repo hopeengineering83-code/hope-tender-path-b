@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CheckIcon, CrossIcon, ChevronDownIcon } from "./icons";
 
 export type ManifestRow = {
   id: string;
@@ -37,15 +38,15 @@ function ManifestTableRow({ row }: { row: ManifestRow }) {
         {row.inPlan === null
           ? <span className="text-slate-400">—</span>
           : row.inPlan
-            ? <span className="text-emerald-600 font-medium">✓</span>
+            ? <span className="inline-flex items-center gap-0.5 text-emerald-600 font-medium"><CheckIcon /> In plan</span>
             : <span className="text-amber-600 font-medium">Outside plan</span>
         }
       </td>
       <td className="py-2 pr-4"><StatusBadge state={row.outputState} /></td>
       <td className="py-2 pr-4 text-center">
         {row.includedInZip
-          ? <span className="text-emerald-600 font-bold">✓</span>
-          : <span className="text-red-600 font-bold">✗</span>
+          ? <span className="inline-flex items-center justify-center text-emerald-600 font-bold"><CheckIcon /></span>
+          : <span className="inline-flex items-center justify-center text-red-600 font-bold"><CrossIcon /></span>
         }
       </td>
       <td className="py-2 text-slate-500 max-w-[260px]">
@@ -88,8 +89,8 @@ export function FinalPackageManifestTable({
                   className="text-xs font-medium text-slate-500 hover:text-slate-800"
                 >
                   {showExcluded
-                    ? `▲ Hide ${excludedRows.length} excluded document${excludedRows.length !== 1 ? "s" : ""}`
-                    : `▼ Show ${excludedRows.length} excluded document${excludedRows.length !== 1 ? "s" : ""}`}
+                    ? <><ChevronDownIcon className="rotate-180 inline-block" /> Hide {excludedRows.length} excluded document{excludedRows.length !== 1 ? "s" : ""}</>
+                    : <><ChevronDownIcon className="inline-block" /> Show {excludedRows.length} excluded document{excludedRows.length !== 1 ? "s" : ""}</>}
                 </button>
               </td>
             </tr>

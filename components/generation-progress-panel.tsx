@@ -6,6 +6,7 @@
 // Auto-hides 10 seconds after SUCCEEDED.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckIcon, CrossIcon, ClockIcon } from "./icons";
 
 // ─── Types (mirrors the shape returned by GET /api/ai-jobs/[id]) ─────────────
 
@@ -56,11 +57,11 @@ function formatDuration(ms: number): string {
   return rem === 0 ? `${mins}m` : `${mins}m ${rem}s`;
 }
 
-function stepIcon(status: string): string {
-  if (status === "SUCCEEDED") return "✓";
-  if (status === "FAILED") return "✗";
-  if (status === "RUNNING") return "…";
-  return "·";
+function stepIcon(status: string) {
+  if (status === "SUCCEEDED") return <CheckIcon />;
+  if (status === "FAILED") return <CrossIcon />;
+  if (status === "RUNNING") return <ClockIcon />;
+  return null;
 }
 
 function stepRowClass(status: string): string {
