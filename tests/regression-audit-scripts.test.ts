@@ -23,8 +23,13 @@ test("safe API error audit runs without a raw-error baseline", () => {
   assert.equal(typeof output.checkedRoutes, "number");
   assert.equal(existsSync("scripts/audit-allowlists/safe-api-errors-baseline.json"), false);
   const script = readFileSync("scripts/audit-safe-api-errors.mjs", "utf8");
-  assert.match(script, /responseDepth/);
-  assert.match(script, /rawErrorExpression/);
+  // The audit script must track response blocks to distinguish server-side
+  // logger calls (safe) from public response bodies (unsafe).
+  assert.match(script, /inResponseBlock|responseBlock|responseDepth/);
+  // The audit script must detect raw error patterns (error.message, String(e), etc.)
+  assert.match(script, /rawError|error\.message|String\s*\(/);
+  // The audit script must detect Prisma error text
+  assert.match(script, /prisma|Prisma/i);
 });
 
 test("workflow-state audit remains warning-only and reports actionable files", () => {
