@@ -77,6 +77,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         planStatus: readiness.summary.planStatus,
         ungeneratedPlannedRequired: readiness.summary.ungeneratedPlannedRequired,
         missingCriticalMetadataFields: readiness.summary.missingCriticalMetadataFields,
+        // ── Canonical required-document model ───────────────────────────
+        // These fields give the widget a single consistent source of truth
+        // for required-doc counts, eliminating the 0/0 bug.
+        requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
+        exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
+        plannedRequiredDocuments: readiness.summary.ungeneratedPlannedRequired,
+        generatedDocumentsTotal: readiness.summary.finalExportCandidates,
+        totalBlockers: readiness.summary.totalBlockers,
+        primaryBlockerReason: readiness.summary.primaryBlockerReason,
+        primaryFixAction: readiness.summary.primaryFixAction,
       },
     });
   } catch (error) {

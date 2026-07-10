@@ -39,6 +39,14 @@ type ReadinessSummary = {
   planStatus: string;
   ungeneratedPlannedRequired?: number;
   missingCriticalMetadataFields?: string[];
+  // ── Canonical required-document model ───────────────────────────────
+  requiredDocumentsTotal?: number;
+  exportReadyDocumentsTotal?: number;
+  plannedRequiredDocuments?: number;
+  generatedDocumentsTotal?: number;
+  totalBlockers?: number;
+  primaryBlockerReason?: string | null;
+  primaryFixAction?: string | null;
 };
 
 type ReadinessScoreResponse = {
@@ -148,15 +156,33 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Required docs</p>
-            <p className={`font-semibold ${data.summary.missingRequiredDocuments === 0 && (data.summary.ungeneratedPlannedRequired ?? 0) === 0 ? "text-emerald-700" : "text-red-700"}`}>
-              {data.summary.finalExportCandidates}/{data.summary.finalExportCandidates + data.summary.missingRequiredDocuments}
-              {data.summary.missingRequiredDocuments > 0 && <span className="ml-1 text-[10px]">({data.summary.missingRequiredDocuments} missing)</span>}
-            </p>
-            {(data.summary.ungeneratedPlannedRequired ?? 0) > 0 && (
-              <p className="mt-0.5 text-[10px] text-amber-700">
-                {data.summary.ungeneratedPlannedRequired} planned (not generated)
-              </p>
-            )}
+            {(() => {
+              // Use the canonical required-document model from the API.
+              // requiredDocumentsTotal includes BOTH confirmed-plan items AND
+              // ungenerated PLANNED docs — so it's never 0 when PLANNED docs exist.
+              // exportReadyDocumentsTotal is the numerator (validated+approved docs).
+              const total = data.summary.requiredDocumentsTotal ?? (data.summary.finalExportCandidates + data.summary.missingRequiredDocuments);
+              const exportReady = data.summary.exportReadyDocumentsTotal ?? data.summary.finalExportCandidates;
+              const ungenerated = data.summary.plannedRequiredDocuments ?? data.summary.ungeneratedPlannedRequired ?? 0;
+              const missing = data.summary.missingRequiredDocuments;
+              const hasIssues = missing > 0 || ungenerated > 0 || exportReady < total;
+              if (total === 0) {
+                return <p className="font-semibold text-slate-400">No required docs</p>;
+              }
+              return (
+                <>
+                  <p className={`font-semibold ${hasIssues ? "text-red-700" : "text-emerald-700"}`}>
+                    {exportReady}/{total} export ready
+                    {missing > 0 && <span className="ml-1 text-[10px]">({missing} missing)</span>}
+                  </p>
+                  {ungenerated > 0 && (
+                    <p className="mt-0.5 text-[10px] text-amber-700">
+                      {ungenerated} planned, not generated
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Quality</p>
@@ -166,9 +192,23 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Export blockers</p>
-            <p className={`font-semibold ${data.summary.documentBlockers > 0 || data.summary.tenderLevelBlockers > 0 ? "text-red-700" : "text-emerald-700"}`}>
-              {data.summary.documentBlockers + data.summary.tenderLevelBlockers > 0 ? `${data.summary.documentBlockers + data.summary.tenderLevelBlockers} blocker(s)` : "Clear"}
-            </p>
+            {(() => {
+              const totalBlockers = data.summary.totalBlockers ?? (data.summary.documentBlockers + data.summary.tenderLevelBlockers);
+              const primaryReason = data.summary.primaryBlockerReason;
+              if (totalBlockers === 0) {
+                return <p className="font-semibold text-emerald-700">Clear</p>;
+              }
+              return (
+                <>
+                  <p className="font-semibold text-red-700">{totalBlockers} blocker(s)</p>
+                  {primaryReason && (
+                    <p className="mt-0.5 text-[10px] text-red-600" title={primaryReason}>
+                      {primaryReason.length > 60 ? primaryReason.slice(0, 57) + "…" : primaryReason}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -188,6 +228,15 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
           <span className="font-semibold">Score capped{data.capScore != null ? ` at ${data.capScore}` : ""}{data.capDimension ? ` (${data.capDimension.replace(/_/g, " ")})` : ""}:</span>{" "}
           {data.capReason}
         </p>
+      )}
+
+      {data.summary.primaryBlockerReason && (
+        <div className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs">
+          <p className="font-semibold text-red-700">Primary blocker: {data.summary.primaryBlockerReason}</p>
+          {data.summary.primaryFixAction && (
+            <p className="mt-0.5 text-red-600">Next action: {data.summary.primaryFixAction}</p>
+          )}
+        </div>
       )}
 
 
