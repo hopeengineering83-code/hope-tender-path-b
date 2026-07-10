@@ -36,7 +36,10 @@
     "build:desktop:linux": "electron-builder --config electron/electron-builder.json --linux",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "audit:no-user-facing-metadata": "node scripts/audit-no-user-facing-metadata.mjs",
+    "audit:safe-api-errors": "node scripts/audit-safe-api-errors.mjs",
+    "audit:workflow-state-consistency": "node scripts/audit-workflow-state-consistency.mjs"
   },
   "main": "electron/main.js",
   "dependencies": {
