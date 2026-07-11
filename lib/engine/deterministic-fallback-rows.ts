@@ -80,7 +80,7 @@ export function buildDeterministicFallbackRows(
       evidenceType: "UNMATCHED_REQUIREMENT_DIAGNOSTIC",
       evidenceSource: "NO_COMPANY_VAULT_EVIDENCE",
       evidenceReference: undefined,
-      notes: `EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED: Link a verified Company Vault record before this requirement can count as covered. Generation remains blocked until evidence is manually confirmed.`,
+      notes: `EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED: Link a verified Company Vault record before this requirement can count as covered; generation remains blocked until evidence is manually confirmed.`,
     });
   }
 
