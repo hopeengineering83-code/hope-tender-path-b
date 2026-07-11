@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
+import { WarningIcon, ArrowRightIcon, ClockIcon } from "./icons";
 
 export async function TenderNotificationsBanner() {
   const userId = await getSession();
@@ -29,9 +30,9 @@ export async function TenderNotificationsBanner() {
           const daysLeft = Math.ceil((new Date(t.deadline!).getTime() - Date.now()) / 86_400_000);
           return (
             <div key={t.id} className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm">
-              <span className="text-amber-600">⏰</span>
+              <ClockIcon className="h-4 w-4 text-amber-600" />
               <span className="flex-1 text-amber-900"><strong>{(t.title ?? "Untitled").slice(0, 60)}</strong> — deadline in {daysLeft} day{daysLeft !== 1 ? "s" : ""}</span>
-              <Link href={`/dashboard/tenders/${t.id}`} className="text-xs font-medium text-amber-700 underline">View →</Link>
+              <Link href={`/dashboard/tenders/${t.id}`} className="text-xs font-medium text-amber-700 underline inline-flex items-center gap-0.5">View <ArrowRightIcon className="inline h-3 w-3" /></Link>
             </div>
           );
         })}
@@ -39,9 +40,9 @@ export async function TenderNotificationsBanner() {
           const count = t._count.complianceGaps;
           return (
             <div key={t.id} className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm">
-              <span className="text-red-600">⚠</span>
+              <WarningIcon className="h-4 w-4 text-red-600" />
               <span className="flex-1 text-red-900"><strong>{(t.title ?? "Untitled").slice(0, 60)}</strong> — {count} critical compliance gap{count !== 1 ? "s" : ""}</span>
-              <Link href={`/dashboard/tenders/${t.id}`} className="text-xs font-medium text-red-700 underline">Review →</Link>
+              <Link href={`/dashboard/tenders/${t.id}`} className="text-xs font-medium text-red-700 underline inline-flex items-center gap-0.5">Review <ArrowRightIcon className="inline h-3 w-3" /></Link>
             </div>
           );
         })}

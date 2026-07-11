@@ -6,6 +6,7 @@
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
+import { CheckIcon, CrossIcon } from "./icons";
 import {
   isFinalExportCandidateDocument,
   deriveDocumentOutputState,
@@ -87,15 +88,15 @@ function ManifestRowsTable({ rows, hasExplicitPlan, faded = false }: { rows: Man
                 {!hasExplicitPlan
                   ? <span className="text-slate-400">—</span>
                   : inPlan
-                    ? <span className="font-medium text-emerald-600">✓</span>
+                    ? <CheckIcon className="inline h-4 w-4 text-emerald-600" />
                     : <span className="font-medium text-amber-600">Outside plan</span>
                 }
               </td>
               <td className="py-2 pr-4">{statusBadge(outputState)}</td>
               <td className="py-2 pr-4 text-center">
                 {includedInZip
-                  ? <span className="font-bold text-emerald-600">✓</span>
-                  : <span className="font-bold text-red-600">✗</span>
+                  ? <CheckIcon className="inline h-4 w-4 font-bold text-emerald-600" />
+                  : <CrossIcon className="inline h-4 w-4 font-bold text-red-600" />
                 }
               </td>
               <td className="max-w-[260px] py-2 text-slate-500">

@@ -1561,6 +1561,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           pageLimit: r.pageLimit ?? null,
           exactFileName: r.exactFileName ?? null,
           restrictions: r.restrictions ?? null,
+          // Source-grounded evidence — the exact quote from the tender document
+          // that proves this requirement exists. Injecting this into the AI
+          // generation prompt anchors every claim to the actual tender text.
+          sourceExactQuote: (r as { sourceExactQuote?: string | null }).sourceExactQuote ?? null,
+          sourcePageNumber: (r as { sourcePageNumber?: number | null }).sourcePageNumber ?? null,
+          sourceConfidence: (r as { sourceConfidence?: number | null }).sourceConfidence ?? null,
         })),
       };
 

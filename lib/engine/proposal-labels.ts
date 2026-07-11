@@ -115,7 +115,7 @@ export function cleanTenderTitle(value?: string | null, context?: { clientName?:
  * Intended call sites:
  *   const requirements = tender.requirements.map(formatRequirementLine)
  */
-export function formatRequirementLine(req: { title?: string | null; description?: string | null; sourcePageNumber?: number | null; sourceSectionHeading?: string | null }, maxDescriptionChars = 380): string {
+export function formatRequirementLine(req: { title?: string | null; description?: string | null; sourcePageNumber?: number | null; sourceSectionHeading?: string | null; sourceExactQuote?: string | null }, maxDescriptionChars = 380): string {
   const title = normalizeLabel(req.title);
   let desc = normalizeLabel(req.description);
 
@@ -155,7 +155,12 @@ export function formatRequirementLine(req: { title?: string | null; description?
   // each requirement back to the source tender document.
   const pageTag = req.sourcePageNumber != null ? ` [p.${req.sourcePageNumber}]` : "";
   const sectionTag = req.sourceSectionHeading ? ` (§ ${req.sourceSectionHeading.slice(0, 80).trim()})` : "";
-  return `${base}${pageTag}${sectionTag}`;
+  // Append the exact source quote when available — anchors every AI-generated
+  // claim to the actual tender text, improving evidence grounding.
+  const quoteTag = req.sourceExactQuote && req.sourceExactQuote.trim().length > 0
+    ? ` (quote: "${req.sourceExactQuote.trim().slice(0, 200)}")`
+    : "";
+  return `${base}${pageTag}${sectionTag}${quoteTag}`;
 }
 
 export function safeFileBaseName(value?: string | null, fallback = "submission-package"): string {

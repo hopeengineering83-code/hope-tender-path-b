@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { CheckIcon, WarningIcon } from "./icons";
 
 type Perspective =
   | "DISCIPLINE_FIT"
@@ -166,15 +167,15 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
               ))}
             </div>
             {floor !== null && <p className="mt-2 text-xs text-slate-600">Critical-floor: {floor}/10 across discipline, scope, evidence, compliance, and eligibility.</p>}
-            {assessment.strength && <p className="mt-2 text-xs text-emerald-700">✓ {assessment.strength}</p>}
-            {assessment.concern && <p className="mt-1 text-xs text-amber-700">⚠ {assessment.concern}</p>}
+            {assessment.strength && <p className="mt-2 text-xs text-emerald-700 inline-flex items-center gap-0.5"><CheckIcon className="inline h-3 w-3" /> {assessment.strength}</p>}
+            {assessment.concern && <p className="mt-1 text-xs text-amber-700 inline-flex items-center gap-0.5"><WarningIcon className="inline h-3 w-3" /> {assessment.concern}</p>}
           </div>
           <div className="shrink-0 text-right">
             <p className="text-2xl font-bold text-slate-900">{Math.round(assessment.overallScore * 100)}</p>
             <p className="text-[10px] uppercase tracking-wide text-slate-500">overall</p>
             {assessment.recommendSelection && (
               <span className="mt-1 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                ✓ Selected
+                <CheckIcon className="inline h-3 w-3" /> Selected
               </span>
             )}
           </div>
@@ -228,7 +229,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
 
         {result?.warning && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-            ⚠ {result.warning}
+            <WarningIcon className="inline h-4 w-4 text-amber-500" /> {result.warning}
             {result.expertsSelected != null && (
               <span className="ml-1">({result.expertsSelected} expert(s), {result.projectsSelected} project(s) selected by engine score.)</span>
             )}

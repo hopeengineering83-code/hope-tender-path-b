@@ -5,8 +5,23 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { SearchIcon, WarningIcon, ListIcon, UploadIcon, DocumentIcon, AlertCircleIcon, CheckCircleIcon, ClockIcon } from "./icons";
 
-type Suggestion = { icon: string; title: string; detail: string; priority: "HIGH" | "MEDIUM" | "LOW" };
+// Map suggestion icon keys to SVG components
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  search: SearchIcon,
+  warning: WarningIcon,
+  list: ListIcon,
+  upload: UploadIcon,
+  pin: DocumentIcon,
+  folder: DocumentIcon,
+  document: DocumentIcon,
+  alert: AlertCircleIcon,
+  check: CheckCircleIcon,
+  clock: ClockIcon,
+};
+
+type Suggestion = { icon: "search" | "warning" | "list" | "upload" | "pin" | "folder" | "document" | "alert" | "check" | "clock"; title: string; detail: string; priority: "HIGH" | "MEDIUM" | "LOW" };
 
 export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
@@ -47,7 +62,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     // 1. No analysis yet
     if (!tender.analysisSummary) {
       suggestions.push({
-        icon: "🔍",
+        icon: "search",
         title: "Run AI Analyze",
         detail: "No analysis yet — AI Analyze extracts requirements, client details, and evaluation criteria automatically.",
         priority: "HIGH",
@@ -60,7 +75,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       (tender.analysisExtractionStatus.includes("PARTIAL") || tender.analysisExtractionStatus.includes("WEAK"))
     ) {
       suggestions.push({
-        icon: "⚠️",
+        icon: "warning",
         title: "Re-run AI Analyze on weak extraction",
         detail: "Analysis ran on partial extraction. Re-uploading a cleaner PDF and re-running will improve requirement coverage.",
         priority: "HIGH",
@@ -70,7 +85,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     // 3. Missing/contaminated tender details
     if (tender.metadataContaminated || !(tender.clientName || (tender as Record<string, unknown>).procuringEntityName) || !tender.country || !tender.deadline) {
       suggestions.push({
-        icon: "📋",
+        icon: "list",
         title: "Optional: review extracted details",
         detail: "Some optional details were not extracted. This does not block the workflow — you can review them in Tender Detail.",
         priority: "HIGH",
@@ -86,7 +101,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       const addressMissing = hasPhysicalMethod && !tender.submissionAddress;
       if (noMethod || emailMissing || addressMissing) {
         suggestions.push({
-          icon: "📤",
+          icon: "upload",
           title: "Add missing submission details",
           detail: noMethod
             ? "Submission method not extracted — advisory only, does not block."
@@ -108,7 +123,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
         const untracedCount = untraced.length;
         if (untracedCount / mandatoryReqs.length > 0.3) {
           suggestions.push({
-            icon: "📌",
+            icon: "pin",
             title: "Improve requirement traceability",
             detail: `${untracedCount} mandatory requirement(s) lack source page/quote. Run AI Analyze again or use the repair tool.`,
             priority: "MEDIUM",
@@ -125,7 +140,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
         tender.exactFileNaming.trim() === "[]";
       if (planIsEmpty) {
         suggestions.push({
-          icon: "📁",
+          icon: "folder",
           title: "Build your submission plan",
           detail: "No submission plan yet. Build Plan to define exactly which files to submit, in what format and order.",
           priority: "MEDIUM",
@@ -142,7 +157,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
         const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
         if (avgScore < 60) {
           suggestions.push({
-            icon: "📄",
+            icon: "document",
             title: "Improve extraction quality",
             detail: `Average extraction score ${avgScore}/100. Consider enabling OCR or uploading a clearer scan.`,
             priority: "MEDIUM",
@@ -156,7 +171,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       const criticalGaps = tender.complianceGaps.filter((g) => g.severity === "CRITICAL").length;
       if (criticalGaps > 0) {
         suggestions.push({
-          icon: "🚨",
+          icon: "alert",
           title: "Resolve critical compliance gaps",
           detail: `${criticalGaps} critical gap(s) will block export. Review and resolve them now.`,
           priority: "HIGH",
@@ -172,7 +187,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       );
       if (generatedDocs.length > 0 && unvalidated.length > 0) {
         suggestions.push({
-          icon: "✅",
+          icon: "check",
           title: "Validate generated documents",
           detail: "Documents are generated but not all have been reviewed and approved. Complete validation to unlock export.",
           priority: "MEDIUM",
@@ -185,7 +200,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
       const daysLeft = Math.ceil((new Date(tender.deadline).getTime() - Date.now()) / 86_400_000);
       if (daysLeft >= 0 && daysLeft <= 7) {
         suggestions.push({
-          icon: "⏰",
+          icon: "clock",
           title: "Deadline approaching",
           detail: `Submission deadline is in ${daysLeft} day(s). Prioritize export readiness.`,
           priority: "HIGH",
@@ -210,7 +225,12 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
                   : "bg-slate-50 border border-slate-100"
               }`}
             >
-              <span className="text-xl">{s.icon}</span>
+              <span className="text-xl shrink-0">
+                {(() => {
+                  const IconComp = ICON_MAP[s.icon];
+                  return IconComp ? <IconComp className="inline h-5 w-5" /> : null;
+                })()}
+              </span>
               <div>
                 <p className="text-sm font-semibold text-slate-800">{s.title}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{s.detail}</p>

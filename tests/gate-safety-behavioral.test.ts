@@ -195,14 +195,17 @@ describe("Gate blocks stale analysis hash (for export/final-zip)", () => {
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 
-  it("does NOT block draft generation when content hash differs", () => {
+  it("ALSO blocks draft generation when content hash differs (stale analysis is unsafe for all purposes)", () => {
+    // PR #1053: stale analysis now blocks ALL purposes, not just export/final-zip.
+    // Running the engine on stale analysis produces incorrect requirements,
+    // matching, and compliance — the user must re-run AI Analyze first.
     const r = evaluateGenerationReadiness(makePassingInput({
       latestJobHash: "hash-abc",
       currentContentHash: "hash-xyz",
       purpose: "generate",
     }));
-    // Draft: content-changed is a warning, not a hard block
-    assert.ok(r.ok || r.blockerCode !== "ANALYSIS_HASH_MISMATCH", "draft should not hard-block on hash mismatch");
+    assert.equal(r.ok, false);
+    assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 });
 
