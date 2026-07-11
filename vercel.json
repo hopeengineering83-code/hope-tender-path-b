@@ -4,7 +4,8 @@
   "installCommand": "npm ci",
   "git": {
     "deploymentEnabled": {
-      "fix/production-engine-full-gap-closure-no-deploy": false
+      "fix/production-engine-full-gap-closure-no-deploy": false,
+      "fix/post-merge-production-engine-audit-no-deploy": false
     }
   },
   "crons": [
