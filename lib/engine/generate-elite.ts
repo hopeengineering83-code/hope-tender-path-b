@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
@@ -3028,6 +3029,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
+  const proposalIntegrity = verifiedIntegrityDataFromBase64({ fileContent, filename: "Technical-Proposal.docx", claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
   const refinementProvider = refinementApplied ? getLastProposalProvider() : null;
   const refinementLabel = refinementApplied
     ? ` + ${refinementProvider === "claude" ? "Claude" : refinementProvider === "gemini" ? "Gemini" : "AI"} refinement pass`
@@ -3186,6 +3188,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // proposal-named slot the tender required.
           exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
           fileContent,
+          ...proposalIntegrity,
           generationStatus: "GENERATED",
           validationStatus: "PENDING",
           // Reset authority review whenever content is replaced — the previous
@@ -3250,6 +3253,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             name: "Client-Ready Benchmark Technical Proposal",
             documentType: "TECHNICAL_PROPOSAL",
             fileContent,
+            ...proposalIntegrity,
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
             reviewStatus: "PENDING",
@@ -3268,6 +3272,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               exactFileName: "Technical-Proposal.docx",
               exactOrder: 1,
               fileContent,
+              ...proposalIntegrity,
               generationStatus: "GENERATED",
               validationStatus: "PENDING",
               contentSummary: summary,
@@ -3291,6 +3296,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
                   name: "Client-Ready Benchmark Technical Proposal",
                   documentType: "TECHNICAL_PROPOSAL",
                   fileContent,
+                  ...proposalIntegrity,
                   generationStatus: "GENERATED",
                   validationStatus: "PENDING",
                   reviewStatus: "PENDING",
@@ -3407,6 +3413,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           profile: (expert as { profile?: string | null }).profile,
         });
         const cvContent = cvBuffer.toString("base64");
+        const cvIntegrity = verifiedIntegrityDataFromBase64({ fileContent: cvContent, filename: fileName, claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
         // Use a TRANSACTIONAL upsert pattern — same TOCTOU + ACTIVE-only + P2002
         // convergence fix as Technical Proposal (see comment above). Default
         // isolation (NOT Serializable — see P2034 explanation above).
@@ -3422,7 +3429,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           if (existing) {
             await tx.generatedDocument.update({
               where: { id: existing.id },
-              data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
+              data: { fileContent: cvContent, ...cvIntegrity, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
             });
           } else {
             try {
@@ -3434,6 +3441,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
                   format: "DOCX",
                   exactFileName: fileName,
                   fileContent: cvContent,
+                  ...cvIntegrity,
                   generationStatus: "GENERATED",
                   validationStatus: "PENDING",
                   contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
@@ -3452,7 +3460,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
                 if (winner) {
                   await tx.generatedDocument.update({
                     where: { id: winner.id },
-                    data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
+                    data: { fileContent: cvContent, ...cvIntegrity, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
                   });
                 } else {
                   // Winner was deleted between the failed create and this lookup.
