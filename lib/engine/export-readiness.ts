@@ -32,6 +32,13 @@ export type ExportReadyDocument = {
   reviewStatus: string;
   fileContent?: string | null;
   storagePath?: string | null;
+  contentSha256?: string | null;
+  contentByteLength?: number | null;
+  contentMimeType?: string | null;
+  detectedFormat?: string | null;
+  integrityStatus?: string | null;
+  integrityVerifiedAt?: Date | null;
+  integrityFailureCode?: string | null;
   hasInlineFileContent?: boolean | null;
 };
 
