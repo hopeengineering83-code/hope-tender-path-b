@@ -46,18 +46,33 @@ function asReadyDoc(doc: any): ExportReadyDocument {
     reviewStatus: String(doc.reviewStatus ?? ""),
     fileContent: doc.fileContent ?? null,
     storagePath: doc.storagePath ?? null,
+    contentSha256: doc.contentSha256 ?? null,
+    contentByteLength: doc.contentByteLength ?? null,
+    contentMimeType: doc.contentMimeType ?? null,
+    detectedFormat: doc.detectedFormat ?? null,
+    integrityStatus: doc.integrityStatus ?? "UNKNOWN",
+    integrityVerifiedAt: doc.integrityVerifiedAt ?? null,
+    integrityFailureCode: doc.integrityFailureCode ?? null,
   };
 }
 
 async function readContentOrError(doc: ExportReadyDocument) {
   try {
-    return { ok: true as const, content: await readGeneratedDocumentContent(doc) };
+    return { ok: true as const, content: await readGeneratedDocumentContent(doc, { requireVerifiedIntegrity: true }) };
   } catch (error) {
-    logger.error("readContentOrError: document bytes unavailable", { documentId: doc.id, detail: error });
+    const safeCode =
+      error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+        ? error.message
+        : "STORAGE_CONTENT_UNAVAILABLE";
+    logger.error("readContentOrError: document bytes unavailable", {
+      documentId: doc.id,
+      errorName: error instanceof Error ? error.constructor.name : typeof error,
+      code: safeCode,
+    });
     return {
       ok: false as const,
-      response: err("Document bytes are unavailable. Regenerate the document or reattach the final file before export.", 409, {
-        code: "STORAGE_CONTENT_UNAVAILABLE",
+      response: err("Document bytes are unavailable or their integrity is not verified. Regenerate the document or reattach the final file before export.", 409, {
+        code: safeCode,
         documentId: doc.id,
         fileName: doc.exactFileName ?? fileName(doc.name),
         hasStoragePath: Boolean(doc.storagePath),
