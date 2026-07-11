@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
 import type { Prisma } from "@prisma/client";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
@@ -43,16 +43,7 @@ export function computeAnalysisJobLockKey(
   jobType: string,
   contentHash: string,
 ): bigint {
-  const digest = createHash("sha256")
-    .update(userId)
-    .update("\0")
-    .update(tenderId)
-    .update("\0")
-    .update(jobType)
-    .update("\0")
-    .update(contentHash)
-    .digest();
-  return digest.readBigInt64BE(0);
+  return computeAdvisoryLockKey([userId, tenderId, jobType, contentHash]);
 }
 
 export async function createAnalysisJob(input: AnalysisJobCreateInput) {
