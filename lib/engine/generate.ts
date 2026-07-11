@@ -1,9 +1,9 @@
 import {
-import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   AlignmentType, Table, TableRow, TableCell, WidthType,
   BorderStyle, PageBreak, Header, Footer,
 } from "docx";
+import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
 import { prisma } from "../prisma";
 import { humanize } from "./humanize";
 import { isAIEnabled } from "../ai";
