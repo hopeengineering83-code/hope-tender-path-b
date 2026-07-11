@@ -33,7 +33,9 @@ export async function GET(
     }
 
     const envelope = buildPublicReadinessEnvelope({
-      ok: result.finalSubmissionStatus !== "BLOCKED",
+      // BUG FIX: `ok` means HTTP transport succeeded — ALWAYS true on a 200
+      // response. Readiness state is carried by `status` and `blockers[]`.
+      ok: true,
       status: result.finalSubmissionStatus === "READY" ? "READY" : result.finalSubmissionStatus === "PARTIAL" ? "PARTIAL" : "BLOCKED",
       blockers: result.blockers,
       warnings: result.warnings,
