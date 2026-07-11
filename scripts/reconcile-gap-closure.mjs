@@ -1,7 +1,22 @@
+// Audit-only gap-closure reconciler. Verifies protected invariants without
+// ever modifying repository files.
+//
+// Provider-order rules: the codebase derives every fallback chain from
+// lib/ai-provider-catalog.cjs CANONICAL_AI_PROVIDER_ORDER. This script pins
+// that catalog to the documented canonical order (CLAUDE.md) and verifies the
+// consumers (policy, lib/ai.ts, health route, environment readiness) still
+// DERIVE from the catalog instead of hardcoding their own literal chains —
+// the failure mode that caused drift in the past.
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
-const REQUIRED_CHAIN = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
+const require = createRequire(import.meta.url);
+const catalog = require("../lib/ai-provider-catalog.cjs");
+
+// The documented canonical order (CLAUDE.md — NEVER change):
+// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic
+const REQUIRED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic";
 const failures = [];
 
 function read(path) {
@@ -12,10 +27,6 @@ function requireRule(label, condition) {
   if (!condition) failures.push(label);
 }
 
-function extractQuotedValues(source) {
-  return Array.from(source.matchAll(/"([^"]+)"/g)).map((match) => match[1]);
-}
-
 const ai = read("lib/ai.ts");
 const policy = read("lib/ai-provider-policy.ts");
 const health = read("app/api/ai/health/route.ts");
@@ -23,32 +34,50 @@ const envReadiness = read("lib/ai-environment-readiness.ts");
 const download = read("app/api/tenders/[id]/download/route.ts");
 const self = read("scripts/reconcile-gap-closure.mjs");
 
-const policyChainMatch = policy.match(/CANONICAL_AI_PROVIDER_CHAIN\s*=\s*\[([\s\S]*?)\]\s*as const/);
-const policyChain = policyChainMatch ? extractQuotedValues(policyChainMatch[1]) : [];
-requireRule("Canonical provider policy is missing or out of order", JSON.stringify(policyChain) === JSON.stringify(REQUIRED_CHAIN));
+// 1. The catalog itself must match the documented canonical order exactly.
+requireRule(
+  "Catalog CANONICAL_AI_PROVIDER_ORDER drifted from the documented canonical order",
+  JSON.stringify(catalog.CANONICAL_AI_PROVIDER_ORDER) === JSON.stringify(REQUIRED_ORDER),
+);
 
-const aiChainMatch = ai.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
-const aiChain = aiChainMatch ? extractQuotedValues(aiChainMatch[1]) : [];
-requireRule("lib/ai.ts canonical generic provider chain is missing or out of order", JSON.stringify(aiChain) === JSON.stringify(REQUIRED_CHAIN));
-
+// 2. Consumers must DERIVE from the catalog order, not hardcode literals.
+requireRule(
+  "lib/ai-provider-policy.ts no longer derives CANONICAL_AI_PROVIDER_CHAIN from the catalog order",
+  /export const CANONICAL_AI_PROVIDER_CHAIN\s*=\s*CANONICAL_AI_PROVIDER_ORDER/.test(policy),
+);
+requireRule(
+  "lib/ai.ts no longer derives CANONICAL_PROVIDER_CHAIN from the catalog order",
+  /export const CANONICAL_PROVIDER_CHAIN[^=]*=\s*CANONICAL_AI_PROVIDER_ORDER/.test(ai),
+);
+requireRule(
+  "lib/ai.ts providerChainForUseCase no longer returns the canonical order",
+  /providerChainForUseCase[\s\S]{0,200}?return CANONICAL_AI_PROVIDER_ORDER;/.test(ai),
+);
+// No per-use-case literal chain may reappear (e.g. `extraction: ["mistral", ...]`).
 for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
-  const direct = ai.match(new RegExp(`${useCase}:\\s*\\[([^\\]]+)\\]`));
-  const spread = ai.includes(`${useCase}: [...CANONICAL_PROVIDER_CHAIN]`);
-  const values = direct ? extractQuotedValues(direct[1]) : [];
-  requireRule(`${useCase} generic provider chain drifted`, spread || JSON.stringify(values) === JSON.stringify(REQUIRED_CHAIN));
+  requireRule(
+    `${useCase} use case reintroduced a hardcoded provider chain`,
+    !new RegExp(`${useCase}:\\s*\\[\\s*"`).test(ai),
+  );
 }
 
-requireRule("AI prompt trust boundary import is missing", ai.includes('from "./ai-trust-boundary"'));
-requireRule("AI prompt trust boundary is not applied", ai.includes("const trustBoundary = protectPrompt(prompt);") && ai.includes("trustBoundary.protectedPrompt"));
-requireRule("AI health display order drifted", health.includes(REQUIRED_LABELS));
-requireRule("AI health preferred provider is not Mistral-first", health.indexOf('mistralConfigured ? "mistral"') >= 0 && health.indexOf('mistralConfigured ? "mistral"') < health.indexOf(': geminiConfigured ? "gemini"'));
+// 3. Surfaces must expose the derived display order, not a hardcoded one.
+requireRule(
+  "AI health route no longer exposes the derived canonical fallback chain",
+  health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY"),
+);
 requireRule("AI environment readiness order drifted", envReadiness.includes(REQUIRED_LABELS));
 
+// 4. Prompt trust boundary.
+requireRule("AI prompt trust boundary import is missing", ai.includes('from "./ai-trust-boundary"'));
+requireRule("AI prompt trust boundary is not applied", ai.includes("const trustBoundary = protectPrompt(prompt);") && ai.includes("trustBoundary.protectedPrompt"));
+
+// 5. Final ZIP invariants.
 requireRule("Final ZIP assembly helper is missing", download.includes("assembleFinalSubmissionZip"));
 requireRule("Final ZIP private cache control is missing", download.includes('"Cache-Control": "private, no-store"'));
 requireRule("Final ZIP nosniff header is missing", download.includes('"X-Content-Type-Options": "nosniff"'));
 
-// Check that this reconciler script only imports read-only fs APIs.
+// 6. This reconciler must stay read-only.
 // We split the forbidden token names so they don't appear literally and
 // trigger a false positive when we test `self` against the pattern.
 const writeTokens = ["Sync", "appendFile", "rename", "unlink", "rm", "cp"].map((s, i) => i === 0 ? "writeFile" + s : s + "Sync");

@@ -313,6 +313,17 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       assert.equal(isMutationAction("FINALIZE_REQUIRED_PDF"), true, "must be classified as a mutation (hidden from REVIEWER)");
     });
 
+    it("readiness panel renders an executable, role-gated Finalize Required PDF control", () => {
+      const panelSrc = readFileSync(resolve(process.cwd(), "components/generation-readiness-panel.tsx"), "utf8");
+      const buttonSrc = readFileSync(resolve(process.cwd(), "components/finalize-required-pdf-button.tsx"), "utf8");
+      assert.ok(panelSrc.includes("FinalizeRequiredPdfButton"), "panel must render the execute control");
+      assert.ok(panelSrc.includes("canMutate &&"), "execute control must be hidden for non-mutating roles");
+      assert.ok(panelSrc.includes("canMutateTender"), "role gating must use the shared capability helper");
+      assert.ok(buttonSrc.includes("/finalize-pdf"), "button must POST the finalize-pdf route");
+      assert.ok(buttonSrc.includes('method: "POST"'), "button must POST, not navigate");
+      assert.ok(!buttonSrc.includes("String(err"), "button must not surface raw errors");
+    });
+
     it("finalize-pdf gate uses the missing-plan-file purpose, not the final-zip completeness check", () => {
       assert.ok(
         finalizeSrc.includes('purpose: "generate-missing-plan-files"'),
