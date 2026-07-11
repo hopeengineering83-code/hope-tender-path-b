@@ -60,21 +60,32 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   const contentHash = computeAnalysisContentHash(tenderText);
 
   // Create or reuse resumable job. FAILED is included so a provider-exhausted
+  // or partially-completed run can be retried/resumed against the SAME job and
+  // its durable checkpoints, rather than spawning a duplicate.
+  //
   // BLOCKER 2: Database-enforced job idempotency with advisory locking.
-  // Acquire transaction-scoped PostgreSQL advisory lock BEFORE recheck/create
-  // to serialize all concurrent calls for same (user, tender, hash). Guarantees
-  // exactly one active job even under high concurrency.
-    // Re-check inside the transaction to close the race window
-    // Step 1: Acquire advisory lock derived from (userId, tenderId, AI_ANALYZE, contentHash).
-    // This blocks all concurrent createAnalysisJob() calls with identical parameters
-    // until this transaction commits/rolls back. Lock auto-releases on commit.
-    await acquireLock(tx, userId, tenderId, contentHash);
+  // Acquire a transaction-scoped PostgreSQL advisory lock BEFORE the recheck/
+  // create to serialize all concurrent calls for the same (tender, hash).
+  // This guarantees exactly one active job even under high concurrency —
+  // the previous findFirst + create race window is closed at the DB level.
+  // The lock is derived from a stable hash of (tenderId, contentHash) so the
+  // same tender+content always maps to the same lock. Lock auto-releases on
+  // commit/rollback.
+  let job = await prisma.$transaction(async (tx) => {
+    // Step 1: Acquire advisory lock. hashtext collapses the composite key
+    // into a stable int4 suitable for pg_advisory_xact_lock. We combine
+    // tenderId + contentHash so different content hashes for the same tender
+    // do NOT collide (a stale hash should not block a fresh-content create).
+    const lockKey = `${tenderId}:${contentHash}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 
     // Step 2: Recheck for existing active job AFTER holding the lock.
-    // Only the first caller creates a new job; all others return the existing one.
-    // FAILED jobs are included so provider-exhausted runs can resume from checkpoints.
-    // We check retryState.nonRetryable before re-arming to prevent infinite retry loops
-    // on terminal failures (e.g., invalid API key, missing provider configuration).
+    // Only the first caller creates a new job; all others return the existing
+    // one. FAILED jobs are included so provider-exhausted runs can resume from
+    // checkpoints. We check retryState.nonRetryable before re-arming to prevent
+    // infinite retry loops on terminal failures (e.g., invalid API key, missing
+    // provider configuration).
+    const existing = await tx.aiJob.findFirst({
       where: {
         tenderId,
         userId,
@@ -88,7 +99,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
 
     if (existing) {
       // If the job is QUEUED or RUNNING, return it as-is — another caller
-      // If job is QUEUED or RUNNING, return as-is — another caller
+      // already has an active job for this content hash. This is the
       // idempotent path: double-click or two-tab scenarios return the
       // SAME job instead of creating a duplicate.
       if (existing.status === "QUEUED" || existing.status === "RUNNING") {
@@ -116,9 +127,10 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       });
     }
 
-    // No existing job — create a new one inside the transaction
+    // Step 3: No existing job found — create a new one. The advisory lock
+    // ensures exactly one creation across concurrent callers.
     return await tx.aiJob.create({
-    // Step 3: No existing job found — create new one. Advisory lock ensures exactly one creation.
+      data: {
         tenderId,
         userId,
         jobType: "AI_ANALYZE",
