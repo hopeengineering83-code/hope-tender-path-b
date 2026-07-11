@@ -23,8 +23,8 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
-import { computeAdvisoryLockKey } from "../../../../../lib/engine/advisory-lock-key";
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { detectTenderFormatPolicy } from "../../../../../lib/engine/export-format-policy";
 import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
@@ -242,15 +242,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // tender without its previously active PDF row.
       let createdDoc;
       try {
-        createdDoc = await prisma.$transaction(async (tx) => {
-          const lockKey = computeAdvisoryLockKey([
-            actor.id,
-            tender.id,
-            "FINALIZE_PDF",
-            requiredName.toLowerCase(),
-          ]);
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
-          await tx.generatedDocument.updateMany({
+        createdDoc = await prisma.$transaction(async (tx) =>
+          withTransactionalGenerationGate({
+            prisma,
+            tx,
+            tenderId: tender.id,
+            userId: actor.id,
+            purpose: "generate-missing-plan-files",
+            write: async (lockedTx) => {
+          await lockedTx.generatedDocument.updateMany({
             where: {
               tenderId: tender.id,
               exactFileName: requiredName,
@@ -262,7 +262,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               reviewStatus: "SUPERSEDED",
             },
           });
-          return tx.generatedDocument.create({
+          return lockedTx.generatedDocument.create({
             data: {
               tenderId: tender.id,
               name: requiredName,
@@ -279,7 +279,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               reviewStatus: "PENDING",
             },
           });
-        });
+            },
+          }),
+        );
       } catch (error) {
         if ((error as { code?: string })?.code === "P2002") {
           logger.warn("finalize-pdf: concurrent finalization detected", { tenderId: tender.id });
