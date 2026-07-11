@@ -42,3 +42,12 @@ CREATE INDEX "TenderFile_integrityStatus_idx" ON "TenderFile"("integrityStatus")
 CREATE INDEX "CompanyDocument_integrityStatus_idx" ON "CompanyDocument"("integrityStatus");
 CREATE INDEX "CompanyAsset_integrityStatus_idx" ON "CompanyAsset"("integrityStatus");
 CREATE INDEX "GeneratedDocument_integrityStatus_idx" ON "GeneratedDocument"("integrityStatus");
+
+ALTER TABLE "ExportPackage"
+  ADD COLUMN "manifestJson" TEXT,
+  ADD COLUMN "packageSha256" TEXT,
+  ADD COLUMN "packageByteLength" INTEGER,
+  ADD COLUMN "integrityStatus" TEXT NOT NULL DEFAULT 'UNKNOWN',
+  ADD COLUMN "integrityVerifiedAt" TIMESTAMP(3);
+
+CREATE INDEX "ExportPackage_integrityStatus_idx" ON "ExportPackage"("integrityStatus");
