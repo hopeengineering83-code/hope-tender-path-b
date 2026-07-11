@@ -1,7 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { PrismaClient } from "@prisma/client";
-import { createAnalysisJob } from "../lib/ai-jobs/analysis-job-service";
+import { createAnalysisJob, computeAnalysisJobLockKey } from "../lib/ai-jobs/analysis-job-service";
 
 /**
  * BLOCKER 2: Real PostgreSQL concurrency test for createAnalysisJob advisory locking.
@@ -19,10 +19,16 @@ import { createAnalysisJob } from "../lib/ai-jobs/analysis-job-service";
 
 const RUN_DB_INTEGRATION = process.env.RUN_DB_INTEGRATION === "true";
 
-if (!RUN_DB_INTEGRATION) {
-  console.log("⏭️  Skipping DB integration tests (RUN_DB_INTEGRATION != true)");
-  process.exit(0);
-}
+describe("analysis-job advisory lock identity", () => {
+  it("is deterministic and changes for every identity dimension", () => {
+    const base = computeAnalysisJobLockKey("user-a", "tender-a", "AI_ANALYZE", "hash-a");
+    assert.equal(base, computeAnalysisJobLockKey("user-a", "tender-a", "AI_ANALYZE", "hash-a"));
+    assert.notEqual(base, computeAnalysisJobLockKey("user-b", "tender-a", "AI_ANALYZE", "hash-a"));
+    assert.notEqual(base, computeAnalysisJobLockKey("user-a", "tender-b", "AI_ANALYZE", "hash-a"));
+    assert.notEqual(base, computeAnalysisJobLockKey("user-a", "tender-a", "OTHER_JOB", "hash-a"));
+    assert.notEqual(base, computeAnalysisJobLockKey("user-a", "tender-a", "AI_ANALYZE", "hash-b"));
+  });
+});
 
 const prisma = new PrismaClient();
 
