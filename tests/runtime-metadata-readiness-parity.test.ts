@@ -102,19 +102,42 @@ describe("screenshot contradiction — Pharo fixture", () => {
   });
 });
 
-// ─── 3. Content-changed is warning, not hard-block ─────────────────────────
+// ─── 3. Content-changed blocks ALL purposes (stale analysis is unsafe) ──────
 
-describe("content-changed — warning not hard-block", () => {
-  it("generation-readiness-gate allows draft when content changed (purpose != export/final-zip)", () => {
+describe("content-changed — blocks all purposes (stale analysis is unsafe)", () => {
+  it("generation-readiness-gate blocks draft when content changed (stale analysis is unsafe for all purposes)", () => {
+    // PR #1053: stale analysis now blocks ALL purposes, not just export/final-zip.
+    // Running the engine on stale analysis produces incorrect requirements,
+    // matching, and compliance — the user must re-run AI Analyze first.
     const src = read("lib/engine/generation-readiness-gate.ts");
-    assert.ok(src.includes('input.purpose === "export" || input.purpose === "final-zip"'), "must check purpose for hard-block");
-    assert.ok(src.includes("Draft: warning only"), "must have draft warning-only comment");
+    // The ANALYSIS_HASH_MISMATCH fail() call must NOT be inside an export/final-zip condition.
+    // Extract the hash-mismatch section and verify it's unconditional.
+    const hashMismatchIdx = src.indexOf("ANALYSIS_HASH_MISMATCH");
+    assert.ok(hashMismatchIdx > -1, "must have ANALYSIS_HASH_MISMATCH");
+    // Check the 200 chars before the first ANALYSIS_HASH_MISMATCH — must NOT contain
+    // the purpose-gated condition (it should be unconditional).
+    const beforeHashMismatch = src.slice(Math.max(0, hashMismatchIdx - 200), hashMismatchIdx);
+    assert.ok(
+      !beforeHashMismatch.includes('input.purpose === "export"'),
+      "ANALYSIS_HASH_MISMATCH must NOT be gated on export/final-zip — it must block ALL purposes",
+    );
   });
 
-  it("generation-readiness-gate does NOT hard-block draft on ANALYSIS_HASH_MISMATCH", () => {
+  it("generation-readiness-gate hard-blocks draft on ANALYSIS_HASH_MISMATCH for all purposes", () => {
     const src = read("lib/engine/generation-readiness-gate.ts");
-    // The ANALYSIS_HASH_MISMATCH fail() calls must be inside the export/final-zip condition
-    assert.ok(src.includes('if (input.purpose === "export" || input.purpose === "final-zip")'), "hash mismatch must be gated on export/final-zip");
+    // Find ALL ANALYSIS_HASH_MISMATCH occurrences and verify NONE are inside a purpose gate.
+    let idx = 0;
+    let count = 0;
+    while ((idx = src.indexOf("ANALYSIS_HASH_MISMATCH", idx)) !== -1) {
+      const before = src.slice(Math.max(0, idx - 200), idx);
+      assert.ok(
+        !before.includes('input.purpose === "export"'),
+        `ANALYSIS_HASH_MISMATCH at offset ${idx} must NOT be inside a purpose gate`,
+      );
+      idx += 20;
+      count++;
+    }
+    assert.ok(count >= 2, "must have at least 2 ANALYSIS_HASH_MISMATCH checks (no hash + hash mismatch)");
   });
 });
 

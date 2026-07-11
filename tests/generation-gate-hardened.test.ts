@@ -156,14 +156,15 @@ describe("hardened gate — content-hash always enforced (no legacy bypass)", ()
     assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 
-  it("does NOT hard-block draft generation when content hash mismatches", () => {
+  it("ALSO hard-blocks draft generation when content hash mismatches (stale analysis is unsafe for all purposes)", () => {
+    // PR #1053: stale analysis now blocks ALL purposes, not just export/final-zip.
     const r = evaluateGenerationReadiness(goodInput({
       latestJobHash: "old_hash",
       currentContentHash: "new_hash",
       purpose: "generate",
     }));
-    // Draft: content-changed is a warning, not a hard block
-    assert.ok(r.ok || r.blockerCode !== "ANALYSIS_HASH_MISMATCH", "draft should not hard-block on hash mismatch");
+    assert.equal(r.ok, false);
+    assert.equal(r.blockerCode, "ANALYSIS_HASH_MISMATCH");
   });
 });
 

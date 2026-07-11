@@ -109,20 +109,19 @@ export async function handleSecureUpload(req: Request) {
       });
 
       if (!stored) throw new Error("STORAGE_WRITE_DID_NOT_RETURN_A_RECORD");
-      const persistedStored = stored;
 
       if (tenderId) {
         const record = await prisma.$transaction(async (tx) => {
-const created = await tx.tenderFile.create({
-          data: {
-            tenderId,
-            fileName,
-            originalFileName: fileName,
-            mimeType,
-            size: buffer.byteLength,
-            storagePath: persistedStored.storagePath,
-            fileContent: persistedStored.fileContent ?? null,
-            ...integrity,
+          const created = await tx.tenderFile.create({
+            data: {
+              tenderId,
+              fileName,
+              originalFileName: fileName,
+              mimeType,
+              size: buffer.byteLength,
+              storagePath: stored!.storagePath,
+              fileContent: stored!.fileContent ?? null,
+              ...integrity,
             classification,
             extractedText: extracted.text || null,
             totalPages: perPage.totalDetectedPages,
@@ -161,8 +160,8 @@ const created = await tx.tenderFile.create({
             originalFileName: fileName,
             mimeType,
             size: buffer.byteLength,
-            storagePath: persistedStored.storagePath,
-            fileContent: persistedStored.fileContent ?? null,
+            storagePath: stored!.storagePath,
+            fileContent: stored!.fileContent ?? null,
             ...integrity,
             category,
             extractedText: extracted.text || null,
@@ -184,7 +183,7 @@ const created = await tx.tenderFile.create({
       }
     } catch (error) {
       if (stored) {
-        await storage.deleteFile({ storagePath: persistedStored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
+        await storage.deleteFile({ storagePath: stored!.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
       }
       logger.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
       results.push({ success: false, fileName: file.name, error: "Upload processing failed. Use the request ID when contacting support.", requestId });
