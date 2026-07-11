@@ -296,6 +296,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName: file.exactFileName, documentType, requirements: tender.requirements });
+    if (generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx")) {
+      skipped.push(`${file.exactFileName} (requires original or format-specific finalization)`);
+      continue;
+    }
+    const integrity = verifiedIntegrityDataFromBase64({
+      fileContent: generated.fileContent,
+      filename: file.exactFileName,
+      claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
     // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
     // preserved history back to GENERATED — and collide with the partial
     // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED.
