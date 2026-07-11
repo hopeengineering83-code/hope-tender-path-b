@@ -1,5 +1,6 @@
 import { logger } from "../../../../../lib/observability";
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -615,7 +616,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           filename: quickDraftFileName,
           claimedMimeType: "text/markdown",
         });
-        await prisma.generatedDocument.create({
+        await prisma.$transaction(async (tx) =>
+          withTransactionalGenerationGate({
+            prisma,
+            tx,
+            tenderId: id,
+            userId,
+            purpose: "ai-proposal-persist",
+            write: async (lockedTx) => {
+              return lockedTx.generatedDocument.create({
           data: {
             tenderId: id,
             name: "AI Proposal (Quick Draft)",
@@ -629,7 +638,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             reviewStatus: "NOT_EXPORTABLE",
             contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
           },
-        });
+        })
+            },
+          }),
+        );;
       } catch {
         // Non-blocking — draft already returned to UI
       }
