@@ -183,9 +183,12 @@ export type TenderLifecycleResult = {
      *  recommend RESUME_AI_ANALYZE instead of treating partial AI as
      *  full success. */
     canonicalState?: string;
-    /** True when current source content differs from analysis binding hash. */
+    /** True when the current tender source content differs from the
+     *  analysis binding hash — the analysis is stale and must be re-run
+     *  before downstream steps can proceed. */
     stale?: boolean;
-    /** True when AI Analyze is PARTIAL_NEEDS_RESUME. */
+    /** True when the AI Analyze job is PARTIAL_NEEDS_RESUME — some chunks
+     *  succeeded, some failed, and the analysis is resumable. */
     partial?: boolean;
   };
   metadataStatus: {
@@ -507,8 +510,9 @@ export async function computeTenderLifecycle(
     analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK" ||
     analysisSource === "REGEX_FALLBACK_AI_ERROR";
 
-  // Stale analysis detection: compare latest SUCCEEDED job hash to current
-  // content hash. If they differ, the analysis is stale.
+  // Stale analysis detection: compare the latest SUCCEEDED AI Analyze job's
+  // content hash to the current tender source content hash. If they differ,
+  // the analysis is stale and must be re-run before downstream steps proceed.
   let analysisIsStale = false;
   if (hasAnalysis && !analysisPartialNeedsResume && canonicalAnalysisState === "AI_SUCCEEDED") {
     try {
@@ -522,7 +526,7 @@ export async function computeTenderLifecycle(
         analysisIsStale = true;
       }
     } catch {
-      // Best-effort
+      // Best-effort — if hash computation fails, don't flag as stale
     }
   }
 
@@ -1078,6 +1082,9 @@ export async function computeTenderLifecycle(
       hasText,
       score: tender.readinessScore,
       canonicalState: canonicalAnalysisState ?? undefined,
+      // Forward stale/partial flags so the Recovery Command Center and other
+      // panels can show "Stale — re-run required" or "PARTIAL — resume" instead
+      // of a green "AI" check when the analysis is not actually current.
       stale: analysisIsStale,
       partial: analysisPartialNeedsResume,
     },

@@ -13,6 +13,7 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
+import { getCanonicalTenderWorkflowDecision } from "../../../../lib/engine/canonical-workflow-decision";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
 // ClientSubmissionDetailsPanel is intentionally NOT imported here — it was a
@@ -164,6 +165,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
+  // Canonical workflow decision provides staleAnalysis, mandatoryComplianceRowsCount,
+  // mandatoryRequirementCount — needed to wire TenderHealthScorePanel so the
+  // AI Analysis dimension fails when stale and Compliance dimension fails when
+  // compliance rows = 0.
+  const workflowDecision = await getCanonicalTenderWorkflowDecision(prismaClient, userId, tender.id).catch(() => null);
   // Confirmed BuildPlan items feed the executive snapshot's planned-doc counts
   // so the dashboard can never show plan numbers the gates do not enforce.
   const confirmedPlanForSnapshot = await getCurrentConfirmedBuildPlan(prismaClient, tender.id, userId).catch(() => ({ ok: false as const, blocker: "unavailable" }));
@@ -186,7 +192,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <NextActionPanel tenderId={tender.id} />
       <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
-      <TenderHealthScorePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
+      <TenderHealthScorePanel
+        tenderId={tender.id}
+        canonicalReadiness={canonicalReadiness}
+        analysisStale={workflowDecision?.staleAnalysis ?? false}
+        mandatoryComplianceRowsCount={workflowDecision?.mandatoryComplianceRowsCount}
+        mandatoryRequirementCount={workflowDecision?.mandatoryRequirementCount}
+      />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
 
