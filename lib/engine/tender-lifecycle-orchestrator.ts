@@ -51,6 +51,7 @@ import {
   buildProviderDiagnosticsSnapshot,
 } from "../ai-provider-health";
 import { newDiagnosticId } from "./safe-api-error";
+import { resolveCurrentAnalysisBinding } from "./generation-readiness-gate";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -182,6 +183,10 @@ export type TenderLifecycleResult = {
      *  recommend RESUME_AI_ANALYZE instead of treating partial AI as
      *  full success. */
     canonicalState?: string;
+    /** True when current source content differs from analysis binding hash. */
+    stale?: boolean;
+    /** True when AI Analyze is PARTIAL_NEEDS_RESUME. */
+    partial?: boolean;
   };
   metadataStatus: {
     completenessRatio: number;
@@ -501,6 +506,25 @@ export async function computeTenderLifecycle(
     analysisSource === "AI" ||
     analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK" ||
     analysisSource === "REGEX_FALLBACK_AI_ERROR";
+
+  // Stale analysis detection: compare latest SUCCEEDED job hash to current
+  // content hash. If they differ, the analysis is stale.
+  let analysisIsStale = false;
+  if (hasAnalysis && !analysisPartialNeedsResume && canonicalAnalysisState === "AI_SUCCEEDED") {
+    try {
+      const binding = await resolveCurrentAnalysisBinding(client, tenderId, tender.userId ?? userId ?? "");
+      const latestSucceeded = await client.aiJob.findFirst({
+        where: { tenderId, jobType: "AI_ANALYZE", status: "SUCCEEDED" },
+        orderBy: { finishedAt: "desc" },
+        select: { analysisInputHash: true },
+      });
+      if (latestSucceeded && binding.contentHash && latestSucceeded.analysisInputHash !== binding.contentHash) {
+        analysisIsStale = true;
+      }
+    } catch {
+      // Best-effort
+    }
+  }
 
   // ── Provider health ────────────────────────────────────────────────────────
   const providers = providerSummary();
@@ -1052,10 +1076,10 @@ export async function computeTenderLifecycle(
     analysisStatus: {
       source: analysisSource,
       hasText,
-      // Legacy DB score retained only as workflow progress context; it is not
-      // used to decide finalSubmissionStatus or DOWNLOAD_ZIP availability.
       score: tender.readinessScore,
       canonicalState: canonicalAnalysisState ?? undefined,
+      stale: analysisIsStale,
+      partial: analysisPartialNeedsResume,
     },
     metadataStatus: {
       completenessRatio: meta.overallRatio,
