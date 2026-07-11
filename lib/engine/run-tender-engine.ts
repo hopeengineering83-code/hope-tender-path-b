@@ -1,6 +1,7 @@
 import { logger } from "../observability";
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
+import { computeTenderMutationLockKey } from "./advisory-lock-key";
 import { logAction } from "../audit";
 import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
 import { analyzeWithAI, isAIEnabled } from "../ai";
@@ -570,7 +571,8 @@ export async function runTenderEngine(
     await prisma.$transaction(async (tx) => {
       // Serialize concurrent engine runs for this tender.
       // The lock is transaction-scoped (released on commit/rollback).
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenderId}))`;
+      const tenderMutationLock = computeTenderMutationLockKey(tenderId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
 
       // Supersede active documents INSIDE the transaction.
       if (activeGeneratedDocuments.length > 0) {
