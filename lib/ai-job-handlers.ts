@@ -446,7 +446,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         write: async (lockedTx) => {
           const doc = await lockedTx.generatedDocument.create({
       data: {
-        tenderId: ctx.tenderId,
+        tenderId: ctx.tenderId!,
         name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
         documentType: "QUICK_DRAFT",
         format: "MARKDOWN",
