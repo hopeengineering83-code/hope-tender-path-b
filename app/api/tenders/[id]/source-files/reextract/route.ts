@@ -7,6 +7,8 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
+import { inspectActualFileBytes } from "../../../../../../lib/engine/persisted-byte-integrity";
+import { invalidateTenderForSourceRevision } from "../../../../../../lib/engine/source-revision-invalidation";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -90,7 +92,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const extractedText = extractionResult.pages.map((p) => p.text).join("\n\n");
       const sha256 = computeFileHash(fileContent);
 
-      await prisma.tenderFile.update({
+      const integrity = inspectActualFileBytes({
+        bytes: fileContent,
+        filename: file.originalFileName,
+        claimedMimeType: file.mimeType,
+      });
+      if (integrity.integrityStatus !== "VERIFIED") {
+        throw new Error(integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED");
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.tenderFile.update({
         where: { id: file.id },
         data: {
           extractedText,
@@ -101,7 +112,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           extractionMethod: extractionResult.pages.some((p) => p.extractionMethod === "ocr") ? "ocr" : "text",
           extractionScore: extractionResult.status === "extracted" ? 100 : extractionResult.status === "partial" ? 60 : 0,
           contentHash: sha256,
+          ...integrity,
         },
+      });
+        await invalidateTenderForSourceRevision(tx, tenderId, "SOURCE_FILE_REEXTRACTED");
       });
 
       results.push({
