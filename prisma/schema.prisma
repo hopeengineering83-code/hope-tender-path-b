@@ -121,6 +121,14 @@ model CompanyDocument {
   size             Int
   storagePath      String    @default("")
   fileContent      String?
+  // Persisted byte-integrity state. Legacy rows remain UNKNOWN and fail closed.
+  contentSha256       String?
+  contentByteLength   Int?
+  contentMimeType     String?
+  detectedFormat      String?
+  integrityStatus     String    @default("UNKNOWN")
+  integrityVerifiedAt DateTime?
+  integrityFailureCode String?
   category         String    @default("OTHER")
   extractedText    String?
   // AI extraction state: PENDING | EXTRACTING | EXTRACTED | FAILED
@@ -135,6 +143,7 @@ model CompanyDocument {
   projectsSourced Project[]
 
   @@index([companyId])
+  @@index([integrityStatus])
 }
 
 model CompanyAsset {
@@ -148,12 +157,21 @@ model CompanyAsset {
   size             Int
   storagePath      String   @default("")
   fileContent      String?
+  // Persisted byte-integrity state. Legacy rows remain UNKNOWN and fail closed.
+  contentSha256       String?
+  contentByteLength   Int?
+  contentMimeType     String?
+  detectedFormat      String?
+  integrityStatus     String    @default("UNKNOWN")
+  integrityVerifiedAt DateTime?
+  integrityFailureCode String?
   isActive         Boolean  @default(true)
   metadata         String   @default("{}")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([companyId])
+  @@index([integrityStatus])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -485,13 +503,22 @@ model TenderFile {
   // Shape: [{ page, charCount, status, hasSubmissionInstructions, ... }]
   pageStatusJson   String?
   ocrModel         String?  // OCR model used if OCR was run, e.g. "claude-3-5-sonnet"
-  contentHash      String?  // MD5 hash of file content — used for dedup at upload time
+  contentHash      String?  // Legacy MD5 dedup hash; never used as a trust digest
+  // Persisted byte-integrity state. Legacy rows remain UNKNOWN and fail closed.
+  contentSha256       String?
+  contentByteLength   Int?
+  contentMimeType     String?
+  detectedFormat      String?
+  integrityStatus     String    @default("UNKNOWN")
+  integrityVerifiedAt DateTime?
+  integrityFailureCode String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([tenderId])
   @@index([tenderId, deletionStatus]) // Compound — 20+ queries filter by both
   @@unique([tenderId, contentHash]) // Prevents duplicate uploads of same content
+  @@index([integrityStatus])
 }
 
 model TenderRequirement {
@@ -613,6 +640,14 @@ model GeneratedDocument {
   exactOrder       Int?
   contentSummary   String?
   fileContent      String?
+  // Persisted byte-integrity state. Legacy rows remain UNKNOWN and fail closed.
+  contentSha256       String?
+  contentByteLength   Int?
+  contentMimeType     String?
+  detectedFormat      String?
+  integrityStatus     String    @default("UNKNOWN")
+  integrityVerifiedAt DateTime?
+  integrityFailureCode String?
   validationStatus String    @default("PENDING")
   generationStatus String    @default("PLANNED")
   reviewStatus     String    @default("PENDING")
@@ -641,6 +676,7 @@ model GeneratedDocument {
   // preserving exactFileName, then inserts new rows with the same name.
   // See migration 20260705000000_generated_document_partial_unique_index.
   @@index([tenderId, exactFileName])
+  @@index([integrityStatus])
 }
 
 // Per-document review action audit trail (PR #247).
