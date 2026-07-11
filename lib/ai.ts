@@ -2,6 +2,7 @@ import { logger } from "./observability";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
+import { preflightProvider } from "./ai-preflight";
 import { protectPrompt } from "./ai-trust-boundary";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
@@ -444,12 +445,20 @@ export type NoAiProviderReadyErrorKind =
 
 // Maximum ACTUAL outbound provider requests per single generateWithFallback
 // call (one request or one AI Analyze chunk). Skipped providers (unconfigured,
-// cooling down, invalid OpenRouter config) do NOT consume an attempt. Bounded
-// to keep cumulative provider time within the Vercel Hobby 60s function limit.
+// cooling down, invalid OpenRouter config, oversized-payload preflight) do NOT
+// consume an attempt. Bounded to keep cumulative provider time within the
+// Vercel Hobby 60s function limit.
+//
+// FIX: raised default from 3 to 5. The previous default of 3 meant that if
+// Z.ai (400), Cerebras (429), and Mistral (timeout) all failed, the budget
+// was exhausted BEFORE trying Groq, OpenRouter, Gemini, etc. — even though
+// those providers were eligible and could have succeeded. With preflight
+// skips not consuming budget, 5 actual attempts still fits within Vercel
+// Hobby's 60s limit (5 × ~8s average = 40s, leaving 20s for error handling).
 export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
   const raw = Number(process.env.AI_MAX_PROVIDER_ATTEMPTS);
   if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return Math.floor(raw);
-  return 3;
+  return 5;
 })();
 
 // Wall-clock reserved at the tail of the shared deadline for error handling and
@@ -782,8 +791,22 @@ export async function generateWithFallback(
       failureDetails.push(`${provider}: in cooldown`);
       continue;
     }
+    // Provider capability preflight — estimate the prompt's input-token count
+    // and skip providers whose context window or TPM limit cannot handle it.
+    // This prevents Groq 413 (TPM limit) and context-window overflow on
+    // smaller providers. Skipped WITHOUT consuming an attempt — same as
+    // cooldown/unconfigured. The chain moves to the next eligible provider.
+    const preflight = preflightProvider(provider, trustBoundary.protectedPrompt, { systemPrompt: opts?.systemPrompt, useCase });
+    if (!preflight.eligible) {
+      providerAttempts.push({
+        provider, configured: true, tried: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: false, cooldownUntil: pre.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: ${preflight.safeMessage}`);
+      continue;
+    }
     // Attempt budget guard — this provider is eligible (configured + not
-    // cooling) but we have already used our actual-attempt budget.
+    // cooling + preflight OK) but we have already used our actual-attempt budget.
     if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST) {
       budgetExhausted = true;
       providerAttempts.push({

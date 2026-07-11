@@ -124,8 +124,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const result = await runTenderEngine(id, userId);
+    // Engine response honesty: propagate partial/blockers/nextAction so the
+    // UI can surface the real state instead of a misleading "engine completed"
+    // green when AI matching failed but deterministic extraction succeeded.
+    const engineMeta = result as {
+      partial?: boolean;
+      blockers?: string[];
+      nextAction?: string | null;
+      analysisMethod?: string;
+      evidenceMatchingBlocker?: { code: string; message: string } | null;
+    };
     return NextResponse.json({
       success: true,
+      ok: !engineMeta.partial,
+      partial: engineMeta.partial ?? false,
+      blockers: engineMeta.blockers ?? [],
+      nextAction: engineMeta.nextAction ?? null,
+      analysisMethod: engineMeta.analysisMethod ?? null,
+      evidenceMatchingBlocker: engineMeta.evidenceMatchingBlocker ?? null,
       tender: result,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
       diagnosticId,

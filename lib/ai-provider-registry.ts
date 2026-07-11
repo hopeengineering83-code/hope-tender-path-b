@@ -539,9 +539,17 @@ const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 // that does NOT accept Z.ai Coding Plan keys. Both plans share the same URL.
 const ZAI_CODING_PLAN_BASE_URL = "https://api.z.ai/api/paas/v4";
 const ZAI_GENERAL_MODELS = new Set(["glm-4-flash", "glm-4-flashx"]);
-// Z.ai support confirmed: the Coding Plan model is "glm-coding" (NOT glm-4-coding).
-// Source: https://z.ai — Coding Plan subscription includes only "glm-coding".
-const ZAI_CODING_PLAN_MODELS = new Set(["glm-coding", "glm-4-coding", "glm-4v-coding"]);
+// Z.ai Coding Plan models. The valid model identifiers on api.z.ai are:
+//   - glm-4-coding (text)
+//   - glm-4v-coding (vision)
+// "glm-coding" (without the "-4-" segment) is NOT a valid Z.ai model identifier
+// and returns HTTP 400 code 1211 "Unknown Model". The previous allowlist
+// included "glm-coding" as the Coding Plan default — that was the root cause
+// of the Z.ai 400 errors observed in Vercel runtime. It has been removed.
+// If a user explicitly configures ZAI_PROPOSAL_MODEL=glm-coding, the resolver
+// now rejects it as MODEL_UNSUPPORTED and the provider is skipped safely
+// without consuming an attempt budget slot.
+const ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
 
 function zaiPlanTypeForBaseUrl(baseUrl: string): ZaiPlanType {
   const normalized = baseUrl.replace(/\/+$/, "").toLowerCase();
@@ -566,9 +574,11 @@ export function resolveZaiConfiguration(
   // Determine the effective model. If no env override is set, use the
   // correct default for the detected plan type:
   //   - General API → glm-4-flash (entry.defaults)
-  //   - Coding Plan → glm-4-coding (plan-specific default)
+  //   - Coding Plan → glm-4-coding (plan-specific default — the valid Z.ai
+  //     Coding Plan model identifier. "glm-coding" is NOT valid and returns
+  //     HTTP 400 code 1211 "Unknown Model".)
   const registryDefault = entry.defaults[slot];
-  const planDefault = planType === "coding-plan" ? "glm-coding" : registryDefault;
+  const planDefault = planType === "coding-plan" ? "glm-4-coding" : registryDefault;
   const model = (specific && specific.length > 0
     ? specific
     : slot !== "proposalModel" && proposal && proposal.length > 0

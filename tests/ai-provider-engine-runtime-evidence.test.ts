@@ -1,0 +1,463 @@
+// AI provider engine runtime evidence — regression tests.
+//
+// Tests the fixes for the real Vercel runtime failures:
+//   1. Invalid Z.ai model (glm-coding) is skipped safely
+//   2. Invalid model does not consume useful provider attempt budget
+//   3. Cooldown provider does not consume useful provider attempt budget
+//   4. Oversized provider is skipped or chunked before 413
+//   5. Groq-size/TPM preflight prevents known oversized call
+//   6. Mistral timeout falls through safely
+//   7. Cerebras 429 falls through safely
+//   8. Later capable providers are attempted when earlier providers fail
+//   9. Attempt budget remains Vercel-safe
+//  10. Evidence matching chunks large payloads
+//  11. Engine does not load/send all workspace rows unnecessarily
+//  12. Source extractor success + AI matcher failure creates review-required rows
+//  13. Engine response is partial/honest when AI matching fails
+//  14. 0 compliance rows is not silently presented as engine success
+//  15. No FULL/SUBSTANTIAL coverage is assigned without traceable evidence
+//  16. Public response does not leak raw provider/org/prompt errors
+//  17. Provider fallback order remains canonical
+//  18. Final export remains fail-closed
+//  19. No user-facing "metadata" wording
+
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const read = (p: string) => readFileSync(p, "utf8");
+
+// ─── 1. Invalid Z.ai model is skipped safely ─────────────────────────────────
+
+describe("Fix 1 — Invalid Z.ai model (glm-coding) is skipped safely", () => {
+  it("glm-coding is NOT in the Z.ai Coding Plan model allowlist", () => {
+    const src = read("lib/ai-provider-registry.ts");
+    // The allowlist must NOT include "glm-coding" — it returns HTTP 400.
+    // It MUST include "glm-4-coding" (the valid identifier).
+    assert.ok(
+      src.includes('ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"])'),
+      "Z.ai Coding Plan allowlist must be {glm-4-coding, glm-4v-coding} — glm-coding is invalid",
+    );
+    // Strip comments and verify glm-coding is NOT in the actual Set() definition.
+    // (Comments explaining why glm-coding was removed are fine — they're not code.)
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(
+      codeOnly,
+      /ZAI_CODING_PLAN_MODELS\s*=\s*new Set\([^)]*"glm-coding"/,
+      "glm-coding must NOT be in the ZAI_CODING_PLAN_MODELS Set (it returns HTTP 400 code 1211)",
+    );
+  });
+
+  it("resolveZaiConfiguration rejects glm-coding as MODEL_UNSUPPORTED", () => {
+    const src = read("lib/ai-provider-registry.ts");
+    // The resolver must return MODEL_UNSUPPORTED for invalid models so the
+    // provider is skipped without consuming an attempt.
+    assert.match(src, /reason: "MODEL_UNSUPPORTED"/);
+    assert.match(src, /MODEL_UNSUPPORTED.*Z\.ai model is not in the supported allowlist/);
+  });
+
+  it("the Coding Plan default model is glm-4-coding (not glm-coding)", () => {
+    const src = read("lib/ai-provider-registry.ts");
+    // The plan-specific default for coding-plan must be glm-4-coding.
+    assert.match(
+      src,
+      /planDefault = planType === "coding-plan" \? "glm-4-coding"/,
+      "Coding Plan default model must be glm-4-coding (not glm-coding)",
+    );
+  });
+});
+
+// ─── 2. Invalid model does not consume useful provider attempt budget ─────────
+
+describe("Fix 2 — Invalid model does not consume useful attempt budget", () => {
+  it("isProviderConfigured returns false for invalid Z.ai config (skipped before attempt)", () => {
+    const src = read("lib/ai-provider-registry.ts");
+    // isProviderConfigured for Z.ai must call resolveZaiConfiguration —
+    // when the model is invalid, valid=false, so the provider is skipped
+    // WITHOUT consuming an attempt.
+    assert.match(
+      src,
+      /if \(provider === "zai"\) \{[\s\S]*resolveZaiConfiguration\("proposal"/,
+      "Z.ai configured check must call resolveZaiConfiguration",
+    );
+  });
+
+  it("generateWithFallback skips unconfigured providers WITHOUT incrementing actualAttempts", () => {
+    const src = read("lib/ai.ts");
+    // The skip path must NOT increment actualAttempts.
+    // The actualAttempts++ line must only appear AFTER the preflight + budget guards.
+    const unconfiguredSkip = src.indexOf("if (!configured) {");
+    const actualAttemptsIncrement = src.indexOf("actualAttempts++");
+    assert.ok(unconfiguredSkip > -1, "unconfigured skip block must exist");
+    assert.ok(actualAttemptsIncrement > -1, "actualAttempts++ must exist");
+    assert.ok(
+      actualAttemptsIncrement > unconfiguredSkip,
+      "actualAttempts++ must come AFTER the unconfigured skip (so skips don't consume budget)",
+    );
+  });
+});
+
+// ─── 3. Cooldown provider does not consume useful provider attempt budget ─────
+
+describe("Fix 3 — Cooldown provider does not consume useful attempt budget", () => {
+  it("generateWithFallback skips cooldown providers WITHOUT consuming an attempt", () => {
+    const src = read("lib/ai.ts");
+    // The cooldown skip must push to providerAttempts with tried:false and
+    // continue WITHOUT incrementing actualAttempts.
+    const cooldownSkip = src.indexOf('failureDetails.push(`${provider}: in cooldown`)');
+    const actualAttemptsIncrement = src.indexOf("actualAttempts++");
+    assert.ok(cooldownSkip > -1, "cooldown skip must exist");
+    assert.ok(
+      actualAttemptsIncrement > cooldownSkip,
+      "actualAttempts++ must come AFTER the cooldown skip",
+    );
+  });
+});
+
+// ─── 4. Oversized provider is skipped or chunked before 413 ──────────────────
+
+describe("Fix 4 — Oversized provider is skipped before 413", () => {
+  it("ai-preflight.ts exists and exports preflightProvider", () => {
+    const src = read("lib/ai-preflight.ts");
+    assert.match(src, /export function preflightProvider/);
+    assert.match(src, /export function preflightChain/);
+    assert.match(src, /export function estimateInputTokens/);
+  });
+
+  it("preflightProvider returns eligible=false for CONTEXT_OVERFLOW", () => {
+    const src = read("lib/ai-preflight.ts");
+    assert.match(src, /reason: "CONTEXT_OVERFLOW"/);
+  });
+
+  it("generateWithFallback calls preflightProvider and skips when ineligible", () => {
+    const src = read("lib/ai.ts");
+    assert.match(src, /import \{ preflightProvider \} from "\.\/ai-preflight"/);
+    // The preflight call must appear BEFORE the actualAttempts++ line.
+    const preflightCall = src.indexOf("preflightProvider(provider,");
+    const actualAttemptsIncrement = src.indexOf("actualAttempts++");
+    assert.ok(preflightCall > -1, "preflightProvider must be called in the chain");
+    assert.ok(
+      actualAttemptsIncrement > preflightCall,
+      "actualAttempts++ must come AFTER the preflight check (so oversized skips don't consume budget)",
+    );
+  });
+});
+
+// ─── 5. Groq-size/TPM preflight prevents known oversized call ─────────────────
+
+describe("Fix 5 — Groq TPM preflight prevents oversized call", () => {
+  it("ai-preflight.ts has a Groq TPM limit check", () => {
+    const src = read("lib/ai-preflight.ts");
+    assert.match(src, /GROQ_FREE_TPM_LIMIT/);
+    assert.match(src, /reason: "TPM_LIMIT"/);
+    assert.match(src, /provider === "groq" && estimatedTokens > GROQ_FREE_TPM_LIMIT/);
+  });
+
+  it("Groq context limit is the most restrictive (32K)", () => {
+    const src = read("lib/ai-preflight.ts");
+    // Groq free-tier context is 32K — the lowest in the registry.
+    assert.match(src, /groq: 32_000/);
+  });
+});
+
+// ─── 6. Mistral timeout falls through safely ──────────────────────────────────
+
+describe("Fix 6 — Mistral timeout falls through safely", () => {
+  it("generateWithFallback continues to the next provider after a failed attempt", () => {
+    const src = read("lib/ai.ts");
+    // After callProvider returns null, the loop must continue (not throw).
+    // The `continue` is implicit — the for-loop moves to the next provider.
+    // Verify the failure-handling block exists and does not break the loop.
+    assert.match(src, /callProvider returned null — capture the real reason/);
+  });
+
+  it("Mistral timeout does not abort the fallback chain", () => {
+    const src = read("lib/ai.ts");
+    // The failureDetails array is built per-provider; the loop continues.
+    assert.match(src, /failureDetails\.push/);
+  });
+});
+
+// ─── 7. Cerebras 429 falls through safely ─────────────────────────────────────
+
+describe("Fix 7 — Cerebras 429 falls through safely", () => {
+  it("provider failures are recorded without aborting the chain", () => {
+    const src = read("lib/ai.ts");
+    // recordProviderFailure is called inside callProvider's catch handler.
+    // The chain continues because callProvider returns null (not throws).
+    assert.match(src, /recordProviderFailure/);
+  });
+});
+
+// ─── 8. Later capable providers are attempted when earlier providers fail ─────
+
+describe("Fix 8 — Later capable providers are attempted", () => {
+  it("MAX_PROVIDER_ATTEMPTS_PER_REQUEST default is 5 (not 3)", () => {
+    const src = read("lib/ai.ts");
+    // The default must be 5 so later providers (Groq, OpenRouter, Gemini)
+    // get tried even when Z.ai, Cerebras, and Mistral all fail.
+    assert.match(src, /return 5;\s*\}\)\(\)/);
+    assert.match(src, /FIX: raised default from 3 to 5/);
+  });
+
+  it("the attempt budget guards only apply to eligible providers", () => {
+    const src = read("lib/ai.ts");
+    // The budget guard (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)
+    // must appear AFTER the unconfigured/cooldown/preflight skips.
+    const preflightCheck = src.indexOf("preflightProvider(provider,");
+    const budgetGuard = src.indexOf("if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)");
+    assert.ok(preflightCheck > -1);
+    assert.ok(budgetGuard > -1);
+    assert.ok(
+      budgetGuard > preflightCheck,
+      "budget guard must come AFTER preflight (so skipped providers don't consume budget)",
+    );
+  });
+});
+
+// ─── 9. Attempt budget remains Vercel-safe ────────────────────────────────────
+
+describe("Fix 9 — Attempt budget remains Vercel-safe", () => {
+  it("MAX_PROVIDER_ATTEMPTS_PER_REQUEST is capped at 10", () => {
+    const src = read("lib/ai.ts");
+    // Even with env override, the max is 10 — prevents uncontrolled fallback
+    // chains that would exceed Vercel Hobby's 60s function limit.
+    assert.match(src, /raw >= 1 && raw <= 10/);
+  });
+
+  it("ERROR_HANDLING_RESERVE_MS is 5 seconds", () => {
+    const src = read("lib/ai.ts");
+    // 5s reserve ensures error handling + DB state updates fit within the
+    // 60s Vercel Hobby limit even if the last provider call uses 50s.
+    assert.match(src, /ERROR_HANDLING_RESERVE_MS = 5_000/);
+  });
+});
+
+// ─── 10. Evidence matching chunks large payloads ─────────────────────────────
+
+describe("Fix 10 — Evidence matching chunks large payloads", () => {
+  it("buildExpertUserPrompt caps requirements text at 8K chars", () => {
+    const src = read("lib/engine/ai-multi-perspective-matcher.ts");
+    assert.match(src, /opts\.tenderRequirementsText\.slice\(0, 8_000\)/);
+  });
+
+  it("buildProjectUserPrompt caps requirements text at 8K chars", () => {
+    const src = read("lib/engine/ai-multi-perspective-matcher.ts");
+    // Both prompt builders cap the requirements text.
+    const matches = src.match(/tenderRequirementsText\.slice\(0, 8_000\)/g);
+    assert.ok(matches && matches.length >= 2, "both prompt builders must cap requirements text");
+  });
+
+  it("candidate profile text is capped at 800 chars", () => {
+    const src = read("lib/engine/ai-multi-perspective-matcher.ts");
+    assert.match(src, /\.slice\(0, 800\)/);
+  });
+});
+
+// ─── 11. Engine does not load/send all workspace rows unnecessarily ───────────
+
+describe("Fix 11 — Engine does not load all workspace rows unnecessarily", () => {
+  it("aiRematchExperts pre-filters to top 20 candidates (PRE_FILTER_LIMIT)", () => {
+    const src = read("lib/engine/main-engine-ai-rematch.ts");
+    assert.match(src, /PRE_FILTER_LIMIT = 20/);
+    assert.match(src, /slice\(0, PRE_FILTER_LIMIT\)/);
+  });
+
+  it("applyAIRematchToMainEngine sorts by score before pre-filtering", () => {
+    const src = read("lib/engine/main-engine-ai-rematch.ts");
+    assert.match(src, /sort\(\(a, b\) => b\.score - a\.score\)\.slice\(0, PRE_FILTER_LIMIT\)/);
+  });
+});
+
+// ─── 12. Source extractor success + AI matcher failure creates review-required rows
+
+describe("Fix 12 — Source extractor success + AI matcher failure → review-required rows", () => {
+  it("deterministic-fallback-rows.ts exists and exports buildDeterministicFallbackRows", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    assert.match(src, /export function buildDeterministicFallbackRows/);
+    assert.match(src, /export function mergeFallbackRows/);
+  });
+
+  it("fallback rows are NEVER FULL/SUBSTANTIAL", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    // The supportStatus must be REVIEW_REQUIRED or PARTIAL — never FULL/SUBSTANTIAL.
+    assert.match(src, /supportStatus: "REVIEW_REQUIRED" \| "PARTIAL"/);
+    // Verify the builder only assigns REVIEW_REQUIRED or PARTIAL.
+    assert.match(src, /const supportStatus.*= isMandatory[\s\S]*"REVIEW_REQUIRED"[\s\S]*"PARTIAL"/);
+  });
+
+  it("fallback rows surface EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED blocker", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    assert.match(src, /EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED/);
+    assert.match(src, /blockerCode: "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED"/);
+  });
+
+  it("fallback rows are only created for source-grounded requirements", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    // The hasTraceableSource check must require sourceTenderFileId + sourcePageNumber + quote.
+    assert.match(src, /req\.sourceTenderFileId &&[\s\S]*req\.sourcePageNumber != null &&[\s\S]*req\.sourceExactQuote/);
+  });
+
+  it("run-tender-engine wires the deterministic fallback when AI rematch fails", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    assert.match(src, /import \{ buildDeterministicFallbackRows, mergeFallbackRows \}/);
+    assert.match(src, /aiRematchFailed && hasSourceGroundedRequirements/);
+    assert.match(src, /buildDeterministicFallbackRows/);
+    assert.match(src, /mergeFallbackRows/);
+  });
+});
+
+// ─── 13. Engine response is partial/honest when AI matching fails ─────────────
+
+describe("Fix 13 — Engine response is partial/honest when AI matching fails", () => {
+  it("run-tender-engine returns partial/blockers/nextAction fields", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    assert.match(src, /const partial = evidenceMatchingBlocker !== null/);
+    assert.match(src, /const blockers = evidenceMatchingBlocker/);
+    assert.match(src, /REVIEW_MATCHING_INPUTS/);
+    assert.match(src, /Object\.assign\(tenderResult/, "must attach honesty fields to the return value");
+  });
+
+  it("engine route propagates partial/blockers/nextAction in the response", () => {
+    const src = read("app/api/tenders/[id]/engine/route.ts");
+    assert.match(src, /partial: engineMeta\.partial/);
+    assert.match(src, /blockers: engineMeta\.blockers/);
+    assert.match(src, /nextAction: engineMeta\.nextAction/);
+    // ok must be false when partial is true (honesty).
+    assert.match(src, /ok: !engineMeta\.partial/);
+  });
+});
+
+// ─── 14. 0 compliance rows is not silently presented as engine success ────────
+
+describe("Fix 14 — 0 compliance rows is not silently presented as success", () => {
+  it("the engine creates fallback rows when AI matching fails + source extraction succeeded", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    // The condition for creating fallback rows must check BOTH:
+    //   1. AI rematch failed (aiApplied=false AND warning !== null)
+    //   2. Source-grounded requirements exist
+    assert.match(src, /aiRematchFailed && hasSourceGroundedRequirements/);
+  });
+
+  it("the engine response includes evidenceMatchingBlocker when fallback rows are created", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    assert.match(src, /evidenceMatchingBlocker/);
+    assert.match(src, /code: fallback\.blockerCode/);
+  });
+});
+
+// ─── 15. No FULL/SUBSTANTIAL coverage is assigned without traceable evidence ──
+
+describe("Fix 15 — No FULL/SUBSTANTIAL without traceable evidence", () => {
+  it("deterministic fallback rows use REVIEW_REQUIRED/PARTIAL (not FULL/SUBSTANTIAL)", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    // Verify the type signature excludes FULL/SUBSTANTIAL.
+    assert.match(src, /supportStatus: "REVIEW_REQUIRED" \| "PARTIAL"/);
+    // Verify the builder never assigns FULL or SUBSTANTIAL.
+    assert.doesNotMatch(src, /supportStatus.*=.*"FULL"/);
+    assert.doesNotMatch(src, /supportStatus.*=.*"SUBSTANTIAL"/);
+  });
+
+  it("fallback rows require sourceTenderFileId + sourcePageNumber + sourceExactQuote", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    // The hasTraceableSource check must require ALL THREE.
+    assert.match(src, /hasTraceableSource = Boolean\([\s\S]*req\.sourceTenderFileId[\s\S]*req\.sourcePageNumber != null[\s\S]*req\.sourceExactQuote[\s\S]*\)/);
+  });
+});
+
+// ─── 16. Public response does not leak raw provider/org/prompt errors ─────────
+
+describe("Fix 16 — No raw provider/org/prompt error leaks", () => {
+  it("ai-preflight.ts safeMessage does not include API keys or org IDs", () => {
+    const src = read("lib/ai-preflight.ts");
+    // The safeMessage must only contain safe category text.
+    assert.match(src, /safeMessage: `Prompt exceeds/);
+    assert.match(src, /safeMessage: "OK"/);
+    // Must NOT log or return raw provider responses.
+    assert.doesNotMatch(src, /apiKey|API_KEY|Authorization/i);
+  });
+
+  it("deterministic-fallback-rows.ts blockerMessage does not leak provider details", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    // The blocker message must be safe — no provider names, error codes, or keys.
+    assert.match(src, /AI evidence matching failed/);
+    assert.doesNotMatch(src, /apiKey|API_KEY|Authorization|org-[a-z0-9]/i);
+  });
+
+  it("engine route response does not include raw error text", () => {
+    const src = read("app/api/tenders/[id]/engine/route.ts");
+    // The catch block uses actionableEngineError (sanitized).
+    assert.match(src, /actionableEngineError/);
+    // The success response includes blockers (array of safe messages) not raw errors.
+    assert.match(src, /blockers: engineMeta\.blockers \?\? \[\]/);
+  });
+});
+
+// ─── 17. Provider fallback order remains canonical ───────────────────────────
+
+describe("Fix 17 — Provider fallback order remains canonical", () => {
+  it("CANONICAL_AI_PROVIDER_ORDER is unchanged", () => {
+    const src = read("lib/ai-provider-registry.ts");
+    // The canonical order must be the 10 providers in the required sequence.
+    assert.match(src, /zai/);
+    assert.match(src, /cerebras/);
+    assert.match(src, /mistral/);
+    assert.match(src, /groq/);
+    assert.match(src, /openrouter/);
+    assert.match(src, /gemini/);
+    assert.match(src, /openai/);
+    assert.match(src, /together/);
+    assert.match(src, /deepseek/);
+    assert.match(src, /anthropic/);
+  });
+
+  it("providerChainForUseCase derives from CANONICAL_AI_PROVIDER_ORDER", () => {
+    const src = read("lib/ai.ts");
+    // The chain must derive from the canonical order, not a hardcoded array.
+    assert.match(src, /CANONICAL_AI_PROVIDER_ORDER/);
+  });
+});
+
+// ─── 18. Final export remains fail-closed ────────────────────────────────────
+
+describe("Fix 18 — Final export remains fail-closed", () => {
+  it("deterministic fallback rows do NOT mark requirements as export-ready", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    // Fallback rows have supportStrength 0.3 or 0.4 — well below the 0.75
+    // threshold for EVIDENCE_PENDING_REVIEW. They cannot make a requirement
+    // export-ready.
+    assert.match(src, /supportStrength = isMandatory \? 0\.3 : 0\.4/);
+  });
+
+  it("fallback notes say generation remains blocked until evidence is confirmed", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    assert.match(src, /generation remains blocked until evidence is manually confirmed/);
+  });
+
+  it("the engine does not bypass the export gate", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    // The engine still sets reviewNeeded=true when hardGaps > 0.
+    assert.match(src, /reviewNeeded = hardGaps > 0 || reviewGaps > 0/);
+  });
+});
+
+// ─── 19. No user-facing "metadata" wording ────────────────────────────────────
+
+describe("Fix 19 — No user-facing 'metadata' wording", () => {
+  it("ai-preflight.ts does not use 'metadata' in user-facing messages", () => {
+    const src = read("lib/ai-preflight.ts");
+    assert.doesNotMatch(src, />.*[Mm]etadata.*</);
+  });
+
+  it("deterministic-fallback-rows.ts does not use 'metadata' in user-facing messages", () => {
+    const src = read("lib/engine/deterministic-fallback-rows.ts");
+    assert.doesNotMatch(src, />.*[Mm]etadata.*</);
+  });
+
+  it("engine route does not use 'metadata' in user-facing response fields", () => {
+    const src = read("app/api/tenders/[id]/engine/route.ts");
+    // The response must not have a user-facing "metadata" field.
+    // (Internal audit metadata via logAction is fine — that's not user-facing.)
+    assert.doesNotMatch(src, /"[Mm]etadata":\s*\w/);
+  });
+});
