@@ -12,3 +12,7 @@ export function computeAdvisoryLockKey(parts: readonly string[]): bigint {
   }
   return hash.digest().readBigInt64BE(0);
 }
+
+export function computeTenderMutationLockKey(tenderId: string): bigint {
+  return computeAdvisoryLockKey(["TENDER_MUTATION", tenderId]);
+}
