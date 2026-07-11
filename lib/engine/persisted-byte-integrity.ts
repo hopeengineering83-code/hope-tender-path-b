@@ -35,6 +35,7 @@ const FORMAT_MIME: Record<string, string> = {
   CSV: "text/csv",
   TEXT: "text/plain",
   JSON: "application/json",
+  MARKDOWN: "text/markdown",
 };
 
 function expectedFormat(filename: string): string | null {
@@ -48,6 +49,7 @@ function expectedFormat(filename: string): string | null {
   if (lower.endsWith(".csv")) return "CSV";
   if (lower.endsWith(".txt")) return "TEXT";
   if (lower.endsWith(".json")) return "JSON";
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "MARKDOWN";
   return null;
 }
 
@@ -77,7 +79,7 @@ export function detectActualByteFormat(bytes: Buffer, filename: string): string 
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "JPEG";
   if (looksLikeText(bytes)) {
     const expected = expectedFormat(filename);
-    if (expected === "CSV" || expected === "JSON" || expected === "TEXT") return expected;
+    if (expected === "CSV" || expected === "JSON" || expected === "TEXT" || expected === "MARKDOWN") return expected;
     return "TEXT";
   }
   return null;
@@ -198,6 +200,34 @@ export function verifyPersistedFileBytes(input: {
 
 export function requireVerifiedPersistedFileBytes(input: Parameters<typeof verifyPersistedFileBytes>[0]): PersistedByteIntegrity {
   const result = verifyPersistedFileBytes(input);
+  if (result.integrityStatus !== "VERIFIED") {
+    throw new Error(result.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED");
+  }
+  return result;
+}
+
+export function verifiedIntegrityDataFromBase64(input: {
+  fileContent: string;
+  filename: string;
+  claimedMimeType?: string | null;
+}): PersistedByteIntegrity {
+  const normalized = input.fileContent.replace(/\s+/g, "");
+  if (
+    !normalized ||
+    normalized.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)
+  ) {
+    throw new Error("INVALID_BASE64_FILE_CONTENT");
+  }
+  const bytes = Buffer.from(normalized, "base64");
+  if (bytes.toString("base64") !== normalized) {
+    throw new Error("INVALID_BASE64_FILE_CONTENT");
+  }
+  const result = inspectActualFileBytes({
+    bytes,
+    filename: input.filename,
+    claimedMimeType: input.claimedMimeType,
+  });
   if (result.integrityStatus !== "VERIFIED") {
     throw new Error(result.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED");
   }
