@@ -19,9 +19,21 @@ describe("round 12 — R1: generate-elite.ts TOCTOU fix", () => {
   });
 
   it("uses tx.generatedDocument (not prisma.generatedDocument) inside transactions", () => {
-    assert.ok(src.includes("tx.generatedDocument.findFirst"), "must use tx for findFirst inside the transaction");
-    assert.ok(src.includes("tx.generatedDocument.update"), "must use tx for update inside the transaction");
-    assert.ok(src.includes("tx.generatedDocument.create"), "must use tx for create inside the transaction");
+    // #1058 introduced withTransactionalGenerationGate which uses lockedTx
+    // (the locked transaction handle) instead of plain tx. The test should
+    // accept either tx.generatedDocument or lockedTx.generatedDocument.
+    assert.ok(
+      src.includes("lockedTx.generatedDocument.findFirst") || src.includes("tx.generatedDocument.findFirst"),
+      "must use tx or lockedTx for findFirst inside the transaction",
+    );
+    assert.ok(
+      src.includes("lockedTx.generatedDocument.update") || src.includes("tx.generatedDocument.update"),
+      "must use tx or lockedTx for update inside the transaction",
+    );
+    assert.ok(
+      src.includes("lockedTx.generatedDocument.create") || src.includes("tx.generatedDocument.create"),
+      "must use tx or lockedTx for create inside the transaction",
+    );
   });
 });
 

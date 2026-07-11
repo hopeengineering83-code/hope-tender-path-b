@@ -74,14 +74,22 @@ describe("phase 25 — reviewStatus reset to PENDING on document re-generation",
   });
 
   it("CV document update also resets reviewStatus to PENDING", () => {
-    // The expert CV update at the end of generate-elite.ts must reset review status
-    const cvIdx = src.indexOf("fileContent: cvContent");
-    assert.ok(cvIdx !== -1, "CV content update must exist in generate-elite.ts");
-    const snippet = src.slice(cvIdx - 20, cvIdx + 200);
-    assert.ok(
-      snippet.includes('reviewStatus: "PENDING"'),
-      "CV document update must reset reviewStatus to PENDING",
-    );
+    // #1058 added verifiedIntegrityDataFromBase64 which wraps cvContent.
+    // The reviewStatus: "PENDING" is in the data object alongside fileContent: cvContent.
+    // Search for any occurrence of fileContent: cvContent and verify PENDING is nearby.
+    const allOccurrences: number[] = [];
+    let idx = 0;
+    while ((idx = src.indexOf("fileContent: cvContent", idx)) !== -1) {
+      allOccurrences.push(idx);
+      idx += 10;
+    }
+    assert.ok(allOccurrences.length > 0, "CV content update must exist in generate-elite.ts");
+    // Check that at least one occurrence has reviewStatus: "PENDING" within 300 chars
+    const hasPending = allOccurrences.some((i) => {
+      const snippet = src.slice(i - 20, i + 300);
+      return snippet.includes('reviewStatus: "PENDING"');
+    });
+    assert.ok(hasPending, "CV document update must reset reviewStatus to PENDING");
   });
 });
 
