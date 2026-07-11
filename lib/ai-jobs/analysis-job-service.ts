@@ -63,14 +63,28 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   // or partially-completed run can be retried/resumed against the SAME job and
   // its durable checkpoints, rather than spawning a duplicate.
   //
-  // BUG FIX: Previously findFirst + create was NOT atomic — two concurrent
-  // POSTs could both see no existing job and both create one. Now we use a
-  // transaction with a re-check inside to close the race window. We also
-  // check retryState.nonRetryable before re-arming a FAILED job — previously
-  // a non-retryable FAILED job was re-armed unconditionally, causing an
-  // infinite retry loop bounded only by MAX_RETRY_COUNT.
+  // BLOCKER 2: Database-enforced job idempotency with advisory locking.
+  // Acquire a transaction-scoped PostgreSQL advisory lock BEFORE the recheck/
+  // create to serialize all concurrent calls for the same (tender, hash).
+  // This guarantees exactly one active job even under high concurrency —
+  // the previous findFirst + create race window is closed at the DB level.
+  // The lock is derived from a stable hash of (tenderId, contentHash) so the
+  // same tender+content always maps to the same lock. Lock auto-releases on
+  // commit/rollback.
   let job = await prisma.$transaction(async (tx) => {
-    // Re-check inside the transaction to close the race window
+    // Step 1: Acquire advisory lock. hashtext collapses the composite key
+    // into a stable int4 suitable for pg_advisory_xact_lock. We combine
+    // tenderId + contentHash so different content hashes for the same tender
+    // do NOT collide (a stale hash should not block a fresh-content create).
+    const lockKey = `${tenderId}:${contentHash}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+
+    // Step 2: Recheck for existing active job AFTER holding the lock.
+    // Only the first caller creates a new job; all others return the existing
+    // one. FAILED jobs are included so provider-exhausted runs can resume from
+    // checkpoints. We check retryState.nonRetryable before re-arming to prevent
+    // infinite retry loops on terminal failures (e.g., invalid API key, missing
+    // provider configuration).
     const existing = await tx.aiJob.findFirst({
       where: {
         tenderId,
@@ -113,7 +127,8 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       });
     }
 
-    // No existing job — create a new one inside the transaction
+    // Step 3: No existing job found — create a new one. The advisory lock
+    // ensures exactly one creation across concurrent callers.
     return await tx.aiJob.create({
       data: {
         tenderId,
