@@ -13,6 +13,21 @@ import { buildDeterministicFallbackRows, mergeFallbackRows } from "./determinist
 import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
+import { REMATCH_TIMEOUT_MS } from "../timeout-config";
+
+// ─── Vercel function-budget reserves ────────────────────────────────────
+// The engine route passes deadlineAt = Date.now() + 50_000 so the whole run
+// stays under Vercel Hobby's 60s cap. AI rematch is wrapped by
+// withRematchTimeout(REMATCH_TIMEOUT_MS) (default 40s, see timeout-config).
+// We must NOT start the rematch unless the remaining budget covers the full
+// rematch timeout PLUS buffers for DB persistence and HTTP response
+// serialization — otherwise Vercel kills the function mid-rematch and the
+// user gets a 504 with no partial result. These reserves are deliberately
+// conservative; they are NOT a perf knob.
+const DB_PERSISTENCE_BUFFER_MS = 8_000; // prisma $transaction + writeEngineRunAudit
+const RESPONSE_SERIALIZATION_BUFFER_MS = 2_000; // NextResponse.json + network egress
+const REMATCH_RESERVE_MS =
+  REMATCH_TIMEOUT_MS + DB_PERSISTENCE_BUFFER_MS + RESPONSE_SERIALIZATION_BUFFER_MS;
 
 export type EngineRunOptions = {
   safe?: boolean;
@@ -267,14 +282,16 @@ export async function runTenderEngine(
     };
 
     // ─── Vercel time budget: skip AI rematch when deadline is near ──────
-    // The AI rematch can take 30-40s (two generateWithFallback calls with
-    // 40s timeout each). When the engine route passes a deadlineAt (50s
-    // from now on Vercel Hobby), and we're already past the analysis step,
-    // skip AI rematch to avoid exceeding the 60s Vercel function limit.
-    // The deterministic matching result is still valid — just without the
-    // 12-perspective AI scoring. The engine response will carry
-    // partial=true so the UI surfaces the real state.
-    const REMATCH_RESERVE_MS = 15_000; // need 15s left to attempt rematch
+    // The AI rematch is wrapped by withRematchTimeout(REMATCH_TIMEOUT_MS)
+    // (default 40s). We must NOT start it unless the remaining budget covers
+    // REMATCH_RESERVE_MS (= REMATCH_TIMEOUT_MS + DB_PERSISTENCE_BUFFER_MS +
+    // RESPONSE_SERIALIZATION_BUFFER_MS) so Vercel cannot kill the function
+    // mid-rematch and leave the user with a 504 + no partial result. When the
+    // deadline is near, the engine skips AI rematch, uses deterministic
+    // matching, and ALWAYS returns partial=true (see Blocker 2 fix below —
+    // the deadline skip itself is a blocker even when no fallback rows are
+    // created, so the route reports success=false and the UI surfaces the
+    // real state instead of "engine completed").
     const deadlineNear = typeof options?.deadlineAt === "number" &&
       Date.now() + REMATCH_RESERVE_MS >= options.deadlineAt;
     let rematchSkippedForDeadline = false;
@@ -420,6 +437,30 @@ export async function runTenderEngine(
         };
         logger.info(`[run-tender-engine] Created ${fallback.rows.length} deterministic fallback compliance rows (AI matching failed, source extraction succeeded).`);
       }
+    }
+
+    // ─── Blocker 2: deadline-skipped rematch is ALWAYS partial ───────────
+    // When the engine deliberately skipped the 12-perspective AI rematch
+    // because the Vercel function budget could not cover REMATCH_RESERVE_MS,
+    // the run MUST be reported as partial regardless of whether the
+    // requirement source extractor produced source-grounded requirements
+    // (and therefore whether fallback rows were created). Previously, a
+    // deadline-skipped run with no source-grounded requirements left
+    // evidenceMatchingBlocker = null, so the route reported success=true
+    // and downstream callers proceeded as if the 12-perspective rematch
+    // had completed. That hid a deliberate skip from the user. The skip
+    // itself is the blocker. (When aiRematchFailed is true for a non-deadline
+    // reason — provider error/timeout — and there are no source-grounded
+    // requirements, we intentionally do NOT synthesize a blocker here: the
+    // existing null warning path correctly reflects "no evidentiary state
+    // to review", and the route's analysisMethod guard already surfaces
+    // REGEX_FALLBACK_AI_ERROR via nextAction RETRY_ENGINE_SMALLER_BATCH.)
+    if (rematchSkippedForDeadline && evidenceMatchingBlocker === null) {
+      evidenceMatchingBlocker = {
+        code: "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE",
+        message: "AI evidence matching was skipped because the remaining Vercel function time could not cover the full rematch timeout. Deterministic matching was used. Re-run in background mode for AI multi-perspective scoring.",
+      };
+      logger.warn("[run-tender-engine] Deadline-skipped rematch reported as partial even without fallback rows (EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE).");
     }
 
     const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
@@ -633,8 +674,19 @@ export async function runTenderEngine(
     // surface the real state instead of a misleading "engine completed" green.
     const partial = evidenceMatchingBlocker !== null;
     const blockers = evidenceMatchingBlocker ? [evidenceMatchingBlocker.message] : [];
+    // nextAction per blocker code:
+    //   EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED (provider error/timeout +
+    //     source-grounded requirements → fallback rows created) → review the
+    //     matching inputs before re-running.
+    //   EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE (Vercel budget could not cover
+    //     REMATCH_RESERVE_MS) → re-run in background mode (smaller batch /
+    //     escapes the 60s cap) so the 12-perspective rematch can complete.
+    //   REGEX_FALLBACK_AI_ERROR (analysis fell back to regex on AI error, no
+    //     evidence blocker) → retry with a smaller tender / batch.
     const nextAction = evidenceMatchingBlocker
-      ? "REVIEW_MATCHING_INPUTS"
+      ? (evidenceMatchingBlocker.code === "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE"
+        ? "RETRY_ENGINE_SMALLER_BATCH"
+        : "REVIEW_MATCHING_INPUTS")
       : analysisMethod === "REGEX_FALLBACK_AI_ERROR"
         ? "RETRY_ENGINE_SMALLER_BATCH"
         : null;

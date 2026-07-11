@@ -372,6 +372,33 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         // Generate docs, etc.) instead of a generic "Engine ran" message
         // that hides remaining blockers.
         if (action === "RUN_ENGINE") {
+          // ─── Blocker 3: handle partial engine responses ───────────────
+          // The engine route returns HTTP 200 with `partial: true` and
+          // `success: false` when AI evidence matching failed or was skipped
+          // for deadline reasons. Checking only `res.ok` here would still
+          // show "Engine completed…" and hide the blocker — bypassing the
+          // honesty fixes already in engine-action-panel and tender-detail.
+          // Branch on `json.partial` / `json.success` BEFORE calling
+          // engineFollowUpMessage so the user sees the blocker text + the
+          // engine's own nextAction (REVIEW_MATCHING_INPUTS or
+          // RETRY_ENGINE_SMALLER_BATCH), matching the engine-action-panel
+          // and tender-detail generation flow.
+          if (json.partial === true || json.success === false) {
+            const blockerText = Array.isArray(json.blockers) && json.blockers.length > 0
+              ? String(json.blockers[0])
+              : (typeof json.error === "string" && json.error
+                ? json.error
+                : "Engine completed partially — AI evidence matching did not complete. Review required.");
+            const nextAction = typeof json.nextAction === "string" && json.nextAction
+              ? json.nextAction
+              : "REVIEW_MATCHING_INPUTS";
+            const nextLabel = ACTION_LABELS[nextAction] ?? nextAction;
+            const blockerCode = json.evidenceMatchingBlocker?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED";
+            await load();
+            router.refresh();
+            setActionMsg(`Engine did NOT complete fully. ${blockerText} Next: ${nextLabel}. (Code: ${blockerCode})`);
+            return;
+          }
           const refreshed = await load();
           router.refresh();
           setActionMsg(engineFollowUpMessage(refreshed));
