@@ -3,10 +3,7 @@
   "buildCommand": "npm run vercel-build",
   "installCommand": "npm ci",
   "git": {
-    "deploymentEnabled": {
-      "fix/production-engine-full-gap-closure-no-deploy": false,
-      "fix/post-merge-production-engine-audit-no-deploy": false
-    }
+    "deploymentEnabled": false
   },
   "crons": [
     {
