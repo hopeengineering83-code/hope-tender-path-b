@@ -23,6 +23,21 @@ Do not run any Vercel deploy, promote, rollback, or production command. Keep thi
 - Never expose raw Prisma/provider errors, SQL, stack traces, paths, Blob URLs, tokens, or keys.
 - Do not use user-facing “metadata” wording.
 
+## Current implementation status
+
+The evidence-provenance defect is fixed on this branch: tender-source fallback diagnostics cannot be merged into `ComplianceResult.matrices` or persisted as Company Vault evidence. The remaining sections are verified requirements and integration blockers, not claims of completed implementation.
+
+## Open-PR overlap and conflict map
+
+Other pull requests were inspected read-only. Do not modify or cherry-pick them into this branch without a fresh review.
+
+- **#1050 — file byte integrity/final ZIP safety:** overlaps byte hashing, storage verification, schema migration, ZIP manifest checks, lifecycle and panel truth. Treat as the primary owner of byte-integrity implementation. PR #1049 must not independently introduce a competing schema or duplicate integrity engine.
+- **#1048 — high-risk audit/finalize PDF:** overlaps Finalize-PDF, required-format policy, generation-readiness UI and audit scripts. PR #1049 must not duplicate those route/component edits. Integration must wait for its final reviewed head.
+- **#1047, #1044 and #1040 — release snapshot/panel truth:** overlap lifecycle, stale analysis and readiness panels. PR #1049 must not edit those runtime/panel files while these PRs are open.
+- **#1043 — AI runtime/evidence:** overlaps engine partial handling, deadline skips and success callbacks. Its partial-success callback and deadline-triggered fallback behavior require parity review against PR #1049's evidence boundary before integration.
+- **#1046 — DB acceptance suite:** contains a direct semantic conflict if any scenario expects `mergeFallbackRows()` to add tender-source rows to compliance evidence. That expectation is invalid and must not be used to regress the evidence boundary. PR #1049 does not modify #1046; integration is blocked until its tests assert zero compliance rows from tender-source diagnostics.
+- **#1042 — icons/accessibility:** UI-only ownership lane. No overlap with the evidence-provenance implementation in PR #1049.
+
 ## Required fixes
 
 ### Evidence provenance
@@ -47,7 +62,7 @@ Persist and verify SHA-256, byte length, MIME/format, and verification status fo
 
 ### PDF and ZIP safety
 
-Integrate valid parts of PR #1048: use an upstream-safe PDF creation gate; require source and target base-name match; require real `%PDF` bytes; support string and object filename policies; transact supersede plus replacement create; lock concurrent finalization; rollback database state and clean orphaned Blob bytes on failure. New PDFs remain validation/review pending. Required formats and exact filenames must be enforced by the final ZIP gate.
+Integrate valid parts of PR #1048 only after its final reviewed head is known: use an upstream-safe PDF creation gate; require source and target base-name match; require real `%PDF` bytes; support string and object filename policies; transact supersede plus replacement create; lock concurrent finalization; rollback database state and clean orphaned Blob bytes on failure. New PDFs remain validation/review pending. Required formats and exact filenames must be enforced by the final ZIP gate.
 
 ### Document state and concurrency
 
@@ -76,6 +91,7 @@ Do not deploy this branch. Verify migrations on isolated disposable PostgreSQL, 
 - Concurrent AI, engine, generation, regeneration, PDF, approval, and ZIP requests produce one consistent active result.
 - Cross-user/company and all role scenarios.
 - Rendered panel tests prove no UI says Ready while the canonical backend gate blocks.
+- Any imported test from #1046 must assert that unmatched tender-source diagnostics produce zero compliance-matrix rows.
 
 ## Validation
 
