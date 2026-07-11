@@ -168,7 +168,7 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
           type="button"
           onClick={() => void checkFinalExport()}
           disabled={checking}
-          className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60"
         >
           {checking ? "Checking final export…" : "Check final submission status"}
         </button>

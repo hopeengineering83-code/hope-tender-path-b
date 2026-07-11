@@ -204,7 +204,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
             type="button"
             disabled={loading}
             onClick={() => void runRematch(false)}
-            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
           >
             {loading ? "Rematching…" : "Re-score (preview only)"}
           </button>
@@ -212,7 +212,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
             type="button"
             disabled={loading}
             onClick={() => void runRematch(true)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
             title="Re-score, select the best available portfolio, and apply the selected experts/projects to the main engine without deleting compliance review state"
           >
             Re-score + apply selections

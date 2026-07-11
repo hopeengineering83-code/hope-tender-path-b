@@ -187,7 +187,7 @@ export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: str
           type="button"
           onClick={() => void clearHistory()}
           disabled={clearing || messages.length === 0}
-          className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+          className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-50 disabled:opacity-60"
         >
           {clearing ? "Clearing…" : "Clear history"}
         </button>
@@ -238,7 +238,7 @@ export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: str
             placeholder={canMutate ? "Ask a question… (Enter to send, Shift+Enter for newline)" : "Read-only — chat requires ADMIN or PROPOSAL_MANAGER role"}
             rows={1}
             disabled={loading || !canMutate}
-            className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400 disabled:opacity-50"
+            className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400 disabled:opacity-60"
             style={{ maxHeight: "120px", overflowY: "auto" }}
           />
           {canMutate && (
@@ -246,7 +246,7 @@ export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: str
             type="button"
             onClick={() => void sendMessage()}
             disabled={!canSend}
-            className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+            className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
           >
             {loading ? "…" : "Send"}
           </button>

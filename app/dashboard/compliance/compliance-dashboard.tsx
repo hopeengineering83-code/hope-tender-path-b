@@ -198,22 +198,22 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                               <input value={noteMap[gap.id]??""} onChange={e=>setNoteMap(m=>({...m,[gap.id]:e.target.value}))}
                                 placeholder="Resolution / audit note…" className="rounded-lg border px-2 py-1.5 text-xs flex-1 min-w-[180px]" />
                               <button onClick={()=>toggleGap(gap.tenderId,gap.id,true,noteMap[gap.id]??"")} disabled={resolvingId===gap.id}
-                                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50 shrink-0">
+                                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60 shrink-0">
                                 {resolvingId===gap.id?"…":"Mark covered with evidence"}
                               </button>
                               <button onClick={()=>markNotApplicable(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
-                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 shrink-0">
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 shrink-0">
                                 Mark not applicable
                               </button>
                               <input value={mitigationMap[gap.id]??""} onChange={e=>setMitigationMap(m=>({...m,[gap.id]:e.target.value}))}
                                 placeholder="Mitigation / JV plan…" className="rounded-lg border px-2 py-1.5 text-xs flex-1 min-w-[180px]" />
                               <div className="flex gap-1 shrink-0">
                                 <button onClick={()=>saveMitigation(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
-                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60">
                                   Add mitigation
                                 </button>
                                 <button onClick={()=>saveMitigation(gap.tenderId,gap.id,"JV/Subcontractor: ")} disabled={resolvingId===gap.id}
-                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60">
                                   JV / subcontractor
                                 </button>
                               </div>

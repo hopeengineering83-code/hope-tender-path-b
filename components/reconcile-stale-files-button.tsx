@@ -76,7 +76,7 @@ export function ReconcileStaleFilesButton({ tenderId, staleCount }: { tenderId: 
         onClick={runReconcile}
         disabled={running || isPending}
         title="Match each stale file against the current plan. Files with no plan target get marked SUPERSEDED; semantic/normalised matches get relinked and flagged for revalidation."
-        className="self-start rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+        className="self-start rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {running || isPending ? "Reconciling…" : `Reconcile ${staleCount} stale file${staleCount === 1 ? "" : "s"}`}
       </button>

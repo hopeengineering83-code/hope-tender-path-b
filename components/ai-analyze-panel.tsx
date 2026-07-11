@@ -212,7 +212,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
             <button
               onClick={handleBackgroundAnalyze}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-60"
             >
               <SparklesIcon />
               {analyzing ? (phase || "Analyzing…") : "Run AI Analyze"}
@@ -255,7 +255,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
           <button
             onClick={() => { cancelAutoRetry(); handleBackgroundAnalyze(); }}
             disabled={analyzing}
-            className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
             title="Retry now and resume from the last completed chunk"
           >
             Retry now
@@ -276,7 +276,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
             <button
               onClick={() => { setError(""); handleBackgroundAnalyze(); }}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
             >
               <RefreshIcon /> Retry AI Analyze
             </button>
@@ -284,7 +284,7 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
             <button
               onClick={runProviderDiagnostics}
               disabled={diagnosing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
               title="Run a live test of every AI provider to see which key is working and why a run fails"
             >
               {diagnosing ? "Testing providers…" : "Diagnose providers"}

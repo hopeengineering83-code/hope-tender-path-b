@@ -155,7 +155,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
           <h3 className="text-sm font-semibold text-slate-900">Pricing Workbook</h3>
           <p className="mt-0.5 text-xs text-slate-500">Build the commercial workbook, validate price leakage status, and keep financial assumptions structured.</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
           {loading ? "Loading…" : workbook ? "Refresh pricing" : "Load pricing"}
         </button>
       </div>
@@ -181,7 +181,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
             <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={workbook.noPriceLeakage} onChange={(e) => setWorkbook({ ...workbook, noPriceLeakage: e.target.checked })} /> Technical envelope has no price leakage</label>
             {canMutate && (
-            <button type="button" disabled={saving} onClick={() => void saveHeader({})} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">Save pricing settings</button>
+            <button type="button" disabled={saving} onClick={() => void saveHeader({})} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60">Save pricing settings</button>
             )}
           </div>
 
@@ -205,7 +205,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
             <div className="mt-2 flex gap-2">
               <input value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} placeholder="Notes" className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-xs" />
               {canMutate && (
-              <button type="button" disabled={saving} onClick={() => void addLine()} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">Add line</button>
+              <button type="button" disabled={saving} onClick={() => void addLine()} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60">Add line</button>
               )}
             </div>
           </div>

@@ -94,7 +94,7 @@ export function ProposalEvidenceReadinessPanel({ tenderId }: { tenderId: string 
               {ok ? "Evidence ready" : `${readiness.blockers.length} blocker(s)`}
             </span>
           )}
-          <button type="button" disabled={loading} onClick={() => void check()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+          <button type="button" disabled={loading} onClick={() => void check()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
             {loading ? "Checking…" : readiness ? "Re-check evidence" : "Check evidence"}
           </button>
         </div>
