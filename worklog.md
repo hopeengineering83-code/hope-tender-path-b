@@ -2450,3 +2450,71 @@ Final state:
 - Note: GitHub shows merged=False for #1048/#1049 because they were merged via direct squash-merge push, not via GitHub's PR merge button. The code changes ARE on main.
 
 Safety statement: No safety behavior was deleted, weakened, bypassed, or hidden. #1048 fixes 4 high-risk bugs + adds race handling. #1049 enforces the evidence-provenance boundary (tender-source diagnostics ≠ Company Vault evidence). Both PRs' safety semantics are intact on main.
+
+---
+Task ID: fix-pr1054-review-blockers
+Agent: main (Super Z / GLM)
+Task: Fix the 3 unresolved review-thread blockers in PR #1054 (engine runtime UI honesty + icons). Do not broaden scope.
+
+Work Log:
+- PR #1054 (fix/engine-runtime-ui-honesty-icons, head 8ecba6cc, base c10e1be3) had green CI but 3 P2 review-thread blockers from chatgpt-codex-connector[bot]:
+  1. run-tender-engine.ts:279 — REMATCH_RESERVE_MS = 15_000 let AI rematch start with only ~15s left, but rematch timeout is 40s
+  2. run-tender-engine.ts:392 — deadline-skipped rematch only set partial=true if fallback rows were created; stayed success=true when no source-grounded requirements
+  3. engine/route.ts:152 — Recovery Command Center RUN_ENGINE path only checked res.ok, showed "Engine completed" on partial responses
+- Created worktree at origin/fix/engine-runtime-ui-honesty-icons, made 3 targeted fixes:
+
+Blocker 1 fix (lib/engine/run-tender-engine.ts):
+- Imported REMATCH_TIMEOUT_MS from ../timeout-config (default 40s)
+- Added DB_PERSISTENCE_BUFFER_MS = 8_000, RESPONSE_SERIALIZATION_BUFFER_MS = 2_000
+- REMATCH_RESERVE_MS = REMATCH_TIMEOUT_MS + DB_PERSISTENCE_BUFFER_MS + RESPONSE_SERIALIZATION_BUFFER_MS (50s total)
+- Removed the old hardcoded REMATCH_RESERVE_MS = 15_000
+- deadlineNear check unchanged structurally — just uses the correct reserve
+
+Blocker 2 fix (lib/engine/run-tender-engine.ts):
+- Added guard after the fallback-rows block: if (rematchSkippedForDeadline && evidenceMatchingBlocker === null) set evidenceMatchingBlocker = { code: "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE", message: ... }
+- This fires even when no source-grounded requirements exist (no fallback rows)
+- Updated nextAction logic: EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE → RETRY_ENGINE_SMALLER_BATCH; other evidence blocker → REVIEW_MATCHING_INPUTS
+- The route's existing GAP A fix (success: !isPartial) now correctly returns success=false, ok=false, partial=true for deadline skips
+
+Blocker 3 fix (components/tender-recovery-command-center.tsx):
+- In the RUN_ENGINE branch, added check: if (json.partial === true || json.success === false) before engineFollowUpMessage
+- Partial branch surfaces blockers[0], json.nextAction, json.evidenceMatchingBlocker.code
+- Sets actionMsg to "Engine did NOT complete fully. <blocker> Next: <nextAction>. (Code: <code>)"
+- Returns before engineFollowUpMessage so "Engine completed" never shows on partial
+- Matches engine-action-panel (GAP D) and tender-detail (GAP E) behavior
+
+Tests (tests/engine-runtime-ui-honesty-icons.test.ts):
+- Updated GAP C tests: assert REMATCH_RESERVE_MS derives from REMATCH_TIMEOUT_MS + buffers; old 15s gone
+- Added Blocker 2 tests: EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE guard + nextAction branching
+- Added Blocker 3 tests (5): partial check before engineFollowUpMessage, no "Engine completed" on partial, surfaces blockers/nextAction/code, default blocker code, REVIEW_MATCHING_INPUTS fallback
+- Added provider-order-unchanged tests (2): catalog Z.ai-first/Anthropic-last; engine does not hardcode a chain
+- Added no-raw-error-leak tests (2): engine route logs errorName; deadline-skip logger.warn calls do not pass raw error
+- Added final-export-fail-closed tests (3): final-zip-assembly unchanged, generation-readiness-gate unchanged, engine does not bypass ZIP path
+- Added no-user-facing-metadata tests (2): blocker messages + partial-engine message do not say "metadata"
+- Total: 39 tests (was 23; +16 new)
+
+Verification (all in worktree):
+- npx tsc --noEmit: PASS
+- npm run lint: PASS (0 warnings)
+- 39 targeted tests: PASS
+- 156 related tests (engine-runtime + ai-provider-evidence + evidence-provenance + export-format-policy + pdf-finalization + reconcile-provider-order): PASS
+- npm run build: PASS (58/58 pages)
+
+Pushed commit 4d2714ee to origin/fix/engine-runtime-ui-honesty-icons (8ecba6cc → 4d2714ee).
+PR #1054 now: head=4d2714ee, mergeable=True, mergeable_state=unstable (CI re-running).
+Posted comment on PR #1054 summarizing the 3 fixes + tests + verification.
+
+Scope discipline:
+- Did NOT touch panel-truth, storage, PDF-finalization, DB acceptance, or ZIP files
+- Did NOT trigger Vercel deployments
+- Did NOT weaken final export fail-closed behavior (tests prove it)
+- Did NOT change provider fallback order (tests prove catalog unchanged)
+- Did NOT reintroduce user-facing "metadata" wording (tests prove new messages are clean)
+- Did NOT delete tests to make CI green
+
+Stage Summary:
+- 3/3 review-thread blockers fixed
+- 16 new tests added (39 total in the file)
+- All 4 verification commands pass
+- PR #1054 is ready for re-review and merge
+- No safety behavior was deleted, weakened, bypassed, or hidden.
