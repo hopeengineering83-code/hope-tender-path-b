@@ -26,7 +26,7 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { detectTenderFormatPolicy } from "../../../../../lib/engine/export-format-policy";
 import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
-import { finalizeRequiredPdf, normalizeFileBaseName } from "../../../../../lib/engine/workflow/pdf-finalizer";
+import { finalizeRequiredPdf, isBase64PdfContent, normalizeFileBaseName } from "../../../../../lib/engine/workflow/pdf-finalizer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -58,7 +58,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Central authoritative gate — PDF finalization produces a final-package
     // artifact, so it must hold the same fail-closed gate as the ZIP path
     // (current content hash, grounding, confirmed non-empty submission plan).
-    const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId: actor.id, purpose: "final-zip" });
+    // Purpose "generate-missing-plan-files": this route CREATES a missing
+    // required plan file, so it must not run the final-zip completeness check
+    // (validateConfirmedPlanDocuments) — that check requires the very PDF this
+    // route produces to already exist, which made the route always return
+    // CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE. The draft-purpose gate still
+    // enforces ownership, extraction, analysis hash/state, requirement
+    // grounding, and a confirmed valid Build Plan; final-level assurance is
+    // preserved because the finalizer requires a validated + approved source
+    // and the produced PDF must itself pass validation + approval + the
+    // final-zip gate before it can be exported.
+    const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId: actor.id, purpose: "generate-missing-plan-files" });
     if (!gate.ok) return err(`PDF finalization blocked: ${gate.blockerDetail}`, 409, { code: gate.blockerCode });
 
     const policy = detectTenderFormatPolicy({
@@ -72,14 +82,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const activeDocs = tender.generatedDocuments.filter((d: any) => isFinalExportCandidateDocument(d));
-    const isSatisfied = (name: string) =>
-      activeDocs.some(
+    // A required PDF counts as satisfied only when the row's REAL bytes carry
+    // the %PDF signature. A DOCX accidentally stored under the .pdf name, or
+    // junk bytes, must stay eligible for (re)finalization — otherwise this
+    // route refuses to replace the bad row while final export stays blocked,
+    // leaving no in-app recovery. Storage-backed rows are NOT trusted blindly:
+    // their bytes are loaded and signature-checked the same way (unreadable
+    // storage bytes count as NOT satisfied — fail closed toward regeneration).
+    const satisfiedNames = new Set<string>();
+    for (const name of requiredPdfNames) {
+      const row = activeDocs.find(
         (d: any) =>
           (d.exactFileName ?? "").trim().toLowerCase() === name.toLowerCase() &&
           d.generationStatus === "GENERATED" &&
           generatedDocumentHasContent(d),
       );
-    let targets = requiredPdfNames.filter((name) => !isSatisfied(name));
+      if (!row) continue;
+      if (row.fileContent) {
+        if (isBase64PdfContent(row.fileContent)) satisfiedNames.add(name.toLowerCase());
+        continue;
+      }
+      try {
+        const stored = await readGeneratedDocumentContent({
+          id: String(row.id),
+          name: row.name ?? name,
+          exactFileName: row.exactFileName ?? null,
+          fileContent: null,
+          storagePath: row.storagePath ?? null,
+        });
+        if (isBase64PdfContent(stored.base64)) satisfiedNames.add(name.toLowerCase());
+      } catch (error) {
+        logger.warn("finalize-pdf: storage-backed required PDF bytes unreadable — treating as not satisfied", { documentId: row.id, detail: error instanceof Error ? error.constructor.name : "UnknownError" });
+      }
+    }
+    let targets = requiredPdfNames.filter((name) => !satisfiedNames.has(name.toLowerCase()));
     if (requestedName) {
       targets = targets.filter((n) => n.toLowerCase() === requestedName.toLowerCase());
       if (!targets.length) {
@@ -115,6 +151,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               (d.exactFileName ?? d.name ?? "").toLowerCase().endsWith(".docx") &&
               normalizeFileBaseName(d.exactFileName ?? d.name ?? "") === normalizeFileBaseName(requiredName),
           );
+      // An explicitly requested source must match the required PDF's base name
+      // just like the automatic lookup — otherwise a technical DOCX could be
+      // rendered and saved as "Financial Proposal.pdf": a correctly named
+      // final artifact with the wrong document body.
+      if (docId && source && normalizeFileBaseName(source.exactFileName ?? source.name ?? "") !== normalizeFileBaseName(requiredName)) {
+        blocked.push({
+          requiredFileName: requiredName,
+          code: "PDF_SOURCE_NAME_MISMATCH",
+          message: `The selected source document does not match "${requiredName}". Pick the document whose filename matches the required PDF, or omit docId to use the automatic match.`,
+        });
+        continue;
+      }
       if (!source) {
         blocked.push({
           requiredFileName: requiredName,
@@ -176,7 +224,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { tenderId: tender.id, exactFileName: requiredName, NOT: { generationStatus: "SUPERSEDED" } },
         data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED" },
       });
-      const createdDoc = await prisma.generatedDocument.create({
+      let createdDoc;
+      try {
+        createdDoc = await prisma.generatedDocument.create({
         data: {
           tenderId: tender.id,
           name: requiredName,
@@ -193,7 +243,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           validationStatus: "PENDING",
           reviewStatus: "PENDING",
         },
-      });
+        });
+      } catch (error) {
+        // Concurrent finalization race: the partial unique index on
+        // (tenderId, exactFileName) rejects a second active row. Surface a
+        // structured conflict instead of a generic 500 — the other request
+        // already produced the PDF.
+        if ((error as { code?: string })?.code === "P2002") {
+          logger.warn("finalize-pdf: concurrent finalization detected", { tenderId: tender.id });
+          blocked.push({
+            requiredFileName: requiredName,
+            code: "PDF_FINALIZE_CONFLICT",
+            message: `"${requiredName}" was finalized by another request at the same time. Refresh to see the current document.`,
+          });
+          continue;
+        }
+        throw error;
+      }
       created.push({ id: createdDoc.id, fileName: requiredName, sourceDocumentId: String(source.id), byteLength: finalized.bytes.length });
     }
 
