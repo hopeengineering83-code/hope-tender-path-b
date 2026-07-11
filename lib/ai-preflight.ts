@@ -18,12 +18,13 @@
  * overestimating size leads to safe skips, underestimating leads to 413s.
  */
 
-import { getProviderEntry, type AiProviderName, type AiUseCase } from "./ai-provider-registry";
+import { getProviderEntry, getProviderModel, type AiProviderName, type AiUseCase } from "./ai-provider-registry";
 
 // Conservative per-provider context window limits (input tokens).
 // These are the documented limits for the DEFAULT models in the registry.
 // When a user overrides the model via env, the limit may differ — we use the
-// default-model limit as a safe conservative bound.
+// default-model limit as a safe conservative bound, EXCEPT for known
+// small-context models where we read the actual model name.
 const PROVIDER_CONTEXT_LIMITS: Record<AiProviderName, number> = {
   zai: 128_000, // glm-4-flash: 128K context
   cerebras: 128_000, // gpt-oss-120b: 128K context
@@ -35,6 +36,19 @@ const PROVIDER_CONTEXT_LIMITS: Record<AiProviderName, number> = {
   together: 128_000, // Llama-3.3-70B: 128K context
   deepseek: 64_000, // deepseek-chat: 64K context
   anthropic: 200_000, // claude-sonnet-4-5: 200K context
+};
+
+// Known small-context models per provider. When the configured model matches
+// one of these, the context limit is tighter than the provider default.
+const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  // Groq models — free tier has tighter limits than the documented 32K.
+  "llama-3.1-8b-instant": 8_000,
+  "llama-3.3-70b-versatile": 32_000,
+  "gemma2-9b-it": 8_000,
+  // Mistral small models
+  "ministral-8b-latest": 128_000,
+  // DeepSeek
+  "deepseek-chat": 64_000,
 };
 
 // Groq free-tier TPM (tokens-per-minute) limit. The free tier is 30K TPM for
@@ -86,7 +100,13 @@ export function preflightProvider(
 ): ProviderPreflightResult {
   const entry = getProviderEntry(provider);
   const estimatedTokens = estimateTotalInputTokens(prompt, opts?.systemPrompt);
-  const contextLimit = PROVIDER_CONTEXT_LIMITS[provider] ?? 32_000;
+  // Read the actual configured model (env override or default) and check
+  // if it has a known tighter context limit.
+  const configuredModel = getProviderModel(provider, opts?.useCase ?? "default");
+  const modelLimit = MODEL_CONTEXT_LIMITS[configuredModel.toLowerCase()];
+  const providerLimit = PROVIDER_CONTEXT_LIMITS[provider] ?? 32_000;
+  // Use the tighter of the two limits (model-specific vs provider default).
+  const contextLimit = modelLimit ? Math.min(modelLimit, providerLimit) : providerLimit;
 
   // Context-window check — if the estimated input exceeds the provider's
   // context window, skip it. Add 20% headroom for the response.

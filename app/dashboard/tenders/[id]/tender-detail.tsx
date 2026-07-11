@@ -1389,6 +1389,14 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       const engineRes = await fetch(`/api/tenders/${tender.id}/engine`, { method: "POST" });
       const engineData = await engineRes.json();
       if (!engineRes.ok) { setError(engineData.error || "Engine run failed"); return; }
+      // Engine response honesty: when partial=true, AI matching failed but
+      // deterministic extraction succeeded. Surface the blocker instead of
+      // proceeding to generation (which would be blocked anyway).
+      if (engineData.partial) {
+        setError(engineData.blockers?.[0] || engineData.error || "Engine completed partially — AI evidence matching did not complete. Review required.");
+        if (engineData.tender) setTender((cur) => ({ ...cur, ...engineData.tender }));
+        return;
+      }
       if (engineData.tender) setTender((cur) => ({ ...cur, ...engineData.tender }));
 
       const genRes = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });

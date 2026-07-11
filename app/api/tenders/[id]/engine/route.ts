@@ -123,7 +123,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
-    const result = await runTenderEngine(id, userId);
+    // Pass a 50s deadline to the engine so AI rematch is skipped when
+    // insufficient time remains within the 60s Vercel Hobby function limit.
+    // 50s leaves 10s for DB persistence + response serialization. When the
+    // deadline is near, the engine skips AI rematch, uses deterministic
+    // matching, and returns partial=true so the UI surfaces the real state.
+    const deadlineAt = Date.now() + 50_000;
+    const result = await runTenderEngine(id, userId, undefined, { deadlineAt });
     // Engine response honesty: propagate partial/blockers/nextAction so the
     // UI can surface the real state instead of a misleading "engine completed"
     // green when AI matching failed but deterministic extraction succeeded.
@@ -134,10 +140,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       analysisMethod?: string;
       evidenceMatchingBlocker?: { code: string; message: string } | null;
     };
+    const isPartial = engineMeta.partial ?? false;
+    // When partial=true, return HTTP 200 but with success=false so the UI's
+    // `!res.ok` check DOES NOT fire (we want to show the partial result, not
+    // an error), BUT the `success: false` field tells the UI to surface the
+    // blockers instead of "Engine run completed". The UI reads `data.success`
+    // and `data.partial` to decide which message to show.
     return NextResponse.json({
-      success: true,
-      ok: !engineMeta.partial,
-      partial: engineMeta.partial ?? false,
+      success: !isPartial,
+      ok: !isPartial,
+      partial: isPartial,
       blockers: engineMeta.blockers ?? [],
       nextAction: engineMeta.nextAction ?? null,
       analysisMethod: engineMeta.analysisMethod ?? null,
@@ -147,7 +159,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       diagnosticId,
     });
   } catch (error) {
-    console.error("Engine run failed:", { diagnosticId, error });
+    // Sanitized logging — never log the raw error object (may contain provider
+    // keys, org IDs, prompt text, or Prisma connection strings). Log only the
+    // error name + a safe diagnostic ID. The full error is mapped to a safe
+    // public body via actionableEngineError below.
+    const errorName = error instanceof Error ? error.constructor.name : typeof error;
+    console.error("Engine run failed:", { diagnosticId, errorName });
     const mapped = actionableEngineError(error);
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }

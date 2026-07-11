@@ -18,6 +18,15 @@ export type EngineRunOptions = {
   safe?: boolean;
   skipAiRematch?: boolean;
   maxChars?: number;
+  /**
+   * Wall-clock deadline (epoch ms) for the entire engine run. When the deadline
+   * is near, AI rematch is skipped and the engine returns partial results
+   * instead of being hard-killed by Vercel's 60s function limit. The engine
+   * route passes `Date.now() + 50_000` (50s, leaving 10s for DB persistence
+   * + response serialization) so the engine never exceeds the 60s Vercel Hobby
+   * cap.
+   */
+  deadlineAt?: number;
 };
 
 export function deduplicatePageText(text: string): string {
@@ -257,7 +266,20 @@ export async function runTenderEngine(
       projectScoreBreakdowns: {},
     };
 
-    if (!options?.skipAiRematch && !options?.safe && isAIEnabled()) {
+    // ─── Vercel time budget: skip AI rematch when deadline is near ──────
+    // The AI rematch can take 30-40s (two generateWithFallback calls with
+    // 40s timeout each). When the engine route passes a deadlineAt (50s
+    // from now on Vercel Hobby), and we're already past the analysis step,
+    // skip AI rematch to avoid exceeding the 60s Vercel function limit.
+    // The deterministic matching result is still valid — just without the
+    // 12-perspective AI scoring. The engine response will carry
+    // partial=true so the UI surfaces the real state.
+    const REMATCH_RESERVE_MS = 15_000; // need 15s left to attempt rematch
+    const deadlineNear = typeof options?.deadlineAt === "number" &&
+      Date.now() + REMATCH_RESERVE_MS >= options.deadlineAt;
+    let rematchSkippedForDeadline = false;
+
+    if (!options?.skipAiRematch && !options?.safe && isAIEnabled() && !deadlineNear) {
       progress("engine.ai-rematch", "Running AI 12-perspective rematch (DISCIPLINE_FIT, SCOPE_COVERAGE, EVIDENCE_QUALITY, etc.)");
       const aiRematch = await applyAIRematchToMainEngine({
         tenderTitle: tender.title,
@@ -279,6 +301,10 @@ export async function runTenderEngine(
         projectScoreBreakdowns: aiRematch.projectScoreBreakdowns,
       };
       if (aiRematch.warning) logger.warn("[run-tender-engine] main-engine AI rematch warning:", { detail: aiRematch.warning });
+    } else if (deadlineNear && !options?.skipAiRematch && !options?.safe && isAIEnabled()) {
+      rematchSkippedForDeadline = true;
+      logger.warn("[run-tender-engine] AI rematch skipped — deadline near, insufficient time for 40s rematch within Vercel function budget.");
+      mainEngineAIRematch.warning = "AI rematch skipped — insufficient time remaining in Vercel function budget. Deterministic matching was used; re-run in background mode for AI scoring.";
     }
 
     const filesWithText = tender.files.filter((f) => typeof f.extractedText === "string" && f.extractedText.length > 200);
@@ -357,13 +383,14 @@ export async function runTenderEngine(
 
     // ─── Deterministic fallback rows when AI matching failed ──────────────
     // If AI rematch was attempted but failed (aiApplied=false AND a warning
-    // was set), AND the requirement source extractor matched requirements to
+    // was set), OR AI rematch was skipped because the Vercel deadline was
+    // near, AND the requirement source extractor matched requirements to
     // source paragraphs, create REVIEW_REQUIRED fallback rows so the user
     // sees a reviewable evidence state instead of a misleading 0-row matrix.
     // These rows are NEVER FULL/SUBSTANTIAL — they surface the
     // EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED blocker.
     let evidenceMatchingBlocker: { code: string; message: string } | null = null;
-    const aiRematchFailed = !mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null;
+    const aiRematchFailed = (!mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null) || rematchSkippedForDeadline;
     const hasSourceGroundedRequirements = createdRequirements.some(
       ({ requirement }) =>
         requirement.sourceTenderFileId &&
