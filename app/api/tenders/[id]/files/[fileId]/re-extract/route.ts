@@ -22,6 +22,8 @@ import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../../l
 import { extractTextFromBuffer } from "../../../../../../../lib/extract-text";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../../lib/extraction-quality";
 import { logger } from "../../../../../../../lib/observability";
+import { inspectActualFileBytes } from "../../../../../../../lib/engine/persisted-byte-integrity";
+import { invalidateTenderForSourceRevision } from "../../../../../../../lib/engine/source-revision-invalidation";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -72,7 +74,7 @@ export async function POST(
       });
     } catch (retrieveErr) {
       logger.error("[repair-extraction] Failed to retrieve file from storage", {
-        tenderId, fileId, detail: retrieveErr instanceof Error ? retrieveErr.message : String(retrieveErr),
+        tenderId, fileId, errorName: retrieveErr instanceof Error ? retrieveErr.constructor.name : typeof retrieveErr,
       });
       return err(
         "Failed to retrieve the original file from storage. The file may have been deleted from blob storage.",
@@ -105,7 +107,20 @@ export async function POST(
     }
 
     // Atomic update — all extraction fields in one transaction
-    const updated = await prisma.tenderFile.update({
+    const integrity = inspectActualFileBytes({
+      bytes: buffer,
+      filename: file.originalFileName,
+      claimedMimeType: file.mimeType,
+    });
+    if (integrity.integrityStatus !== "VERIFIED") {
+      return err(
+        "Original file byte integrity verification failed.",
+        422,
+        integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
+      );
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedRecord = await tx.tenderFile.update({
       where: { id: fileId },
       data: {
         extractedText: extractedText || null,
@@ -116,8 +131,12 @@ export async function POST(
         extractionScore: quality.score,
         extractionMethod: extractedText.startsWith("[PDF text extracted via Claude vision OCR") ? "ocr" : "text",
         pageStatusJson: JSON.stringify(perPage.pages ?? []),
+        ...integrity,
       },
       select: { id: true, extractionScore: true, totalPages: true },
+    });
+      await invalidateTenderForSourceRevision(tx, tenderId, "SOURCE_FILE_REEXTRACTED");
+      return updatedRecord;
     });
 
     await logAction({
