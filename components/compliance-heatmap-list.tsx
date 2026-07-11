@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ChevronDownIcon } from "./icons";
 
 const PREVIEW = 10;
 
@@ -98,8 +99,8 @@ export function ComplianceHeatmapList({ rows }: { rows: HeatmapRow[] }) {
             className="text-xs font-medium text-slate-500 hover:text-slate-800"
           >
             {showAll
-              ? "▲ Show fewer"
-              : `▼ Show all ${rows.length} requirements (${hiddenCount} more)`}
+              ? <span className="inline-flex items-center gap-0.5"><ChevronDownIcon className="inline h-3 w-3 rotate-180" /> Show fewer</span>
+              : <span className="inline-flex items-center gap-0.5"><ChevronDownIcon className="inline h-3 w-3" /> Show all {rows.length} requirements ({hiddenCount} more)</span>}
           </button>
         </div>
       )}

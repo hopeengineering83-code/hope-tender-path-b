@@ -538,6 +538,23 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     const content = contentResult.content;
     const sig = validateFileSignature(content.filename, content.base64);
     if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
+
+    // ─── File byte integrity (SHA-256) verification ──────────────────────
+    // Recompute the SHA-256 from actual bytes and compare with the stored
+    // digest. This prevents corrupted or tampered files from entering the
+    // final ZIP package. Legacy rows without a digest are blocked
+    // (fail-closed) — the backfill script must populate the digest first.
+    const { verifyFileBytes } = await import("../../../../../lib/engine/file-byte-integrity");
+    const integrityResult = verifyFileBytes({
+      storedSha256: (doc as any).sha256 ?? null,
+      storedByteSize: (doc as any).byteSize ?? null,
+      buffer: content.buffer,
+      fileName: content.filename,
+    });
+    if (!integrityResult.ok) {
+      return err(`File integrity check failed: ${integrityResult.detail}`, 422, { code: integrityResult.code, fileName: content.filename });
+    }
+
     zipContents.push({ generatedDocId: doc.id, bytes: content.buffer });
   }
 

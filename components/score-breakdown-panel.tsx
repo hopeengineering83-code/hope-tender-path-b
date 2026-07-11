@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { ChevronDownIcon, RefreshIcon, WarningIcon } from "./icons";
 
 type DimensionCode =
   | "DISCIPLINE_FIT"
@@ -190,7 +191,7 @@ function EntityCard({ entity }: { entity: EntityBreakdown }) {
           )}
         </div>
         {hasDims && (
-          <span className="shrink-0 text-gray-400 text-xs">{open ? "▲" : "▼"}</span>
+          <span className="shrink-0 text-gray-400 text-xs"><ChevronDownIcon className={open ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} /></span>
         )}
       </button>
 
@@ -291,9 +292,9 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh scores">↻</button>
+          <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh scores"><RefreshIcon className="inline h-3 w-3" /></button>
           <button onClick={() => setExpanded((v) => !v)} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
-            {expanded ? "▲ Collapse" : "▼ Show scores"}
+            {expanded ? <span className="inline-flex items-center gap-0.5"><ChevronDownIcon className="inline h-3 w-3 rotate-180" /> Collapse</span> : <span className="inline-flex items-center gap-0.5"><ChevronDownIcon className="inline h-3 w-3" /> Show scores</span>}
           </button>
         </div>
       </div>
@@ -317,7 +318,7 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
 
       {!data.hasDimensionData && (
         <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
-          ⚠ No 12-perspective dimension scores found. Run AI Rematch to populate detailed dimension scoring.
+          <WarningIcon className="inline h-4 w-4 text-amber-500" /> No 12-perspective dimension scores found. Run AI Rematch to populate detailed dimension scoring.
         </div>
       )}
 

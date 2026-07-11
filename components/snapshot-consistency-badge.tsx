@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import { WarningIcon } from "./icons";
 
 /**
  * SnapshotConsistencyBadge — additive "honest UI" overlay.
@@ -84,7 +85,7 @@ export function SnapshotConsistencyBadge({
       </span>
       {disagree && (
         <p className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800">
-          ⚠ This panel{localLabel ? ` (${localLabel})` : ""} shows{" "}
+          <WarningIcon className="inline h-4 w-4" /> This panel{localLabel ? ` (${localLabel})` : ""} shows{" "}
           <strong>{localEligible ? "ready" : "blocked"}</strong>, but the authoritative release snapshot shows{" "}
           <strong>{eligible ? "eligible" : "blocked"}</strong>
           {!eligible && blockers.length > 0 ? `: ${blockers[0]}` : ""}. Trust the snapshot and resolve before relying on this panel.

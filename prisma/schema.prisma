@@ -486,6 +486,11 @@ model TenderFile {
   size             Int
   storagePath      String   @default("")
   fileContent      String?
+  // File byte integrity — SHA-256 digest for source-file verification.
+  // Final ZIP download verifies source files haven't been tampered with
+  // since extraction/grounding.
+  sha256           String?
+  byteSize         Int?
   classification   String?
   extractedText    String?
   // ─── Extraction quality metrics (gap analysis) ───────────────────────────
@@ -648,6 +653,12 @@ model GeneratedDocument {
   integrityStatus     String    @default("UNKNOWN")
   integrityVerifiedAt DateTime?
   integrityFailureCode String?
+  // File byte integrity — SHA-256 digest + byte size for final ZIP safety.
+  // Populated by the generation/finalize pipeline. Final ZIP download
+  // recomputes the digest from actual bytes and compares — prevents
+  // corrupted or tampered files from entering the final package.
+  sha256           String?
+  byteSize         Int?
   validationStatus String    @default("PENDING")
   generationStatus String    @default("PLANNED")
   reviewStatus     String    @default("PENDING")
