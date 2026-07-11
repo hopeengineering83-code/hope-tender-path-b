@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ChevronDownIcon } from "./icons";
 
 const PREVIEW = 5;
 
@@ -59,7 +60,10 @@ export function AuditTrailList({ items }: { items: AuditLogItem[] }) {
             onClick={() => setShowAll((v) => !v)}
             className="text-xs font-medium text-slate-500 hover:text-slate-800"
           >
-            {showAll ? "▲ Show fewer" : `▼ Show all ${items.length} entries`}
+            <span className="inline-flex items-center gap-1">
+              <ChevronDownIcon className={showAll ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} />
+              {showAll ? "Show fewer" : `Show all ${items.length} entries`}
+            </span>
           </button>
         </div>
       )}
