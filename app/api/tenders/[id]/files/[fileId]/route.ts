@@ -95,10 +95,7 @@ export async function DELETE(
     return NextResponse.json(
       {
         error: "File could not be deleted safely",
-        code:
-          error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
-            ? error.message
-            : "FILE_DELETE_FAILED",
+        code: "FILE_DELETE_FAILED",
       },
       { status: 502 },
     );
