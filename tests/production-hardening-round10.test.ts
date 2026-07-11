@@ -126,7 +126,10 @@ describe("production hardening — H3: experts/projects PUT role check", () => {
 });
 
 describe("production hardening — O1: file delete nullifies source-evidence", () => {
-  const src = read("app/api/tenders/[id]/files/[fileId]/route.ts");
+  // #1058 moved the nullification logic from the route to durable-deletion.ts.
+  // The route now calls durableDeleteTenderFile() which handles the nullification
+  // inside a transaction. Check the durable-deletion module instead of the route.
+  const src = read("lib/engine/workflow/durable-deletion.ts");
 
   it("nullifies TenderRequirement.sourceTenderFileId on file delete", () => {
     assert.ok(
@@ -152,7 +155,7 @@ describe("production hardening — O1: file delete nullifies source-evidence", (
 
   it("uses a transaction for the nullify + delete", () => {
     assert.ok(
-      src.includes("prisma.$transaction"),
+      src.includes("$transaction"),
       "must use a transaction for the nullify + delete (atomicity)",
     );
   });

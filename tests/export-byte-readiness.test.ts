@@ -42,6 +42,12 @@ describe("deep export file-byte readiness", () => {
 
   it("passes valid OOXML signatures", async () => {
     const docxBase64 = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]).toString("base64");
+    // #1058 added persisted byte integrity verification (requireVerifiedIntegrity: true
+    // in checkExportFileByteReadiness). The test doc needs integrityStatus=VERIFIED
+    // + matching contentSha256/contentByteLength to pass the integrity check.
+    const docxBuffer = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]);
+    const { inspectActualFileBytes } = require("../lib/engine/persisted-byte-integrity");
+    const integrity = inspectActualFileBytes({ bytes: docxBuffer, filename: "Technical-Proposal.docx", claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
     const failures = await checkExportFileByteReadiness([
       {
         id: "doc-3",
@@ -52,6 +58,7 @@ describe("deep export file-byte readiness", () => {
         reviewStatus: "READY_FOR_EXPORT",
         fileContent: docxBase64,
         storagePath: null,
+        ...integrity,
       },
     ]);
 
