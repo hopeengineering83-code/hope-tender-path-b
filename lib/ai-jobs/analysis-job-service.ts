@@ -60,18 +60,21 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   const contentHash = computeAnalysisContentHash(tenderText);
 
   // Create or reuse resumable job. FAILED is included so a provider-exhausted
-  // or partially-completed run can be retried/resumed against the SAME job and
-  // its durable checkpoints, rather than spawning a duplicate.
-  //
-  // BUG FIX: Previously findFirst + create was NOT atomic — two concurrent
-  // POSTs could both see no existing job and both create one. Now we use a
-  // transaction with a re-check inside to close the race window. We also
-  // check retryState.nonRetryable before re-arming a FAILED job — previously
-  // a non-retryable FAILED job was re-armed unconditionally, causing an
-  // infinite retry loop bounded only by MAX_RETRY_COUNT.
-  let job = await prisma.$transaction(async (tx) => {
+  // BLOCKER 2: Database-enforced job idempotency with advisory locking.
+  // Acquire transaction-scoped PostgreSQL advisory lock BEFORE recheck/create
+  // to serialize all concurrent calls for same (user, tender, hash). Guarantees
+  // exactly one active job even under high concurrency.
     // Re-check inside the transaction to close the race window
-    const existing = await tx.aiJob.findFirst({
+    // Step 1: Acquire advisory lock derived from (userId, tenderId, AI_ANALYZE, contentHash).
+    // This blocks all concurrent createAnalysisJob() calls with identical parameters
+    // until this transaction commits/rolls back. Lock auto-releases on commit.
+    await acquireLock(tx, userId, tenderId, contentHash);
+
+    // Step 2: Recheck for existing active job AFTER holding the lock.
+    // Only the first caller creates a new job; all others return the existing one.
+    // FAILED jobs are included so provider-exhausted runs can resume from checkpoints.
+    // We check retryState.nonRetryable before re-arming to prevent infinite retry loops
+    // on terminal failures (e.g., invalid API key, missing provider configuration).
       where: {
         tenderId,
         userId,
@@ -85,7 +88,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
 
     if (existing) {
       // If the job is QUEUED or RUNNING, return it as-is — another caller
-      // already has an active job for this content hash. This is the
+      // If job is QUEUED or RUNNING, return as-is — another caller
       // idempotent path: double-click or two-tab scenarios return the
       // SAME job instead of creating a duplicate.
       if (existing.status === "QUEUED" || existing.status === "RUNNING") {
@@ -115,7 +118,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
 
     // No existing job — create a new one inside the transaction
     return await tx.aiJob.create({
-      data: {
+    // Step 3: No existing job found — create new one. Advisory lock ensures exactly one creation.
         tenderId,
         userId,
         jobType: "AI_ANALYZE",
