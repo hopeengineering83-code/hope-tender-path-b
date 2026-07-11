@@ -320,11 +320,11 @@ describe("Fix 13 — Engine response is partial/honest when AI matching fails", 
 
   it("engine route propagates partial/blockers/nextAction in the response", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
-    assert.match(src, /partial: engineMeta\.partial/);
+    assert.match(src, /partial: isPartial/);
     assert.match(src, /blockers: engineMeta\.blockers/);
     assert.match(src, /nextAction: engineMeta\.nextAction/);
     // ok must be false when partial is true (honesty).
-    assert.match(src, /ok: !engineMeta\.partial/);
+    assert.match(src, /ok: !isPartial/);
   });
 });
 

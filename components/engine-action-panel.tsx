@@ -16,6 +16,8 @@ type ExtractionBlocker = {
 
 export type EngineResponse = {
   success?: boolean;
+  ok?: boolean;
+  partial?: boolean;
   error?: string;
   code?: string;
   nextAction?: string;
@@ -23,6 +25,12 @@ export type EngineResponse = {
   detail?: string;
   diagnosticId?: string;
   blockers?: ExtractionBlocker[];
+  // Partial-success blockers (string[] from engine route when AI matching fails
+  // but deterministic extraction succeeds). Separate from ExtractionBlocker[]
+  // to avoid type collision.
+  partialBlockers?: string[];
+  evidenceMatchingBlocker?: { code: string; message: string } | null;
+  analysisMethod?: string;
   extractionWarnings?: ExtractionBlocker[];
   tender?: unknown;
   // Async-mode fields (?async=true → 202 with jobId)
@@ -177,6 +185,27 @@ export async function executeEngineRun(options: EngineRunOptions): Promise<void>
         return;
       }
       callbacks.setResult(data);
+      return;
+    }
+    // ─── Engine response honesty: partial success ──────────────────────
+    // When the engine returns HTTP 200 with `partial: true`, AI matching
+    // failed but deterministic extraction succeeded. The response carries
+    // `blockers[]` (string[]) and `nextAction` so the UI can surface the real
+    // state instead of a misleading "Engine run completed" green. The user
+    // must see that evidence rows require review — not a silent 0-row state.
+    if (data.partial) {
+      const rawBlockers = (data as { blockers?: string[] }).blockers;
+      const blockerText = Array.isArray(rawBlockers) && rawBlockers.length > 0
+        ? rawBlockers.join(" ")
+        : "AI evidence matching did not complete. Review-required fallback rows were created for source-grounded requirements.";
+      callbacks.setResult({
+        ...data,
+        success: false,
+        error: `Engine completed partially. ${blockerText}`,
+        code: data.evidenceMatchingBlocker?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED",
+        nextAction: data.nextAction ?? "REVIEW_MATCHING_INPUTS",
+      });
+      callbacks.onSuccess();
       return;
     }
     // "Engine succeeded" here means the engine HTTP run passed its
