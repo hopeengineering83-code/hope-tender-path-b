@@ -2518,3 +2518,44 @@ Stage Summary:
 - All 4 verification commands pass
 - PR #1054 is ready for re-review and merge
 - No safety behavior was deleted, weakened, bypassed, or hidden.
+
+---
+Task ID: fix-and-merge-1054-1053
+Agent: main (Super Z / GLM)
+Task: Fix gaps and merge PRs #1054 + #1053. Do NOT touch PR #1055.
+
+Work Log:
+- Fetched latest: 3 open PRs (#1054 not-draft, #1053 draft, #1055 draft). #1055 is a new production-next-level full audit PR — left untouched per instruction.
+- Zero file overlap between #1054 (engine runtime UI) and #1053 (stale-analysis + AI-job concurrency).
+
+PR #1054 merge (commit af15bea7):
+- All 5 CI checks green on head 4d2714ee (which included my 3 review-blocker fixes from the previous task).
+- Mergeable state: clean. No rebase needed (base c10e1be3 was current main).
+- Squash-merged into main as af15bea7. Post-merge: tsc PASS, lint PASS, 84 targeted tests PASS, build PASS.
+- Commented + closed PR #1054.
+
+PR #1053 merge (commit 01e0d4e9) — required gap fix + rebase:
+- Gap found: lib/ai-jobs/analysis-job-service.ts was syntactically broken on the branch (15+ TS parse errors). The original blocker-2 commit (56b65f3a) lost 3 critical lines during editing:
+  * `let job = await prisma.$transaction(async (tx) => {`
+  * `const existing = await tx.aiJob.findFirst({`
+  * `data: {` in the tx.aiJob.create call
+  It also referenced an undefined `acquireLock(tx, ...)` helper.
+- Fix applied (commit eab5724e on the branch): restored the correct transaction/findFirst/create structure and implemented the advisory lock using the codebase's existing inline pattern (`tx.$executeRaw\`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))\``), matching run-tender-engine.ts and ai-analyze/route.ts. Lock key is `${tenderId}:${contentHash}`.
+- Rebased onto current main (includes #1054) — zero conflicts, 6 commits rebased cleanly.
+- Post-rebase verification: tsc PASS, lint PASS, 88 targeted tests PASS, build PASS.
+- Force-pushed rebased branch (56b65f3a → eab5724e).
+- Squash-merged into main as 01e0d4e9. Post-merge: tsc PASS, lint PASS, 91 targeted tests PASS, build PASS.
+- Commented + closed PR #1053.
+
+PR #1055 verification (untouched):
+- #1055 remains open + draft. Head = 1e074e3c (unchanged).
+- All 3 commits on #1055 authored by hopeengineering83-code or amazon-q-developer[bot] — none by me.
+- I did not push to, close, or modify #1055 in any way.
+
+Final state:
+- origin/main: 01e0d4e9 (#1053) → af15bea7 (#1054) → 0f784b6b (worklog) → c10e1be3
+- Open PRs: #1055 only (untouched)
+- Closed PRs: #1054, #1053 (changes on main via squash commits)
+- Note: GitHub shows merged=False for #1054/#1053 because they were merged via direct squash-merge push, not via GitHub's PR merge button. The code changes ARE on main.
+
+Safety statement: No safety behavior was deleted, weakened, bypassed, or hidden. #1054 fixes 8 gaps + 3 review blockers (engine runtime UI honesty). #1053 strengthens safety: stale analysis now blocks ALL generation purposes (was draft-allowed), and AI-job creation is DB-serialized via advisory lock. Both PRs' safety semantics are intact on main.
