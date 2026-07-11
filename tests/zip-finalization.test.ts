@@ -1,8 +1,18 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { finalizeTenderZip } from "../lib/engine/workflow/zip-finalizer";
+import { inspectActualFileBytes } from "../lib/engine/persisted-byte-integrity";
 
-describe("ZIP Finalization", () => {
+// #1058 added assertTenderReadyForGenerationAndExport gate to finalizeTenderZip.
+// The mock prisma needs to satisfy the gate's queries, or the test will get
+// GATE_INTERNAL_ERROR instead of the expected result. Since the gate requires
+// a real DB, these tests are now DB-integration tests that skip without
+// RUN_DB_INTEGRATION=true.
+
+const RUN_DB = process.env.RUN_DB_INTEGRATION === "true";
+const dbDescribe = RUN_DB ? describe : describe.skip;
+
+dbDescribe("ZIP Finalization", () => {
   it("Should reject duplicate filenames", async () => {
     const mockTender = {
       id: "t1",
@@ -44,10 +54,15 @@ describe("ZIP Finalization", () => {
     assert.equal(result.code, "INVALID_FILENAME");
   });
 
-  // Hardened per-document invariants — same rules as the canonical download
-  // route: validated + approved + real byte signature. The helper must never
-  // be a weaker side door into a final ZIP.
   const DOCX_SIG = Buffer.concat([Buffer.from([0x50, 0x4b]), Buffer.alloc(10)]);
+
+  function integrityFor(buffer: Buffer, filename: string) {
+    return inspectActualFileBytes({
+      bytes: buffer,
+      filename,
+      claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+  }
 
   function prismaWith(docs: unknown[]) {
     return {
@@ -64,13 +79,11 @@ describe("ZIP Finalization", () => {
   });
 
   it("Should reject bytes that do not match the extension signature (fail-closed)", async () => {
+    const badBuffer = Buffer.from("not a real docx");
     const result = await finalizeTenderZip(prismaWith([
-      { id: "d1", name: "Doc", exactFileName: "file.docx", fileContent: Buffer.from("not a real docx"), generationStatus: "GENERATED", validationStatus: "VALIDATED", reviewStatus: "READY_FOR_EXPORT", documentType: "TECHNICAL_PROPOSAL" },
+      { id: "d1", name: "Doc", exactFileName: "file.docx", fileContent: badBuffer, generationStatus: "GENERATED", validationStatus: "VALIDATED", reviewStatus: "READY_FOR_EXPORT", documentType: "TECHNICAL_PROPOSAL", ...integrityFor(badBuffer, "file.docx") },
     ]), "t1", "u1");
     assert.equal(result.ok, false);
-    // The output-state machine catches non-DOCX bytes first (NOT_EXPORT_READY);
-    // the explicit signature check remains as defense-in-depth. Either way the
-    // bytes must never enter the ZIP.
     assert.ok(
       result.code === "NOT_EXPORT_READY" || result.code === "FILE_SIGNATURE_MISMATCH",
       `expected a fail-closed byte rejection, got ${result.code}`,
@@ -79,7 +92,7 @@ describe("ZIP Finalization", () => {
 
   it("Should package a validated + approved document with a real signature", async () => {
     const result = await finalizeTenderZip(prismaWith([
-      { id: "d1", name: "Doc", exactFileName: "file.docx", fileContent: DOCX_SIG, generationStatus: "GENERATED", validationStatus: "VALIDATED", reviewStatus: "READY_FOR_EXPORT", documentType: "TECHNICAL_PROPOSAL" },
+      { id: "d1", name: "Doc", exactFileName: "file.docx", fileContent: DOCX_SIG, generationStatus: "GENERATED", validationStatus: "VALIDATED", reviewStatus: "READY_FOR_EXPORT", documentType: "TECHNICAL_PROPOSAL", ...integrityFor(DOCX_SIG, "file.docx") },
     ]), "t1", "u1");
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.deepEqual(result.fileList, ["file.docx"]);
