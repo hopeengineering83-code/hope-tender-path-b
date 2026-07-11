@@ -68,7 +68,7 @@ export async function seedCompany(
       name: `Test Company ${suffix}`,
       legalName: `Test Company Legal ${suffix}`,
       country: "ET",
-      sector: "Engineering",
+      sectors: "Engineering",
     },
   });
   return { id: company.id };
