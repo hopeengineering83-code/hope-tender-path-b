@@ -1,5 +1,6 @@
 import { logger } from "../observability";
 import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "./transactional-generation-gate";
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
@@ -3241,13 +3242,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
     // preserved history back to GENERATED — and collide with the partial
     // unique index when an active row with the same name already exists.
-    await prisma.$transaction(async (tx) => {
-      const existing = await tx.generatedDocument.findFirst({
+    await prisma.$transaction(async (tx) =>
+      withTransactionalGenerationGate({
+        prisma,
+        tx,
+        tenderId,
+        userId,
+        purpose: "generate",
+        write: async (lockedTx) => {
+      const existing = await lockedTx.generatedDocument.findFirst({
         where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
         orderBy: { updatedAt: "desc" },
       });
       if (existing) {
-        await tx.generatedDocument.update({
+        await lockedTx.generatedDocument.update({
           where: { id: existing.id },
           data: {
             name: "Client-Ready Benchmark Technical Proposal",
@@ -3263,7 +3271,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         });
       } else {
         try {
-          await tx.generatedDocument.create({
+          await lockedTx.generatedDocument.create({
             data: {
               tenderId,
               name: "Client-Ready Benchmark Technical Proposal",
@@ -3284,13 +3292,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // Converge idempotently: update the row the winner created instead
           // of failing the whole generation.
           if ((createErr as { code?: string })?.code === "P2002") {
-            const winner = await tx.generatedDocument.findFirst({
+            const winner = await lockedTx.generatedDocument.findFirst({
               where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
               orderBy: { updatedAt: "desc" },
               select: { id: true },
             });
             if (winner) {
-              await tx.generatedDocument.update({
+              await lockedTx.generatedDocument.update({
                 where: { id: winner.id },
                 data: {
                   name: "Client-Ready Benchmark Technical Proposal",
@@ -3315,7 +3323,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           }
         }
       }
-    });
+        },
+      }),
+    )
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
@@ -3421,19 +3431,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
         // preserved history back to GENERATED — and collide with the partial
         // unique index when an active row with the same name already exists.
-        await prisma.$transaction(async (tx) => {
-          const existing = await tx.generatedDocument.findFirst({
+        await prisma.$transaction(async (tx) =>
+          withTransactionalGenerationGate({
+            prisma,
+            tx,
+            tenderId,
+            userId,
+            purpose: "regenerate-cvs",
+            write: async (lockedTx) => {
+          const existing = await lockedTx.generatedDocument.findFirst({
             where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
             orderBy: { updatedAt: "desc" },
           });
           if (existing) {
-            await tx.generatedDocument.update({
+            await lockedTx.generatedDocument.update({
               where: { id: existing.id },
               data: { fileContent: cvContent, ...cvIntegrity, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
             });
           } else {
             try {
-              await tx.generatedDocument.create({
+              await lockedTx.generatedDocument.create({
                 data: {
                   tenderId,
                   name: `CV — ${expert.fullName}`,
@@ -3452,13 +3469,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               // making the same CV file between our findFirst and this create.
               // Converge idempotently: update the row the winner created.
               if ((createErr as { code?: string })?.code === "P2002") {
-                const winner = await tx.generatedDocument.findFirst({
+                const winner = await lockedTx.generatedDocument.findFirst({
                   where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
                   orderBy: { updatedAt: "desc" },
                   select: { id: true },
                 });
                 if (winner) {
-                  await tx.generatedDocument.update({
+                  await lockedTx.generatedDocument.update({
                     where: { id: winner.id },
                     data: { fileContent: cvContent, ...cvIntegrity, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
                   });
@@ -3473,7 +3490,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               }
             }
           }
-        });
+            },
+          }),
+        )
         return fileName;
       })
     );
