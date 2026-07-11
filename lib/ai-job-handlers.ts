@@ -19,6 +19,8 @@
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
 import { recordStep, type JobType } from "./ai-jobs";
+import { verifiedIntegrityDataFromBase64 } from "./engine/persisted-byte-integrity";
+import { isStrictBase64 } from "./engine/generated-file-integrity";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
 import { executeAnalysis, finalizeAnalysisJob } from "./engine/analysis-orchestrator";
@@ -423,6 +425,13 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
     await recordStep(ctx.jobId, { stepName: "proposal.generate", message: `Generating proposal sections${sectionFilter ? ` (filtered: ${sectionFilter.join(", ")})` : " (full)"}`, status: "RUNNING" });
     const markdown = await generateProposalSectionsParallel(input, sectionFilter);
+    const backgroundFileName = `Technical-Proposal-Background-${ctx.jobId}.md`;
+    const backgroundFileContent = Buffer.from(markdown, "utf8").toString("base64");
+    const backgroundIntegrity = verifiedIntegrityDataFromBase64({
+      fileContent: backgroundFileContent,
+      filename: backgroundFileName,
+      claimedMimeType: "text/markdown",
+    });
 
     // Persist into GeneratedDocument so the user can fetch it later via
     // the existing tender detail page (which already lists generated docs).
@@ -432,7 +441,9 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
         documentType: "QUICK_DRAFT",
         format: "MARKDOWN",
-        fileContent: markdown,
+        exactFileName: backgroundFileName,
+        fileContent: backgroundFileContent,
+        ...backgroundIntegrity,
         generationStatus: "GENERATED",
         validationStatus: "PENDING",
         reviewStatus: "NOT_EXPORTABLE",
@@ -456,9 +467,12 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     });
     if (!tender) throw new Error(`EVALUATOR_SIM: tender ${ctx.tenderId} not found`);
 
+    const storedProposal = tender.generatedDocuments[0]?.fileContent ?? "";
     const proposalMarkdown = typeof ctx.input?.proposalMarkdown === "string"
       ? (ctx.input.proposalMarkdown as string)
-      : tender.generatedDocuments[0]?.fileContent ?? "";
+      : storedProposal && isStrictBase64(storedProposal)
+        ? Buffer.from(storedProposal, "base64").toString("utf8")
+        : storedProposal;
     if (!proposalMarkdown) {
       throw new Error("EVALUATOR_SIM: no proposal markdown found (input.proposalMarkdown empty and no GeneratedDocument exists). Generate a proposal first.");
     }
