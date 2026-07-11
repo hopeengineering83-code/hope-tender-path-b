@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
+import { logger } from "../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -63,7 +64,15 @@ export async function GET() {
     dbVersion = versionResult[0]?.version.split(",")[0] ?? null;
     connectionReachable = true;
   } catch (err) {
-    connectionError = err instanceof Error ? err.message.slice(0, 200) : "connection failed";
+    // SECURITY: never expose the raw Postgres connection error — it can
+    // contain host/port/db name/user (e.g. "password authentication failed
+    // for user tender_app", "ECONNREFUSED 10.0.0.5:5432", Neon endpoint
+    // hostnames). The route header promises "NEVER exposes DATABASE_URL,
+    // host, users, credentials". Log the raw detail server-side only.
+    logger.error("[db-integrity] connection check failed", {
+      detail: err instanceof Error ? err.constructor.name : typeof err,
+    });
+    connectionError = "Connection check failed (see server logs).";
   }
 
   // ── 2. Schema compatibility — required tables present ────────────

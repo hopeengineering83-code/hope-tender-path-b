@@ -29,6 +29,7 @@ export type WorkflowBlockerPriority =
   | "DOCS_NOT_VALIDATED"
   | "DOCS_NOT_APPROVED_EXPORT_READY"
   | "AUTHORITY_OR_QUALITY_BLOCKERS"
+  | "EXPORT_BLOCKED"
   | "EXPORT_ZIP_READY";
 
 export type CanonicalWorkflowDecision = {
@@ -265,6 +266,7 @@ export function buildCanonicalWorkflowDecision(input: {
     "DOCS_NOT_VALIDATED",
     "DOCS_NOT_APPROVED_EXPORT_READY",
     "AUTHORITY_OR_QUALITY_BLOCKERS",
+    "EXPORT_BLOCKED",
     "EXPORT_ZIP_READY",
   ];
 
@@ -293,6 +295,7 @@ export function buildCanonicalWorkflowDecision(input: {
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
     DOCS_NOT_APPROVED_EXPORT_READY: { action: "FIX_EXPORT_BLOCKERS", label: "Approve documents for export", reason: "Documents are validated but not approved for export." },
     AUTHORITY_OR_QUALITY_BLOCKERS: { action: "FIX_EXPORT_BLOCKERS", label: "Fix authority/quality blockers", reason: "Authority review or document quality blockers remain." },
+    EXPORT_BLOCKED: { action: "FIX_EXPORT_BLOCKERS", label: "Resolve export blockers", reason: "Export gate is not satisfied. Resolve the remaining export blockers before downloading the final ZIP." },
     EXPORT_ZIP_READY: { action: "EXPORT_READY", label: "Export ready", reason: "All gates pass. Review the final package manifest and export the submission ZIP." },
   };
 

@@ -399,59 +399,55 @@ export async function runTenderEngine(
     progress("engine.compliance", "Building compliance matrix + gap analysis");
     let compliance = buildCompliance(createdRequirements, knowledge, matching);
 
-    // ─── Deterministic fallback rows when AI matching failed ──────────────
-    // PR #1049 rewrote the fallback-rows module to be diagnostics-only —
-    // tender-source diagnostics CANNOT become Company Vault evidence.
+    // ─── Evidence-matching blocker when AI rematch failed ────────────────
+    // PR #1049 rewrote the fallback-rows module to be diagnostics-only.
     // PR #1055 further ensures that when AI rematch fails or is skipped,
     // NO ComplianceMatrix rows are created from tender-source diagnostics.
-    // Instead, the engine records a blocker and returns partial=true.
+    // PR #1060 adds the mergeFallbackRows boundary call to make the
+    // evidence-provenance boundary explicit in the call site.
     let evidenceMatchingBlocker: { code: string; message: string } | null = null;
     const aiRematchFailed = (!mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null) || rematchSkippedForDeadline;
-
-    if (aiRematchFailed) {
-      // AI rematch was attempted but failed (deadline skip, provider exhaustion,
-      // or other error). The warning field contains the diagnostic reason.
-      //
-      // CRITICAL: Do NOT create any ComplianceMatrix rows from tender-source
-      // diagnostics. These are NOT Company Vault evidence.
-      //
-      // Record the blocker so the engine response exposes partial=true and
-      // the exact failure reason. Generation/export gates will correctly block.
+    const hasSourceGroundedRequirements = createdRequirements.some(
+      ({ requirement }) =>
+        requirement.sourceTenderFileId &&
+        requirement.sourcePageNumber != null &&
+        requirement.sourceExactQuote &&
+        requirement.sourceExactQuote.trim().length > 0 &&
+        (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
+    );
+    if (aiRematchFailed && hasSourceGroundedRequirements) {
+      const fallback = buildDeterministicFallbackRows(
+        createdRequirements.map(({ id, requirement }) => ({
+          id,
+          title: requirement.title,
+          description: requirement.description,
+          requirementType: requirement.requirementType,
+          priority: requirement.priority,
+          sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+          sourcePageNumber: requirement.sourcePageNumber ?? null,
+          sourceExactQuote: requirement.sourceExactQuote ?? null,
+          sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
+        })),
+      );
+      if (fallback.rows.length > 0) {
+        // mergeFallbackRows is a no-op (evidence-provenance boundary). We
+        // call it to make the boundary explicit in the call site — if the
+        // function is ever changed to merge rows, the boundary test in
+        // tests/evidence-provenance-boundary.test.ts will fail.
+        compliance = mergeFallbackRows(compliance, fallback.rows);
+        evidenceMatchingBlocker = {
+          code: fallback.blockerCode!,
+          message: fallback.blockerMessage!,
+        };
+        logger.info(`[run-tender-engine] Set ${evidenceMatchingBlocker.code} blocker for ${fallback.rows.length} source-grounded requirement(s) (diagnostic rows not persisted as compliance evidence — mergeFallbackRows is fail-closed no-op).`);
+      }
+    } else if (aiRematchFailed) {
+      // AI rematch failed but no source-grounded requirements — still set blocker
       evidenceMatchingBlocker = {
         code: "AI_REMATCH_FAILED_ZERO_EVIDENCE",
         message: mainEngineAIRematch.warning ?? "AI multi-perspective rematch failed. Zero Company Vault evidence matched."
       };
-      
-      // Count source-grounded requirements for diagnostic logging ONLY.
-      // These are NOT persisted as compliance evidence.
-      const sourceGroundedCount = createdRequirements.filter(
-        ({ requirement }) =>
-          requirement.sourceTenderFileId &&
-          requirement.sourcePageNumber != null &&
-          requirement.sourceExactQuote &&
-          requirement.sourceExactQuote.trim().length > 0 &&
-          (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
-      ).length;
-      
-      // Safe diagnostic log: state the TRUTH (zero evidence rows created).
-      // Never log misleading "Created N fallback compliance rows" when those
-      // rows are NOT real Company Vault evidence.
-      if (sourceGroundedCount > 0) {
-        logger.info(
-          `[run-tender-engine] AI rematch failed: ${sourceGroundedCount} requirement(s) ` +
-          `matched to tender source paragraphs (diagnostics only). ` +
-          `Zero ComplianceMatrix rows created. Reason: ${mainEngineAIRematch.warning}`
-        );
-      } else {
-        logger.info(
-          `[run-tender-engine] AI rematch failed: zero requirement source matches, ` +
-          `zero ComplianceMatrix rows created. Reason: ${mainEngineAIRematch.warning}`
-        );
-      }
-      
-      // Do NOT call buildDeterministicFallbackRows or mergeFallbackRows.
-      // compliance.matrices remains as-is (deterministic matching only,
-      // no AI-failed tender-source fake evidence rows).
+      logger.info(`[run-tender-engine] AI rematch failed: zero requirement source matches, zero ComplianceMatrix rows created. Reason: ${mainEngineAIRematch.warning}`);
     }
 
     // ─── Blocker 2: deadline-skipped rematch is ALWAYS partial ───────────
