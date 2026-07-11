@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { computeTenderMutationLockKey } from "../../../../../lib/engine/advisory-lock-key";
 import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
@@ -835,7 +836,8 @@ async function handleStreamingAnalyze(
                 // Serialize all promotion attempts for this tender. The advisory
                 // lock prevents a concurrent run from inserting a higher-version
                 // AiJob between our version check and the canonical writes.
-                await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
+                const tenderMutationLock = computeTenderMutationLockKey(id);
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
                 if (analysisJob) {
                   const currentVer = await tx.aiJob.findUnique({
                     where: { id: analysisJob.id },
@@ -1627,7 +1629,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // Atomic TOCTOU guard: same pattern as streaming path.
           let nsPromoSuperseded = false;
           await prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
+            const tenderMutationLock = computeTenderMutationLockKey(id);
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
             if (analysisJob) {
               const currentVer = await tx.aiJob.findUnique({
                 where: { id: analysisJob.id },
