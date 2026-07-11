@@ -1,7 +1,8 @@
 import { logger } from "./observability";
 import { mkdir, writeFile, readFile, unlink } from "fs/promises";
 import path from "path";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
+import { sha256Buffer } from "./engine/file-byte-integrity";
 
 const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(process.cwd(), ".storage");
 export const DB_BASE64_MAX_BYTES = 5 * 1024 * 1024;
@@ -19,6 +20,16 @@ export type StoredRecord = {
   fileName: string;
 };
 
+// Extended write result — includes SHA-256 digest and actual byte size
+// so callers can persist them to the DB for integrity verification.
+export type StorageWriteResult = {
+  storagePath: string;
+  fileContent?: string;
+  provider: StorageProvider;
+  sha256: string;       // SHA-256 hex digest of actual bytes
+  sizeBytes: number;    // Actual byte length
+};
+
 export type StorageReadiness = {
   provider: StorageProvider;
   ready: boolean;
@@ -28,7 +39,7 @@ export type StorageReadiness = {
 };
 
 export interface StorageAdapter {
-  putFile(buffer: Buffer, metadata: StorageMetadata): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }>;
+  putFile(buffer: Buffer, metadata: StorageMetadata): Promise<StorageWriteResult>;
   getFile(record: StoredRecord): Promise<Buffer>;
   deleteFile(record: StoredRecord): Promise<void>;
 }
@@ -143,7 +154,7 @@ export function isProductionStorageReady(): boolean {
 }
 
 class LocalStorage implements StorageAdapter {
-  async putFile(buffer: Buffer, metadata: StorageMetadata) {
+  async putFile(buffer: Buffer, metadata: StorageMetadata): Promise<StorageWriteResult> {
     if (isProduction()) throw new Error("Local filesystem storage is not permitted in production");
     const ext = path.extname(metadata.fileName).replace(/[^.a-zA-Z0-9]/g, "");
     const dir = path.join(STORAGE_ROOT, safeScope(metadata));
@@ -151,7 +162,12 @@ class LocalStorage implements StorageAdapter {
     const storagePath = path.join(dir, `${randomUUID()}${ext}`);
     assertLocalPath(storagePath);
     await writeFile(storagePath, buffer, { flag: "wx" });
-    return { storagePath, provider: "local" as const };
+    return {
+      storagePath,
+      provider: "local" as const,
+      sha256: sha256Buffer(buffer),
+      sizeBytes: buffer.length,
+    };
   }
 
   async getFile(record: StoredRecord): Promise<Buffer> {
@@ -175,7 +191,7 @@ class LocalStorage implements StorageAdapter {
 let warnedAboutDatabaseFallback = false;
 
 class DbBase64Storage implements StorageAdapter {
-  async putFile(buffer: Buffer, _metadata: StorageMetadata) {
+  async putFile(buffer: Buffer, _metadata: StorageMetadata): Promise<StorageWriteResult> {
     if (!isDatabaseStorageAllowed()) {
       throw new Error(
         "Durable production storage is not configured. " +
@@ -190,7 +206,13 @@ class DbBase64Storage implements StorageAdapter {
       warnedAboutDatabaseFallback = true;
       logger.warn("[storage] BLOB_READ_WRITE_TOKEN is not configured; using bounded database file storage fallback");
     }
-    return { storagePath: "", fileContent: buffer.toString("base64"), provider: "db-base64" as const };
+    return {
+      storagePath: "",
+      fileContent: buffer.toString("base64"),
+      provider: "db-base64" as const,
+      sha256: sha256Buffer(buffer),
+      sizeBytes: buffer.length,
+    };
   }
 
   async getFile(record: StoredRecord): Promise<Buffer> {
@@ -206,7 +228,7 @@ class DbBase64Storage implements StorageAdapter {
 class BlobStorage implements StorageAdapter {
   private readonly fallback = new DbBase64Storage();
 
-  async putFile(buffer: Buffer, metadata: StorageMetadata) {
+  async putFile(buffer: Buffer, metadata: StorageMetadata): Promise<StorageWriteResult> {
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     if (!token) return this.fallback.putFile(buffer, metadata);
     const { put } = await import("@vercel/blob");
@@ -216,7 +238,12 @@ class BlobStorage implements StorageAdapter {
     if (!isVercelBlobStorageUrl(result.url)) {
       throw new Error("Blob provider returned an unexpected storage URL");
     }
-    return { storagePath: result.url, provider: "blob" as const };
+    return {
+      storagePath: result.url,
+      provider: "blob" as const,
+      sha256: sha256Buffer(buffer),
+      sizeBytes: buffer.length,
+    };
   }
 
   async getFile(record: StoredRecord): Promise<Buffer> {

@@ -150,10 +150,14 @@ model CompanyAsset {
   fileContent      String?
   isActive         Boolean  @default(true)
   metadata         String   @default("{}")
+  // ─── Byte integrity (SHA-256 + actual size) ────────────────────────────────
+  sha256           String?  // SHA-256 hex digest of actual file bytes
+  sizeBytes        Int?     // Actual byte length (may differ from `size` which is upload-reported)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([companyId])
+  @@index([sha256])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -486,11 +490,16 @@ model TenderFile {
   pageStatusJson   String?
   ocrModel         String?  // OCR model used if OCR was run, e.g. "claude-3-5-sonnet"
   contentHash      String?  // MD5 hash of file content — used for dedup at upload time
+  // ─── Byte integrity (SHA-256 + actual size + storage provider) ─────────────
+  sha256           String?  // SHA-256 hex digest of actual file bytes
+  sizeBytes        Int?     // Actual byte length (may differ from `size` which is upload-reported)
+  storageProvider  String?  // "local" | "db-base64" | "blob"
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([tenderId])
   @@index([tenderId, deletionStatus]) // Compound — 20+ queries filter by both
+  @@index([sha256]) // Byte integrity lookup
   @@unique([tenderId, contentHash]) // Prevents duplicate uploads of same content
 }
 
@@ -630,6 +639,9 @@ model GeneratedDocument {
   // most-recent action), but the full history is in DocumentReview.
   reviews          DocumentReview[]
   comments         DocumentComment[]
+  // ─── Byte integrity (SHA-256 + actual size) ────────────────────────────────
+  sha256           String?  // SHA-256 hex digest of actual file bytes
+  sizeBytes        Int?     // Actual byte length
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -641,6 +653,7 @@ model GeneratedDocument {
   // preserving exactFileName, then inserts new rows with the same name.
   // See migration 20260705000000_generated_document_partial_unique_index.
   @@index([tenderId, exactFileName])
+  @@index([sha256]) // Byte integrity lookup
 }
 
 // Per-document review action audit trail (PR #247).
