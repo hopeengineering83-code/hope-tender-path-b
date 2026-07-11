@@ -46,18 +46,33 @@ function asReadyDoc(doc: any): ExportReadyDocument {
     reviewStatus: String(doc.reviewStatus ?? ""),
     fileContent: doc.fileContent ?? null,
     storagePath: doc.storagePath ?? null,
+    contentSha256: doc.contentSha256 ?? null,
+    contentByteLength: doc.contentByteLength ?? null,
+    contentMimeType: doc.contentMimeType ?? null,
+    detectedFormat: doc.detectedFormat ?? null,
+    integrityStatus: doc.integrityStatus ?? "UNKNOWN",
+    integrityVerifiedAt: doc.integrityVerifiedAt ?? null,
+    integrityFailureCode: doc.integrityFailureCode ?? null,
   };
 }
 
 async function readContentOrError(doc: ExportReadyDocument) {
   try {
-    return { ok: true as const, content: await readGeneratedDocumentContent(doc) };
+    return { ok: true as const, content: await readGeneratedDocumentContent(doc, { requireVerifiedIntegrity: true }) };
   } catch (error) {
-    logger.error("readContentOrError: document bytes unavailable", { documentId: doc.id, detail: error });
+    const safeCode =
+      error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+        ? error.message
+        : "STORAGE_CONTENT_UNAVAILABLE";
+    logger.error("readContentOrError: document bytes unavailable", {
+      documentId: doc.id,
+      errorName: error instanceof Error ? error.constructor.name : typeof error,
+      code: safeCode,
+    });
     return {
       ok: false as const,
-      response: err("Document bytes are unavailable. Regenerate the document or reattach the final file before export.", 409, {
-        code: "STORAGE_CONTENT_UNAVAILABLE",
+      response: err("Document bytes are unavailable or their integrity is not verified. Regenerate the document or reattach the final file before export.", 409, {
+        code: safeCode,
         documentId: doc.id,
         fileName: doc.exactFileName ?? fileName(doc.name),
         hasStoragePath: Boolean(doc.storagePath),
@@ -553,7 +568,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     assembledZip = await assembleFinalSubmissionZip(entries, zipContents);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    logger.error("Final ZIP assembly/verification failed", { detail: error });
+    logger.error("Final ZIP assembly/verification failed", {
+      errorName: error instanceof Error ? error.constructor.name : typeof error,
+    });
     // PERF-003: a size-cap violation thrown by the assembly helper is surfaced
     // as 413 (Payload Too Large) rather than the generic 422 verification error.
     if (/PERF-003|safety cap/i.test(detail)) {
@@ -594,9 +611,29 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     : `${baseLabel}.zip`;
   const fileList = assembledZip.fileList;
   // Fresh read before create/update to avoid stale-object race on concurrent requests.
-  const freshPkg = await prisma.exportPackage.findFirst({ where: { tenderId: tender.id }, orderBy: { createdAt: "desc" } });
-  if (freshPkg) await prisma.exportPackage.update({ where: { id: freshPkg.id }, data: { status: "READY", fileList: JSON.stringify(fileList), downloadCount: { increment: 1 } } });
-  else await prisma.exportPackage.create({ data: { tenderId: tender.id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
+  const packageIntegrity = {
+    status: "READY",
+    fileList: JSON.stringify(fileList),
+    manifestJson: JSON.stringify(assembledZip.manifest),
+    packageSha256: assembledZip.packageSha256,
+    packageByteLength: zipBuffer.length,
+    integrityStatus: "VERIFIED",
+    integrityVerifiedAt: new Date(),
+  };
+  const freshPkg = await prisma.exportPackage.findFirst({
+    where: { tenderId: tender.id },
+    orderBy: { createdAt: "desc" },
+  });
+  if (freshPkg) {
+    await prisma.exportPackage.update({
+      where: { id: freshPkg.id },
+      data: { ...packageIntegrity, downloadCount: { increment: 1 } },
+    });
+  } else {
+    await prisma.exportPackage.create({
+      data: { tenderId: tender.id, ...packageIntegrity, downloadCount: 1 },
+    });
+  }
 
   await logAction({
     userId,

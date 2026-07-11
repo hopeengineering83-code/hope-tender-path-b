@@ -11,6 +11,7 @@ import {
   COMPANY_ASSET_TYPES,
   validateCompanyAsset,
 } from "../../../../lib/company-asset-security";
+import { inspectActualFileBytes } from "../../../../lib/engine/persisted-byte-integrity";
 
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -47,6 +48,11 @@ export async function GET(_req: Request) {
       isActive: true,
       createdAt: true,
       storagePath: true,
+      integrityStatus: true,
+      contentSha256: true,
+      contentByteLength: true,
+      detectedFormat: true,
+      integrityVerifiedAt: true,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -111,6 +117,20 @@ export async function POST(req: Request) {
   if (!validation.ok) {
     return privateJson({ error: validation.error ?? "Invalid company asset" }, { status: 415 });
   }
+  const integrity = inspectActualFileBytes({
+    bytes: buffer,
+    filename: validation.safeFileName,
+    claimedMimeType: validation.normalizedMime,
+  });
+  if (integrity.integrityStatus !== "VERIFIED") {
+    return privateJson(
+      {
+        error: "Company asset byte integrity verification failed",
+        code: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
+      },
+      { status: 415 },
+    );
+  }
 
   const storage = getStorageAdapter();
   let stored: Awaited<ReturnType<typeof storage.putFile>>;
@@ -149,6 +169,7 @@ export async function POST(req: Request) {
           size: buffer.byteLength,
           storagePath: stored.storagePath,
           fileContent: stored.fileContent ?? null,
+          ...integrity,
           isActive: true,
         },
         select: {
@@ -185,7 +206,13 @@ export async function POST(req: Request) {
       });
       await prisma.companyAsset.update({
         where: { id: old.id },
-        data: { storagePath: "", fileContent: null },
+        data: {
+          storagePath: "",
+          fileContent: null,
+          integrityStatus: "MISSING",
+          integrityVerifiedAt: new Date(),
+          integrityFailureCode: "SUPERSEDED_BYTES_DELETED",
+        },
       });
     } catch (error) {
       logger.warn("[company-assets] superseded asset cleanup deferred", {

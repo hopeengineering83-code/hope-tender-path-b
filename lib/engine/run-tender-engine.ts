@@ -1,6 +1,7 @@
 import { logger } from "../observability";
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
+import { computeTenderMutationLockKey } from "./advisory-lock-key";
 import { logAction } from "../audit";
 import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
 import { analyzeWithAI, isAIEnabled } from "../ai";
@@ -570,7 +571,8 @@ export async function runTenderEngine(
     await prisma.$transaction(async (tx) => {
       // Serialize concurrent engine runs for this tender.
       // The lock is transaction-scoped (released on commit/rollback).
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenderId}))`;
+      const tenderMutationLock = computeTenderMutationLockKey(tenderId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
 
       // Supersede active documents INSIDE the transaction.
       if (activeGeneratedDocuments.length > 0) {
@@ -596,10 +598,11 @@ export async function runTenderEngine(
       for (const batch of chunks(projectMatchRows, 100)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
       for (const batch of chunks(matrixRows, 100)) await tx.complianceMatrix.createMany({ data: batch });
       for (const batch of chunks(gapRows, 100)) await tx.complianceGap.createMany({ data: batch });
-      // Create new document-plan rows. The partial unique index
-      // (tenderId, exactFileName) WHERE non-SUPERSEDED ensures no duplicates
-      // among active docs. SUPERSEDED history rows keep their exactFileName.
-      for (const batch of chunks(documentRows, 100)) await tx.generatedDocument.createMany({ data: batch });
+      // GeneratedDocument rows represent actual output artifacts only.
+      // The submission plan lives in BuildPlan; the engine must not create
+      // placeholder GeneratedDocument rows before the transactional generation
+      // gate authorizes real bytes. documentRows remains an in-memory preview
+      // for diagnostics and Build Plan construction.
       await tx.tender.update({
         where: { id: tenderId },
         data: {
@@ -644,7 +647,7 @@ export async function runTenderEngine(
         analysisMethod,
         analysisFallbackReason,
         previousStateCounts: { requirements: existingCounts[0], expertMatches: existingCounts[1], projectMatches: existingCounts[2], complianceRows: existingCounts[3], gaps: existingCounts[4], activeGeneratedDocuments: existingCounts[5] },
-        newStateCounts: { requirements: requirementRows.length, expertMatches: expertMatchRows.length, projectMatches: projectMatchRows.length, complianceRows: matrixRows.length, gaps: gapRows.length, generatedDocuments: documentRows.length, supersededGeneratedDocuments: activeGeneratedDocuments.length },
+        newStateCounts: { requirements: requirementRows.length, expertMatches: expertMatchRows.length, projectMatches: projectMatchRows.length, complianceRows: matrixRows.length, gaps: gapRows.length, generatedDocuments: 0, plannedDocuments: documentRows.length, supersededGeneratedDocuments: activeGeneratedDocuments.length },
         readinessScore,
         hardGapCount: hardGaps,
         reviewGapCount: reviewGaps,

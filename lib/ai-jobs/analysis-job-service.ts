@@ -1,4 +1,5 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
 import type { Prisma } from "@prisma/client";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
@@ -28,6 +29,22 @@ export type AnalysisJobCreateInput = {
   tenderId: string;
   userId: string;
 };
+
+const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
+
+/**
+ * Stable signed 64-bit advisory-lock key for one logical AI Analyze job.
+ * Every identity dimension is included so unrelated actors, tenders, job
+ * types, or source revisions never intentionally share a lock.
+ */
+export function computeAnalysisJobLockKey(
+  userId: string,
+  tenderId: string,
+  jobType: string,
+  contentHash: string,
+): bigint {
+  return computeAdvisoryLockKey([userId, tenderId, jobType, contentHash]);
+}
 
 export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   const { tenderId, userId } = input;
@@ -68,16 +85,18 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   // create to serialize all concurrent calls for the same (tender, hash).
   // This guarantees exactly one active job even under high concurrency —
   // the previous findFirst + create race window is closed at the DB level.
-  // The lock is derived from a stable hash of (tenderId, contentHash) so the
-  // same tender+content always maps to the same lock. Lock auto-releases on
+  // The lock is a deterministic signed 64-bit SHA-256 prefix over actor,
+  // tender, job type, and current content hash. Lock auto-releases on
   // commit/rollback.
   let job = await prisma.$transaction(async (tx) => {
-    // Step 1: Acquire advisory lock. hashtext collapses the composite key
-    // into a stable int4 suitable for pg_advisory_xact_lock. We combine
-    // tenderId + contentHash so different content hashes for the same tender
-    // do NOT collide (a stale hash should not block a fresh-content create).
-    const lockKey = `${tenderId}:${contentHash}`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+    // Step 1: Block until the caller owns the transaction-scoped lock.
+    const lockKey = computeAnalysisJobLockKey(
+      userId,
+      tenderId,
+      AI_ANALYZE_JOB_TYPE,
+      contentHash,
+    );
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
 
     // Step 2: Recheck for existing active job AFTER holding the lock.
     // Only the first caller creates a new job; all others return the existing
@@ -89,7 +108,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       where: {
         tenderId,
         userId,
-        jobType: "AI_ANALYZE",
+        jobType: AI_ANALYZE_JOB_TYPE,
         analysisInputHash: contentHash,
         status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
       },
@@ -133,7 +152,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       data: {
         tenderId,
         userId,
-        jobType: "AI_ANALYZE",
+        jobType: AI_ANALYZE_JOB_TYPE,
         status: "QUEUED",
         analysisInputHash: contentHash,
         input: JSON.stringify({ tenderId, contentHash }),

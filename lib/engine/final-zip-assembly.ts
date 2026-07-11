@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { createHash } from "node:crypto";
 import type { ZipEntry } from "./final-zip-scope";
 
 export type FinalZipDocumentContent = {
@@ -6,9 +7,19 @@ export type FinalZipDocumentContent = {
   bytes: Buffer | Uint8Array;
 };
 
+export type FinalZipManifestEntry = {
+  generatedDocId: string;
+  filename: string;
+  order: number;
+  byteLength: number;
+  sha256: string;
+};
+
 export type FinalZipAssemblyResult = {
   buffer: Buffer;
   fileList: string[];
+  manifest: FinalZipManifestEntry[];
+  packageSha256: string;
 };
 
 /**
@@ -21,6 +32,10 @@ export type FinalZipAssemblyResult = {
  * tender into multiple envelopes or sub-packages.
  */
 export const FINAL_ZIP_MAX_INPUT_BYTES = 50 * 1024 * 1024; // 50 MB
+
+function sha256(bytes: Buffer | Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 function assertSafeEntryName(name: string): string {
   const trimmed = name.trim().replace(/\\/g, "/");
@@ -52,6 +67,7 @@ export async function assembleFinalSubmissionZip(
   const seenDocumentIds = new Set<string>();
   const zip = new JSZip();
   const fileList: string[] = [];
+  const manifest: FinalZipManifestEntry[] = [];
   let totalInputBytes = 0;
 
   for (const entry of entries) {
@@ -87,8 +103,16 @@ export async function assembleFinalSubmissionZip(
       );
     }
 
-    zip.file(safeName, bytes, { binary: true, createFolders: false });
+    const exactBytes = Buffer.from(bytes);
+    zip.file(safeName, exactBytes, { binary: true, createFolders: false });
     fileList.push(safeName);
+    manifest.push({
+      generatedDocId: entry.generatedDocId,
+      filename: safeName,
+      order: manifest.length + 1,
+      byteLength: exactBytes.length,
+      sha256: sha256(exactBytes),
+    });
   }
 
   const buffer = await zip.generateAsync({
@@ -130,10 +154,17 @@ export async function assembleFinalSubmissionZip(
     }
     const reopenedEntry = reopened.file(expectedName);
     if (!reopenedEntry) throw new Error(`Final ZIP is missing manifest entry ${expectedName}.`);
-    // Intentionally NOT calling `reopenedEntry.async("uint8array")` here.
-    // That would decompress every entry just to re-confirm non-emptiness,
-    // which we already guaranteed above before adding the entry.
+    // Verify one entry at a time so exact-byte parity is proven without
+    // materializing every decompressed entry simultaneously.
+    const reopenedBytes = await reopenedEntry.async("nodebuffer");
+    const expected = manifest[index];
+    if (
+      reopenedBytes.length !== expected.byteLength ||
+      sha256(reopenedBytes) !== expected.sha256
+    ) {
+      throw new Error(`Final ZIP exact-byte mismatch for ${expectedName}.`);
+    }
   }
 
-  return { buffer, fileList };
+  return { buffer, fileList, manifest, packageSha256: sha256(buffer) };
 }

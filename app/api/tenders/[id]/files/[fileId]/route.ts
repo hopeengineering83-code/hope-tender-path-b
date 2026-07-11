@@ -5,6 +5,8 @@ import { logAction } from "../../../../../../lib/audit";
 import { getStorageAdapter } from "../../../../../../lib/storage";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { logger } from "../../../../../../lib/observability";
+import { requireVerifiedPersistedFileBytes } from "../../../../../../lib/engine/persisted-byte-integrity";
+import { durableDeleteTenderFile } from "../../../../../../lib/engine/workflow/durable-deletion";
 
 export async function GET(
   _req: Request,
@@ -29,6 +31,18 @@ export async function GET(
       storagePath: file.storagePath,
       fileContent: file.fileContent,
       fileName: file.originalFileName,
+    });
+    requireVerifiedPersistedFileBytes({
+      bytes: buffer,
+      filename: file.originalFileName,
+      claimedMimeType: file.mimeType,
+      persisted: {
+        contentSha256: file.contentSha256,
+        contentByteLength: file.contentByteLength,
+        contentMimeType: file.contentMimeType,
+        detectedFormat: file.detectedFormat,
+        integrityStatus: file.integrityStatus,
+      },
     });
     const safeFileName = file.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
     return new Response(new Uint8Array(buffer), {
@@ -71,89 +85,20 @@ export async function DELETE(
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
   try {
-    await getStorageAdapter().deleteFile({
-      storagePath: file.storagePath,
-      fileContent: file.fileContent,
-      fileName: file.originalFileName,
+    await durableDeleteTenderFile(prisma, fileId, tenderId, actor.id);
+  } catch (error) {
+    logger.error("[file-delete] durable deletion failed", {
+      tenderId,
+      fileId,
+      errorName: error instanceof Error ? error.constructor.name : typeof error,
     });
-    // Nullify all source-evidence references to this file BEFORE deleting it,
-    // so requirements and tender fields don't dangle. Without this,
-    // the canonical resolver may still report EXTRACTED_AND_GROUNDED against
-    // a fileId that no longer exists until the next AI Analyze run.
-    //
-    // CRITICAL: Linked-fact cleanup (TenderFactsLedger, ExtractionQualityOverride,
-    // TenderSubmissionEmail) must NOT use silent .catch(() => {}). If these
-    // fail, the transaction must roll back — deleting a source file while
-    // leaving dangling source-grounded facts would create false confidence
-    // in export readiness. The only exception is when the table itself doesn't
-    // exist (test/dev environments before migration) — that specific Prisma
-    // error (P2021 "table does not exist") is caught and logged explicitly.
-    await prisma.$transaction(async (tx) => {
-      // Nullify requirement source references
-      await tx.tenderRequirement.updateMany({
-        where: { tenderId, sourceTenderFileId: fileId },
-        data: { sourceTenderFileId: null, sourcePageNumber: null, sourceExactQuote: null },
-      });
-      // Nullify tender source-evidence columns that reference this file
-      const sourceColumns = [
-        "titleSourceFileId", "clientNameSourceFileId", "deadlineSourceFileId",
-        "referenceSourceFileId", "submissionMethodSourceFileId",
-        "submissionAddressSourceFileId", "submissionEmailSourceFileId",
-        "submissionEmailSubjectSourceFileId",
-      ];
-      for (const col of sourceColumns) {
-        await (tx as any).tender.updateMany({
-          where: { id: tenderId, [col]: fileId } as any,
-          data: { [col]: null } as any,
-        });
-      }
-      // Nullify TenderFactsLedger entries that reference this file.
-      // Without this, ledger facts still claim SOURCE_GROUNDED against a
-      // deleted file — false export-readiness confidence.
-      // NO silent .catch — if this fails for a real DB error, roll back.
-      // Only catch P2021 (table not found in pre-migration environments).
-      try {
-        await (tx as any).tenderFactsLedger.updateMany({
-          where: { tenderId, sourceFileId: fileId },
-          data: { sourceFileId: null, sourcePage: null, sourceQuote: null, authorityState: "EXTRACTED_UNVERIFIED" },
-        });
-      } catch (e: any) {
-        if (e?.code === "P2021") {
-          // Table doesn't exist yet (pre-migration) — safe to skip
-          logger.info("[file-delete] TenderFactsLedger table not found — skipping (pre-migration)");
-        } else {
-          throw e; // Roll back — don't leave dangling source-grounded facts
-        }
-      }
-      // Delete ExtractionQualityOverride entries that reference this file
-      try {
-        await (tx as any).extractionQualityOverride.deleteMany({
-          where: { tenderFileId: fileId },
-        });
-      } catch (e: any) {
-        if (e?.code === "P2021") {
-          logger.info("[file-delete] ExtractionQualityOverride table not found — skipping (pre-migration)");
-        } else {
-          throw e;
-        }
-      }
-      // Nullify TenderSubmissionEmail entries that reference this file
-      try {
-        await (tx as any).tenderSubmissionEmail.updateMany({
-          where: { tenderId, sourceFileId: fileId },
-          data: { sourceFileId: null, sourcePage: null, sourceQuote: null },
-        });
-      } catch (e: any) {
-        if (e?.code === "P2021") {
-          logger.info("[file-delete] TenderSubmissionEmail table not found — skipping (pre-migration)");
-        } else {
-          throw e;
-        }
-      }
-      await tx.tenderFile.delete({ where: { id: fileId } });
-    });
-  } catch {
-    return NextResponse.json({ error: "File could not be deleted safely" }, { status: 502 });
+    return NextResponse.json(
+      {
+        error: "File could not be deleted safely",
+        code: "FILE_DELETE_FAILED",
+      },
+      { status: 502 },
+    );
   }
 
   await logAction({

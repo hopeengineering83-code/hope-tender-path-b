@@ -1,4 +1,5 @@
 import { logger } from "../../../../lib/observability";
+import { inspectActualFileBytes } from "../../../../lib/engine/persisted-byte-integrity";
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
@@ -518,18 +519,41 @@ export async function POST(req: Request) {
       if (!fileName) { documentsSkipped += 1; continue; }
       if (requireRawText && (!exactText || exactText.length < 50)) { documentsSkipped += 1; continue; }
       const category = normalizeDocumentCategory(doc);
+      const artifactFileName = `${fileName.replace(/\.[a-z0-9]{2,5}$/i, "")}.plan-b.json`;
+      const artifactBytes = Buffer.from(JSON.stringify({
+        sourceFileName: fileName,
+        sourceType: doc.type,
+        sourceCategory: doc.category,
+        rawText: exactText,
+        parsedExperts: doc.parsedExperts,
+        parsedProjects: doc.parsedProjects,
+        suppliedSha256: doc.sha256,
+      }), "utf8");
+      const artifactContent = artifactBytes.toString("base64");
+      const integrity = inspectActualFileBytes({
+        bytes: artifactBytes,
+        filename: artifactFileName,
+        claimedMimeType: "application/json",
+      });
+      if (integrity.integrityStatus !== "VERIFIED") {
+        documentsSkipped += 1;
+        warnings.push(`Skipped ${fileName}: Plan B artifact integrity verification failed.`);
+        continue;
+      }
       const existing = await tx.companyDocument.findFirst({ where: { companyId: company.id, originalFileName: fileName }, select: { id: true } });
       const data = {
-        fileName,
+        fileName: artifactFileName,
         originalFileName: fileName,
         mimeType: "application/json",
-        size: exactText?.length ?? 0,
+        size: artifactBytes.length,
+        fileContent: artifactContent,
+        ...integrity,
         category,
         extractedText: exactText,
         aiExtractionStatus: exactText ? "EXTRACTED" : "FAILED",
         aiExtractedAt: exactText ? now : null,
         aiExtractionError: exactText ? null : "No rawText supplied in Plan B JSON",
-        metadata: JSON.stringify({ planB: true, sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
+        metadata: JSON.stringify({ planB: true, evidenceAuthority: "IMPORTED_JSON_DIAGNOSTIC", sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
       };
       if (existing) {
         await tx.companyDocument.update({ where: { id: existing.id }, data });

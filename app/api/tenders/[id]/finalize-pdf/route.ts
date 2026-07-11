@@ -23,6 +23,8 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { detectTenderFormatPolicy } from "../../../../../lib/engine/export-format-policy";
 import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
@@ -109,7 +111,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           exactFileName: row.exactFileName ?? null,
           fileContent: null,
           storagePath: row.storagePath ?? null,
-        });
+          contentSha256: row.contentSha256 ?? null,
+          contentByteLength: row.contentByteLength ?? null,
+          contentMimeType: row.contentMimeType ?? null,
+          detectedFormat: row.detectedFormat ?? null,
+          integrityStatus: row.integrityStatus ?? "UNKNOWN",
+        }, { requireVerifiedIntegrity: true });
         if (isBase64PdfContent(stored.base64)) satisfiedNames.add(name.toLowerCase());
       } catch (error) {
         logger.warn("finalize-pdf: storage-backed required PDF bytes unreadable — treating as not satisfied", { documentId: row.id, detail: error instanceof Error ? error.constructor.name : "UnknownError" });
@@ -181,9 +188,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             exactFileName: source.exactFileName ?? null,
             fileContent: source.fileContent ?? null,
             storagePath: source.storagePath ?? null,
-          })).base64;
+            contentSha256: source.contentSha256 ?? null,
+            contentByteLength: source.contentByteLength ?? null,
+            contentMimeType: source.contentMimeType ?? null,
+            detectedFormat: source.detectedFormat ?? null,
+            integrityStatus: source.integrityStatus ?? "UNKNOWN",
+          }, { requireVerifiedIntegrity: true })).base64;
         } catch (error) {
-          logger.error("finalize-pdf: storage-backed source bytes unavailable", { documentId: source.id, detail: error });
+          logger.error("finalize-pdf: storage-backed source bytes unavailable", { documentId: source.id, errorName: error instanceof Error ? error.constructor.name : typeof error });
           blocked.push({
             requiredFileName: requiredName,
             code: "PDF_SOURCE_CONTENT_MISSING",
@@ -218,37 +230,59 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         continue;
       }
 
-      // Supersede any active row still holding the required filename (e.g. a
-      // PLANNED control row) so the partial unique index accepts the new PDF.
-      await prisma.generatedDocument.updateMany({
-        where: { tenderId: tender.id, exactFileName: requiredName, NOT: { generationStatus: "SUPERSEDED" } },
-        data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED" },
+      const pdfFileContent = finalized.bytes.toString("base64");
+      const pdfIntegrity = verifiedIntegrityDataFromBase64({
+        fileContent: pdfFileContent,
+        filename: requiredName,
+        claimedMimeType: "application/pdf",
       });
+
+      // Supersede and create atomically while holding a stable filename lock.
+      // A failed create rolls back the supersede, so no request can leave the
+      // tender without its previously active PDF row.
       let createdDoc;
       try {
-        createdDoc = await prisma.generatedDocument.create({
-        data: {
-          tenderId: tender.id,
-          name: requiredName,
-          documentType: source.documentType ?? "TECHNICAL_PROPOSAL",
-          format: "PDF",
-          exactFileName: requiredName,
-          exactOrder: source.exactOrder ?? null,
-          contentSummary: `Finalized PDF rendered in-engine from the approved source document "${source.exactFileName ?? source.name}".`,
-          fileContent: finalized.bytes.toString("base64"),
-          // Deliberately PENDING: the finalized PDF must pass the same
-          // validation + approval pipeline as every other document before it
-          // can reach the final ZIP. This route creates content, not approval.
-          generationStatus: "GENERATED",
-          validationStatus: "PENDING",
-          reviewStatus: "PENDING",
-        },
-        });
+        createdDoc = await prisma.$transaction(async (tx) =>
+          withTransactionalGenerationGate({
+            prisma,
+            tx,
+            tenderId: tender.id,
+            userId: actor.id,
+            purpose: "generate-missing-plan-files",
+            write: async (lockedTx) => {
+          await lockedTx.generatedDocument.updateMany({
+            where: {
+              tenderId: tender.id,
+              exactFileName: requiredName,
+              NOT: { generationStatus: "SUPERSEDED" },
+            },
+            data: {
+              generationStatus: "SUPERSEDED",
+              validationStatus: "SUPERSEDED",
+              reviewStatus: "SUPERSEDED",
+            },
+          });
+          return lockedTx.generatedDocument.create({
+            data: {
+              tenderId: tender.id,
+              name: requiredName,
+              documentType: source.documentType ?? "TECHNICAL_PROPOSAL",
+              format: "PDF",
+              exactFileName: requiredName,
+              exactOrder: source.exactOrder ?? null,
+              contentSummary: `Finalized PDF rendered in-engine from the approved source document "${source.exactFileName ?? source.name}".`,
+              fileContent: pdfFileContent,
+              ...pdfIntegrity,
+              // Deliberately PENDING: content creation never implies approval.
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              reviewStatus: "PENDING",
+            },
+          });
+            },
+          }),
+        );
       } catch (error) {
-        // Concurrent finalization race: the partial unique index on
-        // (tenderId, exactFileName) rejects a second active row. Surface a
-        // structured conflict instead of a generic 500 — the other request
-        // already produced the PDF.
         if ((error as { code?: string })?.code === "P2002") {
           logger.warn("finalize-pdf: concurrent finalization detected", { tenderId: tender.id });
           blocked.push({

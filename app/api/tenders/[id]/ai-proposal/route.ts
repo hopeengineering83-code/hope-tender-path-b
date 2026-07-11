@@ -1,4 +1,6 @@
 import { logger } from "../../../../../lib/observability";
+import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -607,19 +609,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Skip the persist — the proposal is still returned to the UI above.
       } else {
       try {
-        await prisma.generatedDocument.create({
+        const quickDraftFileName = "AI-Proposal-Quick-Draft.md";
+        const quickDraftFileContent = Buffer.from(contentToSave, "utf8").toString("base64");
+        const quickDraftIntegrity = verifiedIntegrityDataFromBase64({
+          fileContent: quickDraftFileContent,
+          filename: quickDraftFileName,
+          claimedMimeType: "text/markdown",
+        });
+        await prisma.$transaction(async (tx) =>
+          withTransactionalGenerationGate({
+            prisma,
+            tx,
+            tenderId: id,
+            userId,
+            purpose: "ai-proposal-persist",
+            write: async (lockedTx) => {
+              return lockedTx.generatedDocument.create({
           data: {
             tenderId: id,
             name: "AI Proposal (Quick Draft)",
             documentType: "QUICK_DRAFT",
             format: "MARKDOWN",
+            exactFileName: quickDraftFileName,
+            fileContent: quickDraftFileContent,
+            ...quickDraftIntegrity,
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
             reviewStatus: "NOT_EXPORTABLE",
             contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
-            fileContent: Buffer.from(contentToSave).toString("base64"),
           },
-        });
+        })
+            },
+          }),
+        );;
       } catch {
         // Non-blocking — draft already returned to UI
       }

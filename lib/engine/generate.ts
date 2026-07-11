@@ -3,6 +3,8 @@ import {
   AlignmentType, Table, TableRow, TableCell, WidthType,
   BorderStyle, PageBreak, Header, Footer,
 } from "docx";
+import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "./transactional-generation-gate";
 import { prisma } from "../prisma";
 import { humanize } from "./humanize";
 import { isAIEnabled } from "../ai";
@@ -292,9 +294,47 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const document = buildDocxFromParagraphs(contentParagraphs, company.name, docTitle);
       const buffer = await Packer.toBuffer(document); const fileContent = buffer.toString("base64");
       const exactFileName = doc.exactFileName ?? `${docTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.docx`;
-      if (doc.id) await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections` } });
-      else await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections` } });
-    } catch (err) { console.error(`[generate] failed for doc "${doc.name}":`, err); }
+      const integrity = verifiedIntegrityDataFromBase64({ fileContent, filename: exactFileName, claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      await prisma.$transaction(async (tx) =>
+        withTransactionalGenerationGate({
+          prisma,
+          tx,
+          tenderId,
+          userId,
+          purpose: "generate",
+          write: async (lockedTx) => {
+            if (doc.id) {
+              return lockedTx.generatedDocument.update({
+                where: { id: doc.id, tenderId },
+                data: {
+                  fileContent,
+                  exactFileName,
+                  ...integrity,
+                  generationStatus: "GENERATED",
+                  validationStatus: "PENDING",
+                  contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections`,
+                },
+              });
+            }
+            return lockedTx.generatedDocument.create({
+              data: {
+                tenderId,
+                name: docTitle,
+                documentType: doc.documentType,
+                format: "DOCX",
+                exactFileName,
+                exactOrder: doc.exactOrder ?? 1,
+                fileContent,
+                ...integrity,
+                generationStatus: "GENERATED",
+                validationStatus: "PENDING",
+                contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections`,
+              },
+            });
+          },
+        }),
+      );
+    } catch (err) { console.error(`[generate] failed for doc "${doc.name}"`, { errorName: err instanceof Error ? err.constructor.name : typeof err }); }
   }
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 }

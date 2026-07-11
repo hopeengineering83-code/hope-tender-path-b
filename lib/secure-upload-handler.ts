@@ -14,6 +14,8 @@ import { getStorageAdapter } from "./storage";
 import { enqueueJob, findActiveEngineRunForTender } from "./ai-jobs";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
 import { sanitizeError } from "./sanitize-error";
+import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
+import { invalidateTenderForSourceRevision } from "./engine/source-revision-invalidation";
 
 function extractionMetadata(fileType: string, text: string, truncated: boolean) {
   const meaningful = isMeaningfulExtraction(text);
@@ -77,6 +79,20 @@ export async function handleSecureUpload(req: Request) {
 
       const fileName = validation.safeFileName;
       const mimeType = validation.normalizedMime;
+      const integrity = inspectActualFileBytes({
+        bytes: buffer,
+        filename: fileName,
+        claimedMimeType: mimeType,
+      });
+      if (integrity.integrityStatus !== "VERIFIED") {
+        results.push({
+          success: false,
+          fileName,
+          error: "File byte integrity verification failed.",
+          code: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
+        });
+        continue;
+      }
       const extracted = limitExtractedText(await extractTextFromBuffer(buffer, mimeType, fileName));
       const fileType = getFileTypeLabel(mimeType, fileName);
       const extraction = extractionMetadata(fileType, extracted.text, extracted.truncated);
@@ -92,16 +108,21 @@ export async function handleSecureUpload(req: Request) {
         tenderId: tenderId ?? undefined,
       });
 
+      if (!stored) throw new Error("STORAGE_WRITE_DID_NOT_RETURN_A_RECORD");
+      const persistedStored = stored;
+
       if (tenderId) {
-        const record = await prisma.tenderFile.create({
+        const record = await prisma.$transaction(async (tx) => {
+const created = await tx.tenderFile.create({
           data: {
             tenderId,
             fileName,
             originalFileName: fileName,
             mimeType,
             size: buffer.byteLength,
-            storagePath: stored.storagePath,
-            fileContent: stored.fileContent ?? null,
+            storagePath: persistedStored.storagePath,
+            fileContent: persistedStored.fileContent ?? null,
+            ...integrity,
             classification,
             extractedText: extracted.text || null,
             totalPages: perPage.totalDetectedPages,
@@ -111,7 +132,10 @@ export async function handleSecureUpload(req: Request) {
             extractionScore: quality.score,
             pageStatusJson: JSON.stringify(perPage.pages),
           },
-          select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+          select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
+          });
+          await invalidateTenderForSourceRevision(tx, tenderId, "SOURCE_FILE_ADDED");
+          return created;
         });
         tenderFilesCreated += 1;
         results.push({ success: true, scope: "tender", fileRecord: record, extraction, storageProvider: stored.provider });
@@ -137,13 +161,14 @@ export async function handleSecureUpload(req: Request) {
             originalFileName: fileName,
             mimeType,
             size: buffer.byteLength,
-            storagePath: stored.storagePath,
-            fileContent: stored.fileContent ?? null,
+            storagePath: persistedStored.storagePath,
+            fileContent: persistedStored.fileContent ?? null,
+            ...integrity,
             category,
             extractedText: extracted.text || null,
             metadata: JSON.stringify({ category, autoDetected: !providedCategory || providedCategory === "AUTO", storageProvider: stored.provider, ...extraction }),
           },
-          select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, createdAt: true },
+          select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
         });
         companyFilesCreated += 1;
         results.push({ success: true, scope: "company", docRecord: record, extraction, storageProvider: stored.provider });
@@ -159,7 +184,7 @@ export async function handleSecureUpload(req: Request) {
       }
     } catch (error) {
       if (stored) {
-        await storage.deleteFile({ storagePath: stored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
+        await storage.deleteFile({ storagePath: persistedStored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
       }
       logger.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
       results.push({ success: false, fileName: file.name, error: "Upload processing failed. Use the request ID when contacting support.", requestId });

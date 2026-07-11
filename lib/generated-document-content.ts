@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { getStorageAdapter } from "./storage";
+import { inspectActualFileBytes, requireVerifiedPersistedFileBytes } from "./engine/persisted-byte-integrity";
 
 export type GeneratedContentSource = "storage" | "legacy";
 
@@ -9,6 +10,11 @@ type GeneratedDocumentContentLike = {
   exactFileName?: string | null;
   storagePath?: string | null;
   fileContent?: string | null;
+  contentSha256?: string | null;
+  contentByteLength?: number | null;
+  contentMimeType?: string | null;
+  detectedFormat?: string | null;
+  integrityStatus?: string | null;
 };
 
 function normalizeGeneratedFileName(name: string): string {
@@ -28,9 +34,26 @@ function inferMimeType(filename: string): string {
 
 export async function readGeneratedDocumentContent(
   doc: GeneratedDocumentContentLike,
+  options: { requireVerifiedIntegrity?: boolean } = {},
 ): Promise<{ buffer: Buffer; base64: string; filename: string; mimeType: string; source: GeneratedContentSource }> {
   const filename = doc.exactFileName ?? normalizeGeneratedFileName(doc.name);
   const mimeType = inferMimeType(filename);
+
+  const verifyWhenRequired = (buffer: Buffer) => {
+    if (!options.requireVerifiedIntegrity) return;
+    requireVerifiedPersistedFileBytes({
+      bytes: buffer,
+      filename,
+      claimedMimeType: mimeType,
+      persisted: {
+        contentSha256: doc.contentSha256 ?? null,
+        contentByteLength: doc.contentByteLength ?? null,
+        contentMimeType: doc.contentMimeType ?? null,
+        detectedFormat: doc.detectedFormat ?? null,
+        integrityStatus: doc.integrityStatus ?? "UNKNOWN",
+      },
+    });
+  };
 
   if (doc.storagePath) {
     try {
@@ -40,6 +63,7 @@ export async function readGeneratedDocumentContent(
         fileContent: doc.fileContent ?? null,
         fileName: filename,
       });
+      verifyWhenRequired(buffer);
       return { buffer, base64: buffer.toString("base64"), filename, mimeType, source: "storage" };
     } catch {
       // Storage read failed — fall through to legacy fileContent if available
@@ -48,6 +72,7 @@ export async function readGeneratedDocumentContent(
 
   if (doc.fileContent) {
     const buffer = Buffer.from(doc.fileContent, "base64");
+    verifyWhenRequired(buffer);
     return { buffer, base64: doc.fileContent, filename, mimeType, source: "legacy" };
   }
 
@@ -62,6 +87,10 @@ export function generatedDocumentHasContent(doc: {
 }
 
 export async function writeGeneratedDocumentContent(docId: string, buffer: Buffer, filename: string, mimeType: string) {
+  const integrity = inspectActualFileBytes({ bytes: buffer, filename, claimedMimeType: mimeType });
+  if (integrity.integrityStatus !== "VERIFIED") {
+    throw new Error(integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED");
+  }
   const adapter = getStorageAdapter();
   const saved = await adapter.putFile(buffer, { fileName: filename, mimeType });
   await prisma.generatedDocument.update({
@@ -70,6 +99,13 @@ export async function writeGeneratedDocumentContent(docId: string, buffer: Buffe
       storagePath: saved.storagePath,
       fileContent: saved.fileContent ?? null,
       exactFileName: filename,
+      contentSha256: integrity.contentSha256,
+      contentByteLength: integrity.contentByteLength,
+      contentMimeType: integrity.contentMimeType,
+      detectedFormat: integrity.detectedFormat,
+      integrityStatus: integrity.integrityStatus,
+      integrityVerifiedAt: integrity.integrityVerifiedAt,
+      integrityFailureCode: integrity.integrityFailureCode,
     },
   });
   return { ...saved, bytes: buffer.byteLength };

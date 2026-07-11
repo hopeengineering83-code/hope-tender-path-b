@@ -21,7 +21,7 @@ export async function checkExportFileByteReadiness(docs: ExportReadyDocument[]):
       reasons.push("MISSING_FILE_BYTES: document has neither inline file content nor storage-backed bytes.");
     } else {
       try {
-        const content = await readGeneratedDocumentContent(doc);
+        const content = await readGeneratedDocumentContent(doc, { requireVerifiedIntegrity: true });
         if (!content.buffer || content.buffer.byteLength === 0) {
           reasons.push("EMPTY_FILE_BYTES: final export file is empty.");
         } else {
@@ -29,7 +29,10 @@ export async function checkExportFileByteReadiness(docs: ExportReadyDocument[]):
           if (!signature.ok) reasons.push(`FILE_SIGNATURE_MISMATCH: ${signature.reason}`);
         }
       } catch (error) {
-        reasons.push(`STORAGE_BYTES_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`);
+        const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+          ? error.message
+          : "STORAGE_BYTES_UNAVAILABLE";
+        reasons.push(`FILE_BYTES_NOT_VERIFIED: ${code}`);
       }
     }
 
