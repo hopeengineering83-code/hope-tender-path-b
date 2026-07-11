@@ -203,8 +203,11 @@ describe("10. unconfigured providers are skipped", () => {
 
 // 12. Attempt budget
 describe("12. provider attempt budget", () => {
-  it("caps actual outbound attempts at 3 by default", () => {
-    assert.equal(MAX_PROVIDER_ATTEMPTS_PER_REQUEST, 3);
+  it("caps actual outbound attempts at 5 by default (raised from 3 in PR #1041)", () => {
+    // Default raised from 3 to 5 so later capable providers (Groq, OpenRouter,
+    // Gemini, etc.) get tried when earlier ones (Z.ai, Cerebras, Mistral) fail.
+    // Set AI_MAX_PROVIDER_ATTEMPTS=3 to restore the old tighter budget.
+    assert.equal(MAX_PROVIDER_ATTEMPTS_PER_REQUEST, 5);
   });
   it("reserves time for error handling within the shared deadline", () => {
     assert.equal(ERROR_HANDLING_RESERVE_MS, 5000);

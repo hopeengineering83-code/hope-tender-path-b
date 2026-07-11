@@ -9,6 +9,7 @@ import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
 import { applyMainEngineBestAvailableSelection } from "./main-engine-selection-policy";
 import { applyAIRematchToMainEngine } from "./main-engine-ai-rematch";
+import { buildDeterministicFallbackRows, mergeFallbackRows } from "./deterministic-fallback-rows";
 import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
@@ -352,7 +353,49 @@ export async function runTenderEngine(
     });
 
     progress("engine.compliance", "Building compliance matrix + gap analysis");
-    const compliance = buildCompliance(createdRequirements, knowledge, matching);
+    let compliance = buildCompliance(createdRequirements, knowledge, matching);
+
+    // ─── Deterministic fallback rows when AI matching failed ──────────────
+    // If AI rematch was attempted but failed (aiApplied=false AND a warning
+    // was set), AND the requirement source extractor matched requirements to
+    // source paragraphs, create REVIEW_REQUIRED fallback rows so the user
+    // sees a reviewable evidence state instead of a misleading 0-row matrix.
+    // These rows are NEVER FULL/SUBSTANTIAL — they surface the
+    // EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED blocker.
+    let evidenceMatchingBlocker: { code: string; message: string } | null = null;
+    const aiRematchFailed = !mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null;
+    const hasSourceGroundedRequirements = createdRequirements.some(
+      ({ requirement }) =>
+        requirement.sourceTenderFileId &&
+        requirement.sourcePageNumber != null &&
+        requirement.sourceExactQuote &&
+        requirement.sourceExactQuote.trim().length > 0 &&
+        (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
+    );
+    if (aiRematchFailed && hasSourceGroundedRequirements) {
+      const fallback = buildDeterministicFallbackRows(
+        createdRequirements.map(({ id, requirement }) => ({
+          id,
+          title: requirement.title,
+          description: requirement.description,
+          requirementType: requirement.requirementType,
+          priority: requirement.priority,
+          sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+          sourcePageNumber: requirement.sourcePageNumber ?? null,
+          sourceExactQuote: requirement.sourceExactQuote ?? null,
+          sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
+        })),
+      );
+      if (fallback.rows.length > 0) {
+        compliance = mergeFallbackRows(compliance, fallback.rows);
+        evidenceMatchingBlocker = {
+          code: fallback.blockerCode!,
+          message: fallback.blockerMessage!,
+        };
+        logger.info(`[run-tender-engine] Created ${fallback.rows.length} deterministic fallback compliance rows (AI matching failed, source extraction succeeded).`);
+      }
+    }
+
     const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
     const documentPlan = buildDocumentPlan(createdRequirements);
     const hardGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL").length;
@@ -544,7 +587,7 @@ export async function runTenderEngine(
       },
     });
 
-    return prisma.tender.findUnique({
+    const tenderResult = await prisma.tender.findUnique({
       where: { id: tenderId },
       include: {
         files: { select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
@@ -555,6 +598,26 @@ export async function runTenderEngine(
         complianceMatrix: { orderBy: { createdAt: "asc" } },
         generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
       },
+    });
+
+    // ─── Engine response honesty ──────────────────────────────────────────
+    // The engine must NOT return a misleading success if AI matching failed.
+    // Return partial:true + blockers[] + nextAction when AI matching failed
+    // but deterministic extraction succeeded. The UI uses these fields to
+    // surface the real state instead of a misleading "engine completed" green.
+    const partial = evidenceMatchingBlocker !== null;
+    const blockers = evidenceMatchingBlocker ? [evidenceMatchingBlocker.message] : [];
+    const nextAction = evidenceMatchingBlocker
+      ? "REVIEW_MATCHING_INPUTS"
+      : analysisMethod === "REGEX_FALLBACK_AI_ERROR"
+        ? "RETRY_ENGINE_SMALLER_BATCH"
+        : null;
+    return Object.assign(tenderResult ?? {}, {
+      partial,
+      blockers,
+      nextAction,
+      analysisMethod,
+      evidenceMatchingBlocker,
     });
   } catch (error) {
     await writeEngineRunAudit({ userId, tenderId, action: "TENDER_ENGINE_RUN_FAILED", description: `Tender engine run failed for "${tender.title}"`, metadata: { engineRunId, startedAt: startedAt.toISOString(), failedAt: new Date().toISOString(), durationMs: Date.now() - startedAt.getTime(), error: error instanceof Error ? error.message : String(error) } });
