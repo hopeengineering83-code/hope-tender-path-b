@@ -2,6 +2,11 @@
   "framework": "nextjs",
   "buildCommand": "npm run vercel-build",
   "installCommand": "npm ci",
+  "git": {
+    "deploymentEnabled": {
+      "fix/production-engine-full-gap-closure-no-deploy": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/deadline-alerts",

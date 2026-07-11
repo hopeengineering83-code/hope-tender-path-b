@@ -1,23 +1,18 @@
 /**
- * Deterministic fallback compliance rows.
+ * Unmatched requirement diagnostics for AI evidence-matching failures.
  *
- * When AI matching/rematch fails after the requirement source extractor has
- * matched requirements to source paragraphs, the engine must NOT silently
- * leave 0 compliance rows. This module creates deterministic REVIEW_REQUIRED /
- * PARTIAL compliance rows for every source-grounded requirement so the user
- * sees a reviewable evidence state instead of a misleading empty matrix.
- *
- * KEY RULES (enforced by the type signatures and the builder):
- *   - These rows are NEVER FULL/SUBSTANTIAL — they are REVIEW_REQUIRED or PARTIAL.
- *   - They are only created when the requirement has traceable source support
- *     (sourceTenderFileId + sourcePageNumber + sourceExactQuote).
- *   - They surface a clear blocker: EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED.
- *   - They do NOT mark anything as confirmed without traceable source.
- *   - Generation remains blocked until evidence is confirmed.
+ * A tender paragraph proves what the buyer requires. It never proves that Hope
+ * satisfies the requirement. These compatibility-shaped rows are diagnostics
+ * only and MUST NOT be merged into ComplianceResult.matrices or persisted as
+ * ComplianceMatrix evidence.
  */
 
 import type { ComplianceResult } from "./types";
 
+/**
+ * Compatibility type retained for callers while the engine diagnostic model is
+ * migrated. None of these values represent Company Vault evidence.
+ */
 export type FallbackComplianceRow = {
   requirementId: string;
   requirementTitle: string;
@@ -49,15 +44,9 @@ type SourceGroundedRequirement = {
 };
 
 /**
- * Build deterministic REVIEW_REQUIRED compliance rows for requirements that
- * have traceable source support. Called when AI matching failed but the
- * requirement source extractor succeeded.
- *
- * These rows:
- *   - Are NEVER FULL/SUBSTANTIAL (supportStatus is REVIEW_REQUIRED or PARTIAL)
- *   - Are only created for requirements with sourceTenderFileId + sourcePageNumber
- *   - Surface the EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED blocker
- *   - Do NOT mark anything as confirmed
+ * Build non-evidentiary diagnostics for source-grounded requirements when AI
+ * evidence matching fails. The diagnostic identifies the unmatched buyer
+ * requirement and recovery action. It does not assert company support.
  */
 export function buildDeterministicFallbackRows(
   requirements: SourceGroundedRequirement[],
@@ -66,8 +55,6 @@ export function buildDeterministicFallbackRows(
   let sourceGroundedCount = 0;
 
   for (const req of requirements) {
-    // Only create a fallback row when the requirement has traceable source
-    // support — sourceTenderFileId + sourcePageNumber + a non-empty quote.
     const hasTraceableSource = Boolean(
       req.sourceTenderFileId &&
       req.sourcePageNumber != null &&
@@ -78,9 +65,6 @@ export function buildDeterministicFallbackRows(
     if (!hasTraceableSource) continue;
 
     sourceGroundedCount++;
-
-    // The support status is REVIEW_REQUIRED for mandatory/critical requirements
-    // (they need human confirmation before generation) and PARTIAL for others.
     const isMandatory = req.priority === "MANDATORY" || req.priority === "CRITICAL";
     const supportStatus: FallbackComplianceRow["supportStatus"] = isMandatory
       ? "REVIEW_REQUIRED"
@@ -92,18 +76,14 @@ export function buildDeterministicFallbackRows(
       requirementTitle: req.title,
       supportStatus,
       supportStrength,
-      evidenceSummary: `Source paragraph extracted (page ${req.sourcePageNumber}) but AI matching failed. Manual evidence review required before this requirement can be marked as covered.`,
-      evidenceType: "REVIEW_REQUIRED_FALLBACK",
-      evidenceSource: "Source-grounded fallback (AI matching failed)",
-      evidenceReference: `Source page ${req.sourcePageNumber}`,
-      notes: `EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED: Requirement has traceable source support (page ${req.sourcePageNumber}) but AI evidence matching did not complete. Review and confirm evidence manually before generation.`,
+      evidenceSummary: `Unmatched buyer requirement on page ${req.sourcePageNumber}. No Company Vault evidence was created because AI evidence matching did not complete.`,
+      evidenceType: "UNMATCHED_REQUIREMENT_DIAGNOSTIC",
+      evidenceSource: "NO_COMPANY_VAULT_EVIDENCE",
+      evidenceReference: undefined,
+      notes: `EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED: Link a verified Company Vault record before this requirement can count as covered; generation remains blocked until evidence is manually confirmed.`,
     });
   }
 
-  // Only surface the blocker when at least one source-grounded requirement
-  // got a fallback row. If no requirements had source support, the blocker
-  // is not EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED — it's a different
-  // problem (source extraction itself failed or no requirements exist).
   if (sourceGroundedCount === 0) {
     return { rows: [], blockerCode: null, blockerMessage: null };
   }
@@ -111,39 +91,22 @@ export function buildDeterministicFallbackRows(
   return {
     rows,
     blockerCode: "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED",
-    blockerMessage: `AI evidence matching failed, but ${sourceGroundedCount} requirement(s) have traceable source support. Review-required fallback rows created — generation remains blocked until evidence is manually confirmed.`,
+    blockerMessage: `AI evidence matching failed for ${sourceGroundedCount} source-grounded requirement(s). No Company Vault evidence was created. Review matching inputs and link verified Vault evidence before generation.`,
   };
 }
 
 /**
- * Merge deterministic fallback rows into an existing compliance result.
- * If the existing result already has rows (e.g. from deterministic matching),
- * the fallback rows are only added for requirements that have NO existing row.
- * This prevents duplicates while ensuring no source-grounded requirement is
- * left without a compliance row.
+ * SECURITY BOUNDARY: tender-source diagnostics must never become compliance
+ * evidence. Keep the existing result unchanged. The caller may use the returned
+ * diagnostic rows only to surface blockers and recovery guidance.
+ *
+ * The function name is retained temporarily to avoid a broad runtime refactor;
+ * its fail-closed no-op behavior is intentional and regression-tested.
  */
 export function mergeFallbackRows(
   existing: ComplianceResult,
   fallbackRows: FallbackComplianceRow[],
 ): ComplianceResult {
-  if (fallbackRows.length === 0) return existing;
-  const existingRequirementIds = new Set(existing.matrices.map((m) => m.requirementId));
-  const newRows = fallbackRows
-    .filter((r) => !existingRequirementIds.has(r.requirementId))
-    .map((r) => ({
-      requirementTitle: r.requirementTitle,
-      requirementId: r.requirementId,
-      supportStatus: r.supportStatus,
-      supportStrength: r.supportStrength,
-      evidenceSummary: r.evidenceSummary,
-      evidenceType: r.evidenceType,
-      evidenceSource: r.evidenceSource,
-      evidenceReference: r.evidenceReference,
-      notes: r.notes,
-    }));
-  if (newRows.length === 0) return existing;
-  return {
-    matrices: [...existing.matrices, ...newRows],
-    gaps: existing.gaps,
-  };
+  void fallbackRows;
+  return existing;
 }
