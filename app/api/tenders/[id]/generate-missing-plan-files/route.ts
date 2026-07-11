@@ -8,6 +8,7 @@ import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-pl
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logger } from "../../../../../lib/observability";
 
@@ -310,6 +311,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       exactFileName: file.exactFileName,
       exactOrder: file.exactOrder,
       fileContent: generated.fileContent,
+      ...integrity,
       generationStatus: "GENERATED",
       validationStatus: generated.validationStatus,
       reviewStatus: generated.reviewStatus,
@@ -354,6 +356,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const fileName = row.exactFileName ?? row.name ?? "Unnamed document";
     const documentType = documentTypeFor(fileName, row.documentType ?? "");
     const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName, documentType, requirements: tender.requirements });
+    if (generated.format !== "DOCX" || !fileName.toLowerCase().endsWith(".docx")) {
+      await prisma.generatedDocument.update({
+        where: { id: row.id },
+        data: {
+          generationStatus: "PLANNED",
+          validationStatus: "PENDING",
+          reviewStatus: generated.reviewStatus,
+          fileContent: null,
+          contentSummary: generated.contentSummary,
+          integrityStatus: "UNKNOWN",
+          integrityVerifiedAt: null,
+          integrityFailureCode: "REQUIRES_ORIGINAL_OR_FORMAT_FINALIZATION",
+          updatedAt: new Date(),
+        },
+      });
+      skipped.push(`${fileName} (kept PLANNED; requires original or format-specific finalization)`);
+      continue;
+    }
+    const integrity = verifiedIntegrityDataFromBase64({
+      fileContent: generated.fileContent,
+      filename: fileName,
+      claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
     await prisma.generatedDocument.update({
       where: { id: row.id },
       data: {
@@ -362,6 +387,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         documentType,
         format: generated.format,
         fileContent: generated.fileContent,
+        ...integrity,
         generationStatus: "GENERATED",
         validationStatus: generated.validationStatus,
         reviewStatus: generated.reviewStatus,
