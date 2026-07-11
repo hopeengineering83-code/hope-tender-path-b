@@ -195,10 +195,15 @@ describe("createAnalysisJob() concurrency safety (BLOCKER 2)", { skip: !RUN_DB_I
       },
     });
 
-    // Temporarily mock computeAnalysisContentHash to return the non-retryable hash
-    const originalHash = require("../lib/engine/tender-analysis-content").computeAnalysisContentHash;
-    require("../lib/engine/tender-analysis-content").computeAnalysisContentHash = () =>
-      "non-retryable-hash";
+    // Temporarily mock computeAnalysisContentHash to return the non-retryable hash.
+    // Use Object.defineProperty because ESM exports may be read-only (getter-only properties).
+    const tacModule = require("../lib/engine/tender-analysis-content");
+    const originalHash = tacModule.computeAnalysisContentHash;
+    Object.defineProperty(tacModule, "computeAnalysisContentHash", {
+      value: () => "non-retryable-hash",
+      writable: true,
+      configurable: true,
+    });
 
     try {
       // Attempt to create a job for the same tender (should throw)
@@ -214,7 +219,11 @@ describe("createAnalysisJob() concurrency safety (BLOCKER 2)", { skip: !RUN_DB_I
       assert.ok(job?.errorMessage, "Error message should be preserved");
     } finally {
       // Restore original function
-      require("../lib/engine/tender-analysis-content").computeAnalysisContentHash = originalHash;
+      Object.defineProperty(tacModule, "computeAnalysisContentHash", {
+        value: originalHash,
+        writable: true,
+        configurable: true,
+      });
 
       // Clean up
       await prisma.aiAnalyzeRetryState.deleteMany({ where: { jobId: failedJob.id } });
