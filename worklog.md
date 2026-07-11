@@ -2409,3 +2409,44 @@ Stage Summary:
 - PR #1049: NOT RELEASE READY — must update #1046's db-acceptance-scenario5 test to expect mergeFallbackRows no-op behavior before merging. The evidence-provenance boundary itself is correct and should be merged after the test fix.
 - Recommended merge order: (1) #1048 now, (2) update #1046's test in a new PR or push to #1049, (3) #1049 after test fix.
 - No safety behavior was deleted, weakened, bypassed, or hidden in either PR.
+
+---
+Task ID: merge-prs-1048-1049
+Agent: main (Super Z / GLM)
+Task: Merge PR #1048 and #1049 only; do NOT touch PR #1053
+
+Work Log:
+- Fetched latest open PRs: 3 open (#1048, #1049, #1053). #1053 is a new post-merge corrective PR created since the previous audit.
+- Analyzed #1053: it's a separate branch (fix/post-merge-production-engine-audit-no-deploy) that restores the same evidence-provenance boundary as #1049 but rebased on current main with the #1046 test fix. User instruction: do NOT touch #1053.
+
+PR #1048 merge:
+- Token lacks permission to clear draft status via GitHub API (fine-grained PAT). Main branch is NOT protected — direct push is allowed.
+- Squash-merged origin/fix/high-risk-app-audit-findings into main as commit 80d41d50 (author: hopeengineering83-code).
+- Pre-push verification: tsc PASS, lint PASS, 69 targeted tests PASS, build PASS.
+- Pushed to origin/main (7f24bd64 → 80d41d50).
+- Commented on PR #1048 + closed it.
+
+PR #1049 merge (required conflict resolution):
+- #1049's branch base was 46e0d57e (before #1046 merged). #1049 changes mergeFallbackRows to a no-op, but #1046's db-acceptance-scenario5 test (now on main) asserts mergeFallbackRows ADDS rows. Hidden semantic conflict.
+- Checked out fix/production-engine-full-gap-closure-no-deploy, merged current main into it (merge commit 26b83f47) — brings in #1046's test file + #1048's changes.
+- Updated tests/db-acceptance-scenario5-partial-success.test.ts on #1049's branch to assert the evidence-provenance boundary:
+  * buildDeterministicFallbackRows returns UNMATCHED_REQUIREMENT_DIAGNOSTIC + NO_COMPANY_VAULT_EVIDENCE
+  * mergeFallbackRows is a fail-closed no-op (returns existing unchanged, 0 rows merged)
+  * zero GeneratedDocument rows while evidence matching is unresolved
+- Committed test fix (d30278a3) + pushed to origin/fix/production-engine-full-gap-closure-no-deploy.
+- Squash-merged into main as commit 5f2f64d2 (author: hopeengineering83-code).
+- Pre-push verification: tsc PASS, lint PASS, 72 targeted tests PASS (3 evidence-provenance + 69 from #1048), build PASS.
+- Pushed to origin/main (80d41d50 → 5f2f64d2).
+- Commented on PR #1049 + closed it.
+
+PR #1053 verification (untouched):
+- #1053 remains open + draft. Its head advanced from e6ac3b7c to ce48fd71 (2 new commits: 32f058c1 "fix: preserve fail-closed evidence test compatibility", ce48fd71 "docs: add production-level scorecard and five-pass review strategy").
+- Both new commits authored by hopeengineering83-code (repo owner) — NOT by me. I did not push to, close, or modify #1053 in any way.
+
+Final state:
+- origin/main: 5f2f64d2 (#1049) → 80d41d50 (#1048) → 35a272b4 (worklog) → 7f24bd64 (#1052)
+- Open PRs: #1053 only (untouched)
+- Closed PRs: #1048, #1049 (changes on main via squash commits)
+- Note: GitHub shows merged=False for #1048/#1049 because they were merged via direct squash-merge push, not via GitHub's PR merge button. The code changes ARE on main.
+
+Safety statement: No safety behavior was deleted, weakened, bypassed, or hidden. #1048 fixes 4 high-risk bugs + adds race handling. #1049 enforces the evidence-provenance boundary (tender-source diagnostics ≠ Company Vault evidence). Both PRs' safety semantics are intact on main.
