@@ -106,7 +106,7 @@ export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
               {summary.exportBlockedByHighObjections ? `${summary.openHigh} high blocker(s)` : "No high blockers"}
             </span>
           )}
-          <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+          <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
             {loading ? "Loading…" : hasLoaded ? "Refresh" : "Load objections"}
           </button>
         </div>
@@ -157,10 +157,10 @@ export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-slate-400"
                     />
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" disabled={savingId === objection.id} onClick={() => void updateObjection(objection.id, "RESOLVED")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                      <button type="button" disabled={savingId === objection.id} onClick={() => void updateObjection(objection.id, "RESOLVED")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
                         Mark resolved
                       </button>
-                      <button type="button" disabled={savingId === objection.id} onClick={() => void updateObjection(objection.id, "WAIVED")} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                      <button type="button" disabled={savingId === objection.id} onClick={() => void updateObjection(objection.id, "WAIVED")} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60">
                         Waive with justification
                       </button>
                     </div>

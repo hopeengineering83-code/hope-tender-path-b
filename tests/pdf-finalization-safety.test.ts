@@ -12,6 +12,7 @@ import {
   checkPdfConversionCapability,
   finalizeRequiredPdf,
   internalArtifactIssues,
+  isBase64PdfContent,
   normalizeFileBaseName,
   resolveRequiredPdfFileName,
   validatePdfBytes,
@@ -311,6 +312,50 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       assert.equal(spec!.path, "/api/tenders/{tenderId}/finalize-pdf");
       assert.equal(getRecoveryCommandActionSpec("TENDER_REQUIRES_PDF")?.path, "/api/tenders/{tenderId}/finalize-pdf");
       assert.equal(isMutationAction("FINALIZE_REQUIRED_PDF"), true, "must be classified as a mutation (hidden from REVIEWER)");
+    });
+
+    it("readiness panel renders an executable, role-gated Finalize Required PDF control", () => {
+      const panelSrc = readFileSync(resolve(process.cwd(), "components/generation-readiness-panel.tsx"), "utf8");
+      const buttonSrc = readFileSync(resolve(process.cwd(), "components/finalize-required-pdf-button.tsx"), "utf8");
+      assert.ok(panelSrc.includes("FinalizeRequiredPdfButton"), "panel must render the execute control");
+      assert.ok(panelSrc.includes("canMutate &&"), "execute control must be hidden for non-mutating roles");
+      assert.ok(panelSrc.includes("canMutateTender"), "role gating must use the shared capability helper");
+      assert.ok(buttonSrc.includes("/finalize-pdf"), "button must POST the finalize-pdf route");
+      assert.ok(buttonSrc.includes('method: "POST"'), "button must POST, not navigate");
+      assert.ok(!buttonSrc.includes("String(err"), "button must not surface raw errors");
+    });
+
+    it("finalize-pdf gate uses the missing-plan-file purpose, not the final-zip completeness check", () => {
+      assert.ok(
+        finalizeSrc.includes('purpose: "generate-missing-plan-files"'),
+        "final-zip purpose would require the PDF this route creates to already exist (always CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE)",
+      );
+      assert.ok(!finalizeSrc.includes('purpose: "final-zip"'), "final-zip purpose must be gone from finalize-pdf");
+    });
+
+    it("finalize-pdf treats only real %PDF bytes as satisfying a required PDF — inline AND storage-backed", () => {
+      assert.ok(finalizeSrc.includes("isBase64PdfContent"), "satisfaction check must verify the %PDF signature via the shared helper");
+      const satisfactionBlock = finalizeSrc.slice(finalizeSrc.indexOf("satisfiedNames"), finalizeSrc.indexOf("let targets"));
+      assert.ok(satisfactionBlock.includes("readGeneratedDocumentContent"), "storage-backed rows must have their real bytes loaded and signature-checked");
+      assert.ok(!finalizeSrc.includes("Boolean(d.storagePath)"), "storage-backed rows must not be trusted blindly");
+    });
+
+    it("isBase64PdfContent behaves correctly on real byte fixtures", async () => {
+      assert.equal(isBase64PdfContent(Buffer.from("%PDF-1.7\nbody").toString("base64")), true, "real PDF base64 must pass");
+      assert.equal(isBase64PdfContent(await makeDocxBase64(GOOD_TEXT)), false, "DOCX base64 must fail");
+      assert.equal(isBase64PdfContent("not-base64-pdf-at-all"), false, "junk must fail");
+      assert.equal(isBase64PdfContent(""), false);
+      assert.equal(isBase64PdfContent(null), false);
+    });
+
+    it("finalize-pdf resolves a concurrent-create race with a structured conflict, not a 500", () => {
+      assert.ok(finalizeSrc.includes('"P2002"'), "must recognize the unique-violation code");
+      assert.ok(finalizeSrc.includes("PDF_FINALIZE_CONFLICT"), "must surface a structured conflict code");
+      assert.ok(finalizeSrc.includes("finalized by another request"), "conflict message must be safe and specific");
+    });
+
+    it("finalize-pdf rejects an explicit source whose name does not match the required PDF", () => {
+      assert.ok(finalizeSrc.includes("PDF_SOURCE_NAME_MISMATCH"), "explicit docId must enforce the same base-name match as the automatic lookup");
     });
 
     it("finalize-pdf route persists the PDF as PENDING (no validation/approval bypass) behind the central gate", () => {

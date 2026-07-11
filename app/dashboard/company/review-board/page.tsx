@@ -168,7 +168,7 @@ export default function KnowledgeReviewBoardPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => void load()} className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50">Refresh</button>
-          <button onClick={() => void approveVisibleDrafts()} disabled={draftExperts.length + draftProjects.length === 0 || Boolean(workingId)} className="rounded-lg bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50">Approve all visible drafts</button>
+          <button onClick={() => void approveVisibleDrafts()} disabled={draftExperts.length + draftProjects.length === 0 || Boolean(workingId)} className="rounded-lg bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-60">Approve all visible drafts</button>
           <Link href="/dashboard/company/review" className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50">Diagnostics</Link>
           <Link href="/dashboard/company" className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50">Vault</Link>
         </div>
@@ -206,8 +206,8 @@ export default function KnowledgeReviewBoardPage() {
                   <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{snippet(expert.profile)}</p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => void patchRecord("expert", expert.id, "approve")} disabled={workingId === expert.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
-                  <button onClick={() => void patchRecord("expert", expert.id, "reject")} disabled={workingId === expert.id} className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Keep draft</button>
+                  <button onClick={() => void patchRecord("expert", expert.id, "approve")} disabled={workingId === expert.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60">Approve</button>
+                  <button onClick={() => void patchRecord("expert", expert.id, "reject")} disabled={workingId === expert.id} className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60">Keep draft</button>
                 </div>
               </div>
             </div>
@@ -229,8 +229,8 @@ export default function KnowledgeReviewBoardPage() {
                   <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{snippet(project.summary)}</p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => void patchRecord("project", project.id, "approve")} disabled={workingId === project.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
-                  <button onClick={() => void patchRecord("project", project.id, "reject")} disabled={workingId === project.id} className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Keep draft</button>
+                  <button onClick={() => void patchRecord("project", project.id, "approve")} disabled={workingId === project.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60">Approve</button>
+                  <button onClick={() => void patchRecord("project", project.id, "reject")} disabled={workingId === project.id} className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60">Keep draft</button>
                 </div>
               </div>
             </div>

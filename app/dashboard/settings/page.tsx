@@ -172,7 +172,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+          <button type="submit" disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
             {saving?"Saving…":"Save Settings"}
           </button>
           {saved && <span className="text-sm text-green-600">✓ Settings saved</span>}

@@ -172,7 +172,7 @@ function FactActions({
           type="button"
           onClick={handleSaveEdit}
           disabled={busy || !editValue.trim()}
-          className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
         >
           {busy ? "Saving…" : "Save"}
         </button>
@@ -195,7 +195,7 @@ function FactActions({
         onClick={handleIgnore}
         disabled={busy}
         title="Mark this fact as not applicable to this tender"
-        className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+        className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-60"
       >
         Ignore
       </button>
@@ -204,7 +204,7 @@ function FactActions({
         onClick={() => setEditing(true)}
         disabled={busy}
         title="Manually enter a value for this fact"
-        className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+        className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 disabled:opacity-60"
       >
         Edit
       </button>
@@ -213,7 +213,7 @@ function FactActions({
         onClick={handleReExtract}
         disabled={busy}
         title="Re-extract this fact from the tender source"
-        className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+        className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
       >
         Re-extract
       </button>

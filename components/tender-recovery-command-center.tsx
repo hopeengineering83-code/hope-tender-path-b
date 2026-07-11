@@ -51,7 +51,7 @@ type LifecycleResult = {
     hasCooledDownProvider: boolean;
     primaryProvider: string | null;
   };
-  analysisStatus: { source: string; hasText: boolean; score: number | null; canonicalState?: string };
+  analysisStatus: { source: string; hasText: boolean; score: number | null; canonicalState?: string; stale?: boolean; partial?: boolean };
   metadataStatus: {
     completenessRatio: number;
     criticalMissing: string[];
@@ -432,7 +432,12 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
     try {
       const res = await fetch(`/api/tenders/${tenderId}/lifecycle`);
       const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error("Failed to load lifecycle state");
+      // BUG FIX: Previously `!json.ok` was included in the throw predicate.
+      // The lifecycle route sets `ok: true` for transport success and uses
+      // `status` (READY/PARTIAL/BLOCKED) for readiness. A BLOCKED tender
+      // is NOT a transport error — it is a valid payload that the panel
+      // must render as a blocked state. Only throw on HTTP non-2xx.
+      if (!res.ok) throw new Error("Failed to load lifecycle state");
       const result = json as LifecycleResult;
       setData(result);
       return result;
@@ -708,11 +713,13 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
               <StatusRow
                 label="Analysis"
                 value={
-                  data.analysisStatus.canonicalState === "PARTIAL_NEEDS_RESUME"
-                    ? "PARTIAL — resume required"
-                    : data.analysisStatus.source.replace(/_/g, " ")
+                  data.analysisStatus.stale
+                    ? "STALE — re-run required"
+                    : data.analysisStatus.canonicalState === "PARTIAL_NEEDS_RESUME" || data.analysisStatus.partial
+                      ? "PARTIAL — resume required"
+                      : data.analysisStatus.source.replace(/_/g, " ")
                 }
-                ok={data.analysisStatus.source === "AI" && data.analysisStatus.canonicalState !== "PARTIAL_NEEDS_RESUME"}
+                ok={data.analysisStatus.source === "AI" && !data.analysisStatus.stale && !data.analysisStatus.partial && data.analysisStatus.canonicalState !== "PARTIAL_NEEDS_RESUME"}
               />
                {/* Tender Details status row removed — tender facts are advisory only */}
               <StatusRow

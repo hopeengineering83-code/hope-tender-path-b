@@ -138,7 +138,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                     <button
                       onClick={() => void loadPreview(v.id)}
                       disabled={loadingPreview && previewId !== v.id}
-                      className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                      className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-60"
                     >
                       {loadingPreview && previewId === v.id ? "Loading…" : "Preview"}
                     </button>
@@ -155,7 +155,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                         <button
                           onClick={() => void restore(v.id)}
                           disabled={restoringId === v.id}
-                          className="rounded bg-amber-600 px-2 py-0.5 text-xs text-white hover:bg-amber-700 disabled:opacity-50"
+                          className="rounded bg-amber-600 px-2 py-0.5 text-xs text-white hover:bg-amber-700 disabled:opacity-60"
                         >
                           {restoringId === v.id ? "Restoring…" : "Confirm"}
                         </button>
@@ -198,7 +198,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
           <button
             onClick={() => void loadDiff(diffBaseId, diffCompareId)}
             disabled={!diffCompareId || loadingDiff}
-            className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-700 disabled:opacity-60"
           >
             {loadingDiff ? "Loading…" : "Show Diff"}
           </button>

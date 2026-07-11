@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { getSession } from "../lib/auth";
+import { FinalizeRequiredPdfButton } from "./finalize-required-pdf-button";
+import { canMutateTender } from "../lib/recovery-command-actions";
+import { getCurrentUser } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
@@ -73,8 +75,12 @@ export async function GenerationReadinessPanel({
   tenderId: string;
   readiness?: TenderGenerationReadiness | null;
 }) {
-  const userId = await getSession();
-  if (!userId) return null;
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const userId = user.id;
+  // Mutation controls (Execute buttons) are HIDDEN for roles that cannot
+  // mutate tenders — REVIEWER/VIEWER only ever see read-only links.
+  const canMutate = canMutateTender(user.role);
 
   try {
     const readiness = providedReadiness === undefined
@@ -109,7 +115,22 @@ export async function GenerationReadinessPanel({
       b.code === "BUILD_PLAN_MISSING" || b.code === "BUILD_PLAN_STALE" ||
       b.code === "BUILD_PLAN_NOT_CONFIRMED" || b.code === "BUILD_PLAN_ITEMS_INVALID"
     );
-    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan;
+    // Also check for stale analysis and missing compliance rows — these are
+    // canonical snapshot blockers that the strict gate may not catch.
+    // Per spec: Generation Readiness must not show "Ready" when the
+    // authoritative snapshot is blocked by stale AI, no compliance rows,
+    // or PDF required but unavailable.
+    const hasStaleAnalysis = blockers.some((b: { code?: string }) =>
+      b.code === "STALE_ANALYSIS" || b.code === "ANALYSIS_HASH_MISMATCH"
+    );
+    const hasNoComplianceRows = blockers.some((b: { code?: string }) =>
+      b.code === "MANDATORY_NO_COMPLIANCE_ROWS" || b.code === "EVIDENCE_NOT_ASSESSED"
+    );
+    const hasPdfRequiredUnavailable = blockers.some((b: { code?: string }) =>
+      b.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE" || b.code === "PDF_CONVERSION_REQUIRED"
+    );
+    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan
+      && !hasStaleAnalysis && !hasNoComplianceRows && !hasPdfRequiredUnavailable;
     const panelClass = effectivelyReady
       ? "border-green-200 bg-green-50"
       : "border-red-200 bg-red-50";
@@ -177,7 +198,12 @@ export async function GenerationReadinessPanel({
               <div key={`${item.code}-${index}`} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{item.message}</span>
-                  <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                  <span className="inline-flex items-center gap-2">
+                    {item.nextAction === "FINALIZE_REQUIRED_PDF" && canMutate && (
+                      <FinalizeRequiredPdfButton tenderId={tenderId} />
+                    )}
+                    <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                  </span>
                 </div>
               </div>
             ))}

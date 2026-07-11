@@ -265,7 +265,7 @@ export function DocumentReviewPanel({
                 disabled={actionInFlight !== null}
                 onClick={() => takeAction(a)}
                 title={a.description}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50 ${a.color}`}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${a.color}`}
               >
                 {actionInFlight === a.key ? "…" : a.label}
               </button>
@@ -327,7 +327,7 @@ export function DocumentReviewPanel({
                 type="button"
                 disabled={newCommentBody.trim().length === 0 || postingComment}
                 onClick={() => void postComment(null, newCommentBody)}
-                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
               >
                 {postingComment ? "Posting…" : "Post comment"}
               </button>
@@ -392,7 +392,7 @@ export function DocumentReviewPanel({
                       type="button"
                       onClick={() => void toggleResolve(c.id, Boolean(c.resolvedAt))}
                       disabled={resolvingCommentId === c.id}
-                      className="text-[11px] font-medium text-slate-600 hover:text-slate-900 disabled:opacity-50"
+                      className="text-[11px] font-medium text-slate-600 hover:text-slate-900 disabled:opacity-60"
                     >
                       {resolvingCommentId === c.id ? "Saving…" : c.resolvedAt ? "Reopen thread" : "Mark resolved"}
                     </button>
@@ -414,7 +414,7 @@ export function DocumentReviewPanel({
                         type="button"
                         disabled={replyBody.trim().length === 0 || postingComment}
                         onClick={() => void postComment(c.id, replyBody)}
-                        className="rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+                        className="rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
                       >
                         {postingComment ? "Posting…" : "Post reply"}
                       </button>

@@ -193,7 +193,7 @@ export default function KnowledgeReviewPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => void load()} className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
-          <button onClick={() => void runRepair()} disabled={repairing} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+          <button onClick={() => void runRepair()} disabled={repairing} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
             {repairing ? "Repairing…" : "Run Knowledge Repair"}
           </button>
           <Link href="/dashboard/company" className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Back to Vault</Link>
@@ -265,7 +265,7 @@ export default function KnowledgeReviewPage() {
               <button
                 onClick={() => void batchReviewExperts()}
                 disabled={selectedExperts.size === 0 || batchingExperts}
-                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-50"
+                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-60"
               >
                 {batchingExperts ? "Marking..." : `Mark ${selectedExperts.size} as Reviewed`}
               </button>
@@ -310,7 +310,7 @@ export default function KnowledgeReviewPage() {
           {draftProjects.length > 0 && (
             <div className="flex gap-2">
               <button onClick={() => setSelectedProjects(new Set(draftProjects.map((p) => p.id)))} className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50">Select all drafts ({draftProjects.length})</button>
-              <button onClick={() => void batchReviewProjects()} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-50">{batchingProjects ? "Marking..." : `Mark ${selectedProjects.size} as Reviewed`}</button>
+              <button onClick={() => void batchReviewProjects()} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-60">{batchingProjects ? "Marking..." : `Mark ${selectedProjects.size} as Reviewed`}</button>
             </div>
           )}
         </div>

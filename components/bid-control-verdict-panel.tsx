@@ -92,6 +92,22 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   const supportPackageReady = Boolean(generationReadiness.supportPackageReady);
   const fullProposalBlockers = generationReadiness.fullProposalBlockers ?? [];
 
+  // Per spec: Bid Control must not show internal cards as Ready when the
+  // authoritative release snapshot is blocked. Check for stale analysis,
+  // no compliance rows, and PDF required but unavailable — these are
+  // canonical snapshot blockers that the strict gate may not catch.
+  const hasStaleAnalysis = fullProposalBlockers.some((b) =>
+    b.code === "STALE_ANALYSIS" || b.code === "ANALYSIS_HASH_MISMATCH"
+  );
+  const hasNoComplianceRows = fullProposalBlockers.some((b) =>
+    b.code === "MANDATORY_NO_COMPLIANCE_ROWS" || b.code === "EVIDENCE_NOT_ASSESSED"
+  );
+  const hasSnapshotBlocker = hasStaleAnalysis || hasNoComplianceRows || !canonical.ok;
+  // If any snapshot blocker exists, force the cards to show Blocked/Stale
+  // instead of Ready — the strict gate alone is not authoritative.
+  const effectiveFullProposalReady = fullProposalReady && !hasSnapshotBlocker;
+  const effectiveSupportPackageReady = supportPackageReady && !hasStaleAnalysis;
+
   const documentBlockersCount = finalPackage.documents.blockers.length;
   const tenderBlockersCount = canonical.summary.tenderLevelBlockers + finalPackage.requirements.blockers.length;
   const advisoryWarningsCount = canonical.summary.advisoryWarnings;
@@ -157,7 +173,9 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         </div>
         <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
           <p className="text-xs text-slate-500">Analysis</p>
-          <p className="text-sm font-bold text-slate-900">{analysisSourceFromNotes(tender.notes)}</p>
+          <p className={`text-sm font-bold ${hasStaleAnalysis ? "text-amber-700" : "text-slate-900"}`}>
+            {hasStaleAnalysis ? "Stale — re-run required" : analysisSourceFromNotes(tender.notes)}
+          </p>
           <p className="text-[10px] text-slate-400">{statusText(tender.status)}</p>
         </div>
       </div>
@@ -175,12 +193,12 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
         <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation.">
           <p className="text-xs text-slate-500">Full proposal</p>
-          <p className={`text-lg font-bold ${fullProposalReady ? "text-emerald-700" : "text-red-700"}`}>{fullProposalReady ? "Ready" : "Blocked"}</p>
+          <p className={`text-lg font-bold ${effectiveFullProposalReady ? "text-emerald-700" : "text-red-700"}`}>{effectiveFullProposalReady ? "Ready" : "Blocked"}</p>
           {fullProposalBlockReason && <p className="mt-0.5 text-[10px] text-red-600 leading-tight">{fullProposalBlockReason}</p>}
         </div>
         <div className="rounded-xl bg-white p-3" title="Support / compliance file generation gate.">
           <p className="text-xs text-slate-500">Support pkg</p>
-          <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
+          <p className={`text-lg font-bold ${effectiveSupportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{effectiveSupportPackageReady ? "Ready" : "Blocked"}</p>
         </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
         <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace / export</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} / {finalExportCandidates}</p>{workspaceDocuments > 0 && finalExportCandidates === 0 && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{workspaceDocuments} workspace rows, 0 export candidates — review quality/classification</p>}</div>

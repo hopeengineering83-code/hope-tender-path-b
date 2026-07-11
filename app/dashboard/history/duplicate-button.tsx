@@ -22,7 +22,7 @@ export function DuplicateButton({ tenderId }: { tenderId: string }) {
 
   return (
     <button onClick={duplicate} disabled={loading}
-      className="text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-40">
+      className="text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-60">
       {loading ? "…" : "Duplicate"}
     </button>
   );

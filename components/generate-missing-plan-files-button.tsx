@@ -72,7 +72,7 @@ export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { ten
       <button
         onClick={run}
         disabled={missingCount <= 0 || running || isPending}
-        className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+        className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {running || isPending ? "Generating missing files…" : `Generate ${missingCount} missing planned file${missingCount === 1 ? "" : "s"}`}
       </button>

@@ -2350,3 +2350,62 @@ Stage Summary:
 - 8 real bugs fixed (3 high severity, 4 medium, 1 cosmetic docs).
 - 28 new regression tests prove the fixes.
 - NOT merged — per user instruction.
+
+---
+Task ID: audit-open-prs-1048-1049
+Agent: main (Super Z / GLM)
+Task: Apply the same 10-gate release audit to ALL currently-open PRs (continuation from previous #1051 audit)
+
+Work Log:
+- Fetched open PR list via GitHub API: only 2 PRs remain open (#1048, #1049). All others from previous summary (#1040, #1042, #1043, #1044, #1046, #1047, #1050, #1051) are now merged/closed.
+- PR #1048 (fix/high-risk-app-audit-findings, draft, 11 files, +423/-33, base=46e0d57e):
+  * CI: 5/5 checks PASS (Vercel Preview, Migrations/integrity/typecheck/lint/tests/build, build, generate, Validate controlled PR route)
+  * Files: finalize-pdf/route.ts, finalize-required-pdf-button.tsx (new), generation-readiness-panel.tsx, export-format-policy.ts, pdf-finalizer.ts, operator_handoff.md, package.json, reconcile-gap-closure.mjs, 3 test files
+  * Local verification in worktree: prisma generate PASS, tsc --noEmit PASS, lint PASS (0 warnings), 69 targeted tests PASS (34 pdf-finalization + 25 export-format + 7 reconcile + 3 subset), build PASS (58/58 pages)
+  * Merge simulation into current main: clean auto-merge (generation-readiness-panel.tsx auto-merges with #1052's changes in different hunks), tsc PASS, lint PASS, 69 tests PASS, build PASS
+  * 0 file overlap with #1049
+  * Fixes 4 high-risk bugs: (1) finalize-pdf gate purpose wrong (final-zip → generate-missing-plan-files), (2) ZIP-gate object-form bypass, (3) wrong-body-under-required-name, (4) bricked re-finalization. Plus: race conflict handling (P2002), storage-byte satisfaction check, truthful reconcile script (Z.ai-first), executable Finalize-PDF control, CI-wired audit scripts.
+- PR #1049 (fix/production-engine-full-gap-closure-no-deploy, draft, 4 files, +216/-63, base=46e0d57e):
+  * CI: 4/4 checks PASS (Migrations/integrity/typecheck/lint/tests/build, build, generate, Validate controlled PR route)
+  * Files: PRODUCTION_ENGINE_GAP_CLOSURE.md (new), deterministic-fallback-rows.ts, evidence-provenance-boundary.test.ts (new), vercel.json
+  * Local verification in worktree: prisma generate PASS, tsc PASS, lint PASS, 3 new tests PASS, build PASS
+  * CRITICAL FINDING: mergeFallbackRows changed to no-op (returns existing unchanged). This conflicts with #1046's db-acceptance-scenario5 test (merged in 52ed6282) which asserts merged.matrices.length === 1 after mergeFallbackRows.
+  * Verified conflict: ran #1049's mergeFallbackRows against #1046's test assertions → merged.matrices.length === 0 (expected 1) → FAIL
+  * #1049's CI passes because #1046's test file does NOT exist on #1049's branch (branched before #1046 merged). Hidden merge conflict — will break CI on merge.
+  * #1049's body explicitly acknowledges: "integration is blocked until its tests assert zero compliance rows from tender-source diagnostics"
+  * vercel.json disables Git deployments for the branch (deployment safety, not a code change)
+  * Evidence-provenance boundary is a legitimate security improvement (tender-source diagnostics should never become Company Vault evidence)
+
+10-GATE VERDICT:
+
+PR #1048:
+  1. PR integration proof: PASS (clean merge, 0 overlap with #1049, auto-merges with #1052's panel changes)
+  2. Screenshot contradiction proof: PASS (34 pdf-finalization tests cover route wiring + UI)
+  3. Runtime/evidence proof: PASS (truthful reconcile script, no stale Mistral-first chain)
+  4. DB acceptance proof: N/A (no DB acceptance test touches #1048's files)
+  5. Final export proof: PASS (ZIP-gate object-form bypass closed, required-PDF satisfaction enforced)
+  6. Icon/UI proof: PASS (FinalizeRequiredPdfButton role-gated via canMutateTender)
+  7. Required commands: PASS (tsc, lint, test, build, audit:release-integrity all green)
+  8. Runtime checks: PASS (all CI checks green on head SHA)
+  9. No false success claims: PASS (no fake success, fail-closed everywhere)
+  10. Safety: PASS — no safety behavior weakened; 4 high-risk bugs fixed
+  VERDICT: RELEASE READY
+
+PR #1049:
+  1. PR integration proof: FAIL (mergeFallbackRows no-op will break #1046's db-acceptance-scenario5 test on merge)
+  2. Screenshot contradiction proof: N/A (no UI changes)
+  3. Runtime/evidence proof: PASS (evidence-provenance boundary is correct)
+  4. DB acceptance proof: FAIL (#1046's test "mergeFallbackRows adds fallback rows" will fail; #1049 doesn't update it)
+  5. Final export proof: PASS (no change to final export path)
+  6. Icon/UI proof: N/A (no UI changes)
+  7. Required commands: PASS (tsc, lint, test, build all green in isolation)
+  8. Runtime checks: PASS (CI green on head SHA, but hidden conflict not caught)
+  9. No false success claims: PASS (vercel.json disables deploy, body says "do not merge")
+  10. Safety: PASS — evidence-provenance boundary strengthens safety (tender-source ≠ evidence)
+  VERDICT: NOT RELEASE READY (blocked by #1046 test conflict)
+
+Stage Summary:
+- PR #1048: RELEASE READY — merge immediately. Fixes 4 high-risk bugs + adds race handling + truthful reconcile + CI-wired audits. Zero conflicts.
+- PR #1049: NOT RELEASE READY — must update #1046's db-acceptance-scenario5 test to expect mergeFallbackRows no-op behavior before merging. The evidence-provenance boundary itself is correct and should be merged after the test fix.
+- Recommended merge order: (1) #1048 now, (2) update #1046's test in a new PR or push to #1049, (3) #1049 after test fix.
+- No safety behavior was deleted, weakened, bypassed, or hidden in either PR.

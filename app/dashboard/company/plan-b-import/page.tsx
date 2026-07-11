@@ -158,7 +158,7 @@ export default function PlanBImportPage() {
         <button
           onClick={() => void submit()}
           disabled={loading}
-          className="mt-5 rounded-xl bg-black px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          className="mt-5 rounded-xl bg-black px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
         >
           {loading ? "Importing exact knowledge…" : "Import Plan B Knowledge"}
         </button>

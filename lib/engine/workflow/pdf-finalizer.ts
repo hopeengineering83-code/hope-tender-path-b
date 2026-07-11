@@ -126,6 +126,16 @@ export function checkPdfConversionCapability(doc: PdfFinalizerSourceDocument): P
   return { ok: true, method: "docx-visible-text" };
 }
 
+/** True when base64 content decodes to bytes starting with the %PDF signature. */
+export function isBase64PdfContent(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    return Buffer.from(value.slice(0, 12), "base64").toString("latin1").startsWith("%PDF");
+  } catch {
+    return false;
+  }
+}
+
 /** Non-empty bytes that start with the %PDF signature. */
 export function validatePdfBytes(bytes: Uint8Array | Buffer | null | undefined): { ok: true } | { ok: false; reason: string } {
   if (!bytes || bytes.length === 0) return { ok: false, reason: "Rendered PDF is empty (0 bytes)." };

@@ -98,7 +98,7 @@ function FieldActionMenu({
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         disabled={saving}
-        className="min-h-[44px] min-w-[44px] rounded border border-slate-300 bg-white px-2 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+        className="min-h-[44px] min-w-[44px] rounded border border-slate-300 bg-white px-2 text-slate-600 hover:bg-slate-50 disabled:opacity-60"
       >
         ⋮
       </button>
@@ -389,7 +389,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
                         type="button"
                         disabled={saving === field.fieldKey}
                         onClick={() => void save(field, "edit", editValue)}
-                        className="min-h-[44px] rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        className="min-h-[44px] rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
                       >
                         Save
                       </button>
@@ -518,7 +518,7 @@ export function ClientSubmissionDetailsPanel({ tenderId, canMutate = false }: { 
                     auditBasis,
                   );
                 }}
-                className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? "Saving…" : "Confirm & save"}
               </button>
