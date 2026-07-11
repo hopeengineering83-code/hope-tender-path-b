@@ -391,13 +391,58 @@ dbDescribe("DB Acceptance — Scenario 2: Blocked-state fixtures", () => {
 
   // ─── Safe public error check for all blocked states ──────────────────────────
   describe("safe public errors — no raw Prisma/SQL/path/key leaks", () => {
-    it("tender data does not leak raw errors", async () => {
-      const tender = await seedTender(prisma, { userId: user.id, suffix: `${suffix}-safe`, title: "Safe Error Tender" });
+    it("no-file tender data does not leak raw errors", async () => {
+      const t = await seedTender(prisma, { userId: user.id, suffix: `${suffix}-safe-nofile`, title: "Safe No File" });
       try {
-        const t = await prisma.tender.findUnique({ where: { id: tender.id } });
-        assertSafePublicError(t);
+        const tender = await prisma.tender.findUnique({ where: { id: t.id } });
+        assertSafePublicError(tender);
       } finally {
-        await cleanupTender(prisma, tender.id);
+        await cleanupTender(prisma, t.id);
+      }
+    });
+
+    it("weak-extraction tender data does not leak raw errors", async () => {
+      const t = await seedTender(prisma, {
+        userId: user.id,
+        suffix: `${suffix}-safe-weak`,
+        title: "Safe Weak",
+        analysisExtractionStatus: "OCR_REQUIRED",
+      });
+      try {
+        const tender = await prisma.tender.findUnique({ where: { id: t.id } });
+        assertSafePublicError(tender);
+      } finally {
+        await cleanupTender(prisma, t.id);
+      }
+    });
+
+    it("partial-AI tender data does not leak raw errors", async () => {
+      const t = await seedTender(prisma, {
+        userId: user.id,
+        suffix: `${suffix}-safe-partial`,
+        title: "Safe Partial",
+        analysisExtractionStatus: "AI_ANALYSIS_PARTIAL",
+      });
+      try {
+        const tender = await prisma.tender.findUnique({ where: { id: t.id } });
+        assertSafePublicError(tender);
+      } finally {
+        await cleanupTender(prisma, t.id);
+      }
+    });
+
+    it("missing-PDF tender data does not leak raw errors", async () => {
+      const t = await seedTender(prisma, {
+        userId: user.id,
+        suffix: `${suffix}-safe-nopdf`,
+        title: "Safe No PDF",
+        exactFileNaming: JSON.stringify([{ exactFileName: "Technical Proposal.pdf", required: true, format: "pdf" }]),
+      });
+      try {
+        const tender = await prisma.tender.findUnique({ where: { id: t.id } });
+        assertSafePublicError(tender);
+      } finally {
+        await cleanupTender(prisma, t.id);
       }
     });
   });

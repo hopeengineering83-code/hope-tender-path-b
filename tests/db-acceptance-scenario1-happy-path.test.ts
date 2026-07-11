@@ -115,6 +115,8 @@ dbDescribe("DB Acceptance — Scenario 1: Happy path end-to-end", () => {
       ]),
     });
     // Documents generated + validated + approved/export-ready
+    // Both the DOCX and the required PDF must be GENERATED+PASSED+READY_FOR_EXPORT
+    // for the happy path to be truly "ready" (the plan requires both).
     doc1 = await seedGeneratedDocument(prisma, {
       tenderId: tender.id,
       name: "Technical Proposal",
@@ -124,6 +126,17 @@ dbDescribe("DB Acceptance — Scenario 1: Happy path end-to-end", () => {
       generationStatus: "GENERATED",
       validationStatus: "PASSED",
       reviewStatus: "READY_FOR_EXPORT",
+    });
+    await seedGeneratedDocument(prisma, {
+      tenderId: tender.id,
+      name: "Technical Proposal PDF",
+      documentType: "TECHNICAL_PROPOSAL",
+      exactFileName: "Technical Proposal.pdf",
+      exactOrder: 2,
+      generationStatus: "GENERATED",
+      validationStatus: "PASSED",
+      reviewStatus: "READY_FOR_EXPORT",
+      format: "PDF",
     });
   });
 
@@ -176,43 +189,50 @@ dbDescribe("DB Acceptance — Scenario 1: Happy path end-to-end", () => {
     assert.equal(plan!.confirmedContentHash, "confirmed-hash");
   });
 
-  it("documents are generated + validated + approved/export-ready", async () => {
+  it("documents are generated + validated + approved/export-ready (both DOCX and required PDF)", async () => {
     const docs = await prisma.generatedDocument.findMany({
       where: { tenderId: tender.id, generationStatus: { not: "SUPERSEDED" } },
+      orderBy: { exactOrder: "asc" },
     });
-    assert.equal(docs.length, 1);
-    assert.equal(docs[0].generationStatus, "GENERATED");
-    assert.equal(docs[0].validationStatus, "PASSED");
-    assert.equal(docs[0].reviewStatus, "READY_FOR_EXPORT");
+    assert.equal(docs.length, 2, "must have both DOCX and PDF");
+    assert.equal(docs[0].exactFileName, "Technical Proposal.docx");
+    assert.equal(docs[1].exactFileName, "Technical Proposal.pdf");
+    for (const d of docs) {
+      assert.equal(d.generationStatus, "GENERATED");
+      assert.equal(d.validationStatus, "PASSED");
+      assert.equal(d.reviewStatus, "READY_FOR_EXPORT");
+    }
   });
 
-  it("final ZIP would contain only current export-ready docs", async () => {
-    // Verify the query the ZIP route uses: non-SUPERSEDED + READY_FOR_EXPORT
+  it("final ZIP would contain only current export-ready docs (both DOCX and PDF)", async () => {
     const exportReady = await prisma.generatedDocument.findMany({
       where: {
         tenderId: tender.id,
         generationStatus: { not: "SUPERSEDED" },
         reviewStatus: "READY_FOR_EXPORT",
       },
+      orderBy: { exactOrder: "asc" },
     });
-    assert.equal(exportReady.length, 1, "exactly 1 export-ready doc");
+    assert.equal(exportReady.length, 2, "exactly 2 export-ready docs (DOCX + PDF)");
     assert.equal(exportReady[0].exactFileName, "Technical Proposal.docx");
+    assert.equal(exportReady[1].exactFileName, "Technical Proposal.pdf");
   });
 
-  it("required PDF filename is in the plan", async () => {
+  it("required PDF filename is exact — 'Technical Proposal.pdf' in both plan and generated docs", async () => {
     const plan = await prisma.buildPlan.findUnique({ where: { tenderId: tender.id } });
     const items = JSON.parse(plan!.itemsJson) as Array<{ exactFileName: string }>;
     const pdfItem = items.find((i) => i.exactFileName.endsWith(".pdf"));
     assert.ok(pdfItem, "plan must include a required PDF");
-    // The exact filename must match the tender's exactFileNaming
-    const naming = JSON.parse((await prisma.tender.findUnique({ where: { id: tender.id } }))!.exactFileNaming) as Array<{ exactFileName: string }>;
-    const pdfName = naming.find((n) => n.exactFileName.endsWith(".pdf"));
-    assert.ok(pdfName, "tender exactFileNaming must include a PDF");
+    assert.equal(pdfItem!.exactFileName, "Technical Proposal.pdf", "PDF filename must be exact");
+
+    // The generated PDF must match the exact filename
+    const pdfDoc = await prisma.generatedDocument.findFirst({
+      where: { tenderId: tender.id, exactFileName: "Technical Proposal.pdf" },
+    });
+    assert.ok(pdfDoc, "generated PDF must exist with the exact filename");
   });
 
   it("no panel/route says READY while export is blocked — export-ready state is consistent", async () => {
-    // In the happy path, everything IS ready. The assertion is that the
-    // tender status is MATCHED (not EXPORTED yet) and the docs are READY_FOR_EXPORT.
     const t = await prisma.tender.findUnique({ where: { id: tender.id } });
     assert.equal(t!.status, "MATCHED");
     const docs = await prisma.generatedDocument.findMany({
@@ -223,12 +243,12 @@ dbDescribe("DB Acceptance — Scenario 1: Happy path end-to-end", () => {
   });
 
   it("final export is fail-closed — a doc with PENDING review cannot be in the export-ready set", async () => {
-    // Seed a second doc with PENDING review and verify it's NOT in the export-ready set.
+    // Seed a third doc with PENDING review and verify it's NOT in the export-ready set.
     const pendingDoc = await seedGeneratedDocument(prisma, {
       tenderId: tender.id,
       name: "Financial Proposal",
       exactFileName: "Financial Proposal.docx",
-      exactOrder: 2,
+      exactOrder: 3,
       generationStatus: "GENERATED",
       validationStatus: "PENDING",
       reviewStatus: "PENDING",
@@ -240,10 +260,42 @@ dbDescribe("DB Acceptance — Scenario 1: Happy path end-to-end", () => {
         reviewStatus: "READY_FOR_EXPORT",
       },
     });
-    assert.equal(exportReady.length, 1, "only 1 doc (Technical Proposal) is export-ready");
+    assert.equal(exportReady.length, 2, "only 2 docs (Technical Proposal DOCX + PDF) are export-ready");
     assert.ok(!exportReady.find((d) => d.id === pendingDoc.id), "pending doc must NOT be export-ready");
     // Cleanup the extra doc
     await prisma.generatedDocument.delete({ where: { id: pendingDoc.id } });
+  });
+
+  it("authority review would pass — all docs are READY_FOR_EXPORT (no PENDING/BLOCKED review)", async () => {
+    // Authority review passes when all generated docs are READY_FOR_EXPORT.
+    // This is the DB-state assertion; the route-level assertion is in the
+    // route-driven-workflow-truth-db-integration test.
+    const docs = await prisma.generatedDocument.findMany({
+      where: { tenderId: tender.id, generationStatus: { not: "SUPERSEDED" } },
+    });
+    const allReady = docs.every((d) => d.reviewStatus === "READY_FOR_EXPORT");
+    assert.ok(allReady, "authority review requires all docs READY_FOR_EXPORT");
+    // No doc has a BLOCKED or PENDING review status
+    const blocked = docs.filter((d) => d.reviewStatus === "BLOCKED" || d.reviewStatus === "PENDING");
+    assert.equal(blocked.length, 0, "no docs with BLOCKED/PENDING review status");
+  });
+
+  it("ZIP manifest would be ready — all plan items have matching export-ready docs", async () => {
+    // The ZIP route checks that every required plan item has a matching
+    // export-ready GeneratedDocument. Verify this at the DB level.
+    const plan = await prisma.buildPlan.findUnique({ where: { tenderId: tender.id } });
+    const items = JSON.parse(plan!.itemsJson) as Array<{ exactFileName: string; required: boolean }>;
+    const requiredItems = items.filter((i) => i.required !== false);
+    const docs = await prisma.generatedDocument.findMany({
+      where: { tenderId: tender.id, generationStatus: { not: "SUPERSEDED" }, reviewStatus: "READY_FOR_EXPORT" },
+    });
+    const docNames = new Set(docs.map((d) => d.exactFileName));
+    for (const item of requiredItems) {
+      assert.ok(
+        docNames.has(item.exactFileName),
+        `required plan item "${item.exactFileName}" must have a matching export-ready doc`,
+      );
+    }
   });
 
   it("safe public error check — no raw Prisma/SQL/path/key leaks in tender data", async () => {

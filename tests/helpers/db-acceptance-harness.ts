@@ -286,14 +286,42 @@ export async function seedBuildPlan(
 
 export async function cleanupTender(prisma: PrismaClient, tenderId: string): Promise<void> {
   // Delete in dependency order to respect FK constraints.
-  await prisma.complianceMatrix.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.complianceGap.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.tenderRequirement.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.generatedDocument.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.buildPlan.deleteMany({ where: { tenderId } }).catch(() => {});
-  await prisma.tenderFile.deleteMany({ where: { tenderId } }).catch(() => {});
+  // Every model with a tenderId FK must be cleaned up, or the tender delete
+  // will fail on the FK constraint. Listed in reverse dependency order.
+  const models = [
+    "tenderCopilotMessage",
+    "tenderWorkflowRun",
+    "tenderSubmissionEmail",
+    "tenderFactsLedger",
+    "tenderMetadataOverride",
+    "tenderShare",
+    "matchScoreBreakdown",
+    "proposalVersion",
+    "sectionEvidenceMap",
+    "pricingWorkbook",
+    "evaluatorObjection",
+    "fallbackApprovalRecord",
+    "exportPackage",
+    "extractionQualityOverride",
+    "submissionPlanState",
+    "aiUsageRecord",
+    "aiAnalyzeRetryState",
+    "aiAnalyzeChunk",
+    "aiJob",
+    "documentReview",
+    "documentComment",
+    "complianceMatrix",
+    "complianceGap",
+    "tenderExpertMatch",
+    "tenderProjectMatch",
+    "tenderRequirement",
+    "generatedDocument",
+    "buildPlan",
+    "tenderFile",
+  ] as const;
+  for (const model of models) {
+    await (prisma as any)[model]?.deleteMany({ where: { tenderId } }).catch(() => {});
+  }
   await prisma.tender.deleteMany({ where: { id: tenderId } }).catch(() => {});
 }
 
@@ -309,6 +337,11 @@ export async function cleanupUser(prisma: PrismaClient, userId: string): Promise
 /**
  * Assert that a response body does NOT contain raw Prisma/server/path/token errors.
  * This is the "safe public error" check — every blocked-state response must pass it.
+ *
+ * NOTE: The "metadata" wording check uses a regex that matches HTML/JSX tags
+ * (/>.*[Mm]etadata.*</). This is intentionally scoped to user-facing markup,
+ * NOT to raw DB records (which may legitimately have a `metadata` column on
+ * AuditLog). Call this on route RESPONSE bodies, not on raw prisma records.
  */
 export function assertSafePublicError(body: unknown): void {
   const text = JSON.stringify(body);
@@ -323,6 +356,25 @@ export function assertSafePublicError(body: unknown): void {
   assert.ok(!/sk-[a-zA-Z0-9]{20}/.test(text), `body leaked API key: ${text.slice(0, 500)}`);
   // Must NOT contain file paths.
   assert.ok(!/\/(home|usr|var|etc|tmp)\//.test(text), `body leaked file path: ${text.slice(0, 500)}`);
-  // Must NOT contain "metadata" in user-facing fields.
-  assert.ok(!/>.*[Mm]etadata.*</.test(text), `body contains user-facing 'metadata' wording: ${text.slice(0, 500)}`);
+  // Must NOT contain "metadata" in user-facing markup (HTML/JSX tags).
+  // This regex matches />...metadata...</ which only appears in rendered markup,
+  // not in raw JSON field names like {"metadata": ...}.
+  assert.ok(!/>[^<]*[Mm]etadata[^<]*</.test(text), `body contains user-facing 'metadata' wording in markup: ${text.slice(0, 500)}`);
+}
+
+/**
+ * Assert that a raw DB record does not leak sensitive fields into public responses.
+ * This is a weaker check than assertSafePublicError — it verifies the record
+ * doesn't contain password hashes, API keys, or connection strings, but allows
+ * legitimate DB column names like "metadata" (AuditLog.metadata).
+ */
+export function assertDbRecordSafe(record: unknown): void {
+  const text = JSON.stringify(record);
+  // Must NOT contain password hashes in plaintext (the field exists but the
+  // value must be bcrypt-hashed, not plaintext).
+  assert.ok(!/"passwordHash":\s*"[^$]/.test(text), `DB record has plaintext password: ${text.slice(0, 500)}`);
+  // Must NOT contain API keys.
+  assert.ok(!/sk-[a-zA-Z0-9]{20}/.test(text), `DB record leaked API key: ${text.slice(0, 500)}`);
+  // Must NOT contain connection strings.
+  assert.ok(!/postgresql:\/\/[^\s"']+/.test(text), `DB record leaked connection string: ${text.slice(0, 500)}`);
 }

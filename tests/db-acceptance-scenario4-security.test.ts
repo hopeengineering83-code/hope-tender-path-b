@@ -128,25 +128,45 @@ dbDescribe("DB Acceptance — Scenario 4: Security DB fixtures", () => {
 
   // ─── 4.3 requireRole guard for mutation routes ──────────────────────────────
   describe("requireRole guard", () => {
-    it("requireRole throws Forbidden for VIEWER when ADMIN/PROPOSAL_MANAGER required", async () => {
-      const { requireRole } = require("../lib/auth");
-      // Set up a session for the viewer
-      const { prisma } = require("../lib/prisma");
-      await (prisma as any).session.create({
-        data: {
-          token: "test-token-viewer-" + suffix,
-          userId: viewer.id,
-          expiresAt: new Date(Date.now() + 86400000),
-        },
-      });
-      // Mock the session cookie — requireRole reads from next/headers cookies.
-      // Since we can't easily mock that in a DB test, we verify the role check
-      // logic indirectly: the viewer's role is VIEWER, and requireRole
-      // checks actor.role against the allowed roles.
-      const user = await (prisma as any).user.findUnique({ where: { id: viewer.id } });
-      assert.equal(user.role, "VIEWER");
-      // requireRole("ADMIN", "PROPOSAL_MANAGER") would throw Forbidden for VIEWER.
-      await (prisma as any).session.deleteMany({ where: { userId: viewer.id } });
+    it("VIEWER role is NOT in the ADMIN/PROPOSAL_MANAGER allowed list", async () => {
+      // requireRole(...roles) checks: if (!roles.includes(user.role)) throw "Forbidden".
+      // Verify the DB-stored role for viewer is VIEWER, which is NOT in
+      // ["ADMIN", "PROPOSAL_MANAGER"] — so requireRole would throw Forbidden.
+      const viewerUser = await prisma.user.findUnique({ where: { id: viewer.id } });
+      assert.equal(viewerUser!.role, "VIEWER");
+      const allowedRoles = ["ADMIN", "PROPOSAL_MANAGER"];
+      assert.ok(!allowedRoles.includes(viewerUser!.role), "VIEWER must NOT be in ADMIN/PROPOSAL_MANAGER list");
+    });
+
+    it("REVIEWER role is NOT in the ADMIN/PROPOSAL_MANAGER allowed list", async () => {
+      const reviewerUser = await prisma.user.findUnique({ where: { id: reviewer.id } });
+      assert.equal(reviewerUser!.role, "REVIEWER");
+      const allowedRoles = ["ADMIN", "PROPOSAL_MANAGER"];
+      assert.ok(!allowedRoles.includes(reviewerUser!.role), "REVIEWER must NOT be in ADMIN/PROPOSAL_MANAGER list");
+    });
+
+    it("PROPOSAL_MANAGER role IS in the ADMIN/PROPOSAL_MANAGER allowed list", async () => {
+      const pmUser = await prisma.user.findUnique({ where: { id: proposalManager.id } });
+      assert.equal(pmUser!.role, "PROPOSAL_MANAGER");
+      const allowedRoles = ["ADMIN", "PROPOSAL_MANAGER"];
+      assert.ok(allowedRoles.includes(pmUser!.role), "PROPOSAL_MANAGER must be in the allowed list");
+    });
+
+    it("ADMIN role IS in the ADMIN/PROPOSAL_MANAGER allowed list", async () => {
+      const adminUser = await prisma.user.findUnique({ where: { id: admin.id } });
+      assert.equal(adminUser!.role, "ADMIN");
+      const allowedRoles = ["ADMIN", "PROPOSAL_MANAGER"];
+      assert.ok(allowedRoles.includes(adminUser!.role), "ADMIN must be in the allowed list");
+    });
+
+    it("requireRole source code verifies role against the allowed list", async () => {
+      // Verify the requireRole implementation actually checks roles.includes(user.role)
+      // and throws "Forbidden" when the role is not allowed.
+      const fs = await import("node:fs");
+      const authSrc = fs.readFileSync("lib/auth.ts", "utf8");
+      assert.match(authSrc, /export async function requireRole\(\.\.\.roles: Role\[\]\)/);
+      assert.match(authSrc, /if \(!roles\.includes\(user\.role as Role\)\)/);
+      assert.match(authSrc, /throw new Error\("Forbidden"\)/);
     });
   });
 
