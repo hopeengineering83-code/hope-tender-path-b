@@ -12,6 +12,7 @@ import {
   checkPdfConversionCapability,
   finalizeRequiredPdf,
   internalArtifactIssues,
+  isBase64PdfContent,
   normalizeFileBaseName,
   resolveRequiredPdfFileName,
   validatePdfBytes,
@@ -332,9 +333,25 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       assert.ok(!finalizeSrc.includes('purpose: "final-zip"'), "final-zip purpose must be gone from finalize-pdf");
     });
 
-    it("finalize-pdf treats only real %PDF bytes as satisfying a required PDF", () => {
-      assert.ok(finalizeSrc.includes("isRealPdfContent"), "satisfaction check must verify the %PDF signature");
-      assert.ok(finalizeSrc.includes('startsWith("%PDF")'), "must check the %PDF signature on inline bytes");
+    it("finalize-pdf treats only real %PDF bytes as satisfying a required PDF — inline AND storage-backed", () => {
+      assert.ok(finalizeSrc.includes("isBase64PdfContent"), "satisfaction check must verify the %PDF signature via the shared helper");
+      const satisfactionBlock = finalizeSrc.slice(finalizeSrc.indexOf("satisfiedNames"), finalizeSrc.indexOf("let targets"));
+      assert.ok(satisfactionBlock.includes("readGeneratedDocumentContent"), "storage-backed rows must have their real bytes loaded and signature-checked");
+      assert.ok(!finalizeSrc.includes("Boolean(d.storagePath)"), "storage-backed rows must not be trusted blindly");
+    });
+
+    it("isBase64PdfContent behaves correctly on real byte fixtures", async () => {
+      assert.equal(isBase64PdfContent(Buffer.from("%PDF-1.7\nbody").toString("base64")), true, "real PDF base64 must pass");
+      assert.equal(isBase64PdfContent(await makeDocxBase64(GOOD_TEXT)), false, "DOCX base64 must fail");
+      assert.equal(isBase64PdfContent("not-base64-pdf-at-all"), false, "junk must fail");
+      assert.equal(isBase64PdfContent(""), false);
+      assert.equal(isBase64PdfContent(null), false);
+    });
+
+    it("finalize-pdf resolves a concurrent-create race with a structured conflict, not a 500", () => {
+      assert.ok(finalizeSrc.includes('"P2002"'), "must recognize the unique-violation code");
+      assert.ok(finalizeSrc.includes("PDF_FINALIZE_CONFLICT"), "must surface a structured conflict code");
+      assert.ok(finalizeSrc.includes("finalized by another request"), "conflict message must be safe and specific");
     });
 
     it("finalize-pdf rejects an explicit source whose name does not match the required PDF", () => {

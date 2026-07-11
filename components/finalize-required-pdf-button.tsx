@@ -57,6 +57,7 @@ export function FinalizeRequiredPdfButton({ tenderId }: { tenderId: string }) {
         type="button"
         onClick={run}
         disabled={state === "running" || state === "done"}
+        aria-busy={state === "running"}
         className="rounded-lg border border-amber-300 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-60"
       >
         {state === "running" ? "Finalizing PDF…" : state === "done" ? "PDF finalized" : "Finalize Required PDF"}

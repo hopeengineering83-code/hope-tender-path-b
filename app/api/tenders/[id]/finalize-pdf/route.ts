@@ -26,7 +26,7 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { detectTenderFormatPolicy } from "../../../../../lib/engine/export-format-policy";
 import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
-import { finalizeRequiredPdf, normalizeFileBaseName } from "../../../../../lib/engine/workflow/pdf-finalizer";
+import { finalizeRequiredPdf, isBase64PdfContent, normalizeFileBaseName } from "../../../../../lib/engine/workflow/pdf-finalizer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -82,29 +82,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const activeDocs = tender.generatedDocuments.filter((d: any) => isFinalExportCandidateDocument(d));
-    // A required PDF counts as satisfied only when the row's inline bytes are
-    // a REAL PDF (%PDF signature). A DOCX accidentally stored under the .pdf
-    // name, or junk bytes, must stay eligible for (re)finalization — otherwise
-    // this route refuses to replace the bad row while final export stays
-    // blocked, leaving no in-app recovery. Storage-backed rows (no inline
-    // bytes) are trusted here; the download route revalidates their bytes.
-    const isRealPdfContent = (value: string | null | undefined): boolean => {
-      if (!value) return false;
-      try {
-        return Buffer.from(value.slice(0, 12), "base64").toString("latin1").startsWith("%PDF");
-      } catch {
-        return false;
-      }
-    };
-    const isSatisfied = (name: string) =>
-      activeDocs.some(
+    // A required PDF counts as satisfied only when the row's REAL bytes carry
+    // the %PDF signature. A DOCX accidentally stored under the .pdf name, or
+    // junk bytes, must stay eligible for (re)finalization — otherwise this
+    // route refuses to replace the bad row while final export stays blocked,
+    // leaving no in-app recovery. Storage-backed rows are NOT trusted blindly:
+    // their bytes are loaded and signature-checked the same way (unreadable
+    // storage bytes count as NOT satisfied — fail closed toward regeneration).
+    const satisfiedNames = new Set<string>();
+    for (const name of requiredPdfNames) {
+      const row = activeDocs.find(
         (d: any) =>
           (d.exactFileName ?? "").trim().toLowerCase() === name.toLowerCase() &&
           d.generationStatus === "GENERATED" &&
-          generatedDocumentHasContent(d) &&
-          (d.fileContent ? isRealPdfContent(d.fileContent) : Boolean(d.storagePath)),
+          generatedDocumentHasContent(d),
       );
-    let targets = requiredPdfNames.filter((name) => !isSatisfied(name));
+      if (!row) continue;
+      if (row.fileContent) {
+        if (isBase64PdfContent(row.fileContent)) satisfiedNames.add(name.toLowerCase());
+        continue;
+      }
+      try {
+        const stored = await readGeneratedDocumentContent({
+          id: String(row.id),
+          name: row.name ?? name,
+          exactFileName: row.exactFileName ?? null,
+          fileContent: null,
+          storagePath: row.storagePath ?? null,
+        });
+        if (isBase64PdfContent(stored.base64)) satisfiedNames.add(name.toLowerCase());
+      } catch (error) {
+        logger.warn("finalize-pdf: storage-backed required PDF bytes unreadable — treating as not satisfied", { documentId: row.id, detail: error instanceof Error ? error.constructor.name : "UnknownError" });
+      }
+    }
+    let targets = requiredPdfNames.filter((name) => !satisfiedNames.has(name.toLowerCase()));
     if (requestedName) {
       targets = targets.filter((n) => n.toLowerCase() === requestedName.toLowerCase());
       if (!targets.length) {
@@ -213,7 +224,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { tenderId: tender.id, exactFileName: requiredName, NOT: { generationStatus: "SUPERSEDED" } },
         data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED" },
       });
-      const createdDoc = await prisma.generatedDocument.create({
+      let createdDoc;
+      try {
+        createdDoc = await prisma.generatedDocument.create({
         data: {
           tenderId: tender.id,
           name: requiredName,
@@ -230,7 +243,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           validationStatus: "PENDING",
           reviewStatus: "PENDING",
         },
-      });
+        });
+      } catch (error) {
+        // Concurrent finalization race: the partial unique index on
+        // (tenderId, exactFileName) rejects a second active row. Surface a
+        // structured conflict instead of a generic 500 — the other request
+        // already produced the PDF.
+        if ((error as { code?: string })?.code === "P2002") {
+          logger.warn("finalize-pdf: concurrent finalization detected", { tenderId: tender.id });
+          blocked.push({
+            requiredFileName: requiredName,
+            code: "PDF_FINALIZE_CONFLICT",
+            message: `"${requiredName}" was finalized by another request at the same time. Refresh to see the current document.`,
+          });
+          continue;
+        }
+        throw error;
+      }
       created.push({ id: createdDoc.id, fileName: requiredName, sourceDocumentId: String(source.id), byteLength: finalized.bytes.length });
     }
 
