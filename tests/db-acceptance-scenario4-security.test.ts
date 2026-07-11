@@ -86,7 +86,7 @@ dbDescribe("DB Acceptance — Scenario 4: Security DB fixtures", () => {
       // an unscoped lookup for ADMIN role only. The raw findFirst here scopes
       // by userId, so admin doesn't find it via this path. But requireTenderAccess
       // handles admin separately.
-      const { requireTenderAccess } = require("../../lib/tender-ownership");
+      const { requireTenderAccess } = require("../lib/tender-ownership");
       const t = await requireTenderAccess(ownerTender.id, admin.id, "ADMIN");
       assert.ok(t, "admin must access via requireTenderAccess fallback");
       assert.equal(t.id, ownerTender.id);
@@ -96,31 +96,31 @@ dbDescribe("DB Acceptance — Scenario 4: Security DB fixtures", () => {
   // ─── 4.2 Viewer/Reviewer cannot mutate ──────────────────────────────────────
   describe("role-based mutation guards", () => {
     it("requireTenderAccess blocks viewer from owner's tender", async () => {
-      const { requireTenderAccess } = require("../../lib/tender-ownership");
+      const { requireTenderAccess } = require("../lib/tender-ownership");
       const t = await requireTenderAccess(ownerTender.id, viewer.id, "VIEWER");
       assert.equal(t, null, "viewer must be blocked");
     });
 
     it("requireTenderAccess blocks reviewer from owner's tender", async () => {
-      const { requireTenderAccess } = require("../../lib/tender-ownership");
+      const { requireTenderAccess } = require("../lib/tender-ownership");
       const t = await requireTenderAccess(ownerTender.id, reviewer.id, "REVIEWER");
       assert.equal(t, null, "reviewer must be blocked");
     });
 
     it("requireTenderAccess blocks another PROPOSAL_MANAGER from owner's tender", async () => {
-      const { requireTenderAccess } = require("../../lib/tender-ownership");
+      const { requireTenderAccess } = require("../lib/tender-ownership");
       const t = await requireTenderAccess(ownerTender.id, otherUser.id, "PROPOSAL_MANAGER");
       assert.equal(t, null, "cross-tenant PROPOSAL_MANAGER must be blocked");
     });
 
     it("requireTenderAccess allows owner (PROPOSAL_MANAGER) to access their tender", async () => {
-      const { requireTenderAccess } = require("../../lib/tender-ownership");
+      const { requireTenderAccess } = require("../lib/tender-ownership");
       const t = await requireTenderAccess(ownerTender.id, owner.id, "PROPOSAL_MANAGER");
       assert.ok(t, "owner must access their own tender");
     });
 
     it("requireTenderAccess allows ADMIN fallback", async () => {
-      const { requireTenderAccess } = require("../../lib/tender-ownership");
+      const { requireTenderAccess } = require("../lib/tender-ownership");
       const t = await requireTenderAccess(ownerTender.id, admin.id, "ADMIN");
       assert.ok(t, "admin must access via fallback");
     });
@@ -129,9 +129,9 @@ dbDescribe("DB Acceptance — Scenario 4: Security DB fixtures", () => {
   // ─── 4.3 requireRole guard for mutation routes ──────────────────────────────
   describe("requireRole guard", () => {
     it("requireRole throws Forbidden for VIEWER when ADMIN/PROPOSAL_MANAGER required", async () => {
-      const { requireRole } = require("../../lib/auth");
+      const { requireRole } = require("../lib/auth");
       // Set up a session for the viewer
-      const { prisma } = require("../../lib/prisma");
+      const { prisma } = require("../lib/prisma");
       await (prisma as any).session.create({
         data: {
           token: "test-token-viewer-" + suffix,

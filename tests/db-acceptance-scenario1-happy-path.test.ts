@@ -109,6 +109,10 @@ dbDescribe("DB Acceptance — Scenario 1: Happy path end-to-end", () => {
       revision: 1,
       confirmedRevision: 1,
       confirmedContentHash: "confirmed-hash",
+      itemsJson: JSON.stringify([
+        { exactFileName: "Technical Proposal.docx", required: true, format: "docx" },
+        { exactFileName: "Technical Proposal.pdf", required: true, format: "pdf" },
+      ]),
     });
     // Documents generated + validated + approved/export-ready
     doc1 = await seedGeneratedDocument(prisma, {
