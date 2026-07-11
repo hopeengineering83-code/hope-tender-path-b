@@ -743,6 +743,11 @@ model ExportPackage {
   tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   status        String   @default("PREPARING")
   fileList      String   @default("[]")
+  manifestJson  String?
+  packageSha256 String?
+  packageByteLength Int?
+  integrityStatus String  @default("UNKNOWN")
+  integrityVerifiedAt DateTime?
   downloadCount Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
