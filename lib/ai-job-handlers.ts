@@ -20,6 +20,7 @@
 
 import { recordStep, type JobType } from "./ai-jobs";
 import { verifiedIntegrityDataFromBase64 } from "./engine/persisted-byte-integrity";
+import { withTransactionalGenerationGate } from "./engine/transactional-generation-gate";
 import { isStrictBase64 } from "./engine/generated-file-integrity";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
@@ -435,7 +436,15 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
     // Persist into GeneratedDocument so the user can fetch it later via
     // the existing tender detail page (which already lists generated docs).
-    const doc = await prisma.generatedDocument.create({
+    const doc = await prisma.$transaction(async (tx) =>
+      withTransactionalGenerationGate({
+        prisma,
+        tx,
+        tenderId: ctx.tenderId!,
+        userId: ctx.userId,
+        purpose: "background-proposal-generation",
+        write: async (lockedTx) => {
+          const doc = await lockedTx.generatedDocument.create({
       data: {
         tenderId: ctx.tenderId,
         name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
@@ -448,7 +457,11 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         validationStatus: "PENDING",
         reviewStatus: "NOT_EXPORTABLE",
       },
-    });
+    })
+          return doc;
+        },
+      }),
+    );;
 
     await recordStep(ctx.jobId, { stepName: "proposal.complete", message: `Saved ${markdown.length} chars to GeneratedDocument ${doc.id}`, status: "SUCCEEDED" });
     return { generatedDocumentId: doc.id, markdownChars: markdown.length, sectionsGenerated: sectionFilter ?? "all" };
