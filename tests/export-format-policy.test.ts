@@ -55,6 +55,15 @@ describe("detectTenderFormatPolicy", () => {
     assert.equal(policy.perFile.length, 2);
   });
 
+  it("detects object-form entries ([{name: \"...\"}]) — coverage gate must not be bypassable", () => {
+    const policy = detectTenderFormatPolicy({
+      exactFileNaming: JSON.stringify([{ name: "Technical Proposal.pdf" }, { exactFileName: "Annex A.docx" }]),
+    });
+    assert.equal(policy.requiresPdf, true, "object entry with .name must be detected");
+    assert.equal(policy.requiresDocx, true, "object entry with .exactFileName must be detected");
+    assert.ok(policy.perFile.some((p) => p.exactFileName === "Technical Proposal.pdf"));
+  });
+
   it("pulls per-requirement exactFileName too", () => {
     const policy = detectTenderFormatPolicy({
       requirements: [{ exactFileName: "Compliance-Matrix.pdf" }],

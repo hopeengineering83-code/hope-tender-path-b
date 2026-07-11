@@ -30,6 +30,15 @@ function collectExactFilenames(tender: TenderLike): string[] {
     if (Array.isArray(parsed) && parsed.length > 0) {
       for (const item of parsed) {
         if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
+        // Object form: [{"name":"Technical Proposal.pdf"}] — the download
+        // route's manifest parser accepts entry.name, so the format-coverage
+        // gate must too. Ignoring object entries let a tender whose required
+        // PDF was stored in object form bypass PDF_REQUIRED_CONVERSION_UNAVAILABLE.
+        else if (item && typeof item === "object") {
+          const objName = (item as { name?: unknown; exactFileName?: unknown }).name
+            ?? (item as { name?: unknown; exactFileName?: unknown }).exactFileName;
+          if (typeof objName === "string" && objName.trim().length > 0) out.add(objName.trim());
+        }
       }
       continue;
     }

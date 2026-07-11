@@ -58,7 +58,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Central authoritative gate — PDF finalization produces a final-package
     // artifact, so it must hold the same fail-closed gate as the ZIP path
     // (current content hash, grounding, confirmed non-empty submission plan).
-    const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId: actor.id, purpose: "final-zip" });
+    // Purpose "generate-missing-plan-files": this route CREATES a missing
+    // required plan file, so it must not run the final-zip completeness check
+    // (validateConfirmedPlanDocuments) — that check requires the very PDF this
+    // route produces to already exist, which made the route always return
+    // CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE. The draft-purpose gate still
+    // enforces ownership, extraction, analysis hash/state, requirement
+    // grounding, and a confirmed valid Build Plan; final-level assurance is
+    // preserved because the finalizer requires a validated + approved source
+    // and the produced PDF must itself pass validation + approval + the
+    // final-zip gate before it can be exported.
+    const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId: actor.id, purpose: "generate-missing-plan-files" });
     if (!gate.ok) return err(`PDF finalization blocked: ${gate.blockerDetail}`, 409, { code: gate.blockerCode });
 
     const policy = detectTenderFormatPolicy({
@@ -72,12 +82,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const activeDocs = tender.generatedDocuments.filter((d: any) => isFinalExportCandidateDocument(d));
+    // A required PDF counts as satisfied only when the row's inline bytes are
+    // a REAL PDF (%PDF signature). A DOCX accidentally stored under the .pdf
+    // name, or junk bytes, must stay eligible for (re)finalization — otherwise
+    // this route refuses to replace the bad row while final export stays
+    // blocked, leaving no in-app recovery. Storage-backed rows (no inline
+    // bytes) are trusted here; the download route revalidates their bytes.
+    const isRealPdfContent = (value: string | null | undefined): boolean => {
+      if (!value) return false;
+      try {
+        return Buffer.from(value.slice(0, 12), "base64").toString("latin1").startsWith("%PDF");
+      } catch {
+        return false;
+      }
+    };
     const isSatisfied = (name: string) =>
       activeDocs.some(
         (d: any) =>
           (d.exactFileName ?? "").trim().toLowerCase() === name.toLowerCase() &&
           d.generationStatus === "GENERATED" &&
-          generatedDocumentHasContent(d),
+          generatedDocumentHasContent(d) &&
+          (d.fileContent ? isRealPdfContent(d.fileContent) : Boolean(d.storagePath)),
       );
     let targets = requiredPdfNames.filter((name) => !isSatisfied(name));
     if (requestedName) {
@@ -115,6 +140,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               (d.exactFileName ?? d.name ?? "").toLowerCase().endsWith(".docx") &&
               normalizeFileBaseName(d.exactFileName ?? d.name ?? "") === normalizeFileBaseName(requiredName),
           );
+      // An explicitly requested source must match the required PDF's base name
+      // just like the automatic lookup — otherwise a technical DOCX could be
+      // rendered and saved as "Financial Proposal.pdf": a correctly named
+      // final artifact with the wrong document body.
+      if (docId && source && normalizeFileBaseName(source.exactFileName ?? source.name ?? "") !== normalizeFileBaseName(requiredName)) {
+        blocked.push({
+          requiredFileName: requiredName,
+          code: "PDF_SOURCE_NAME_MISMATCH",
+          message: `The selected source document does not match "${requiredName}". Pick the document whose filename matches the required PDF, or omit docId to use the automatic match.`,
+        });
+        continue;
+      }
       if (!source) {
         blocked.push({
           requiredFileName: requiredName,

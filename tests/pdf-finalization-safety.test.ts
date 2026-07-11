@@ -313,6 +313,23 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       assert.equal(isMutationAction("FINALIZE_REQUIRED_PDF"), true, "must be classified as a mutation (hidden from REVIEWER)");
     });
 
+    it("finalize-pdf gate uses the missing-plan-file purpose, not the final-zip completeness check", () => {
+      assert.ok(
+        finalizeSrc.includes('purpose: "generate-missing-plan-files"'),
+        "final-zip purpose would require the PDF this route creates to already exist (always CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE)",
+      );
+      assert.ok(!finalizeSrc.includes('purpose: "final-zip"'), "final-zip purpose must be gone from finalize-pdf");
+    });
+
+    it("finalize-pdf treats only real %PDF bytes as satisfying a required PDF", () => {
+      assert.ok(finalizeSrc.includes("isRealPdfContent"), "satisfaction check must verify the %PDF signature");
+      assert.ok(finalizeSrc.includes('startsWith("%PDF")'), "must check the %PDF signature on inline bytes");
+    });
+
+    it("finalize-pdf rejects an explicit source whose name does not match the required PDF", () => {
+      assert.ok(finalizeSrc.includes("PDF_SOURCE_NAME_MISMATCH"), "explicit docId must enforce the same base-name match as the automatic lookup");
+    });
+
     it("finalize-pdf route persists the PDF as PENDING (no validation/approval bypass) behind the central gate", () => {
       assert.ok(finalizeSrc.includes("assertTenderReadyForGenerationAndExport"), "central gate must run first");
       assert.ok(finalizeSrc.includes('validationStatus: "PENDING"'), "finalized PDF must NOT be auto-validated");
