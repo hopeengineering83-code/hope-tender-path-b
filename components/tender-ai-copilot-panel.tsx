@@ -149,17 +149,17 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
         />
         <div className="flex flex-wrap gap-2">
           {canMutate && (
-          <button type="button" disabled={loading || question.trim().length < 3} onClick={() => void ask()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+          <button type="button" disabled={loading || question.trim().length < 3} onClick={() => void ask()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
             {loading ? "Thinking…" : "Ask Copilot"}
           </button>
           )}
           {canMutate && QUICK_QUESTIONS.slice(0, 3).map((q) => (
-            <button key={q} type="button" disabled={loading} onClick={() => void ask(q)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+            <button key={q} type="button" disabled={loading} onClick={() => void ask(q)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60">
               {q}
             </button>
           ))}
           {canMutate && canRecord && (
-            <button type="button" disabled={recording} onClick={() => void recordControls()} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+            <button type="button" disabled={recording} onClick={() => void recordControls()} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60">
               {recording ? "Recording…" : "Record actions/risks"}
             </button>
           )}

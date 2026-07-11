@@ -541,7 +541,7 @@ export default function CompanyPage() {
             </div>
           </div>
 
-          <button type="submit" disabled={saving||!company.name} className="rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+          <button type="submit" disabled={saving||!company.name} className="rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
             {saving ? "Saving…" : "Save Profile"}
           </button>
         </form>
@@ -556,7 +556,7 @@ export default function CompanyPage() {
               <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · All types extracted fully</p>
             </div>
             <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40 font-medium">
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
               {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
             </button>
           </div>
@@ -641,7 +641,7 @@ export default function CompanyPage() {
                 <input value={expertForm.yearsExperience} onChange={e=>setExpertForm({...expertForm,yearsExperience:e.target.value})} type="number" placeholder="Years experience" className="rounded-lg border px-3 py-2 text-sm" />
               </div>
               <textarea value={expertForm.profile} onChange={e=>setExpertForm({...expertForm,profile:e.target.value})} rows={2} placeholder="Profile summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
-              <button disabled={expertSaving||!expertForm.fullName} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+              <button disabled={expertSaving||!expertForm.fullName} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
                 {expertSaving?"Adding…":"Add Expert"}
               </button>
             </form>
@@ -693,7 +693,7 @@ export default function CompanyPage() {
                       <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
                       <td className="px-5 py-3 text-right">
                         <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                        <button onClick={()=>deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">
+                        <button onClick={()=>deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
                           {deletingExpertId===ex.id?"…":"Delete"}
                         </button>
                       </td>
@@ -732,7 +732,7 @@ export default function CompanyPage() {
               </div>
               <input value={projectForm.serviceAreas} onChange={e=>setProjectForm({...projectForm,serviceAreas:e.target.value})} placeholder="Service areas (comma-separated)" className="w-full rounded-lg border px-3 py-2 text-sm" />
               <textarea value={projectForm.summary} onChange={e=>setProjectForm({...projectForm,summary:e.target.value})} rows={2} placeholder="Project summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
-              <button disabled={projectSaving||!projectForm.name} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+              <button disabled={projectSaving||!projectForm.name} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
                 {projectSaving?"Adding…":"Add Project"}
               </button>
             </form>
@@ -784,7 +784,7 @@ export default function CompanyPage() {
                       <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
                       <td className="px-5 py-3 text-right">
                         <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                        <button onClick={()=>deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">
+                        <button onClick={()=>deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
                           {deletingProjectId===p.id?"…":"Delete"}
                         </button>
                       </td>
@@ -840,7 +840,7 @@ export default function CompanyPage() {
                     {["ACTIVE","EXPIRED","PENDING","REVOKED"].map(s=><option key={s}>{s}</option>)}
                   </select>
                   <textarea value={complianceForm.evidenceSummary} onChange={e=>setComplianceForm({...complianceForm,evidenceSummary:e.target.value})} rows={2} placeholder="Evidence summary (optional)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-                  <button disabled={complianceSaving||!complianceForm.complianceType||!complianceForm.title} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                  <button disabled={complianceSaving||!complianceForm.complianceType||!complianceForm.title} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
                     {complianceSaving?"Adding…":"Add Record"}
                   </button>
                 </form>
@@ -859,7 +859,7 @@ export default function CompanyPage() {
                           <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
                           <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
                           <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">{deletingComplianceId===r.id?"…":"Delete"}</button></td>
+                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"…":"Delete"}</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -901,7 +901,7 @@ export default function CompanyPage() {
                   <select value={legalForm.status} onChange={e=>setLegalForm({...legalForm,status:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
                     {["ACTIVE","EXPIRED","PENDING","REVOKED"].map(s=><option key={s}>{s}</option>)}
                   </select>
-                  <button disabled={legalSaving||!legalForm.recordType||!legalForm.title} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                  <button disabled={legalSaving||!legalForm.recordType||!legalForm.title} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
                     {legalSaving?"Adding…":"Add Record"}
                   </button>
                 </form>
@@ -920,7 +920,7 @@ export default function CompanyPage() {
                           <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
                           <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
                           <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">{deletingLegalId===r.id?"…":"Delete"}</button></td>
+                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"…":"Delete"}</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -954,7 +954,7 @@ export default function CompanyPage() {
                     </select>
                   </div>
                   <textarea value={financialForm.notes} onChange={e=>setFinancialForm({...financialForm,notes:e.target.value})} rows={2} placeholder="Notes (optional)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-                  <button disabled={financialSaving||!financialForm.recordType||!financialForm.fiscalYear} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                  <button disabled={financialSaving||!financialForm.recordType||!financialForm.fiscalYear} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
                     {financialSaving?"Adding…":"Add Record"}
                   </button>
                 </form>
@@ -972,7 +972,7 @@ export default function CompanyPage() {
                           <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
                           <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
                           <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">{deletingFinancialId===r.id?"…":"Delete"}</button></td>
+                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"…":"Delete"}</button></td>
                         </tr>
                       ))}
                     </tbody>

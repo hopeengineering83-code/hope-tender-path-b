@@ -130,9 +130,9 @@ export default function ActivityPage() {
         <div className="flex items-center justify-between text-sm text-slate-500">
           <p>{total} total entries</p>
           <div className="flex gap-1">
-            <button onClick={() => handlePage(page - 1)} disabled={page === 1} className="rounded px-3 py-1 border disabled:opacity-40 hover:border-black">‹</button>
+            <button onClick={() => handlePage(page - 1)} disabled={page === 1} className="rounded px-3 py-1 border disabled:opacity-60 hover:border-black">‹</button>
             <span className="px-3 py-1">{page} / {totalPages}</span>
-            <button onClick={() => handlePage(page + 1)} disabled={page >= totalPages} className="rounded px-3 py-1 border disabled:opacity-40 hover:border-black">›</button>
+            <button onClick={() => handlePage(page + 1)} disabled={page >= totalPages} className="rounded px-3 py-1 border disabled:opacity-60 hover:border-black">›</button>
           </div>
         </div>
       )}

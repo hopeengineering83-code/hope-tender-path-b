@@ -154,7 +154,7 @@ export default function SetupWizard() {
               <option value="FULL_LIBRARY">Mode B — Full Document Library (deep evidence matching)</option>
             </select>
           </div>
-          <button onClick={() => void saveProfile()} disabled={saving || !profile.name.trim()} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">{saving ? "Saving…" : "Save & Continue →"}</button>
+          <button onClick={() => void saveProfile()} disabled={saving || !profile.name.trim()} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">{saving ? "Saving…" : "Save & Continue →"}</button>
         </div>
       )}
 
@@ -201,7 +201,7 @@ export default function SetupWizard() {
             <input value={expert.yearsExperience} onChange={(e) => setExpert({ ...expert, yearsExperience: e.target.value })} type="number" min="0" placeholder="Years experience" className="rounded-lg border px-3 py-2 text-sm" />
           </div>
           <textarea value={expert.profile} onChange={(e) => setExpert({ ...expert, profile: e.target.value })} rows={2} placeholder="Profile summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
-          <button onClick={() => void saveExpert()} disabled={addingExpert || !expert.fullName.trim()} className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-black disabled:opacity-50">{addingExpert ? "Adding…" : "+ Add Expert"}</button>
+          <button onClick={() => void saveExpert()} disabled={addingExpert || !expert.fullName.trim()} className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-black disabled:opacity-60">{addingExpert ? "Adding…" : "+ Add Expert"}</button>
           {experts.length > 0 && <div className="space-y-1.5 rounded-xl border bg-slate-50 p-3"><p className="text-xs font-medium text-slate-600">{experts.length} expert{experts.length !== 1 ? "s" : ""} added</p>{experts.map((item, index) => <p key={`${item.name}-${index}`} className="text-xs text-slate-700">• {item.name}</p>)}</div>}
           <div className="flex gap-3 pt-2"><button onClick={() => setStep(4)} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800">Continue →</button><button onClick={() => setStep(2)} className="rounded-lg border px-5 py-2 text-sm text-slate-600 hover:bg-slate-50">← Back</button></div>
         </div>
@@ -221,7 +221,7 @@ export default function SetupWizard() {
             <select value={project.currency} onChange={(e) => setProject({ ...project, currency: e.target.value })} className="rounded-lg border bg-white px-3 py-2 text-sm">{["USD", "EUR", "GBP", "AED", "SAR", "KWD", "EGP", "ZAR", "ETB"].map((currency) => <option key={currency}>{currency}</option>)}</select>
           </div>
           <textarea value={project.summary} onChange={(e) => setProject({ ...project, summary: e.target.value })} rows={2} placeholder="Project summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
-          <button onClick={() => void saveProject()} disabled={addingProject || !project.name.trim()} className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-black disabled:opacity-50">{addingProject ? "Adding…" : "+ Add Project"}</button>
+          <button onClick={() => void saveProject()} disabled={addingProject || !project.name.trim()} className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-black disabled:opacity-60">{addingProject ? "Adding…" : "+ Add Project"}</button>
           {projects.length > 0 && <div className="space-y-1.5 rounded-xl border bg-slate-50 p-3"><p className="text-xs font-medium text-slate-600">{projects.length} project{projects.length !== 1 ? "s" : ""} added</p>{projects.map((item, index) => <p key={`${item.name}-${index}`} className="text-xs text-slate-700">• {item.name}</p>)}</div>}
           <div className="flex gap-3 pt-2"><button onClick={() => setStep(5)} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800">Continue →</button><button onClick={() => setStep(3)} className="rounded-lg border px-5 py-2 text-sm text-slate-600 hover:bg-slate-50">← Back</button></div>
         </div>
@@ -233,7 +233,7 @@ export default function SetupWizard() {
           <h2 className="text-xl font-semibold text-slate-900">Setup Complete!</h2>
           <p className="mx-auto max-w-sm text-sm text-slate-500">Your company knowledge vault is ready. You can now create tenders and the engine will automatically match experts, projects, and evidence from your vault.</p>
           <div className="space-y-2 rounded-xl border bg-slate-50 p-4 text-left text-sm text-slate-600"><p className="font-medium text-slate-800">What happens next:</p><p>1. Create a new tender and upload the tender documents</p><p>2. Run the analysis engine to extract requirements</p><p>3. Review matching and compliance results</p><p>4. Generate and export your submission package</p></div>
-          <div className="flex justify-center gap-3 pt-2"><button onClick={() => void completeSetup()} disabled={saving} className="rounded-lg bg-black px-6 py-2.5 text-sm text-white hover:bg-slate-800 disabled:opacity-50">{saving ? "Setting up…" : "Go to Dashboard →"}</button><button onClick={() => router.push("/dashboard/tenders/new")} className="rounded-lg border px-6 py-2.5 text-sm text-slate-700 hover:bg-slate-50">Create First Tender</button></div>
+          <div className="flex justify-center gap-3 pt-2"><button onClick={() => void completeSetup()} disabled={saving} className="rounded-lg bg-black px-6 py-2.5 text-sm text-white hover:bg-slate-800 disabled:opacity-60">{saving ? "Setting up…" : "Go to Dashboard →"}</button><button onClick={() => router.push("/dashboard/tenders/new")} className="rounded-lg border px-6 py-2.5 text-sm text-slate-700 hover:bg-slate-50">Create First Tender</button></div>
         </div>
       )}
     </div>

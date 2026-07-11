@@ -193,7 +193,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={uploading}
-          className="mt-3 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-3 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {uploading ? "Uploading…" : "Choose files"}
         </button>
@@ -245,7 +245,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
                     <div className="flex justify-end gap-2">
                       <button type="button" onClick={() => downloadFile(file)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Download</button>
                       {canMutate && (
-                      <button type="button" onClick={() => void removeFile(file)} disabled={deletingId === file.id} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">
+                      <button type="button" onClick={() => void removeFile(file)} disabled={deletingId === file.id} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60">
                         {deletingId === file.id ? "Deleting…" : "Delete"}
                       </button>
                       )}

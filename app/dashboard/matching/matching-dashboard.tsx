@@ -162,7 +162,7 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                                 <button
                                   onClick={() => toggleMatch(tender.id, match.id, "expert", !match.isSelected)}
                                   disabled={isBusy}
-                                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+                                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${
                                     match.isSelected
                                       ? "bg-green-600 text-white hover:bg-green-700"
                                       : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
@@ -227,7 +227,7 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                                 <button
                                   onClick={() => toggleMatch(tender.id, match.id, "project", !match.isSelected)}
                                   disabled={isBusy}
-                                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+                                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${
                                     match.isSelected
                                       ? "bg-green-600 text-white hover:bg-green-700"
                                       : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
