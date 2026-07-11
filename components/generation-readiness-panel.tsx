@@ -109,7 +109,22 @@ export async function GenerationReadinessPanel({
       b.code === "BUILD_PLAN_MISSING" || b.code === "BUILD_PLAN_STALE" ||
       b.code === "BUILD_PLAN_NOT_CONFIRMED" || b.code === "BUILD_PLAN_ITEMS_INVALID"
     );
-    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan;
+    // Also check for stale analysis and missing compliance rows — these are
+    // canonical snapshot blockers that the strict gate may not catch.
+    // Per spec: Generation Readiness must not show "Ready" when the
+    // authoritative snapshot is blocked by stale AI, no compliance rows,
+    // or PDF required but unavailable.
+    const hasStaleAnalysis = blockers.some((b: { code?: string }) =>
+      b.code === "STALE_ANALYSIS" || b.code === "ANALYSIS_HASH_MISMATCH"
+    );
+    const hasNoComplianceRows = blockers.some((b: { code?: string }) =>
+      b.code === "MANDATORY_NO_COMPLIANCE_ROWS" || b.code === "EVIDENCE_NOT_ASSESSED"
+    );
+    const hasPdfRequiredUnavailable = blockers.some((b: { code?: string }) =>
+      b.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE" || b.code === "PDF_CONVERSION_REQUIRED"
+    );
+    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan
+      && !hasStaleAnalysis && !hasNoComplianceRows && !hasPdfRequiredUnavailable;
     const panelClass = effectivelyReady
       ? "border-green-200 bg-green-50"
       : "border-red-200 bg-red-50";
