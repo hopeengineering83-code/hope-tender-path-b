@@ -1,0 +1,67 @@
+name: Hide tender cleanup internal activity
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/tender-delete-storage-manifest-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Exclude cleanup queue rows from user activity feeds
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          for path in ['app/dashboard/page.tsx', 'app/dashboard/analytics/page.tsx']:
+              p = Path(path)
+              s = p.read_text()
+              marker = 'prisma.auditLog.findMany({'
+              start = s.find(marker)
+              if start < 0:
+                  raise SystemExit(f'audit query not found: {path}')
+              region_end = s.find('}),', start)
+              region = s[start:region_end]
+              old = 'where: { userId },'
+              new = 'where: { userId, NOT: { entityType: "TenderStorageCleanup" } },'
+              if old not in region:
+                  raise SystemExit(f'audit where anchor not found: {path}')
+              region = region.replace(old, new, 1)
+              s = s[:start] + region + s[region_end:]
+              p.write_text(s)
+
+          test = Path('tests/tender-storage-cleanup-audit-visibility-current.test.ts')
+          t = test.read_text()
+          anchor = '''  it("never returns raw storage paths or internal task IDs from tender deletion", () => {'''
+          guard = '''  it("excludes internal cleanup rows from dashboard activity feeds", () => {
+              const dashboard = readFileSync("app/dashboard/page.tsx", "utf8");
+              const analytics = readFileSync("app/dashboard/analytics/page.tsx", "utf8");
+              assert.match(dashboard, /NOT: \{ entityType: "TenderStorageCleanup" \}/);
+              assert.match(analytics, /NOT: \{ entityType: "TenderStorageCleanup" \}/);
+            });
+
+          '''
+          if anchor not in t:
+              raise SystemExit('audit visibility test anchor not found')
+          if 'dashboard activity feeds' not in t:
+              t = t.replace(anchor, guard + anchor, 1)
+          test.write_text(t)
+          PY
+      - name: Commit visibility filters
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/dashboard/page.tsx app/dashboard/analytics/page.tsx tests/tender-storage-cleanup-audit-visibility-current.test.ts
+          git commit -m "fix: hide internal cleanup tasks from activity feeds"
+          git push origin HEAD:${{ github.head_ref }}
