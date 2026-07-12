@@ -24,13 +24,17 @@ describe("admin generated-proposal audit response boundary", () => {
     assert.match(source, /take: limitParam \* 2/);
   });
 
-  it("preserves metadata-only document selection", () => {
+  it("preserves metadata-only response output", () => {
     assert.match(source, /fileContent: true/);
     assert.match(source, /storagePath: true/);
-    assert.match(source, /documents: visibleRows/);
-    assert.doesNotMatch(source, /visibleText\s*[,}]/);
-    assert.doesNotMatch(source, /inlineBase64\s*[,}]/);
-    assert.doesNotMatch(source, /fileContent:\s*document\.fileContent/);
+    const responseStart = source.indexOf("    return NextResponse.json({\n      success: true");
+    const catchStart = source.lastIndexOf("  } catch (error) {");
+    assert.ok(responseStart >= 0 && catchStart > responseStart);
+    const responseRegion = source.slice(responseStart, catchStart);
+    assert.match(responseRegion, /documents: visibleRows/);
+    assert.doesNotMatch(responseRegion, /visibleText/);
+    assert.doesNotMatch(responseRegion, /inlineBase64/);
+    assert.doesNotMatch(responseRegion, /fileContent/);
   });
 
   it("preserves all audit issue flags and quality checks", () => {
