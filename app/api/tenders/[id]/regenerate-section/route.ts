@@ -6,12 +6,9 @@ import { logger } from "../../../../../lib/observability";
 //
 // Regenerates a SINGLE section of a proposal using the same prompt builders,
 // evidence context, and AI provider chain as the main parallel generation
-// pipeline. This is much faster than regenerating the entire proposal
-// (one 20-25s Claude call instead of four in parallel) and lets users
-// target weak sections without losing strong ones.
-//
-// The route returns the raw section markdown. The caller (UI) is responsible
-// for stitching it back into the full proposal display.
+// pipeline. The route returns AI-generated section markdown only after the
+// canonical generation gate passes and only REVIEWED Company Vault evidence
+// is admitted to the prompt.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -22,9 +19,11 @@ import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvide
 import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
-import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { buildProposalSectionSpecs, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { resolveReviewedSectionEvidence, sectionEvidenceBlocker } from "../../../../../lib/engine/regenerate-section-evidence";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -41,8 +40,8 @@ function clean(text?: string | null): string {
 }
 
 function shortText(text?: string | null, max = 700): string {
-  const v = clean(text);
-  return v.length > max ? `${v.slice(0, max - 1)}…` : v;
+  const value = clean(text);
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
 function buildCompanyEvidenceLines(company: Record<string, unknown>): string[] {
@@ -52,255 +51,292 @@ function buildCompanyEvidenceLines(company: Record<string, unknown>): string[] {
   const compliance = (company.complianceRecords as { title?: string | null; complianceType?: string | null; status?: string | null; referenceNumber?: string | null; evidenceSummary?: string | null }[] | undefined) ?? [];
 
   return [
-    ...docs.filter((d) => clean(d.extractedText).length > 20 || clean(d.originalFileName).length > 0).slice(0, 18)
-      .map((d) => `Company document: ${d.originalFileName} | category: ${d.category} | evidence: ${shortText(d.extractedText, 850)}`),
-    ...legal.slice(0, 8).map((r) => `Legal evidence: ${r.title} | type: ${r.recordType}${r.authority ? ` | authority: ${r.authority}` : ""}${r.referenceNumber ? ` | ref: ${r.referenceNumber}` : ""}${r.status ? ` | status: ${r.status}` : ""}`),
-    ...financial.slice(0, 8).map((r) => `Financial evidence: ${r.recordType} ${r.fiscalYear}${r.amount ? ` | amount: ${r.currency ?? ""} ${r.amount}` : ""}${r.notes ? ` | notes: ${shortText(r.notes, 240)}` : ""}`),
-    ...compliance.slice(0, 10).map((r) => `Compliance evidence: ${r.title} | type: ${r.complianceType}${r.status ? ` | status: ${r.status}` : ""}${r.referenceNumber ? ` | ref: ${r.referenceNumber}` : ""}${r.evidenceSummary ? ` | ${shortText(r.evidenceSummary, 360)}` : ""}`),
+    ...docs.filter((doc) => clean(doc.extractedText).length > 20 || clean(doc.originalFileName).length > 0).slice(0, 18)
+      .map((doc) => `Company document: ${doc.originalFileName} | category: ${doc.category} | evidence: ${shortText(doc.extractedText, 850)}`),
+    ...legal.slice(0, 8).map((record) => `Legal evidence: ${record.title} | type: ${record.recordType}${record.authority ? ` | authority: ${record.authority}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.status ? ` | status: ${record.status}` : ""}`),
+    ...financial.slice(0, 8).map((record) => `Financial evidence: ${record.recordType} ${record.fiscalYear}${record.amount ? ` | amount: ${record.currency ?? ""} ${record.amount}` : ""}${record.notes ? ` | notes: ${shortText(record.notes, 240)}` : ""}`),
+    ...compliance.slice(0, 10).map((record) => `Compliance evidence: ${record.title} | type: ${record.complianceType}${record.status ? ` | status: ${record.status}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.evidenceSummary ? ` | ${shortText(record.evidenceSummary, 360)}` : ""}`),
   ].filter(Boolean);
 }
 
 function buildProjectEvidenceLines(projects: { name?: string | null; evidences?: { title?: string | null; evidenceType?: string | null; fileName?: string | null; description?: string | null; extractedText?: string | null }[] }[]): string[] {
   return projects.flatMap((project) =>
-    (project.evidences ?? []).slice(0, 5).map((e) =>
-      `Project evidence for ${project.name}: ${e.title} | type: ${e.evidenceType}${e.fileName ? ` | file: ${e.fileName}` : ""}${e.description ? ` | ${shortText(e.description, 280)}` : ""}${e.extractedText ? ` | text: ${shortText(e.extractedText, 520)}` : ""}`
+    (project.evidences ?? []).slice(0, 5).map((evidence) =>
+      `Project evidence for ${project.name}: ${evidence.title} | type: ${evidence.evidenceType}${evidence.fileName ? ` | file: ${evidence.fileName}` : ""}${evidence.description ? ` | ${shortText(evidence.description, 280)}` : ""}${evidence.extractedText ? ` | text: ${shortText(evidence.extractedText, 520)}` : ""}`
     )
   ).slice(0, 30);
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   const userId = actor.id;
 
   const rl = await rateLimitPersistent(`regen-section:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
     const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
     return NextResponse.json(
-      { error: "Too many requests. Please wait before regenerating again.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter },
+      { success: false, error: "Too many requests. Please wait before regenerating again.", code: "RATE_LIMITED", resetAt: rl.resetAt, retryAfter },
       { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
 
-  await prismaReady;
-  const { id } = await params;
-  const body = await req.json().catch(() => ({} as Record<string, unknown>));
-  const sectionId = body.sectionId as string;
-
-  if (!VALID_SECTION_IDS.includes(sectionId as ProposalSectionId)) {
-    return NextResponse.json({
-      error: `Invalid sectionId. Must be one of: ${VALID_SECTION_IDS.join(", ")}`,
-    }, { status: 400 });
-  }
-
-  if (!isAIEnabled()) {
-    return NextResponse.json({ error: "AI is not configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
-  }
-
-  const [tender, company] = await Promise.all([
-    prisma.tender.findFirst({
-      where: { id, userId },
-      include: {
-        requirements: true,
-        files: { select: { originalFileName: true, extractedText: true } },
-        expertMatches: {
-          where: { isSelected: true },
-          include: { expert: true },
-          orderBy: { score: "desc" },
-        },
-        projectMatches: {
-          where: { isSelected: true },
-          include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } },
-          orderBy: { score: "desc" },
-        },
-        complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
-        complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
-      },
-    }),
-    prisma.company.findUnique({
-      where: { userId },
-      include: {
-        documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-        legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-        financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-        complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-        // Vault fallback — when selected tender matches are all unreviewed
-        // we substitute the firm's reviewed vault so the section AI always
-        // has real evidence rather than an empty context.
-        experts: {
-          where: { trustLevel: "REVIEWED", deletedAt: null },
-          orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
-          take: 12,
-        },
-        projects: {
-          where: { trustLevel: "REVIEWED", deletedAt: null },
-          orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
-          take: 8,
-          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
-        },
-      },
-    }),
-  ]);
-
-  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
-
-  let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
-  let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
-
-  // Vault fallback: if selected matches are all unreviewed, use the company's
-  // reviewed vault — same three-tier logic as ai-proposal/route.ts so every
-  // section regeneration has real evidence rather than an empty context.
-  const vaultExperts = (company as unknown as { experts?: typeof experts }).experts ?? [];
-  const vaultProjects = (company as unknown as { projects?: typeof projects }).projects ?? [];
-  if (experts.length === 0) {
-    if (vaultExperts.length > 0) {
-      experts = vaultExperts;
-      logger.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
-    } else {
-      experts = tender.expertMatches.map((m) => m.expert);
-      if (experts.length > 0) logger.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
-    }
-  }
-  if (projects.length === 0) {
-    if (vaultProjects.length > 0) {
-      projects = vaultProjects as typeof projects;
-      logger.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
-    } else {
-      projects = tender.projectMatches.map((m) => m.project);
-      if (projects.length > 0) logger.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
-    }
-  }
-
-  const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
-
-  const tenderText = [
-    tender.title, tender.reference, tender.clientName || tender.procuringEntityName, tender.description,
-    tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology,
-    ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`),
-  ].filter(Boolean).join("\n\n");
-
-  const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
-
-  const evaluationWeightLines = intelligence.evaluationWeights.map(
-    (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
-  );
-  const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
-  const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
-  const tenderFacts = extractTenderFacts(intelligence.tenderText);
-  const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
-
-  const companyEvidenceLines = buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);
-  const projectEvidenceLines = buildProjectEvidenceLines(projects as Parameters<typeof buildProjectEvidenceLines>[0]);
-  const expertLines = experts.map(expertProofLine);
-  const projectLines = projects.map(projectProofLine);
-  const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
-  const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
-
-  const complianceLines = [
-    ...tender.complianceMatrix.map((m) => {
-      const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement";
-      return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`;
-    }),
-    ...companyEvidenceLines.slice(0, 14).map((l) => `Company evidence: ${l}`),
-    ...tender.complianceGaps.map((g) => `${g.severity}: ${g.title} — ${g.mitigationPlan || g.description}`),
-  ];
-
-  type _CompanyFields = {
-    legalName?: string | null; address?: string | null; phone?: string | null; email?: string | null;
-    website?: string | null; country?: string | null; foundingYear?: number | null; headcount?: number | null;
-    licenseGrade?: string | null; registrationNumber?: string | null; tin?: string | null; vat?: string | null;
-    gmName?: string | null; gmTitle?: string | null; gmLicense?: string | null; description?: string | null;
-    serviceLines?: string | null; sectors?: string | null;
-    complianceRecords?: Array<{ title?: string | null; complianceType?: string | null; referenceNumber?: string | null; status?: string | null }>;
-  };
-  const c = company as typeof company & _CompanyFields;
-
-  const aiInput: AIBidWriterInput = {
-    tenderTitle: tender.title,
-    clientName: intelligence.clientName,
-    clientContactName: tender.clientContactName ?? null,
-    tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
-    analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-    evaluationMethodology: [
-      clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-      ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
-      tenderLanguageEchoBlock,
-      tenderFactsPromptBlock,
-      buildRubricPromptDirective(intelligence.evaluationWeights),
-    ].filter(Boolean).join("\n"),
-    submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
-    requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
-    companyProfile:
-      `${company.name}\n${c.legalName ?? ""}\n${company.profileSummary ?? c.description ?? ""}\n` +
-      `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
-      `Sectors: ${safeParseArr(c.sectors).join(", ")}\n\n` +
-      `Company evidence:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
-    experts: expertLines.join("\n"),
-    projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-    compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
-    differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
-    companyVault: {
-      name: company.name,
-      legalName: c.legalName,
-      address: c.address,
-      phone: c.phone,
-      email: c.email,
-      website: c.website,
-      country: c.country,
-      foundingYear: c.foundingYear,
-      headcount: c.headcount,
-      licenseGrade: c.licenseGrade,
-      registrationNumber: c.registrationNumber,
-      tin: c.tin,
-      vat: c.vat,
-      gmName: c.gmName,
-      gmTitle: c.gmTitle,
-      gmLicense: c.gmLicense,
-      profileSummary: company.profileSummary ?? c.description,
-      serviceLines: safeParseArr(c.serviceLines),
-      sectors: safeParseArr(c.sectors),
-      complianceLines: (c.complianceRecords ?? [])
-        .map((r) => [r.title, r.complianceType, r.referenceNumber ? `Ref: ${r.referenceNumber}` : "", r.status ? `Status: ${r.status}` : ""].filter(Boolean).join(" — "))
-        .filter((s) => s.length > 0),
-    },
-    doNotUseAsClient: (() => {
-      // Build from vault projects AND the resolved evidence projects (covers
-      // unreviewed-selected fallback path); exclude the current tender client
-      // so repeat-client tenders don't receive contradictory instructions.
-      const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
-      return Array.from(new Set([
-        ...((company as { projects?: Array<{ clientName?: string | null }> }).projects?.map((p) => p.clientName) ?? []),
-        ...projects.map((p) => p.clientName),
-      ].filter((cn): cn is string => {
-        if (!cn || cn.trim().length < 3) return false;
-        return cn.toLowerCase().trim() !== tenderClient;
-      })));
-    })(),
-    criterionEvidenceMap: buildCriterionEvidenceMap(
-      intelligence.evaluationWeights,
-      intelligence.topProjects,
-      intelligence.topExperts,
-      tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
-    ),
-  };
-
-  // Build just the spec for the requested section.
-  const allSpecs = buildProposalSectionSpecs(aiInput);
-  const spec = allSpecs.find((s) => s.id === sectionId);
-  if (!spec) {
-    return NextResponse.json({ error: `Section spec not found for: ${sectionId}` }, { status: 500 });
-  }
-
   try {
-    let sectionMarkdown: string | null = null;
+    await prismaReady;
+    const { id } = await params;
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const sectionId = body.sectionId as string;
 
+    if (!VALID_SECTION_IDS.includes(sectionId as ProposalSectionId)) {
+      return NextResponse.json({
+        success: false,
+        error: `Invalid sectionId. Must be one of: ${VALID_SECTION_IDS.join(", ")}`,
+        code: "INVALID_SECTION_ID",
+      }, { status: 400 });
+    }
+
+    if (!isAIEnabled()) {
+      return NextResponse.json({
+        success: false,
+        error: "AI section regeneration is unavailable.",
+        code: "AI_NOT_CONFIGURED",
+        requestId,
+      }, { status: 503 });
+    }
+
+    const readiness = await assertTenderReadyForGenerationAndExport({
+      prisma,
+      tenderId: id,
+      userId,
+      purpose: "regenerate-section",
+    });
+    if (!readiness.ok) {
+      const notFound = readiness.blockerCode === "OWNERSHIP_TENDER_NOT_FOUND";
+      return NextResponse.json({
+        success: false,
+        ok: false,
+        code: notFound ? "TENDER_NOT_FOUND" : readiness.blockerCode,
+        error: notFound ? "Tender not found" : readiness.blockerDetail,
+        nextAction: notFound ? undefined : "Resolve the canonical generation-readiness blocker before regenerating a section.",
+      }, { status: notFound ? 404 : 422 });
+    }
+
+    const [tender, company] = await Promise.all([
+      prisma.tender.findFirst({
+        where: { id, userId },
+        include: {
+          requirements: true,
+          files: { select: { originalFileName: true, extractedText: true } },
+          expertMatches: {
+            where: { isSelected: true },
+            include: { expert: true },
+            orderBy: { score: "desc" },
+          },
+          projectMatches: {
+            where: { isSelected: true },
+            include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } },
+            orderBy: { score: "desc" },
+          },
+          complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
+          complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
+        },
+      }),
+      prisma.company.findUnique({
+        where: { userId },
+        include: {
+          documents: { orderBy: { updatedAt: "desc" }, take: 24 },
+          legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+          financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
+          complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+          experts: {
+            where: { trustLevel: "REVIEWED", deletedAt: null },
+            orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
+            take: 12,
+          },
+          projects: {
+            where: { trustLevel: "REVIEWED", deletedAt: null },
+            orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
+            take: 8,
+            include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
+          },
+        },
+      }),
+    ]);
+
+    if (!tender) return NextResponse.json({ success: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    if (!company) return NextResponse.json({ success: false, error: "Company not found", code: "COMPANY_NOT_FOUND" }, { status: 404 });
+
+    const evidence = resolveReviewedSectionEvidence({
+      selectedExperts: tender.expertMatches.map((match) => match.expert),
+      selectedProjects: tender.projectMatches.map((match) => match.project),
+      vaultExperts: company.experts,
+      vaultProjects: company.projects,
+    });
+    const evidenceBlocker = sectionEvidenceBlocker({
+      sectionId,
+      expertCount: evidence.experts.length,
+      projectCount: evidence.projects.length,
+    });
+    if (evidenceBlocker) {
+      return NextResponse.json({
+        success: false,
+        ok: false,
+        code: evidenceBlocker.code,
+        error: evidenceBlocker.message,
+        nextAction: "Review and approve the required Company Vault evidence before regenerating this section.",
+      }, { status: 422 });
+    }
+
+    const experts = evidence.experts;
+    const projects = evidence.projects;
+    logger.info("[regenerate-section] reviewed evidence resolved", {
+      requestId,
+      sectionId,
+      expertSource: evidence.expertSource,
+      projectSource: evidence.projectSource,
+      expertCount: experts.length,
+      projectCount: projects.length,
+    });
+
+    const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
+    const tenderText = [
+      tender.title,
+      tender.reference,
+      tender.clientName || tender.procuringEntityName,
+      tender.description,
+      tender.intakeSummary,
+      tender.analysisSummary,
+      tender.evaluationMethodology,
+      ...tender.files.map((file) => `${file.originalFileName}\n${file.extractedText ?? ""}`),
+    ].filter(Boolean).join("\n\n");
+
+    const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
+    const evaluationWeightLines = intelligence.evaluationWeights.map(
+      (weight) => `- ${weight.criterion} — ${weight.weight} (raw match: "${weight.rawMatch}")`,
+    );
+    const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
+    const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
+    const tenderFacts = extractTenderFacts(intelligence.tenderText);
+    const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
+
+    const companyEvidenceLines = buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);
+    const projectEvidenceLines = buildProjectEvidenceLines(projects as Parameters<typeof buildProjectEvidenceLines>[0]);
+    const expertLines = experts.map(expertProofLine);
+    const projectLines = projects.map(projectProofLine);
+    const requirementLines = tender.requirements.map((requirement) => `${requirement.priority} ${requirement.requirementType}: ${requirement.title} — ${requirement.description}`);
+    const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
+    const complianceLines = [
+      ...tender.complianceMatrix.map((matrix) => {
+        const requirement = matrix.requirement?.title ?? matrix.requirement?.description ?? "Requirement";
+        return `${matrix.supportLevel}: ${requirement} | ${matrix.evidenceType} from ${matrix.evidenceSource}${matrix.evidenceReference ? ` | ref: ${matrix.evidenceReference}` : ""}${matrix.notes ? ` — ${matrix.notes}` : ""}`;
+      }),
+      ...companyEvidenceLines.slice(0, 14).map((line) => `Company evidence: ${line}`),
+      ...tender.complianceGaps.map((gap) => `${gap.severity}: ${gap.title} — ${gap.mitigationPlan || gap.description}`),
+    ];
+
+    type CompanyFields = {
+      legalName?: string | null;
+      address?: string | null;
+      phone?: string | null;
+      email?: string | null;
+      website?: string | null;
+      country?: string | null;
+      foundingYear?: number | null;
+      headcount?: number | null;
+      licenseGrade?: string | null;
+      registrationNumber?: string | null;
+      tin?: string | null;
+      vat?: string | null;
+      gmName?: string | null;
+      gmTitle?: string | null;
+      gmLicense?: string | null;
+      description?: string | null;
+      serviceLines?: string | null;
+      sectors?: string | null;
+      complianceRecords?: Array<{ title?: string | null; complianceType?: string | null; referenceNumber?: string | null; status?: string | null }>;
+    };
+    const companyFields = company as typeof company & CompanyFields;
+
+    const aiInput: AIBidWriterInput = {
+      tenderTitle: tender.title,
+      clientName: intelligence.clientName,
+      clientContactName: tender.clientContactName ?? null,
+      tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
+      analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
+      evaluationMethodology: [
+        clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+        ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+        tenderLanguageEchoBlock,
+        tenderFactsPromptBlock,
+        buildRubricPromptDirective(intelligence.evaluationWeights),
+      ].filter(Boolean).join("\n"),
+      submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+      requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
+      companyProfile:
+        `${company.name}\n${companyFields.legalName ?? ""}\n${company.profileSummary ?? companyFields.description ?? ""}\n` +
+        `Services: ${safeParseArr(companyFields.serviceLines).join(", ")}\n` +
+        `Sectors: ${safeParseArr(companyFields.sectors).join(", ")}\n\n` +
+        `Company evidence:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
+      experts: expertLines.join("\n"),
+      projects: [...projectLines, ...projectEvidenceLines].join("\n"),
+      compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+      differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
+      companyVault: {
+        name: company.name,
+        legalName: companyFields.legalName,
+        address: companyFields.address,
+        phone: companyFields.phone,
+        email: companyFields.email,
+        website: companyFields.website,
+        country: companyFields.country,
+        foundingYear: companyFields.foundingYear,
+        headcount: companyFields.headcount,
+        licenseGrade: companyFields.licenseGrade,
+        registrationNumber: companyFields.registrationNumber,
+        tin: companyFields.tin,
+        vat: companyFields.vat,
+        gmName: companyFields.gmName,
+        gmTitle: companyFields.gmTitle,
+        gmLicense: companyFields.gmLicense,
+        profileSummary: company.profileSummary ?? companyFields.description,
+        serviceLines: safeParseArr(companyFields.serviceLines),
+        sectors: safeParseArr(companyFields.sectors),
+        complianceLines: (companyFields.complianceRecords ?? [])
+          .map((record) => [record.title, record.complianceType, record.referenceNumber ? `Ref: ${record.referenceNumber}` : "", record.status ? `Status: ${record.status}` : ""].filter(Boolean).join(" — "))
+          .filter((line) => line.length > 0),
+      },
+      doNotUseAsClient: (() => {
+        const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+        return Array.from(new Set(projects.map((project) => project.clientName).filter((clientName): clientName is string => {
+          if (!clientName || clientName.trim().length < 3) return false;
+          return clientName.toLowerCase().trim() !== tenderClient;
+        })));
+      })(),
+      criterionEvidenceMap: buildCriterionEvidenceMap(
+        intelligence.evaluationWeights,
+        intelligence.topProjects,
+        intelligence.topExperts,
+        tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
+      ),
+    };
+
+    const spec = buildProposalSectionSpecs(aiInput).find((candidate) => candidate.id === sectionId);
+    if (!spec) {
+      return NextResponse.json({
+        success: false,
+        error: "Requested section specification is unavailable.",
+        code: "SECTION_SPEC_NOT_FOUND",
+        requestId,
+      }, { status: 500 });
+    }
+
+    let sectionMarkdown: string | null = null;
     try {
       const { generateWithFallback } = await import("../../../../../lib/ai");
       sectionMarkdown = await generateWithFallback(spec.userPrompt, {
         systemPrompt: spec.systemPrompt,
-        // OBS-004 — fire-and-forget per-tenant AI usage tracking.
         onProviderAttempt: (provider, success, latencyMs, failureCategory) => {
           void recordAiUsage({
             userId,
@@ -313,19 +349,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
         },
       });
-    } catch (err) {
-      logger.warn(`[regenerate-section] AI generation failed for ${sectionId}: ${sanitizeError(err)}`);
+    } catch (error) {
+      logger.warn("[regenerate-section] AI provider chain failed", {
+        requestId,
+        sectionId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
     }
 
     if (!sectionMarkdown || sectionMarkdown.trim().length < 50) {
-      const deterministic = buildSectionFallback(spec, aiInput);
       return NextResponse.json({
-        success: true,
+        success: false,
+        ok: false,
         sectionId,
-        markdown: deterministic,
         fallback: true,
-        message: "AI unavailable — returned deterministic section.",
-      });
+        fallbackApplied: false,
+        code: "AI_SECTION_REGENERATION_UNAVAILABLE",
+        error: "AI section regeneration did not complete. No deterministic fallback was applied.",
+        nextAction: "Retry after an AI provider is healthy. Do not apply fallback text as generated proposal content.",
+        requestId,
+      }, { status: 503 });
     }
 
     return NextResponse.json({
@@ -333,9 +376,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       sectionId,
       markdown: sectionMarkdown,
       fallback: false,
+      aiGenerated: true,
+      evidence: {
+        expertSource: evidence.expertSource,
+        projectSource: evidence.projectSource,
+      },
     });
   } catch (error) {
-    logger.error(`[regenerate-section] Fatal error for ${sectionId}: ${sanitizeError(error)}`);
-    return NextResponse.json({ error: "Section regeneration failed. Retry or review server logs." }, { status: 500 });
+    logger.error("[regenerate-section] fatal route error", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json({
+      success: false,
+      error: "Section regeneration failed. Retry or contact support with the request ID.",
+      code: "SECTION_REGENERATION_RUNTIME_ERROR",
+      requestId,
+    }, { status: 500 });
   }
 }
