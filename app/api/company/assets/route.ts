@@ -261,28 +261,22 @@ export async function DELETE(req: Request) {
 
   const company = await ensureCompanyForUser(prisma, auth.actor.id);
   const result = await deleteCompanyAssetDurably({
-      prisma,
-      storage: getStorageAdapter(),
-      companyId: company.id,
-      assetId: id,
-    });
-    if (!result.ok) {
-      return privateJson(
-        {
-          error: result.code === "NOT_FOUND"
-            ? "Asset not found"
-            : "Asset deletion is pending a safe retry.",
-          ...result,
-        },
-        { status: result.status },
-      );
-    }
-  } catch (error) {
-    logger.error("[company-assets] delete failed", {
-      assetId: id,
-      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-    });
-    return privateJson({ error: "Company asset could not be deleted safely" }, { status: 502 });
+    prisma,
+    storage: getStorageAdapter(),
+    companyId: company.id,
+    assetId: id,
+  });
+
+  if (!result.ok) {
+    return privateJson(
+      {
+        error: result.code === "NOT_FOUND"
+          ? "Asset not found"
+          : "Asset deletion is pending a safe retry.",
+        ...result,
+      },
+      { status: result.status },
+    );
   }
 
   await logAction({
@@ -294,5 +288,5 @@ export async function DELETE(req: Request) {
     metadata: { companyId: company.id },
   });
 
-  return privateJson({ success: true });
+  return privateJson({ success: true, ...result });
 }
