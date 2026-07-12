@@ -2,6 +2,7 @@ import { logger } from "../../../../../lib/observability";
 import { getSession, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getStorageAdapter } from "../../../../../lib/storage";
+import { isCompanyAssetPendingDeletion } from "../../../../../lib/company-asset-durable-deletion";
 import {
   isInlineSafeCompanyAssetMime,
   sanitizeCompanyAssetFileName,
@@ -32,7 +33,7 @@ export async function GET(
   if (!company) return privateText("Not found", 404);
 
   const asset = await prisma.companyAsset.findFirst({
-    where: { id, companyId: company.id },
+    where: { id, companyId: company.id, isActive: true },
     select: {
       assetType: true,
       fileContent: true,
@@ -40,9 +41,14 @@ export async function GET(
       mimeType: true,
       originalFileName: true,
       size: true,
+      metadata: true,
     },
   });
-  if (!asset || (!asset.fileContent && !asset.storagePath)) return privateText("Not found", 404);
+  if (
+      !asset ||
+      isCompanyAssetPendingDeletion(asset.metadata) ||
+      (!asset.fileContent && !asset.storagePath)
+    ) return privateText("Not found", 404);
 
   let buffer: Buffer;
   try {

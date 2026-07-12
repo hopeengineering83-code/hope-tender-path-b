@@ -5,6 +5,10 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { logAction } from "../../../../lib/audit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { getStorageAdapter } from "../../../../lib/storage";
+import {
+  COMPANY_ASSET_PENDING_DELETE_MARKER,
+  deleteCompanyAssetDurably,
+} from "../../../../lib/company-asset-durable-deletion";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import {
   COMPANY_ASSET_MAX_BYTES,
@@ -38,7 +42,10 @@ export async function GET(_req: Request) {
 
   const company = await ensureCompanyForUser(prisma, userId);
   const assets = await prisma.companyAsset.findMany({
-    where: { companyId: company.id },
+    where: {
+      companyId: company.id,
+      NOT: { metadata: { contains: COMPANY_ASSET_PENDING_DELETE_MARKER } },
+    },
     select: {
       id: true,
       assetType: true,
@@ -253,22 +260,23 @@ export async function DELETE(req: Request) {
   if (!id) return privateJson({ error: "Missing id" }, { status: 400 });
 
   const company = await ensureCompanyForUser(prisma, auth.actor.id);
-  const asset = await prisma.companyAsset.findFirst({ where: { id, companyId: company.id } });
-  if (!asset) return privateJson({ error: "Asset not found" }, { status: 404 });
+  const result = await deleteCompanyAssetDurably({
+    prisma,
+    storage: getStorageAdapter(),
+    companyId: company.id,
+    assetId: id,
+  });
 
-  try {
-    await getStorageAdapter().deleteFile({
-      storagePath: asset.storagePath,
-      fileContent: asset.fileContent,
-      fileName: asset.originalFileName,
-    });
-    await prisma.companyAsset.delete({ where: { id } });
-  } catch (error) {
-    logger.error("[company-assets] delete failed", {
-      assetId: id,
-      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-    });
-    return privateJson({ error: "Company asset could not be deleted safely" }, { status: 502 });
+  if (!result.ok) {
+    return privateJson(
+      {
+        error: result.code === "NOT_FOUND"
+          ? "Asset not found"
+          : "Asset deletion is pending a safe retry.",
+        ...result,
+      },
+      { status: result.status },
+    );
   }
 
   await logAction({
@@ -276,9 +284,9 @@ export async function DELETE(req: Request) {
     action: "COMPANY_ASSET_DELETE",
     entityType: "CompanyAsset",
     entityId: id,
-    description: `Deleted ${asset.assetType} company asset`,
+    description: "Deleted a company asset",
     metadata: { companyId: company.id },
   });
 
-  return privateJson({ success: true });
+  return privateJson({ success: true, ...result });
 }
