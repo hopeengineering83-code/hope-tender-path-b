@@ -1,0 +1,94 @@
+name: Update retention cleanup source pins
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/retention-storage-cleanup-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Replace obsolete cron-local assertions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/performance-storage-observability-hardening.test.ts')
+          s = p.read_text()
+          start_marker = '// ─── 1. Cleanup cron ────────────────────────────────────────────────────────'
+          end_marker = '// ─── 2. Tender deletion blob cleanup ────────────────────────────────────────'
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('cleanup test section markers not found')
+          replacement = '''// ─── 1. Cleanup cron ────────────────────────────────────────────────────────
+
+          describe("Cleanup cron — stale artifact cleanup", () => {
+            const route = read("app/api/cron/cleanup-old-records/route.ts");
+            const helper = read("lib/engine/retention-storage-cleanup.ts");
+
+            it("deletes old SUPERSEDED ExportPackage rows using exact ID selection (race-condition-safe)", () => {
+              assert.ok(
+                route.includes('status: "SUPERSEDED"'),
+                "must delete SUPERSEDED ExportPackage rows older than 30 days",
+              );
+              assert.ok(
+                route.includes("deletedExportPackages"),
+                "must report deleted ExportPackage count in response",
+              );
+              assert.ok(
+                route.includes("supersededExportPkgIds"),
+                "must select exact ExportPackage IDs first (not broad deleteMany)",
+              );
+              assert.ok(
+                route.includes("id: { in: supersededExportPkgIds }"),
+                "must delete only the pre-selected IDs (deterministic deletion)",
+              );
+            });
+
+            it("purges exact SUPERSEDED GeneratedDocument candidates only after byte cleanup", () => {
+              assert.match(helper, /generatedDocument\.findMany\(/);
+              assert.match(helper, /generationStatus: "SUPERSEDED"/);
+              const storagePos = helper.indexOf("deleteStoredBytes(args.storage", helper.indexOf("purgeExpiredSupersededDocuments"));
+              const clearPos = helper.indexOf("generatedDocument.updateMany", storagePos);
+              const deletePos = helper.indexOf("generatedDocument.deleteMany", clearPos);
+              assert.ok(storagePos >= 0 && clearPos > storagePos && deletePos > clearPos);
+              assert.match(helper, /where: \{ id: doc\.id, generationStatus: "SUPERSEDED" \}/);
+              assert.match(route, /supersededDocBlobsCleaned: supersededDocumentCleanup\.blobsCleaned/);
+              assert.match(route, /supersededDocBlobFailures: supersededDocumentCleanup\.failures/);
+            });
+
+            it("does NOT use broad cron-local deleteMany for superseded docs", () => {
+              assert.doesNotMatch(route, /prisma\.generatedDocument\.deleteMany\(/);
+              assert.match(route, /purgeExpiredSupersededDocuments\(/);
+            });
+
+            it("blob cleanup uses retryable try/catch with safe diagnostics", () => {
+              assert.match(helper, /try \{/);
+              assert.match(helper, /catch \(error\)/);
+              assert.match(helper, /errorClass: error instanceof Error \? error\.constructor\.name/);
+              assert.doesNotMatch(helper, /error\.message/);
+              assert.match(route, /supersededDocBlobFailures/);
+            });
+          });
+
+          '''
+          p.write_text(s[:start] + replacement + s[end:])
+          PY
+      - name: Commit source-pin update
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/performance-storage-observability-hardening.test.ts
+          git commit -m "test: pin retryable retention cleanup"
+          git push origin HEAD:${{ github.head_ref }}
