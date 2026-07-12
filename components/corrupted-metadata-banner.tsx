@@ -99,7 +99,7 @@ function badFieldsFor(tender: TenderShape): Array<{ field: string; label: string
   return bad;
 }
 
-export function ClientEntityWarningBanner({ tender }: { tender: TenderShape }) {
+export function ClientEntityWarningBanner({ tender, canMutate = false }: { tender: TenderShape; canMutate?: boolean }) {
   const bad = badFieldsFor(tender);
   if (bad.length === 0) return null;
 
@@ -127,7 +127,7 @@ export function ClientEntityWarningBanner({ tender }: { tender: TenderShape }) {
             ))}
           </ul>
         </div>
-        <RepairTenderFactsButton tenderId={tender.id} badCount={bad.length} />
+        {canMutate && <RepairTenderFactsButton tenderId={tender.id} badCount={bad.length} />}
       </div>
     </section>
   );

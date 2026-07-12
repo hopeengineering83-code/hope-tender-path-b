@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { getSession } from "../lib/auth";
+import { getCurrentUser } from "../lib/auth";
+import { canMutateTender } from "../lib/recovery-command-actions";
 import { prisma, prismaReady } from "../lib/prisma";
 import { findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../lib/engine/build-plan";
@@ -24,8 +25,10 @@ const ENVELOPE_BADGE: Record<SubmissionEnvelope, string> = {
 };
 
 export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId: string }) {
-  const userId = await getSession();
-  if (!userId) return null;
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const userId = user.id;
+  const canMutate = canMutateTender(user.role);
 
   try {
   await prismaReady;
@@ -53,7 +56,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
             <p className="mt-1 max-w-3xl text-sm text-slate-600">{confirmed.blocker} Document counts, export eligibility, and reconciliation are unavailable until a Build Plan is rebuilt and confirmed.</p>
           </div>
           <div className="flex flex-col items-stretch gap-2 lg:items-end">
-            <BuildSubmissionPlanButton tenderId={tenderId} />
+            {canMutate && <BuildSubmissionPlanButton tenderId={tenderId} />}
           </div>
         </div>
         {tender.generatedDocuments.length > 0 && (
@@ -93,7 +96,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
             <p className="text-xs text-slate-500">Required generated files</p>
             <p className="text-2xl font-bold text-slate-900">{generatedCount}/{requiredCount}</p>
           </div>
-          {missing.length > 0 && <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={missing.length} />}
+          {missing.length > 0 && canMutate && <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={missing.length} />}
         </div>
       </div>
 
@@ -162,7 +165,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
                   (built in PR #371). For each stale row, the reconciler decides
                   KEEP / RELINK / SUPERSEDE / NEEDS_REVALIDATION and writes
                   the result back. Audit-logged via TENDER_DOCS_RECONCILED. */}
-              <ReconcileStaleFilesButton tenderId={tenderId} staleCount={extra.length} />
+              {canMutate && <ReconcileStaleFilesButton tenderId={tenderId} staleCount={extra.length} />}
             </div>
           )}
         </div>

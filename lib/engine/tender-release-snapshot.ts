@@ -598,7 +598,12 @@ export async function getTenderReleaseSnapshot(
     total: allReqs.length,
     mandatory: mandatory.length,
     groundedMandatory,
-    allMandatoryGrounded: groundedMandatory === mandatory.length && mandatory.length > 0,
+    // allMandatoryGrounded is vacuously true when there are no mandatory
+    // requirements — a tender with only OPTIONAL/SCORED requirements is not
+    // blocked on source grounding. The previous `&& mandatory.length > 0`
+    // guard made this false, which blocked the entire workflow via
+    // canonical-workflow-decision.ts priority 7 REQUIREMENTS_NOT_SOURCE_GROUNDED.
+    allMandatoryGrounded: mandatory.length === 0 || groundedMandatory === mandatory.length,
     blocker: requirementsBlocker,
   };
 

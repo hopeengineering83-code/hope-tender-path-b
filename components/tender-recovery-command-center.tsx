@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
-import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon } from "./icons";
+import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -725,7 +725,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
               </p>
               <ul className="space-y-1">
                 {data.advisoryWarnings.map((w) => (
-                  <li key={w.code} className="text-xs text-gray-600">ℹ {w.message}</li>
+                  <li key={w.code} className="text-xs text-gray-600"><InfoIcon className="inline h-3 w-3" /> {w.message}</li>
                 ))}
               </ul>
             </div>

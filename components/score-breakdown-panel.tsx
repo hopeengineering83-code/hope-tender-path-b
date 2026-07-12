@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ChevronDownIcon, RefreshIcon, WarningIcon } from "./icons";
+import { ChevronDownIcon, RefreshIcon, WarningIcon, InfoIcon } from "./icons";
 
 type DimensionCode =
   | "DISCIPLINE_FIT"
@@ -107,7 +107,7 @@ function DimensionBar({ dim }: { dim: DimensionRow }) {
             className="shrink-0 text-gray-300 hover:text-gray-500 text-xs leading-none"
             aria-label="Toggle rationale"
           >
-            ℹ
+            <InfoIcon className="inline h-3 w-3" />
           </button>
         )}
       </div>

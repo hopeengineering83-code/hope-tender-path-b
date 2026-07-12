@@ -39,7 +39,7 @@ const STATUS_BADGE: Record<string, string> = {
   WAIVED: "bg-blue-100 text-blue-700",
 };
 
-export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
+export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [objections, setObjections] = useState<Objection[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -147,7 +147,7 @@ export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
                   </div>
                 </div>
 
-                {isOpen && (
+                {isOpen && canMutate && (
                   <div className="mt-3 border-t border-slate-100 pt-3">
                     <textarea
                       value={notes[objection.id] ?? ""}
@@ -164,6 +164,11 @@ export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
                         Waive with justification
                       </button>
                     </div>
+                  </div>
+                )}
+                {isOpen && !canMutate && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <p className="text-[10px] text-slate-500">Read-only: resolving or waiving objections requires ADMIN or PROPOSAL_MANAGER role.</p>
                   </div>
                 )}
               </li>

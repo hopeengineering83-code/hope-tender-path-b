@@ -315,6 +315,11 @@ async function buildAnalysisState(
             id: f.id,
             originalFileName: f.originalFileName ?? f.fileName ?? "",
             extractedText: f.extractedText ?? null,
+            // classification is part of the canonical hash input —
+            // buildTenderAnalysisContent uses it as a fallback when
+            // extractedText is falsy. Omitting it here made the runtime-facts
+            // hash diverge from the gate's hash for files with empty text.
+            classification: f.classification ?? null,
             createdAt: f.createdAt,
           })),
       });

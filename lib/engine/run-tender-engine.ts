@@ -435,9 +435,17 @@ export async function runTenderEngine(
         // function is ever changed to merge rows, the boundary test in
         // tests/evidence-provenance-boundary.test.ts will fail.
         compliance = mergeFallbackRows(compliance, fallback.rows);
+        // When the rematch was skipped for deadline (not provider failure),
+        // override the blocker code so the nextAction mapper routes the user
+        // to RETRY_ENGINE_SMALLER_BATCH (re-run in background mode) instead of
+        // REVIEW_MATCHING_INPUTS. The fallback blocker code is
+        // EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED which maps to the wrong
+        // nextAction for a deadline skip.
         evidenceMatchingBlocker = {
-          code: fallback.blockerCode!,
-          message: fallback.blockerMessage!,
+          code: rematchSkippedForDeadline ? "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE" : fallback.blockerCode!,
+          message: rematchSkippedForDeadline
+            ? "AI evidence matching was skipped because the remaining Vercel function time could not cover the full rematch timeout. Deterministic matching was used. Re-run in background mode for AI multi-perspective scoring."
+            : fallback.blockerMessage!,
         };
         logger.info(`[run-tender-engine] Set ${evidenceMatchingBlocker.code} blocker for ${fallback.rows.length} source-grounded requirement(s) (diagnostic rows not persisted as compliance evidence — mergeFallbackRows is fail-closed no-op).`);
       }

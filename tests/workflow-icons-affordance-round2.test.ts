@@ -31,7 +31,7 @@ function stripComments(src: string): string {
     .replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-const RAW_UNICODE_PATTERN = /[✓✗⚡▶↻⊘⏳✦→↓↑←▼▲✕↺↗]/;
+const RAW_UNICODE_PATTERN = /[✓✗⚡▶↻⊘⏳✦→↓↑←▼▲✕↺↗ℹⓘ]/;
 
 // ─── 1. Recovery Command Center primary action renders SVG icon + text ────────
 
@@ -294,6 +294,7 @@ describe("Spec Test 12 — No raw Unicode in workflow components", () => {
     "bid-decision-form.tsx",
     "vault-evidence-search-panel.tsx",
     "tender-health-score-panel.tsx",
+    "score-breakdown-panel.tsx",
   ];
 
   for (const file of WORKFLOW_COMPONENTS) {

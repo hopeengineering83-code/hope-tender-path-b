@@ -184,7 +184,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         procuringEntityName: tender.procuringEntityName,
         country: tender.country,
         clientContactName: tender.clientContactName,
-      }} />
+      }} canMutate={canMutate} />
 
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} confirmedPlanItems={confirmedPlanItems} />
       <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
@@ -248,7 +248,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <AuthorityReviewTruthPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
-        <EvaluatorObjectionsPanel tenderId={tender.id} />
+        <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
       </WorkflowStage>
 
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
