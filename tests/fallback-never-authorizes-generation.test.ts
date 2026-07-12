@@ -46,7 +46,7 @@ const expectedHash = computeAnalysisContentHash({
   fileHashes: [
     {
       fileId: "file-1",
-      fileContentHash: "a8f022e155cfd83fe29fa41d7b72eeed615769b461618d7d679777e468941fba",
+      fileContentHash: "c36003e8dd4285e2bca25619f8861aac5d39cb07e759f4641e5d7a73de23681d",
     },
   ],
   tenderMetadata: {
