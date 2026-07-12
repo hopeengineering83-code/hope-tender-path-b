@@ -394,14 +394,15 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         where: { id: ctx.tenderId, userId: ctx.userId },
         include: {
           requirements: true,
-          expertMatches: { where: { isSelected: true }, include: { expert: true } },
-          projectMatches: { where: { isSelected: true }, include: { project: true } },
+          expertMatches: { where: { isSelected: true, expert: { is: { trustLevel: "REVIEWED", deletedAt: null } } }, include: { expert: true } },
+          projectMatches: { where: { isSelected: true, project: { is: { trustLevel: "REVIEWED", deletedAt: null } } }, include: { project: true } },
           complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
         },
       }),
       prisma.company.findUnique({ where: { userId: ctx.userId } }),
     ]);
     if (!tender) throw new Error(`PROPOSAL_GENERATION: tender ${ctx.tenderId} not found`);
+    if (!company) throw new Error("PROPOSAL_GENERATION: Company Vault not found");
 
     const input: AIBidWriterInput = {
       tenderTitle: tender.title,
@@ -424,8 +425,50 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
           ["cover-and-summary", "company-and-experience", "technical-approach", "additional-and-declaration"].includes(s))
       : undefined;
 
+    const needsReviewedExperts = !sectionFilter || sectionFilter.includes("technical-approach");
+    const needsReviewedProjects = !sectionFilter || sectionFilter.includes("company-and-experience");
+    if (needsReviewedExperts && tender.expertMatches.length === 0) {
+      await recordStep(ctx.jobId, {
+        stepName: "proposal.evidence",
+        message: "Blocked: no REVIEWED selected expert evidence is available.",
+        status: "FAILED",
+      });
+      throw new Error("NO_REVIEWED_EXPERT_EVIDENCE");
+    }
+    if (needsReviewedProjects && tender.projectMatches.length === 0) {
+      await recordStep(ctx.jobId, {
+        stepName: "proposal.evidence",
+        message: "Blocked: no REVIEWED selected project evidence is available.",
+        status: "FAILED",
+      });
+      throw new Error("NO_REVIEWED_PROJECT_EVIDENCE");
+    }
+
     await recordStep(ctx.jobId, { stepName: "proposal.generate", message: `Generating proposal sections${sectionFilter ? ` (filtered: ${sectionFilter.join(", ")})` : " (full)"}`, status: "RUNNING" });
     const markdown = await generateProposalSectionsParallel(input, sectionFilter);
+    if (!markdown || markdown.trim().length < 50) {
+    await recordStep(ctx.jobId, {
+      stepName: "proposal.output",
+      message: "AI proposal output was empty or insufficient; no document was persisted.",
+      status: "FAILED",
+    });
+    throw new Error("AI_PROPOSAL_OUTPUT_INSUFFICIENT");
+  }
+
+  const postGenerationReadiness = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId: ctx.tenderId,
+    userId: ctx.userId,
+    purpose: "background-proposal-generation",
+  });
+  if (!postGenerationReadiness.ok) {
+    await recordStep(ctx.jobId, {
+      stepName: "proposal.post-gate",
+      message: `Readiness changed while AI generation was running: ${postGenerationReadiness.blockerCode}`,
+      status: "FAILED",
+    });
+    throw new Error(`PROPOSAL_GENERATION readiness changed (${postGenerationReadiness.blockerCode})`);
+  }
     const backgroundFileName = `Technical-Proposal-Background-${ctx.jobId}.md`;
     const backgroundFileContent = Buffer.from(markdown, "utf8").toString("base64");
     const backgroundIntegrity = verifiedIntegrityDataFromBase64({
