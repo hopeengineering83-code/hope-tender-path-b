@@ -16,14 +16,17 @@ describe("company reimport safety", () => {
   });
 
   it("defers destructive cleanup until primary and safety imports complete", () => {
-    const primaryPos = route.indexOf("importCompanyKnowledgeFromDocuments(company.id)");
-    const safetyPos = route.indexOf("runCompanyKnowledgeSafetyImport(prisma, company.id)");
-    const cleanupPos = route.indexOf("cleanupSupportDocImportedRecords(company.id)");
-    assert.ok(primaryPos >= 0);
+    const postStart = route.indexOf("export async function POST");
+    const primaryPos = route.indexOf("importCompanyKnowledgeFromDocuments(company.id)", postStart);
+    const safetyPos = route.indexOf("runCompanyKnowledgeSafetyImport(prisma, company.id)", postStart);
+    const cleanupPos = route.indexOf("cleanupSupportDocImportedRecords(company.id)", postStart);
+    assert.ok(postStart >= 0);
+    assert.ok(primaryPos > postStart);
     assert.ok(safetyPos > primaryPos);
     assert.ok(cleanupPos > safetyPos);
-    assert.equal(route.match(/cleanupSupportDocImportedRecords\(company\.id\)/g)?.length, 1);
-    assert.doesNotMatch(route.slice(0, primaryPos), /cleanupSupportDocImportedRecords/);
+    const postRegion = route.slice(postStart);
+    assert.equal(postRegion.match(/cleanupSupportDocImportedRecords\(company\.id\)/g)?.length, 1);
+    assert.doesNotMatch(route.slice(postStart, primaryPos), /cleanupSupportDocImportedRecords\(company\.id\)/);
   });
 
   it("makes support-derived deletion one transaction", () => {
