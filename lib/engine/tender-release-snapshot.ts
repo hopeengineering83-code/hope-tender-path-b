@@ -27,6 +27,7 @@ import { assessExtractionQuality } from "../extraction-quality";
 import { isGroundedEvidence } from "./evidence-grounding";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
+import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
 import { createHash } from "node:crypto";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
@@ -531,14 +532,41 @@ export async function getTenderReleaseSnapshot(
     activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages })),
   });
 
-  // GATE-ALIGNED STRICT METADATA CHECK — mirrors generation-readiness-gate.ts:716-732.
-  // METADATA IS NO LONGER A HARD BLOCKER (unified runtime model).
-  // The snapshot's metadata.gateValid is ALWAYS true — metadata cannot
-  // block the workflow. The hasGenerationBlocker/hasExportBlocker flags
-  // from the canonical resolver are kept for diagnostic display but do
-  // NOT affect gateValid, generationBlockers, or exportBlockers.
-  const metadataGateValid = true;
-  const metadataGateBlocker: string | null = null;
+  // FINAL TENDER-FACTS CHECK — mirrors generation-readiness-gate.ts.
+  // Draft generation uses metadataResult.hasGenerationBlocker only. Final export
+  // and Final ZIP additionally require hasExportBlocker=false and the same
+  // final-mode source/audit validator used by the authoritative gate.
+  let metadataGateValid = !metadataResult.hasExportBlocker;
+  let metadataGateBlocker: string | null = metadataResult.hasExportBlocker
+    ? "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority."
+    : null;
+  if (metadataGateValid) {
+    try {
+      const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
+      const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(
+        tender as any,
+        activeFiles,
+        ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
+          field: o.field,
+          fieldState: o.fieldState,
+          overrideValue: o.overrideValue,
+          reason: o.reason,
+          confirmationBasis: o.confirmationBasis,
+          authorityClass: o.authorityClass,
+          confirmedAt: o.confirmedAt,
+        })),
+        "final",
+      );
+      if (!metaValidation.ok) {
+        metadataGateValid = false;
+        metadataGateBlocker = metaValidation.blockers[0]
+          ?? "Final Tender Facts are not source-grounded or audit-authorized.";
+      }
+    } catch {
+      metadataGateValid = false;
+      metadataGateBlocker = "Final Tender Facts gate check failed (internal error).";
+    }
+  }
   const metadata: SnapshotMetadataState = {
     ...metadataResult,
     gateValid: metadataGateValid,
@@ -716,37 +744,37 @@ export async function getTenderReleaseSnapshot(
       : null,
   };
 
-  // Aggregate generation/export/zip eligibility.
-  // METADATA IS NO LONGER A BLOCKER — removed metadata.hasGenerationBlocker
-  // and metadata.hasExportBlocker from the blocker arrays. Per the unified
-  // runtime model, metadata is advisory/diagnostic only.
-  const generationBlockers: string[] = [
-    ...(extraction.blocker ? [extraction.blocker] : []),
-    ...(analysis.blocker ? [analysis.blocker] : []),
-    ...(requirements.blocker ? [requirements.blocker] : []),
-    ...(buildPlan.blocker ? [buildPlan.blocker] : []),
-    ...(vault.blocker ? [vault.blocker] : []),
-  ];
-
-  const exportBlockers: string[] = [
-    ...generationBlockers,
-    // Export requires evidence coverage ≥ 50% on mandatory requirements when any exist.
-    ...(mandatory.length > 0 && evidence.coveragePercent < 50
-      ? [`Evidence coverage is ${evidence.coveragePercent}% (need ≥ 50% for export).`]
-      : []),
-  ];
-
-  const finalZipBlockers: string[] = [
-    ...exportBlockers,
-    // Final ZIP requires ALL mandatory requirements grounded, not just ≥ 50%.
-    ...(!requirements.allMandatoryGrounded && mandatory.length > 0
-      ? ["All mandatory requirements must be source-grounded for Final ZIP."]
-      : []),
-  ];
-
-  const generationEligible = generationBlockers.length === 0;
-  const exportEligible = exportBlockers.length === 0;
-  const finalZipEligible = finalZipBlockers.length === 0;
+  // Aggregate generation/export/ZIP eligibility through one pure decision
+  // helper. Draft generation receives only the resolver's generation blocker;
+  // final output additionally receives the strict final Tender Facts blocker.
+  // The strict confirmed Build Plan result is authoritative — document count is
+  // display-only and must never unlock generation.
+  const eligibility = buildReleaseSnapshotEligibility({
+    extractionBlocker: extraction.blocker,
+    analysisBlocker: analysis.blocker,
+    metadataGenerationBlocker: metadata.hasGenerationBlocker
+      ? "One or more Tender Facts are invalid for draft generation."
+      : null,
+    metadataFinalBlocker: metadata.gateValid
+      ? null
+      : metadata.gateBlocker ?? "Final Tender Facts are not ready for export.",
+    requirementsBlocker: requirements.blocker,
+    buildPlanGateBlocker: buildPlan.gateValid
+      ? null
+      : buildPlan.gateBlocker ?? "A current confirmed Build Plan is required.",
+    vaultBlocker: vault.blocker,
+    mandatoryRequirementCount: mandatory.length,
+    evidenceCoveragePercent: evidence.coveragePercent,
+    allMandatoryGrounded: requirements.allMandatoryGrounded,
+  });
+  const {
+    generationBlockers,
+    exportBlockers,
+    finalZipBlockers,
+    generationEligible,
+    exportEligible,
+    finalZipEligible,
+  } = eligibility;
 
   // Snapshot revision: stable hash of all inputs used to build this snapshot.
   const revisionInput = JSON.stringify({
@@ -759,7 +787,15 @@ export async function getTenderReleaseSnapshot(
       field: o.field,
       fieldState: o.fieldState,
       overrideValue: o.overrideValue,
+      reason: o.reason,
+      confirmationBasis: o.confirmationBasis,
+      authorityClass: o.authorityClass,
+      confirmedAt: o.confirmedAt?.toISOString?.() ?? o.confirmedAt ?? null,
     })),
+    metadataGateValid: metadata.gateValid,
+    metadataGateBlocker: metadata.gateBlocker,
+    buildPlanGateValid: buildPlan.gateValid,
+    buildPlanGateBlocker: buildPlan.gateBlocker,
     documentCount: buildPlanCount,
   });
   const snapshotRevision = createHash("sha256").update(revisionInput).digest("hex").slice(0, 16);
