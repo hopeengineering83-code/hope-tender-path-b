@@ -4,56 +4,15 @@ import { logger } from "../../../../../lib/observability";
 // Why this exists:
 //   Generated proposal content lives behind authenticated session cookies,
 //   so /api/tenders/* correctly returns 401 to unauthenticated callers.
-//   That makes external production auditing impossible without an app
-//   session. This endpoint gives ADMIN users a safe, structured way to
-//   audit the health of every generated proposal across all users without
-//   leaking the proposal body text.
+//   This endpoint gives ADMIN users a safe, structured way to audit the
+//   health of generated proposals across all users without leaking proposal
+//   body text or content bytes.
 //
 // Security guarantees:
 //   - ADMIN role only.
-//   - Returns metadata + issue flags ONLY. No proposal text or content
-//     bytes ever flow through this response.
-//   - Issue snippets are NOT returned. The caller gets:
-//       * boolean issue flags (aiTrace, placeholder, pricingLeakage, etc.)
-//       * a recommendedAction string per row
-//       * aggregate counts at the top
-//   - Pagination via ?limit=20 (max 200).
-//   - Optional ?tenderId=… to scope a single tender (still ADMIN-only).
-//
-// Use cases:
-//   - "Show me every generated DOCX across production that has AI traces"
-//   - "Show me every tender with strict two-envelope risk"
-//   - "Show me every generated proposal that has no file content"
-//   - "Show me every official-original placeholder still blocking export"
-//
-// Query parameters:
-//   tenderId      — optional; restrict to a single tender
-//   limit         — optional; 1..200, default 20
-//   includeReady  — optional "true|false"; when false (default), only rows
-//                   with at least one issue are returned. When true, every
-//                   row is returned for full inventory.
-//   severity      — optional "HIGH|MEDIUM|LOW"; filter by recommended-action
-//                   severity. Computed from the per-doc reasons.
-//
-// Response shape (no body text leaks):
-//   {
-//     success: true,
-//     summary: { totalGeneratedDocuments, finalExportCandidates,
-//                readyForExport, blockedDocuments, missingContent,
-//                invalidSignatures, aiTraceIssues, placeholderIssues,
-//                pricingLeakageIssues, officialOriginalRisks,
-//                staleInternalRows },
-//     documents: [ { tenderId, tenderTitle, documentId, documentName,
-//                    exactFileName, documentType, envelope, format,
-//                    generationStatus, validationStatus, reviewStatus,
-//                    finalExportCandidate, excludedReason,
-//                    hasFileContent, hasStoragePath, storageReadable,
-//                    byteSignatureOk, docxVisibleTextInspectable,
-//                    aiTraceIssue, placeholderIssue, pricingLeakageIssue,
-//                    officialOriginalPlaceholderRisk, readyForExport,
-//                    zipEligible, recommendedAction, createdAt, updatedAt
-//                    } ]
-//   }
+//   - Returns metadata + issue flags only.
+//   - Issue snippets are never returned.
+//   - Pagination is bounded to 200 rows.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -74,7 +33,7 @@ import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygien
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/tender-metadata-completeness";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -100,7 +59,6 @@ type AuditRow = {
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
   docxVisibleTextInspectable: boolean;
-  // ── Quality-gate fields (Part 14) ──────────────────────────────────────
   wordCount: number;
   sectionCount: number;
   requiredSectionsPresent: string[];
@@ -108,7 +66,6 @@ type AuditRow = {
   requirementCoverageRatio: number;
   qualityScore: number;
   qualityRecommendedStatus: string;
-  // ── Issue flags (booleans only — no body text leaks) ─────────────────
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
   bidTeamToConfirmIssue: boolean;
@@ -119,7 +76,6 @@ type AuditRow = {
   officialOriginalPlaceholderRisk: boolean;
   missingContentIssue: boolean;
   duplicatedSectionsIssue: boolean;
-  // ── Outcome ───────────────────────────────────────────────────────────
   readyForExport: boolean;
   zipEligible: boolean;
   recommendedAction: string;
@@ -183,14 +139,28 @@ function why(row: AuditRow): { recommendedAction: string; severity: Severity } {
   return { recommendedAction: "OK — ready for final export.", severity: "LOW" };
 }
 
-function detectOfficialOriginalRisk(doc: { name: string | null; exactFileName: string | null; documentType: string | null; reviewStatus: string | null; format: string | null }): boolean {
+function detectOfficialOriginalRisk(doc: {
+  name: string | null;
+  exactFileName: string | null;
+  documentType: string | null;
+  reviewStatus: string | null;
+  format: string | null;
+}): boolean {
   const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""} ${doc.reviewStatus ?? ""} ${doc.format ?? ""}`.toUpperCase();
   if (label.includes("REPLACE_WITH_ORIGINAL")) return true;
   if (label.includes("NOT_EXPORTABLE") && /BID FORM|TENDER FORM|TEMPLATE|DECLARATION|UNDERTAKING|INTEGRITY PACT|BID BOND|RATE CARD|TIN|VAT|TAX CLEARANCE|AUDITED|TRADE LICENSE/.test(label)) return true;
   return false;
 }
 
-function describeExclusionReason(doc: { generationStatus: string; validationStatus: string; reviewStatus: string; format: string | null; documentType: string | null; name: string | null; exactFileName: string | null }): string | null {
+function describeExclusionReason(doc: {
+  generationStatus: string;
+  validationStatus: string;
+  reviewStatus: string;
+  format: string | null;
+  documentType: string | null;
+  name: string | null;
+  exactFileName: string | null;
+}): string | null {
   if (isFinalExportCandidateDocument(doc as any)) return null;
   const gen = (doc.generationStatus ?? "").toUpperCase();
   const val = (doc.validationStatus ?? "").toUpperCase();
@@ -203,20 +173,21 @@ function describeExclusionReason(doc: { generationStatus: string; validationStat
   if (rev === "REPLACE_WITH_ORIGINAL") return "REPLACE_WITH_ORIGINAL";
   if (fmt === "CONTROL") return "CONTROL";
   if (dtype === "SUBMISSION_CONTROL" || dtype === "SUBMISSION_RULES") return dtype;
-  // Internal-draft heuristic (QUICK_DRAFT / DRAFT_ONLY / Markdown).
   const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${dtype} ${fmt} ${rev} ${gen}`.toUpperCase();
   if (/QUICK_DRAFT|DRAFT_ONLY|MARKDOWN/.test(label)) return "INTERNAL_DRAFT";
   return "EXCLUDED_INTERNAL_ROW";
 }
 
 export async function GET(req: Request) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try {
       actor = await requireRole("ADMIN");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+    } catch (error) {
+      return error instanceof Error && error.message === "Forbidden"
+        ? forbiddenResponse()
+        : unauthorizedResponse();
     }
     await prismaReady;
 
@@ -226,18 +197,15 @@ export async function GET(req: Request) {
     const includeReady = (url.searchParams.get("includeReady") ?? "").toLowerCase() === "true";
     const severityParam = (url.searchParams.get("severity") ?? "").toUpperCase();
     const severityFilter: Severity | null =
-      severityParam === "HIGH" || severityParam === "MEDIUM" || severityParam === "LOW" ? (severityParam as Severity) : null;
+      severityParam === "HIGH" || severityParam === "MEDIUM" || severityParam === "LOW"
+        ? (severityParam as Severity)
+        : null;
 
-    // Pull a bounded slice: most recently updated generated docs across all
-    // tenders. Filtering by tenderId narrows to a single tender. We never
-    // load fileContent for ALL rows up front — we stream document-by-document
-    // and only decode DOCX visible text when the file is small enough
-    // (<2MB base64) to avoid blowing Vercel memory on big PDFs.
     const where = tenderIdParam ? { tenderId: tenderIdParam } : {};
     const docs = await prisma.generatedDocument.findMany({
       where,
       orderBy: [{ updatedAt: "desc" }],
-      take: limitParam * 2, // overfetch so the issue filter can find enough
+      take: limitParam * 2,
       select: {
         id: true,
         tenderId: true,
@@ -256,80 +224,76 @@ export async function GET(req: Request) {
       },
     });
 
-    const tenderIds = Array.from(new Set(docs.map((d) => d.tenderId)));
+    const tenderIds = Array.from(new Set(docs.map((document) => document.tenderId)));
     const tenders = await prisma.tender.findMany({
       where: { id: { in: tenderIds } },
       select: { id: true, title: true },
     });
-    const tenderTitleById = new Map(tenders.map((t) => [t.id, t.title]));
+    const tenderTitleById = new Map(tenders.map((tender) => [tender.id, tender.title]));
 
     const rows: AuditRow[] = [];
-    for (const d of docs) {
-      const candidate = isFinalExportCandidateDocument(d);
-      const excludedReason = candidate ? null : describeExclusionReason(d);
-      const hasFileContent = Boolean(d.fileContent && d.fileContent.length > 0);
-      const hasStoragePath = Boolean(d.storagePath && d.storagePath.length > 0);
+    for (const document of docs) {
+      const candidate = isFinalExportCandidateDocument(document);
+      const excludedReason = candidate ? null : describeExclusionReason(document);
+      const hasFileContent = Boolean(document.fileContent && document.fileContent.length > 0);
+      const hasStoragePath = Boolean(document.storagePath && document.storagePath.length > 0);
       const missingContentIssue = candidate && !hasFileContent && !hasStoragePath;
-      const fileName = d.exactFileName ?? d.name ?? "generated-document";
+      const fileName = document.exactFileName ?? document.name ?? "generated-document";
 
       let byteSignatureOk: boolean | null = null;
-      if (hasFileContent && d.fileContent) {
-        const sig = validateFileSignature(fileName, d.fileContent);
-        byteSignatureOk = sig.ok;
+      if (hasFileContent && document.fileContent) {
+        byteSignatureOk = validateFileSignature(fileName, document.fileContent).ok;
       }
 
-      // Decode DOCX visible text from inline base64 (small enough) or from
-      // storagePath for storage-backed documents (capped at 2 MB to bound RAM).
       let visibleText: string | null = null;
       let docxVisibleTextInspectable = false;
-      let storageReadable: boolean | null = hasStoragePath ? null : null;
-      const inlineBase64 = d.fileContent ?? null;
+      let storageReadable: boolean | null = null;
+      const inlineBase64 = document.fileContent ?? null;
       if (inlineBase64 && inlineBase64.length > 0 && inlineBase64.length < 2_000_000) {
         try {
           visibleText = await extractDocxVisibleText(inlineBase64, fileName);
           docxVisibleTextInspectable = visibleText !== null;
-          storageReadable = null; // inline path — storage not consulted
         } catch {
           docxVisibleTextInspectable = false;
         }
-      } else if (hasStoragePath && d.storagePath) {
-        // Attempt to read from storage for docs without inline content.
+      } else if (hasStoragePath && document.storagePath) {
         try {
           const { getStorageAdapter } = await import("../../../../../lib/storage");
           const storage = getStorageAdapter();
-          const buf = await storage.getFile({ storagePath: d.storagePath, fileContent: null, fileName });
+          const buffer = await storage.getFile({
+            storagePath: document.storagePath,
+            fileContent: null,
+            fileName,
+          });
           storageReadable = true;
-          if (buf.length < 2_000_000) {
-            const base64FromStorage = buf.toString("base64");
+          if (buffer.length < 2_000_000) {
+            const base64FromStorage = buffer.toString("base64");
             visibleText = await extractDocxVisibleText(base64FromStorage, fileName).catch(() => null);
             docxVisibleTextInspectable = visibleText !== null;
-            if (!byteSignatureOk && byteSignatureOk !== false) {
+            if (byteSignatureOk === null) {
               byteSignatureOk = validateFileSignature(fileName, base64FromStorage).ok;
             }
-          } else {
-            docxVisibleTextInspectable = false; // too large
           }
         } catch {
           storageReadable = false;
         }
       }
 
-      // Pure-text hygiene (works on either plain-text fileContent or the
-      // decoded DOCX visible text). We never return the matching text — only
-      // the flags.
       const hygieneTarget = visibleText ?? (inlineBase64 ?? "");
-      const hygiene = hygieneTarget ? documentHygieneIssues(hygieneTarget, d) : [];
-      const aiTraceIssue = hygiene.some((r) => /AI\/meta-preparation/i.test(r));
-      const placeholderIssue = hygiene.some((r) => /Placeholder/i.test(r));
-      const pricingLeakageIssue = hygiene.some((r) => /pricing language/i.test(r)) || (visibleText ? containsPricingLeakage(visibleText, d) : false);
-      const officialOriginalPlaceholderRisk = detectOfficialOriginalRisk(d);
+      const hygiene = hygieneTarget ? documentHygieneIssues(hygieneTarget, document) : [];
+      const aiTraceIssue = hygiene.some((reason) => /AI\/meta-preparation/i.test(reason));
+      const placeholderIssue = hygiene.some((reason) => /Placeholder/i.test(reason));
+      const pricingLeakageIssue = hygiene.some((reason) => /pricing language/i.test(reason))
+        || (visibleText ? containsPricingLeakage(visibleText, document) : false);
+      const officialOriginalPlaceholderRisk = detectOfficialOriginalRisk(document);
 
-      // ── Quality-gate per document (Part 14). Runs only when we have visible
-      // text; otherwise we mark it inspectable=false and skip the gate so
-      // we don't penalise documents whose body lives in storage we did not
-      // fetch in this bulk audit.
       const quality = visibleText
-        ? assessGeneratedDocumentQuality({ doc: d, visibleText, rawFileContent: inlineBase64, hasStoragePath })
+        ? assessGeneratedDocumentQuality({
+            doc: document,
+            visibleText,
+            rawFileContent: inlineBase64,
+            hasStoragePath,
+          })
         : null;
       const wordCount = quality?.wordCount ?? 0;
       const sectionCount = quality?.sectionCount ?? 0;
@@ -338,35 +302,40 @@ export async function GET(req: Request) {
       const requirementCoverageRatio = quality?.requirementCoverageRatio ?? 0;
       const qualityScore = quality?.score ?? 0;
       const qualityRecommendedStatus = quality?.recommendedStatus ?? (visibleText ? "PASSED" : "DRAFT_ONLY");
-      // Issue flags derived from the quality gate so the admin audit
-      // surface lines up with the gate's verdict.
-      const issueCodes = new Set(quality?.issues.map((i) => i.code) ?? []);
-      const bidTeamToConfirmIssue = issueCodes.has("BID_TEAM_TO_CONFIRM") || (visibleText ? METADATA_PLACEHOLDER_PATTERNS.some((rx) => rx.test(visibleText)) : false);
+      const issueCodes = new Set(quality?.issues.map((issue) => issue.code) ?? []);
+      const bidTeamToConfirmIssue = issueCodes.has("BID_TEAM_TO_CONFIRM")
+        || (visibleText ? METADATA_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(visibleText)) : false);
       const genericContentIssue = issueCodes.has("GENERIC_FILLER");
       const unsupportedClaimRisk = issueCodes.has("UNSUPPORTED_CLAIM_RISK");
       const internalTraceabilityIssue = issueCodes.has("INTERNAL_TRACEABILITY");
       const duplicatedSectionsIssue = issueCodes.has("DUPLICATED_SECTIONS");
 
-      const generated = isGenerated(d.generationStatus);
-      const validated = isValidationPassed(d.validationStatus);
-      const reviewed = isReviewReadyForExport(d.reviewStatus);
-      const state = deriveDocumentOutputState(d);
+      const generated = isGenerated(document.generationStatus);
+      const validated = isValidationPassed(document.validationStatus);
+      const reviewed = isReviewReadyForExport(document.reviewStatus);
+      const state = deriveDocumentOutputState(document);
       const readyForExport = candidate && generated && validated && reviewed && state === "READY_FOR_EXPORT";
-      const zipEligible = readyForExport && !missingContentIssue && byteSignatureOk !== false && !officialOriginalPlaceholderRisk;
-      const envelope = inferEnvelope(d.documentType ?? "TECHNICAL", d.exactFileName ?? d.name ?? "");
+      const zipEligible = readyForExport
+        && !missingContentIssue
+        && byteSignatureOk !== false
+        && !officialOriginalPlaceholderRisk;
+      const envelope = inferEnvelope(
+        document.documentType ?? "TECHNICAL",
+        document.exactFileName ?? document.name ?? "",
+      );
 
-      const partial: AuditRow = {
-        tenderId: d.tenderId,
-        tenderTitle: tenderTitleById.get(d.tenderId) ?? d.tenderId,
-        documentId: d.id,
-        documentName: d.name,
-        exactFileName: d.exactFileName,
-        documentType: d.documentType,
+      const row: AuditRow = {
+        tenderId: document.tenderId,
+        tenderTitle: tenderTitleById.get(document.tenderId) ?? document.tenderId,
+        documentId: document.id,
+        documentName: document.name,
+        exactFileName: document.exactFileName,
+        documentType: document.documentType,
         envelope,
-        format: d.format,
-        generationStatus: d.generationStatus,
-        validationStatus: d.validationStatus,
-        reviewStatus: d.reviewStatus,
+        format: document.format,
+        generationStatus: document.generationStatus,
+        validationStatus: document.validationStatus,
+        reviewStatus: document.reviewStatus,
         finalExportCandidate: candidate,
         excludedReason,
         hasFileContent,
@@ -395,47 +364,55 @@ export async function GET(req: Request) {
         zipEligible,
         recommendedAction: "",
         severity: "LOW",
-        createdAt: d.createdAt.toISOString(),
-        updatedAt: d.updatedAt.toISOString(),
+        createdAt: document.createdAt.toISOString(),
+        updatedAt: document.updatedAt.toISOString(),
       };
-      const verdict = why(partial);
-      partial.recommendedAction = verdict.recommendedAction;
-      partial.severity = verdict.severity;
-      rows.push(partial);
+      const verdict = why(row);
+      row.recommendedAction = verdict.recommendedAction;
+      row.severity = verdict.severity;
+      rows.push(row);
     }
 
-    const hasIssue = (r: AuditRow) =>
-      r.missingContentIssue || r.officialOriginalPlaceholderRisk || r.byteSignatureOk === false ||
-      r.pricingLeakageIssue || r.aiTraceIssue || r.placeholderIssue || r.bidTeamToConfirmIssue ||
-      r.genericContentIssue || r.unsupportedClaimRisk || r.internalTraceabilityIssue ||
-      r.duplicatedSectionsIssue || r.qualityRecommendedStatus !== "PASSED" ||
-      (!r.readyForExport && r.finalExportCandidate);
+    const hasIssue = (row: AuditRow) =>
+      row.missingContentIssue
+      || row.officialOriginalPlaceholderRisk
+      || row.byteSignatureOk === false
+      || row.pricingLeakageIssue
+      || row.aiTraceIssue
+      || row.placeholderIssue
+      || row.bidTeamToConfirmIssue
+      || row.genericContentIssue
+      || row.unsupportedClaimRisk
+      || row.internalTraceabilityIssue
+      || row.duplicatedSectionsIssue
+      || row.qualityRecommendedStatus !== "PASSED"
+      || (!row.readyForExport && row.finalExportCandidate);
 
     let visibleRows = includeReady ? rows : rows.filter(hasIssue);
-    if (severityFilter) visibleRows = visibleRows.filter((r) => r.severity === severityFilter);
+    if (severityFilter) visibleRows = visibleRows.filter((row) => row.severity === severityFilter);
     visibleRows = visibleRows.slice(0, limitParam);
 
     const summary = {
       totalGeneratedDocuments: rows.length,
-      currentOutputs: rows.filter((r) => r.finalExportCandidate && r.generationStatus === "GENERATED").length,
-      staleOutputs: rows.filter((r) => !r.finalExportCandidate).length,
-      finalExportCandidates: rows.filter((r) => r.finalExportCandidate).length,
-      readyForExport: rows.filter((r) => r.readyForExport).length,
-      blockedDocuments: rows.filter((r) => r.finalExportCandidate && !r.readyForExport).length,
-      qualityFailed: rows.filter((r) => r.qualityRecommendedStatus === "QUALITY_FAILED").length,
-      missingRequiredDocs: 0, // Computed at the tender level by the canonical helper, not in the bulk audit.
-      missingContent: rows.filter((r) => r.missingContentIssue).length,
-      invalidSignatures: rows.filter((r) => r.byteSignatureOk === false).length,
-      aiTraceIssues: rows.filter((r) => r.aiTraceIssue).length,
-      placeholderIssues: rows.filter((r) => r.placeholderIssue).length,
-      bidTeamToConfirmIssues: rows.filter((r) => r.bidTeamToConfirmIssue).length,
-      pricingLeakageIssues: rows.filter((r) => r.pricingLeakageIssue).length,
-      genericContentIssues: rows.filter((r) => r.genericContentIssue).length,
-      unsupportedClaimRisks: rows.filter((r) => r.unsupportedClaimRisk).length,
-      internalTraceabilityIssues: rows.filter((r) => r.internalTraceabilityIssue).length,
-      duplicatedSectionsIssues: rows.filter((r) => r.duplicatedSectionsIssue).length,
-      officialOriginalRisks: rows.filter((r) => r.officialOriginalPlaceholderRisk).length,
-      staleInternalRows: rows.filter((r) => !r.finalExportCandidate).length,
+      currentOutputs: rows.filter((row) => row.finalExportCandidate && row.generationStatus === "GENERATED").length,
+      staleOutputs: rows.filter((row) => !row.finalExportCandidate).length,
+      finalExportCandidates: rows.filter((row) => row.finalExportCandidate).length,
+      readyForExport: rows.filter((row) => row.readyForExport).length,
+      blockedDocuments: rows.filter((row) => row.finalExportCandidate && !row.readyForExport).length,
+      qualityFailed: rows.filter((row) => row.qualityRecommendedStatus === "QUALITY_FAILED").length,
+      missingRequiredDocs: 0,
+      missingContent: rows.filter((row) => row.missingContentIssue).length,
+      invalidSignatures: rows.filter((row) => row.byteSignatureOk === false).length,
+      aiTraceIssues: rows.filter((row) => row.aiTraceIssue).length,
+      placeholderIssues: rows.filter((row) => row.placeholderIssue).length,
+      bidTeamToConfirmIssues: rows.filter((row) => row.bidTeamToConfirmIssue).length,
+      pricingLeakageIssues: rows.filter((row) => row.pricingLeakageIssue).length,
+      genericContentIssues: rows.filter((row) => row.genericContentIssue).length,
+      unsupportedClaimRisks: rows.filter((row) => row.unsupportedClaimRisk).length,
+      internalTraceabilityIssues: rows.filter((row) => row.internalTraceabilityIssue).length,
+      duplicatedSectionsIssues: rows.filter((row) => row.duplicatedSectionsIssue).length,
+      officialOriginalRisks: rows.filter((row) => row.officialOriginalPlaceholderRisk).length,
+      staleInternalRows: rows.filter((row) => !row.finalExportCandidate).length,
     };
 
     return NextResponse.json({
@@ -451,7 +428,13 @@ export async function GET(req: Request) {
       documents: visibleRows,
     });
   } catch (error) {
-    logger.error("admin generated-proposals audit failed", { detail: error });
-    return jsonError("Admin audit failed.", 500, { code: "ADMIN_AUDIT_RUNTIME_ERROR", detail: sanitizeError(error) });
+    logger.error("admin generated-proposals audit failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return jsonError("Admin audit failed.", 500, {
+      code: "ADMIN_AUDIT_RUNTIME_ERROR",
+      requestId,
+    });
   }
 }
