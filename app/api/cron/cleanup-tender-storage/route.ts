@@ -5,6 +5,7 @@ import { logger } from "../../../../lib/observability";
 import { processPendingTenderStorageCleanupTasks } from "../../../../lib/tender/tender-storage-cleanup-task";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
