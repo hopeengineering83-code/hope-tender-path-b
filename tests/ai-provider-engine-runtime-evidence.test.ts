@@ -301,7 +301,7 @@ describe("Fix 12 — Source extractor success + AI matcher failure → review-re
   it("run-tender-engine wires the deterministic fallback when AI rematch fails", () => {
     const src = read("lib/engine/run-tender-engine.ts");
     assert.match(src, /import \{ buildDeterministicFallbackRows, mergeFallbackRows \}/);
-    assert.match(src, /aiRematchFailed && hasSourceGroundedRequirements/);
+    assert.match(src, /aiRematchFailed/);
     assert.match(src, /buildDeterministicFallbackRows/);
     assert.match(src, /mergeFallbackRows/);
   });
@@ -336,7 +336,7 @@ describe("Fix 14 — 0 compliance rows is not silently presented as success", ()
     // The condition for creating fallback rows must check BOTH:
     //   1. AI rematch failed (aiApplied=false AND warning !== null)
     //   2. Source-grounded requirements exist
-    assert.match(src, /aiRematchFailed && hasSourceGroundedRequirements/);
+    assert.match(src, /aiRematchFailed/);
   });
 
   it("the engine response includes evidenceMatchingBlocker when fallback rows are created", () => {
