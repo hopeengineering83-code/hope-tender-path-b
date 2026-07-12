@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 
 // E2E_SEED_ALLOWED guard
@@ -19,6 +20,11 @@ const secondaryPassword = process.env.E2E_SECOND_PASSWORD || "E2E-secondary-pass
 if (primaryPassword.length < 16) throw new Error("E2E_TEST_PASSWORD must be at least 16 characters");
 if (secondaryPassword.length < 16) throw new Error("E2E_SECONDARY_PASSWORD must be at least 16 characters");
 
+const PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
+const SECONDARY_TENDER_ID = "22222222-2222-4222-8222-222222222222";
+const SECONDARY_DOCUMENT_ID = "33333333-3333-4333-8333-333333333333";
+const SECONDARY_FILE_ID = "44444444-4444-4444-8444-444444444444";
+
 try {
   const primaryPasswordHash = await bcrypt.hash(primaryPassword, 10);
   const primaryUser = await prisma.user.upsert({
@@ -38,7 +44,6 @@ try {
     },
   });
 
-  // Secondary Owner Private Tender for cross-user isolation tests
   const secondaryPasswordHash = await bcrypt.hash(secondaryPassword, 10);
   const secondaryUser = await prisma.user.upsert({
     where: { email: secondaryEmail },
@@ -57,11 +62,9 @@ try {
     },
   });
 
-  // Primary Owner Fixture Tender
-  const PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
   await prisma.tender.upsert({
     where: { id: PRIMARY_TENDER_ID },
-    update: { title: "Primary Owner Fixture" },
+    update: { title: "Primary Owner Fixture", userId: primaryUser.id },
     create: {
       id: PRIMARY_TENDER_ID,
       userId: primaryUser.id,
@@ -69,11 +72,9 @@ try {
     },
   });
 
-  // Secondary Owner Private Tender for cross-user isolation tests
-  const SECONDARY_TENDER_ID = "22222222-2222-4222-8222-222222222222";
   await prisma.tender.upsert({
     where: { id: SECONDARY_TENDER_ID },
-    update: { title: "Secondary Owner Private Tender" },
+    update: { title: "Secondary Owner Private Tender", userId: secondaryUser.id },
     create: {
       id: SECONDARY_TENDER_ID,
       userId: secondaryUser.id,
@@ -81,7 +82,91 @@ try {
     },
   });
 
-  console.log(JSON.stringify({ seeded: true, primaryUserId: primaryUser.id, secondaryUserId: secondaryUser.id, primaryEmail, secondaryEmail }));
+  // Real secondary-tenant rows let the browser suite prove supplied-ID
+  // isolation instead of merely exercising random/nonexistent identifiers.
+  await prisma.generatedDocument.upsert({
+    where: { id: SECONDARY_DOCUMENT_ID },
+    update: {
+      tenderId: SECONDARY_TENDER_ID,
+      name: "Secondary Private Document",
+      documentType: "TECHNICAL_PROPOSAL",
+      format: "DOCX",
+      exactFileName: "Secondary-Private-Document.docx",
+      generationStatus: "PLANNED",
+      validationStatus: "PENDING",
+      reviewStatus: "PENDING",
+      fileContent: null,
+      storagePath: null,
+    },
+    create: {
+      id: SECONDARY_DOCUMENT_ID,
+      tenderId: SECONDARY_TENDER_ID,
+      name: "Secondary Private Document",
+      documentType: "TECHNICAL_PROPOSAL",
+      format: "DOCX",
+      exactFileName: "Secondary-Private-Document.docx",
+      generationStatus: "PLANNED",
+      validationStatus: "PENDING",
+      reviewStatus: "PENDING",
+    },
+  });
+
+  const privateBytes = Buffer.from("secondary-private-source-fixture", "utf8");
+  const privateSha256 = createHash("sha256").update(privateBytes).digest("hex");
+  await prisma.tenderFile.upsert({
+    where: { id: SECONDARY_FILE_ID },
+    update: {
+      tenderId: SECONDARY_TENDER_ID,
+      fileName: "secondary-private-source.txt",
+      originalFileName: "secondary-private-source.txt",
+      mimeType: "text/plain",
+      size: privateBytes.length,
+      fileContent: privateBytes.toString("base64"),
+      storagePath: "",
+      classification: "SOURCE",
+      extractedText: privateBytes.toString("utf8"),
+      deletionStatus: "ACTIVE",
+      sha256: privateSha256,
+      byteSize: privateBytes.length,
+      contentSha256: privateSha256,
+      contentByteLength: privateBytes.length,
+      contentMimeType: "text/plain",
+      detectedFormat: "TEXT",
+      integrityStatus: "VERIFIED",
+      integrityVerifiedAt: new Date(),
+      integrityFailureCode: null,
+      deletedAt: null,
+    },
+    create: {
+      id: SECONDARY_FILE_ID,
+      tenderId: SECONDARY_TENDER_ID,
+      fileName: "secondary-private-source.txt",
+      originalFileName: "secondary-private-source.txt",
+      mimeType: "text/plain",
+      size: privateBytes.length,
+      fileContent: privateBytes.toString("base64"),
+      classification: "SOURCE",
+      extractedText: privateBytes.toString("utf8"),
+      sha256: privateSha256,
+      byteSize: privateBytes.length,
+      contentSha256: privateSha256,
+      contentByteLength: privateBytes.length,
+      contentMimeType: "text/plain",
+      detectedFormat: "TEXT",
+      integrityStatus: "VERIFIED",
+      integrityVerifiedAt: new Date(),
+    },
+  });
+
+  console.log(JSON.stringify({
+    seeded: true,
+    primaryUserId: primaryUser.id,
+    secondaryUserId: secondaryUser.id,
+    primaryEmail,
+    secondaryEmail,
+    secondaryDocumentId: SECONDARY_DOCUMENT_ID,
+    secondaryFileId: SECONDARY_FILE_ID,
+  }));
 } finally {
   await prisma.$disconnect();
 }
