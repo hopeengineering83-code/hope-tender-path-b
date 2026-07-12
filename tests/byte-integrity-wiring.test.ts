@@ -27,11 +27,24 @@ describe("byte-integrity wiring — every writer pins at creation", () => {
       src.includes('rebuiltIntegrity.integrityStatus === "VERIFIED"'),
       "READY_FOR_EXPORT must require VERIFIED rebuilt bytes (fail closed to review)",
     );
+    assert.ok(
+      src.includes("integrityNotes"),
+      "NEEDS_REVIEW notes must state the byte-integrity reason (truthful audit trail)",
+    );
   });
 
-  it("attach-original pins the attached final file's integrity", () => {
+  it("attach-original pins integrity and rejects non-verified originals before storing", () => {
     const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
-    assert.ok(src.includes("...inspectActualFileBytes({ bytes: buffer, filename: outputName"), "attached original must be pinned");
+    assert.ok(src.includes("const attachedIntegrity = inspectActualFileBytes({ bytes: buffer, filename: outputName"), "attached original must be pinned from the actual bytes");
+    assert.ok(src.includes("...attachedIntegrity"), "must persist the pinned integrity record");
+    assert.ok(
+      src.includes('attachedIntegrity.integrityStatus !== "VERIFIED"'),
+      "must fail closed: never mark READY_FOR_EXPORT with unverifiable bytes",
+    );
+    assert.ok(
+      src.indexOf("const attachedIntegrity") < src.indexOf("putFile"),
+      "integrity must be checked BEFORE the storage write (no orphan blobs for rejected files)",
+    );
   });
 
   it("generate-elite CV writes remain pinned (regression guard)", () => {
@@ -43,5 +56,14 @@ describe("byte-integrity wiring — every writer pins at creation", () => {
     const src = read("lib/generated-document-content.ts");
     assert.ok(src.includes("inspectActualFileBytes"), "central write helper must inspect bytes");
     assert.ok(src.includes("contentSha256: integrity.contentSha256"), "central write helper must persist the digest");
+  });
+});
+
+describe("review-status badge truthfulness", () => {
+  it("NEEDS_REVIEW renders an attention badge, not the neutral fallback", () => {
+    // auto-finalize routes documents to NEEDS_REVIEW; without a STATUS_COLORS
+    // entry the badge fell through to the same grey as an untouched document.
+    const src = read("components/document-review-panel.tsx");
+    assert.ok(/NEEDS_REVIEW:\s*"bg-amber-100 text-amber-700"/.test(src), "NEEDS_REVIEW badge must be amber");
   });
 });

@@ -434,9 +434,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const priorStatus = doc.reviewStatus;
     const hygieneNotes = hygieneReady ? "" : `hygiene: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}`;
     const gateNotes = summarizeSevenPassForReviewNotes(gateEvaluation);
+    // If integrity is the only blocker, the notes must say so — otherwise the
+    // audit trail claims every check passed on a NEEDS_REVIEW document.
+    const integrityNotes = rebuiltIntegrity.integrityStatus === "VERIFIED"
+      ? ""
+      : `byte-integrity: ${rebuiltIntegrity.integrityFailureCode ?? rebuiltIntegrity.integrityStatus}`;
     const reviewNotes = ready
       ? `Auto-finalized for print/submission. ${gateNotes}`
-      : `Auto-finalized but needs review. ${[hygieneNotes, gateNotes].filter(Boolean).join(" | ")}`;
+      : `Auto-finalized but needs review. ${[hygieneNotes, integrityNotes, gateNotes].filter(Boolean).join(" | ")}`;
 
     // Wrap update + audit in a transaction — if the DocumentReview create
     // fails, the GeneratedDocument should NOT be marked READY_FOR_EXPORT

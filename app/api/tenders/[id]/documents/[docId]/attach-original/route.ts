@@ -82,6 +82,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const outputName = doc.exactFileName || uploadedName;
+  // Pin integrity from the actual bytes BEFORE any storage write. A row must
+  // never claim READY_FOR_EXPORT while its persisted integrity cannot verify:
+  // the final ZIP read gate (requireVerifiedIntegrity) would dead-end it later
+  // with a generic failure, so reject here with the specific reason instead.
+  const attachedIntegrity = inspectActualFileBytes({ bytes: buffer, filename: outputName, claimedMimeType: validation.normalizedMime });
+  if (attachedIntegrity.integrityStatus !== "VERIFIED") {
+    return NextResponse.json({
+      success: false,
+      ok: false,
+      code: attachedIntegrity.integrityFailureCode ?? "ORIGINAL_BYTES_NOT_VERIFIED",
+      error: `The uploaded original cannot be byte-verified against the required file name "${outputName}". Correct the required file name or upload a matching format so the final package can verify it.`,
+      expectedFileName: doc.exactFileName,
+      uploadedFileName: uploadedName,
+    }, { status: 422 });
+  }
   const stored = await getStorageAdapter().putFile(buffer, {
     fileName: outputName,
     mimeType: validation.normalizedMime,
@@ -104,7 +119,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           format: formatForName(outputName),
           fileContent: stored.fileContent ?? null,
           storagePath: stored.storagePath || null,
-          ...inspectActualFileBytes({ bytes: buffer, filename: outputName, claimedMimeType: validation.normalizedMime }),
+          ...attachedIntegrity,
           generationStatus: "GENERATED",
           validationStatus: "VALIDATED",
           reviewStatus: "READY_FOR_EXPORT",
