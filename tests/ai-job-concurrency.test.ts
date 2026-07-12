@@ -104,62 +104,43 @@ describe("createAnalysisJob() concurrency safety (BLOCKER 2)", { skip: !RUN_DB_I
     await prisma.$disconnect();
   });
 
-  it("advisory lock reduces job duplication (at most 8 jobs, not 8 unique)", async () => {
-    // Launch 8 concurrent createAnalysisJob() calls for the same user/tender.
-    // The advisory lock (pg_advisory_xact_lock) should serialize concurrent
-    // calls so they share a single job. However, under CI's PostgreSQL +
-    // Prisma connection pool, the lock may not block all 8 concurrent
-    // transactions perfectly — some may complete before others acquire the
-    // lock. This test verifies the advisory lock code exists and reduces
-    // duplication (fewer unique jobs than calls), without being flaky.
-    //
-    // The PRODUCTION code is correct: real-world sequential calls (double-click,
-    // two-tab) are serialized by the advisory lock. The test limitation is
-    // specifically about Promise.all + connection pool interaction in CI.
-    const promises = Array.from({ length: 8 }, () =>
-      createAnalysisJob({ tenderId, userId })
-    );
+  it("creates exactly one active job from 8 simultaneous calls", async () => {
+  const promises = Array.from({ length: 8 }, () =>
+    createAnalysisJob({ tenderId, userId })
+  );
 
-    const results = await Promise.all(promises);
+  const results = await Promise.all(promises);
+  const jobIds = results.map((result) => result.jobId);
+  const uniqueJobIds = new Set(jobIds);
+  assert.equal(
+    uniqueJobIds.size,
+    1,
+    `Expected exactly 1 unique jobId, got ${uniqueJobIds.size}: ${Array.from(uniqueJobIds).join(", ")}`,
+  );
 
-    // Verify all calls returned a valid jobId (no errors)
-    const jobIds = results.map((r) => r.jobId);
-    assert.ok(jobIds.every((id) => typeof id === "string" && id.length > 0), "all calls must return a valid jobId");
-
-    // The advisory lock should reduce duplication — at least some calls
-    // should share the same jobId. We don't assert exactly 1 because the
-    // connection pool may prevent perfect serialization under CI conditions.
-    const uniqueJobIds = new Set(jobIds);
-    assert.ok(
-      uniqueJobIds.size <= 8,
-      `Expected at most 8 unique jobIds, got ${uniqueJobIds.size}`,
-    );
-
-    const jobId = jobIds[0];
-
-    // Verify AiJob rows exist for this tender/user
-    const jobs = await prisma.aiJob.findMany({
-      where: {
-        userId,
-        tenderId,
-        jobType: "AI_ANALYZE",
-        status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
-      },
-    });
-    assert.ok(jobs.length >= 1, `Expected at least 1 active AiJob row, found ${jobs.length}`);
-
-    // Verify no duplicate chunks were created
-    const chunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { jobId },
-    });
-    const chunkIndexes = chunks.map((c) => c.chunkIndex);
-    const uniqueIndexes = new Set(chunkIndexes);
-    assert.equal(
-      chunkIndexes.length,
-      uniqueIndexes.size,
-      `Duplicate chunk indexes found: ${chunkIndexes.join(", ")}`
-    );
+  const jobId = jobIds[0];
+  const jobs = await prisma.aiJob.findMany({
+    where: {
+      userId,
+      tenderId,
+      jobType: "AI_ANALYZE",
+      status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
+    },
   });
+  assert.equal(jobs.length, 1, `Expected 1 active AiJob row, found ${jobs.length}`);
+  assert.equal(jobs[0].id, jobId, "The single job row should match the returned jobId");
+  assert.ok(jobs[0].analysisInputHash, "The created job must persist its analysis input hash");
+
+  const chunks = await prisma.aiAnalyzeChunk.findMany({
+    where: { jobId },
+  });
+  const chunkIndexes = chunks.map((chunk) => chunk.chunkIndex);
+  assert.equal(
+    chunkIndexes.length,
+    new Set(chunkIndexes).size,
+    `Duplicate chunk indexes found: ${chunkIndexes.join(", ")}`,
+  );
+});
 
   it("does not re-arm a non-retryable FAILED job", async () => {
     // Create a FAILED job with nonRetryable=true

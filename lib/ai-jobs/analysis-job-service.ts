@@ -96,14 +96,8 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       AI_ANALYZE_JOB_TYPE,
       contentHash,
     );
-    // Cast to string and use Prisma.raw to inject the bigint literal directly
-    // into the SQL. Prisma's $executeRaw parameterized query doesn't handle
-    // bigint parameters correctly — the parameter is sent as a string but
-    // pg_advisory_xact_lock expects a bigint, and the cast doesn't work
-    // through the parameterized path. Using Prisma.raw() with the string
-    // value ensures the SQL contains the literal bigint value.
-    const lockKeyStr = lockKey.toString();
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${lockKeyStr}::bigint)`);
+    // Parameterized tagged SQL keeps the computed bigint out of raw SQL text.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
 
     // Step 2: Recheck for existing active job AFTER holding the lock.
     // Only the first caller creates a new job; all others return the existing
@@ -161,6 +155,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         userId,
         jobType: AI_ANALYZE_JOB_TYPE,
         status: "QUEUED",
+        analysisInputHash: contentHash,
         runId: require("crypto").randomUUID(),
         input: JSON.stringify({ tenderId, contentHash }),
       },
