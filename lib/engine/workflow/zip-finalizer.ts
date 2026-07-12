@@ -60,39 +60,9 @@ function safeZipName(value: string): boolean {
     !value.includes(":");
 }
 
-export async function finalizeTenderZip(
-  prisma: PrismaClient,
-  tenderId: string,
-  userId: string,
+export async function finalizeApprovedDocumentsZip(
+  docs: ExportReadyDocument[],
 ): Promise<ZipFinalizerResult> {
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: {
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-      },
-    },
-  });
-  if (!tender) return { ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" };
-
-  const gate = await assertTenderReadyForGenerationAndExport({
-    prisma,
-    tenderId,
-    userId,
-    purpose: "final-zip",
-  });
-  if (!gate.ok) {
-    return {
-      ok: false,
-      error: "Final ZIP is blocked by release-readiness requirements.",
-      code: gate.blockerCode ?? "FINAL_ZIP_NOT_READY",
-    };
-  }
-
-  const docs = tender.generatedDocuments
-    .map((doc) => asExportReadyDocument(doc as unknown as Record<string, unknown>))
-    .filter((doc) => isFinalExportCandidateDocument(doc));
   if (docs.length === 0) {
     return { ok: false, error: "No documents ready for export", code: "NO_DOCUMENTS" };
   }
@@ -211,4 +181,41 @@ export async function finalizeTenderZip(
     fileList: prepared.map((item) => item.fileName),
     manifest,
   };
+}
+
+export async function finalizeTenderZip(
+  prisma: PrismaClient,
+  tenderId: string,
+  userId: string,
+): Promise<ZipFinalizerResult> {
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: {
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+  if (!tender) return { ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" };
+
+  const gate = await assertTenderReadyForGenerationAndExport({
+    prisma,
+    tenderId,
+    userId,
+    purpose: "final-zip",
+  });
+  if (!gate.ok) {
+    return {
+      ok: false,
+      error: "Final ZIP is blocked by release-readiness requirements.",
+      code: gate.blockerCode ?? "FINAL_ZIP_NOT_READY",
+    };
+  }
+
+  const docs = tender.generatedDocuments
+    .map((doc) => asExportReadyDocument(doc as unknown as Record<string, unknown>))
+    .filter((doc) => isFinalExportCandidateDocument(doc));
+
+  return finalizeApprovedDocumentsZip(docs);
 }
