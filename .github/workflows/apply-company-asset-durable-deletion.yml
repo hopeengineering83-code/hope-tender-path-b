@@ -1,0 +1,126 @@
+name: Apply company asset durable deletion
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/company-asset-durable-deletion-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Wire durable deletion and hidden tombstones
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          collection = Path('app/api/company/assets/route.ts')
+          s = collection.read_text()
+          import_anchor = 'import { getStorageAdapter } from "../../../../lib/storage";'
+          import_block = '''import { getStorageAdapter } from "../../../../lib/storage";
+          import {
+            COMPANY_ASSET_PENDING_DELETE_MARKER,
+            deleteCompanyAssetDurably,
+          } from "../../../../lib/company-asset-durable-deletion";'''
+          if 'deleteCompanyAssetDurably' not in s:
+              if import_anchor not in s:
+                  raise SystemExit('collection import anchor not found')
+              s = s.replace(import_anchor, import_block, 1)
+
+          where_anchor = '''    where: {
+                companyId: company.id,
+                ...(assetType ? { assetType } : {}),
+              },'''
+          where_replacement = '''    where: {
+                companyId: company.id,
+                NOT: { metadata: { contains: COMPANY_ASSET_PENDING_DELETE_MARKER } },
+                ...(assetType ? { assetType } : {}),
+              },'''
+          if where_anchor not in s:
+              raise SystemExit('collection list filter anchor not found')
+          s = s.replace(where_anchor, where_replacement, 1)
+
+          start_marker = '''    const asset = await prisma.companyAsset.findFirst({
+                where: { id, companyId: company.id },
+              });'''
+          end_marker = '''    await prisma.companyAsset.delete({ where: { id } });'''
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('collection delete block markers not found')
+          end += len(end_marker)
+          replacement = '''    const result = await deleteCompanyAssetDurably({
+                prisma,
+                storage: getStorageAdapter(),
+                companyId: company.id,
+                assetId: id,
+              });
+              if (!result.ok) {
+                return NextResponse.json(
+                  {
+                    error: result.code === "NOT_FOUND"
+                      ? "Asset not found"
+                      : "Asset deletion is pending a safe retry.",
+                    ...result,
+                  },
+                  { status: result.status },
+                );
+              }'''
+          s = s[:start] + replacement + s[end:]
+          if 'getStorageAdapter().deleteFile' in s:
+              raise SystemExit('storage-first collection delete remains')
+          collection.write_text(s)
+
+          detail = Path('app/api/company/assets/[id]/route.ts')
+          d = detail.read_text()
+          detail_import_anchor = '''import { getStorageAdapter } from "../../../../../lib/storage";'''
+          detail_import_block = '''import { getStorageAdapter } from "../../../../../lib/storage";
+          import { isCompanyAssetPendingDeletion } from "../../../../../lib/company-asset-durable-deletion";'''
+          if 'isCompanyAssetPendingDeletion' not in d:
+              if detail_import_anchor not in d:
+                  raise SystemExit('detail import anchor not found')
+              d = d.replace(detail_import_anchor, detail_import_block, 1)
+
+          detail_where = '    where: { id, companyId: company.id },'
+          detail_where_replacement = '    where: { id, companyId: company.id, isActive: true },'
+          if detail_where not in d:
+              raise SystemExit('detail ownership filter anchor not found')
+          d = d.replace(detail_where, detail_where_replacement, 1)
+
+          select_anchor = '''      size: true,
+                },'''
+          select_replacement = '''      size: true,
+                metadata: true,
+              },'''
+          if select_anchor not in d:
+              raise SystemExit('detail metadata select anchor not found')
+          d = d.replace(select_anchor, select_replacement, 1)
+
+          check_anchor = '''  if (!asset || (!asset.fileContent && !asset.storagePath)) return privateText("Not found", 404);'''
+          check_replacement = '''  if (
+                !asset ||
+                isCompanyAssetPendingDeletion(asset.metadata) ||
+                (!asset.fileContent && !asset.storagePath)
+              ) return privateText("Not found", 404);'''
+          if check_anchor not in d:
+              raise SystemExit('detail visibility check anchor not found')
+          d = d.replace(check_anchor, check_replacement, 1)
+          detail.write_text(d)
+          PY
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/company/assets/route.ts app/api/company/assets/[id]/route.ts
+          git commit -m "fix: make company asset deletion durable"
+          git push origin HEAD:${{ github.head_ref }}
