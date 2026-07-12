@@ -1,0 +1,363 @@
+name: Patch AI proposal no-fallback authority
+
+on:
+  pull_request:
+    branches:
+      - automation/patch-background-proposal-no-deploy
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/ai-proposal-no-fallback-authority-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Enforce canonical proposal authority
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/api/tenders/[id]/ai-proposal/route.ts')
+          source = path.read_text()
+
+          source = source.replace(
+            'import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";\n',
+            'import { selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";\n',
+            1,
+          )
+          source = source.replace(
+            'import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";\n',
+            '',
+            1,
+          )
+          request_import = 'import { extractRequestId } from "../../../../../lib/request-id";\n'
+          if request_import not in source:
+            anchor = 'import { sanitizeError } from "../../../../../lib/sanitize-error";\n'
+            if anchor not in source:
+              raise SystemExit('request-id import anchor not found')
+            source = source.replace(anchor, anchor + request_import, 1)
+
+          start = 'export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {\n  let actor;'
+          if start not in source:
+            raise SystemExit('POST start anchor not found')
+          source = source.replace(
+            start,
+            'export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {\n  const requestId = extractRequestId(req);\n  let actor;',
+            1,
+          )
+
+          identity = '  const tenderId = id as string;\n  const uid = userId as string;\n'
+          initial = '''  const tenderId = id as string;
+          const uid = userId as string;
+
+          // Proposal text is generation output. Resolve readiness, provider
+          // availability, and Company Vault existence before creating/resuming
+          // any job or returning a cached chunk.
+          const initialGenerationGate = await assertTenderReadyForGenerationAndExport({
+            prisma,
+            tenderId,
+            userId: uid,
+            purpose: "ai-proposal",
+          });
+          if (!initialGenerationGate.ok) {
+            const notFound = initialGenerationGate.blockerCode === "OWNERSHIP_TENDER_NOT_FOUND";
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              code: notFound ? "TENDER_NOT_FOUND" : initialGenerationGate.blockerCode,
+              error: notFound ? "Tender not found" : initialGenerationGate.blockerDetail,
+              nextAction: notFound ? undefined : "Resolve the canonical generation-readiness blocker before generating proposal text.",
+            }, { status: notFound ? 404 : 422 });
+          }
+          if (!isAIEnabled()) {
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              fallback: true,
+              fallbackApplied: false,
+              code: "AI_PROPOSAL_UNAVAILABLE",
+              error: "AI proposal generation is unavailable. No deterministic proposal was generated.",
+              requestId,
+            }, { status: 503 });
+          }
+          const companyExists = await prisma.company.findUnique({
+            where: { userId: uid },
+            select: { id: true },
+          });
+          if (!companyExists) {
+            return NextResponse.json({
+              success: false,
+              error: "Company Vault not found",
+              code: "COMPANY_NOT_FOUND",
+            }, { status: 404 });
+          }
+'''
+          if identity not in source:
+            raise SystemExit('identity anchor not found')
+          source = source.replace(identity, initial, 1)
+
+          source = source.replace(
+            '    if (cached.chunks[chunkKey] && !forceRefresh) {\n      return NextResponse.json({ success: true, proposal: cached.chunks[chunkKey], fallback: false, cached: true, proposalJobId });\n    }',
+            '    if (cached.chunks[chunkKey] && !forceRefresh) {\n      return NextResponse.json({ success: true, proposal: cached.chunks[chunkKey], fallback: false, cached: true, proposalJobId });\n    }',
+            1,
+          )
+
+          old_authority_start = source.find('  // ── Regex-fallback analysis gate')
+          evidence_start = source.find('  let experts =', old_authority_start)
+          if old_authority_start < 0 or evidence_start < 0:
+            raise SystemExit('legacy fallback authority block not found')
+          source = source[:old_authority_start] + '''  if (!company) {
+            return NextResponse.json({
+              success: false,
+              error: "Company Vault not found",
+              code: "COMPANY_NOT_FOUND",
+            }, { status: 404 });
+          }
+
+''' + source[evidence_start:]
+
+          evidence_anchor = '  if (projects.length === 0 && tender.projectMatches.length > 0) logger.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");\n'
+          evidence_block = evidence_anchor + '''
+          const needsReviewedExperts = !sectionFilter || sectionFilter.includes("technical-approach");
+          const needsReviewedProjects = !sectionFilter || sectionFilter.includes("company-and-experience");
+          if (needsReviewedExperts && experts.length === 0) {
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              code: "NO_REVIEWED_EXPERT_EVIDENCE",
+              error: "Proposal generation requires REVIEWED expert evidence for the technical approach.",
+            }, { status: 422 });
+          }
+          if (needsReviewedProjects && projects.length === 0) {
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              code: "NO_REVIEWED_PROJECT_EVIDENCE",
+              error: "Proposal generation requires REVIEWED project evidence for company experience.",
+            }, { status: 422 });
+          }
+'''
+          if evidence_anchor not in source:
+            raise SystemExit('reviewed evidence anchor not found')
+          source = source.replace(evidence_anchor, evidence_block, 1)
+
+          source = source.replace(
+            '    if (cached) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: cached.fallback, cached: true });',
+            '    if (cached && !cached.fallback) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: false, cached: true });',
+            1,
+          )
+          source = source.replace('    let fallback = false;\n', '', 1)
+
+          catch_start = source.find('    } catch (aiError) {')
+          cache_start = source.find('    if (!fallback && !sectionFilter)', catch_start)
+          if catch_start < 0 or cache_start < 0:
+            raise SystemExit('provider catch/cache anchors not found')
+          provider_catch = '''    } catch (aiError) {
+            const msg = sanitizeError(aiError);
+            logger.error("Benchmark AI proposal failed in /ai-proposal route:", {
+              requestId,
+              errorClass: aiError instanceof Error ? aiError.constructor.name : "UnknownError",
+            });
+
+            const rateLimited = msg.toLowerCase().includes("rate limit") || msg.includes("429");
+            void prisma.aiJob.update({
+              where: { id: proposalJobId },
+              data: {
+                status: "FAILED",
+                errorMessage: rateLimited ? "AI_RATE_LIMITED" : "AI_PROPOSAL_UNAVAILABLE",
+                finishedAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }).catch(() => {});
+
+            if (rateLimited) {
+              return NextResponse.json({
+                success: false,
+                error: "AI provider rate limit reached. Please wait 30–60 seconds and try again.",
+                code: "AI_RATE_LIMITED",
+                rateLimitRetry: true,
+                proposalJobId,
+              }, { status: 429 });
+            }
+
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              fallback: true,
+              fallbackApplied: false,
+              code: "AI_PROPOSAL_UNAVAILABLE",
+              error: "AI proposal generation did not complete. No deterministic fallback was returned.",
+              proposalJobId,
+              requestId,
+            }, { status: 503 });
+          }
+
+          if (!proposal || proposal.trim().length < 50) {
+            void prisma.aiJob.update({
+              where: { id: proposalJobId },
+              data: {
+                status: "FAILED",
+                errorMessage: "AI_PROPOSAL_OUTPUT_INSUFFICIENT",
+                finishedAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }).catch(() => {});
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              fallback: true,
+              fallbackApplied: false,
+              code: "AI_PROPOSAL_OUTPUT_INSUFFICIENT",
+              error: "AI proposal output was empty or insufficient. No proposal text was returned.",
+              proposalJobId,
+              requestId,
+            }, { status: 503 });
+          }
+
+          const responseGenerationGate = await assertTenderReadyForGenerationAndExport({
+            prisma,
+            tenderId: id,
+            userId,
+            purpose: "ai-proposal",
+          });
+          if (!responseGenerationGate.ok) {
+            void prisma.aiJob.update({
+              where: { id: proposalJobId },
+              data: {
+                status: "FAILED",
+                errorMessage: responseGenerationGate.blockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+                finishedAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }).catch(() => {});
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              code: responseGenerationGate.blockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+              error: responseGenerationGate.blockerDetail ?? "Proposal readiness changed while AI generation was running.",
+              proposalJobId,
+              requestId,
+            }, { status: 409 });
+          }
+
+'''
+          source = source[:catch_start] + provider_catch + source[cache_start:]
+
+          source = source.replace('    if (!fallback && !sectionFilter)', '    if (!sectionFilter)', 1)
+          source = source.replace('    if (!fallback && chunkNum !== undefined)', '    if (chunkNum !== undefined)', 1)
+          source = source.replace('    if (!fallback && isSubstantial', '    if (isSubstantial', 1)
+
+          vars_start = source.find('    // Track whether the persist was blocked')
+          persist_if = source.find('    if (isSubstantial &&', vars_start)
+          if vars_start < 0 or persist_if < 0:
+            raise SystemExit('persist tracking anchors not found')
+          source = source[:vars_start] + source[persist_if:]
+
+          blocked = '''      if (!centralGate.ok) {
+                persistBlocked = true;
+                persistBlockerCode = centralGate.blockerCode ?? null;
+                persistBlockerDetail = centralGate.blockerDetail ?? null;
+                await logAction({
+                  userId,
+                  action: "AI_PROPOSAL_PERSIST_BLOCKED",
+                  entityType: "Tender",
+                  entityId: id,
+                  description: `Quick-draft persist blocked by central gate (${centralGate.blockerCode}): ${centralGate.blockerDetail}`,
+                }).catch(() => {});
+                // Skip the persist — the proposal is still returned to the UI above.
+              } else {'''
+          blocked_new = '''      if (!centralGate.ok) {
+                await logAction({
+                  userId,
+                  action: "AI_PROPOSAL_PERSIST_BLOCKED",
+                  entityType: "Tender",
+                  entityId: id,
+                  description: `Quick-draft persist blocked by central gate (${centralGate.blockerCode}): ${centralGate.blockerDetail}`,
+                }).catch(() => {});
+                void prisma.aiJob.update({
+                  where: { id: proposalJobId },
+                  data: {
+                    status: "FAILED",
+                    errorMessage: centralGate.blockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+                    finishedAt: new Date(),
+                    updatedAt: new Date(),
+                  },
+                }).catch(() => {});
+                return NextResponse.json({
+                  success: false,
+                  ok: false,
+                  code: centralGate.blockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+                  error: centralGate.blockerDetail ?? "Proposal readiness changed before persistence.",
+                  proposalJobId,
+                  requestId,
+                }, { status: 409 });
+              } else {'''
+          if blocked not in source:
+            raise SystemExit('persist blocked anchor not found')
+          source = source.replace(blocked, blocked_new, 1)
+
+          source = source.replace(
+            '      } catch {\n        // Non-blocking — draft already returned to UI\n      }',
+            '      } catch (persistError) {\n        throw persistError;\n      }',
+            1,
+          )
+          source = source.replace(
+            'data: { status: fallback ? "FAILED" : "SUCCEEDED", finishedAt: new Date(), updatedAt: new Date() },',
+            'data: { status: "SUCCEEDED", finishedAt: new Date(), updatedAt: new Date() },',
+            1,
+          )
+
+          response_start = source.find('    return NextResponse.json({\n      success: true,\n      proposal,')
+          response_end = source.find('    });', response_start)
+          if response_start < 0 or response_end < 0:
+            raise SystemExit('final response anchor not found')
+          response_end += len('    });')
+          final_response = '''    return NextResponse.json({
+              success: true,
+              proposal,
+              fallback: false,
+              cached: false,
+              proposalJobId,
+            });'''
+          source = source[:response_start] + final_response + source[response_end:]
+
+          forbidden = [
+            'fallbackProposal(',
+            'let fallback = false',
+            'fallback ? "FAILED" : "SUCCEEDED"',
+            'success: true, proposal, fallback: true',
+            'deterministic fallback used',
+            'persistBlocked',
+            'persistBlockerCode',
+            'persistBlockerDetail',
+            'assertAnalysisReadyForFinalGeneration',
+          ]
+          remaining = [item for item in forbidden if item in source]
+          if remaining:
+            raise SystemExit(f'fallback authority remains: {remaining}')
+
+          initial_pos = source.index('const initialGenerationGate =')
+          create_pos = source.index('prisma.aiJob.create({')
+          company_pos = source.index('const companyExists =')
+          if not (initial_pos < company_pos < create_pos):
+            raise SystemExit('readiness/Company Vault checks must precede AiJob.create')
+          if source.count('purpose: "ai-proposal"') < 2:
+            raise SystemExit('initial and post-generation gates required')
+
+          path.write_text(source)
+          PY
+      - name: Commit interactive proposal repair
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/tenders/[id]/ai-proposal/route.ts
+          git commit -m "fix: remove AI proposal fallback authority"
+          git push origin HEAD:${{ github.head_ref }}
