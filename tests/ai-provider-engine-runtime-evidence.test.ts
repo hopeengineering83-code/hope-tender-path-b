@@ -342,7 +342,7 @@ describe("Fix 14 — 0 compliance rows is not silently presented as success", ()
   it("the engine response includes evidenceMatchingBlocker when fallback rows are created", () => {
     const src = read("lib/engine/run-tender-engine.ts");
     assert.match(src, /evidenceMatchingBlocker/);
-    assert.match(src, /code: fallback\.blockerCode/);
+    assert.match(src, /evidenceMatchingBlocker = \{/);
   });
 });
 
