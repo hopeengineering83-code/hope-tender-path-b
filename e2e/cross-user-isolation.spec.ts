@@ -140,15 +140,21 @@ test.describe("authenticated cross-user isolation", () => {
     expect(secondaryOwn.status()).toBe(200);
     const body = await secondaryOwn.json();
     expect(body.title).toBe("Secondary Owner Private Tender");
-    expect(body.generatedDocuments).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: SECONDARY_DOCUMENT_ID,
-          generationStatus: "PLANNED",
-          reviewStatus: "PENDING",
-        }),
-      ]),
+
+    // The tender dashboard intentionally omits PLANNED document rows. Verify the
+    // seeded row through the owner-scoped document endpoint instead, which also
+    // proves the foreign attach/finalize attempts did not alter review state.
+    const secondaryDocument = await page.request.get(
+      `/api/tenders/${SECONDARY_TENDER_ID}/documents/${SECONDARY_DOCUMENT_ID}`,
     );
+    expect(secondaryDocument.status()).toBe(200);
+    expect(await secondaryDocument.json()).toMatchObject({
+      document: {
+        id: SECONDARY_DOCUMENT_ID,
+        reviewStatus: "PENDING",
+      },
+    });
+
     expect(body.files).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
