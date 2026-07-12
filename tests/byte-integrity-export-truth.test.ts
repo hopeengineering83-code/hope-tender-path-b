@@ -134,6 +134,13 @@ describe("writers keep both digest systems in sync", () => {
     assert.ok(src.includes("sha256: rebuiltIntegrity.contentSha256"), "rebuilt write must fill sha256");
     assert.ok(src.includes("storagePath: null"), "rebuilt bytes are inline — a stale pointer would serve the OLD object");
   });
+  it("auto-finalize never rebuilds a storage-backed document from its inline copy", () => {
+    // The rebuild reads only inline bytes; rebuilding a storage-backed row
+    // would replace real content with a hollow shell built from the filename
+    // and orphan/destroy the canonical object.
+    const src = read("app/api/tenders/[id]/auto-finalize/route.ts");
+    assert.ok(src.includes("if (!doc.fileContent || doc.storagePath) continue;"), "storage-backed and byte-less rows must be skipped");
+  });
   it("attach-original fills legacy digests for attached finals", () => {
     const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
     assert.ok(src.includes("sha256: attachedIntegrity.contentSha256"), "attached original must fill sha256");

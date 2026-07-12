@@ -3,7 +3,6 @@ import { inspectActualFileBytes } from "../../../../../lib/engine/persisted-byte
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getStorageAdapter } from "../../../../../lib/storage";
 import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
@@ -370,6 +369,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   for (const doc of batch) {
     if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") continue;
     if (isSensitiveDocument(doc)) continue; // audited statements, bid forms, tax/legal certs — require manual upload
+    // The rebuild reads ONLY inline bytes. A storage-backed row's canonical
+    // bytes live in the storage object — rebuilding from the absent (or
+    // possibly stale) inline copy would replace real content with a hollow
+    // shell built from just the filename. Skip; manual review handles these.
+    if (!doc.fileContent || doc.storagePath) continue;
     const fileName = doc.exactFileName ?? doc.name;
     const technical = /technical|methodology|workplan|approach|strategic/i.test(`${fileName} ${doc.documentType ?? ""}`);
     const docMeta = { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType ?? undefined, format: "DOCX" as const };
@@ -449,18 +453,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // without an audit trail (was non-atomic — broken "every approval is
     // audited" invariant).
     await prisma.$transaction(async (tx) => {
-      // The rebuilt bytes live inline. Clear any stale storage pointer (the
-      // read path serves storage first, so a leftover pointer would serve the
-      // OLD object against the NEW digest) and keep the legacy final-ZIP
-      // digest columns describing the same rebuilt bytes.
+      // Only inline-content rows reach this point (storage-backed rows are
+      // skipped above), so the rebuilt bytes are canonical. storagePath: null
+      // is defensive normalization; the legacy final-ZIP digest columns must
+      // describe the same rebuilt bytes.
       await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, sha256: rebuiltIntegrity.contentSha256, byteSize: rebuiltIntegrity.contentByteLength, storagePath: null, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
       if (ready && priorStatus !== "READY_FOR_EXPORT") await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
     });
-    // Best-effort cleanup of the replaced storage object after commit — the
-    // row already points at the rebuilt inline bytes.
-    if (doc.storagePath) {
-      await getStorageAdapter().deleteFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.exactFileName ?? doc.name }).catch(() => {});
-    }
     processed += 1;
   }
 
