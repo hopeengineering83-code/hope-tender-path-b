@@ -2559,3 +2559,52 @@ Final state:
 - Note: GitHub shows merged=False for #1054/#1053 because they were merged via direct squash-merge push, not via GitHub's PR merge button. The code changes ARE on main.
 
 Safety statement: No safety behavior was deleted, weakened, bypassed, or hidden. #1054 fixes 8 gaps + 3 review blockers (engine runtime UI honesty). #1053 strengthens safety: stale analysis now blocks ALL generation purposes (was draft-allowed), and AI-job creation is DB-serialized via advisory lock. Both PRs' safety semantics are intact on main.
+
+---
+Task ID: audit-remaining-gaps-round-2
+Agent: main (Super Z / GLM)
+Task: Create a new PR fixing remaining gaps. Re-audit 3 times before coding. Do not touch any open PR. Do not merge.
+
+Work Log:
+- Synced main to ddcc0c53 (includes #1059, #1067, #1070). 7 open PRs present (#1062-#1071) — none to be touched.
+- Created branch audit/remaining-gaps-round-2 from main.
+
+3-PASS RE-AUDIT:
+- Pass 1 (verify previous findings): E1 (inverted !), E3 (EXPORT_BLOCKED), E7 (runtime-readiness-facts select) are now FIXED by #1067. E2 (metadataGateValid=true), E5 (tender-operation-lock unused), E6 (runTenderWorkflow dead), E8 (requirementCount=chunkResults.length), E11 (criticalTenderDetailsValid=true) are still real. A1 (admin/db-integrity), U1 (BidControlVerdictPanel) fixed by #1067. A2/A3 (raw error leaks) still real.
+- Pass 2 (fresh audit): 2 parallel subagents found 12 new findings — 6 engine/API + 6 UI/test.
+- Pass 3 (cross-lane verification): confirmed all 8 fixes below are real on current main.
+
+8 FIXES IMPLEMENTED:
+
+Engine (3):
+- F1 run-tender-engine.ts: deadline-skipped rematch with source-grounded requirements got wrong blocker code (EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED instead of EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE) → wrong nextAction (REVIEW_MATCHING_INPUTS instead of RETRY_ENGINE_SMALLER_BATCH). Fixed: override blocker code when rematchSkippedForDeadline.
+- F2 runtime-readiness-facts.ts: .map() omitted classification → hash diverged from gate for files with empty text. Fixed: add classification: f.classification ?? null.
+- F3 tender-release-snapshot.ts: allMandatoryGrounded false when mandatory.length===0 → blocked workflow for tenders with only OPTIONAL/SCORED requirements. Fixed: vacuously true when mandatory.length===0.
+
+UI (5):
+- F4 corrupted-metadata-banner.tsx: RepairTenderFactsButton rendered without canMutate gate. Fixed: accept canMutate prop, gate button, wire from page.tsx.
+- F5 evaluator-objections-panel.tsx: Mark resolved/Waive buttons rendered without canMutate gate. Fixed: accept canMutate prop, gate buttons+textarea, show read-only notice, wire from page.tsx.
+- F6 submission-plan-reconciliation-panel.tsx: used getSession() (no role) + 3 mutation buttons without gate. Fixed: switch to getCurrentUser()+canMutateTender(), gate all 3 buttons.
+- F7 tender-recovery-command-center.tsx: raw Unicode ℹ in advisory warnings. Fixed: replace with InfoIcon SVG.
+- F8 score-breakdown-panel.tsx: raw Unicode ℹ in Toggle rationale button. Fixed: replace with InfoIcon SVG. Added ℹ+ⓘ to RAW_UNICODE_PATTERN + added score-breakdown-panel.tsx to WORKFLOW_COMPONENTS.
+
+TESTS: 23 new tests in tests/remaining-gaps-round-2.test.ts, all pass.
+
+VERIFICATION:
+- npx tsc --noEmit: PASS
+- npm run lint: PASS (0 warnings)
+- 140 tests PASS (23 new + 117 existing related)
+- npm run build: PASS (58/58 pages)
+
+PR #1074 created: https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1074
+- 11 files changed, +221/-20
+- Base: main <- Head: audit/remaining-gaps-round-2
+- NOT merged per user instruction.
+
+SCOPE ISOLATION: No open PRs touched. Zero file overlap with #1062-#1073. All 9 open PRs retain their original head SHAs.
+
+Stage Summary:
+- 8 real gaps fixed after 3-pass re-audit.
+- 23 regression tests prove each fix.
+- PR #1074 is ready for review (not merged).
+- No safety behavior was deleted, weakened, bypassed, or hidden.
