@@ -3,9 +3,8 @@ import { logger } from "../../../../../lib/observability";
 //
 // When all AI providers fail and the engine falls back to the regex
 // analyzer, `lib/engine/analysis-source.ts` blocks final proposal
-// generation by default — a senior engineer must explicitly confirm the
-// fallback analysis captured the tender correctly before the final
-// proposal can be generated.
+// generation by default. This endpoint records an audit-only human review;
+// it never promotes fallback output into genuine AI authority.
 //
 // Endpoint:
 //   POST /api/tenders/[id]/approve-analysis      { note?: string }
@@ -17,9 +16,7 @@ import { logger } from "../../../../../lib/observability";
 // title="ANALYSIS_APPROVAL:REGEX_FALLBACK", isResolved=true. Same
 // pattern we use for donor advisory resolutions (no migration).
 //
-// Auth: ADMIN, PROPOSAL_MANAGER, or REVIEWER. VIEWER is rejected.
-// REVIEWER is included so that Recovery Command Center Execute buttons work
-// for reviewer-role users — see tests/recovery-command-center-actions.test.ts.
+// Auth: ADMIN or PROPOSAL_MANAGER. REVIEWER and VIEWER are rejected.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -32,9 +29,9 @@ import {
   revokeRegexFallbackApproval,
 } from "../../../../../lib/engine/analysis-source";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { resolveCurrentAnalysisBinding } from "../../../../../lib/engine/generation-readiness-gate";
 import { recordFallbackApproval, revokeFallbackApprovals } from "../../../../../lib/engine/readiness-overrides";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -45,6 +42,7 @@ function err(message: string, status = 500, extra: Record<string, unknown> = {})
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
@@ -64,11 +62,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     await approveRegexFallbackAnalysis(prisma, id, note);
 
-    // Durable, auditable approval bound to the EXACT current analysis job +
-    // content hash (central readiness gate, condition I). The legacy
-    // ComplianceGap above stays for backward compatibility, but the gate trusts
-    // only this bound record — which self-invalidates if the job or tender
-    // content changes (the hash moves).
+    // Durable, auditable approval bound to the exact current analysis job and
+    // content hash. The legacy ComplianceGap remains for backward compatibility,
+    // but release gates trust only the bound record and still reject fallback
+    // analysis as generation/export authority.
     const binding = await resolveCurrentAnalysisBinding(prisma, id, actor.id);
     if (binding.jobId && binding.contentHash) {
       await recordFallbackApproval(prisma, {
@@ -98,12 +95,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       message: "Human approval recorded as AUDIT-ONLY. It does NOT authorize generation, export, download, regeneration, AI proposal, missing-file generation, or ZIP. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis that authorizes release.",
     });
   } catch (error) {
-    logger.error("approve-analysis POST failed", { detail: error });
-    return err("Approve-analysis failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });
+    logger.error("approve-analysis POST failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return err("Approve-analysis failed.", 500, {
+      code: "ANALYSIS_APPROVAL_RUNTIME_ERROR",
+      requestId,
+    });
   }
 }
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
@@ -124,7 +128,13 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
     return NextResponse.json({ success: true, approved: false, gapTitle: ANALYSIS_APPROVAL_GAP_TITLE });
   } catch (error) {
-    logger.error("approve-analysis DELETE failed", { detail: error });
-    return err("Revoke-approval failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });
+    logger.error("approve-analysis DELETE failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return err("Revoke-approval failed.", 500, {
+      code: "ANALYSIS_APPROVAL_RUNTIME_ERROR",
+      requestId,
+    });
   }
 }
