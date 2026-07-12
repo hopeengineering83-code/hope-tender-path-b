@@ -400,44 +400,58 @@ export async function runTenderEngine(
     let compliance = buildCompliance(createdRequirements, knowledge, matching);
 
     // ─── Deterministic fallback rows when AI matching failed ──────────────
-    // If AI rematch was attempted but failed (aiApplied=false AND a warning
-    // was set), AND the requirement source extractor matched requirements to
-    // source paragraphs, create REVIEW_REQUIRED fallback rows so the user
-    // sees a reviewable evidence state instead of a misleading 0-row matrix.
-    // These rows are NEVER FULL/SUBSTANTIAL — they surface the
-    // EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED blocker.
+    // PR #1049 rewrote the fallback-rows module to be diagnostics-only —
+    // tender-source diagnostics CANNOT become Company Vault evidence.
+    // PR #1055 further ensures that when AI rematch fails or is skipped,
+    // NO ComplianceMatrix rows are created from tender-source diagnostics.
+    // Instead, the engine records a blocker and returns partial=true.
     let evidenceMatchingBlocker: { code: string; message: string } | null = null;
     const aiRematchFailed = (!mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null) || rematchSkippedForDeadline;
-    const hasSourceGroundedRequirements = createdRequirements.some(
-      ({ requirement }) =>
-        requirement.sourceTenderFileId &&
-        requirement.sourcePageNumber != null &&
-        requirement.sourceExactQuote &&
-        requirement.sourceExactQuote.trim().length > 0 &&
-        (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
-    );
-    if (aiRematchFailed && hasSourceGroundedRequirements) {
-      const fallback = buildDeterministicFallbackRows(
-        createdRequirements.map(({ id, requirement }) => ({
-          id,
-          title: requirement.title,
-          description: requirement.description,
-          requirementType: requirement.requirementType,
-          priority: requirement.priority,
-          sourceTenderFileId: requirement.sourceTenderFileId ?? null,
-          sourcePageNumber: requirement.sourcePageNumber ?? null,
-          sourceExactQuote: requirement.sourceExactQuote ?? null,
-          sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
-        })),
-      );
-      if (fallback.rows.length > 0) {
-        compliance = mergeFallbackRows(compliance, fallback.rows);
-        evidenceMatchingBlocker = {
-          code: fallback.blockerCode!,
-          message: fallback.blockerMessage!,
-        };
-        logger.info(`[run-tender-engine] Created ${fallback.rows.length} deterministic fallback compliance rows (AI matching failed, source extraction succeeded).`);
+
+    if (aiRematchFailed) {
+      // AI rematch was attempted but failed (deadline skip, provider exhaustion,
+      // or other error). The warning field contains the diagnostic reason.
+      //
+      // CRITICAL: Do NOT create any ComplianceMatrix rows from tender-source
+      // diagnostics. These are NOT Company Vault evidence.
+      //
+      // Record the blocker so the engine response exposes partial=true and
+      // the exact failure reason. Generation/export gates will correctly block.
+      evidenceMatchingBlocker = {
+        code: "AI_REMATCH_FAILED_ZERO_EVIDENCE",
+        message: mainEngineAIRematch.warning ?? "AI multi-perspective rematch failed. Zero Company Vault evidence matched."
+      };
+      
+      // Count source-grounded requirements for diagnostic logging ONLY.
+      // These are NOT persisted as compliance evidence.
+      const sourceGroundedCount = createdRequirements.filter(
+        ({ requirement }) =>
+          requirement.sourceTenderFileId &&
+          requirement.sourcePageNumber != null &&
+          requirement.sourceExactQuote &&
+          requirement.sourceExactQuote.trim().length > 0 &&
+          (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
+      ).length;
+      
+      // Safe diagnostic log: state the TRUTH (zero evidence rows created).
+      // Never log misleading "Created N fallback compliance rows" when those
+      // rows are NOT real Company Vault evidence.
+      if (sourceGroundedCount > 0) {
+        logger.info(
+          `[run-tender-engine] AI rematch failed: ${sourceGroundedCount} requirement(s) ` +
+          `matched to tender source paragraphs (diagnostics only). ` +
+          `Zero ComplianceMatrix rows created. Reason: ${mainEngineAIRematch.warning}`
+        );
+      } else {
+        logger.info(
+          `[run-tender-engine] AI rematch failed: zero requirement source matches, ` +
+          `zero ComplianceMatrix rows created. Reason: ${mainEngineAIRematch.warning}`
+        );
       }
+      
+      // Do NOT call buildDeterministicFallbackRows or mergeFallbackRows.
+      // compliance.matrices remains as-is (deterministic matching only,
+      // no AI-failed tender-source fake evidence rows).
     }
 
     // ─── Blocker 2: deadline-skipped rematch is ALWAYS partial ───────────

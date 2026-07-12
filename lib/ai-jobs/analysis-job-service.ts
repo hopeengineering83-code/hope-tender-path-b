@@ -154,9 +154,8 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         userId,
         jobType: AI_ANALYZE_JOB_TYPE,
         status: "QUEUED",
-        analysisInputHash: contentHash,
+        runId: require("crypto").randomUUID(),
         input: JSON.stringify({ tenderId, contentHash }),
-        runId: require("crypto").randomUUID()
       },
     });
   });
