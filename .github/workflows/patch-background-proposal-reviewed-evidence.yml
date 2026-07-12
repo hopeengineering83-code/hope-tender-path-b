@@ -1,0 +1,121 @@
+name: Patch background proposal reviewed evidence
+
+on:
+  pull_request:
+    branches:
+      - automation/patch-background-proposal-no-deploy
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/background-proposal-reviewed-evidence-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Enforce reviewed evidence and post-generation readiness
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/ai-job-handlers.ts')
+          source = path.read_text()
+
+          expert_old = 'expertMatches: { where: { isSelected: true }, include: { expert: true } },'
+          expert_new = 'expertMatches: { where: { isSelected: true, expert: { is: { trustLevel: "REVIEWED", deletedAt: null } } }, include: { expert: true } },'
+          project_old = 'projectMatches: { where: { isSelected: true }, include: { project: true } },'
+          project_new = 'projectMatches: { where: { isSelected: true, project: { is: { trustLevel: "REVIEWED", deletedAt: null } } }, include: { project: true } },'
+          if expert_old not in source or project_old not in source:
+              raise SystemExit('background evidence query anchors not found')
+          source = source.replace(expert_old, expert_new, 1)
+          source = source.replace(project_old, project_new, 1)
+
+          tender_check = '    if (!tender) throw new Error(`PROPOSAL_GENERATION: tender ${ctx.tenderId} not found`);\n'
+          company_check = tender_check + '    if (!company) throw new Error("PROPOSAL_GENERATION: Company Vault not found");\n'
+          if tender_check not in source:
+              raise SystemExit('tender check anchor not found')
+          source = source.replace(tender_check, company_check, 1)
+
+          filter_block = '''    const rawFilter = ctx.input?.sectionFilter;
+              const sectionFilter = Array.isArray(rawFilter) && rawFilter.length > 0
+                ? (rawFilter as string[]).filter((s): s is "cover-and-summary" | "company-and-experience" | "technical-approach" | "additional-and-declaration" =>
+                    ["cover-and-summary", "company-and-experience", "technical-approach", "additional-and-declaration"].includes(s))
+                : undefined;
+          '''
+          if filter_block not in source:
+              raise SystemExit('section filter anchor not found')
+
+          blocker_block = filter_block + '''
+              const needsReviewedExperts = !sectionFilter || sectionFilter.includes("technical-approach");
+              const needsReviewedProjects = !sectionFilter || sectionFilter.includes("company-and-experience");
+              if (needsReviewedExperts && tender.expertMatches.length === 0) {
+                await recordStep(ctx.jobId, {
+                  stepName: "proposal.evidence",
+                  message: "Blocked: no REVIEWED selected expert evidence is available.",
+                  status: "FAILED",
+                });
+                throw new Error("NO_REVIEWED_EXPERT_EVIDENCE");
+              }
+              if (needsReviewedProjects && tender.projectMatches.length === 0) {
+                await recordStep(ctx.jobId, {
+                  stepName: "proposal.evidence",
+                  message: "Blocked: no REVIEWED selected project evidence is available.",
+                  status: "FAILED",
+                });
+                throw new Error("NO_REVIEWED_PROJECT_EVIDENCE");
+              }
+          '''
+          source = source.replace(filter_block, blocker_block, 1)
+
+          markdown_anchor = '    const markdown = await generateProposalSectionsParallel(input, sectionFilter);\n'
+          markdown_guard = markdown_anchor + '''    if (!markdown || markdown.trim().length < 50) {
+              await recordStep(ctx.jobId, {
+                stepName: "proposal.output",
+                message: "AI proposal output was empty or insufficient; no document was persisted.",
+                status: "FAILED",
+              });
+              throw new Error("AI_PROPOSAL_OUTPUT_INSUFFICIENT");
+            }
+
+            const postGenerationReadiness = await assertTenderReadyForGenerationAndExport({
+              prisma,
+              tenderId: ctx.tenderId,
+              userId: ctx.userId,
+              purpose: "background-proposal-generation",
+            });
+            if (!postGenerationReadiness.ok) {
+              await recordStep(ctx.jobId, {
+                stepName: "proposal.post-gate",
+                message: `Readiness changed while AI generation was running: ${postGenerationReadiness.blockerCode}`,
+                status: "FAILED",
+              });
+              throw new Error(`PROPOSAL_GENERATION readiness changed (${postGenerationReadiness.blockerCode})`);
+            }
+          '''
+          if markdown_anchor not in source:
+              raise SystemExit('markdown generation anchor not found')
+          source = source.replace(markdown_anchor, markdown_guard, 1)
+
+          if 'expertMatches: { where: { isSelected: true }, include: { expert: true } }' in source:
+              raise SystemExit('unreviewed expert query remains')
+          if 'projectMatches: { where: { isSelected: true }, include: { project: true } }' in source:
+              raise SystemExit('unreviewed project query remains')
+          if source.count('purpose: "background-proposal-generation"') < 3:
+              raise SystemExit('expected preflight, post-generation, and transactional gates')
+
+          path.write_text(source)
+          PY
+      - name: Commit worker repair
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/ai-job-handlers.ts
+          git commit -m "fix: require reviewed evidence in background proposals"
+          git push origin HEAD:${{ github.head_ref }}
