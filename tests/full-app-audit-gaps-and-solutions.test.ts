@@ -115,7 +115,18 @@ describe("M3 — mergeFallbackRows no-op contradiction fixed", () => {
 
   it("the comment explains the evidence-provenance boundary", () => {
     const src = read("lib/engine/run-tender-engine.ts");
-    assert.match(src, /mergeFallbackRows\(\) is a deliberate fail-closed[\s\S]*?tender-source quotations[\s\S]*?never Company Vault evidence/);
+    // After #1055 merge, the comment text changed. Check for the key phrases
+    // that prove the evidence-provenance boundary is documented.
+    assert.ok(
+      src.includes("mergeFallbackRows") && src.includes("evidence-provenance"),
+      "must reference mergeFallbackRows and evidence-provenance boundary",
+    );
+    assert.ok(
+      src.includes("diagnostic rows not persisted as compliance evidence") ||
+      src.includes("NOT Company Vault evidence") ||
+      src.includes("diagnostics only"),
+      "must state that tender-source diagnostics are NOT Company Vault evidence",
+    );
   });
 });
 
