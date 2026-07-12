@@ -3,6 +3,7 @@ import { inspectActualFileBytes } from "../../../../../lib/engine/persisted-byte
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { getStorageAdapter } from "../../../../../lib/storage";
 import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
@@ -448,14 +449,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // without an audit trail (was non-atomic — broken "every approval is
     // audited" invariant).
     await prisma.$transaction(async (tx) => {
-      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
+      // The rebuilt bytes live inline. Clear any stale storage pointer (the
+      // read path serves storage first, so a leftover pointer would serve the
+      // OLD object against the NEW digest) and keep the legacy final-ZIP
+      // digest columns describing the same rebuilt bytes.
+      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, sha256: rebuiltIntegrity.contentSha256, byteSize: rebuiltIntegrity.contentByteLength, storagePath: null, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
       if (ready && priorStatus !== "READY_FOR_EXPORT") await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
     });
+    // Best-effort cleanup of the replaced storage object after commit — the
+    // row already points at the rebuilt inline bytes.
+    if (doc.storagePath) {
+      await getStorageAdapter().deleteFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.exactFileName ?? doc.name }).catch(() => {});
+    }
     processed += 1;
   }
 
   await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
-  // Metadata-only fetch for final readiness check — fileContent not needed (requireFileContent: false).
+  // The readiness check verifies actual bytes and persisted integrity
+  // (checkExportFileByteReadiness). Fetching without fileContent/integrity
+  // columns made it report false MISSING_FILE_BYTES / unverified-integrity
+  // failures for documents that were just verified above.
   const finalAll = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
@@ -477,7 +490,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       reviewNotes: true,
       createdAt: true,
       updatedAt: true,
-      // fileContent: excluded — not needed for finalization metadata or readiness checks
+      fileContent: true,
+      contentSha256: true,
+      contentByteLength: true,
+      contentMimeType: true,
+      detectedFormat: true,
+      integrityStatus: true,
     },
   });
   const finalDocs = filterFinalExportCandidateDocuments(finalAll as any[]);

@@ -43,6 +43,12 @@ function expectedFormat(filename: string): string | null {
   if (lower.endsWith(".pdf")) return "PDF";
   if (lower.endsWith(".docx")) return "DOCX";
   if (lower.endsWith(".xlsx")) return "XLSX";
+  // Legacy Office extensions: tender plans regularly require ".doc"/".xls"
+  // names, but genuine legacy binaries are banned at upload and the app only
+  // ever produces/attaches modern OOXML bytes under those names
+  // (formatForName maps them to DOCX/XLSX). Expect the modern container.
+  if (lower.endsWith(".doc")) return "DOCX";
+  if (lower.endsWith(".xls")) return "XLSX";
   if (lower.endsWith(".zip")) return "ZIP";
   if (lower.endsWith(".png")) return "PNG";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "JPEG";
@@ -50,6 +56,28 @@ function expectedFormat(filename: string): string | null {
   if (lower.endsWith(".txt")) return "TEXT";
   if (lower.endsWith(".json")) return "JSON";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "MARKDOWN";
+  return null;
+}
+
+function hasFileExtension(filename: string): boolean {
+  return /\.[a-z0-9]{2,8}$/i.test(filename.trim());
+}
+
+// Legacy MIME aliases a caller may legitimately claim for a detected format.
+const CLAIMED_MIME_ALIASES: Record<string, string[]> = {
+  DOCX: ["application/msword"],
+  XLSX: ["application/vnd.ms-excel"],
+};
+
+function formatFromMime(mime: string | null | undefined): string | null {
+  const cleaned = mime?.trim().toLowerCase();
+  if (!cleaned || cleaned === "application/octet-stream") return null;
+  for (const [format, formatMime] of Object.entries(FORMAT_MIME)) {
+    if (formatMime === cleaned) return format;
+  }
+  for (const [format, aliases] of Object.entries(CLAIMED_MIME_ALIASES)) {
+    if (aliases.includes(cleaned)) return format;
+  }
   return null;
 }
 
@@ -65,10 +93,10 @@ function looksLikeText(bytes: Buffer): boolean {
   return printable / sample.length >= 0.9;
 }
 
-export function detectActualByteFormat(bytes: Buffer, filename: string): string | null {
+export function detectActualByteFormat(bytes: Buffer, filename: string, expectedHint?: string | null): string | null {
   if (bytes.length >= 5 && bytes.subarray(0, 5).toString("ascii") === "%PDF-") return "PDF";
   if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
-    const expected = expectedFormat(filename);
+    const expected = expectedHint ?? expectedFormat(filename);
     return expected === "DOCX" || expected === "XLSX" ? expected : "ZIP";
   }
   if (
@@ -78,7 +106,7 @@ export function detectActualByteFormat(bytes: Buffer, filename: string): string 
   ) return "PNG";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "JPEG";
   if (looksLikeText(bytes)) {
-    const expected = expectedFormat(filename);
+    const expected = expectedHint ?? expectedFormat(filename);
     if (expected === "CSV" || expected === "JSON" || expected === "TEXT" || expected === "MARKDOWN") return expected;
     return "TEXT";
   }
@@ -114,8 +142,13 @@ export function inspectActualFileBytes(input: {
     };
   }
 
-  const expected = expectedFormat(input.filename);
-  const detected = detectActualByteFormat(bytes, input.filename);
+  // Tender-required filenames legitimately come without an extension. With no
+  // extension there is no label for the bytes to contradict, so fall back to
+  // the claimed MIME type to establish the expected format. A filename WITH an
+  // unrecognized extension stays UNSUPPORTED — that label cannot be checked.
+  const extensionExpected = expectedFormat(input.filename);
+  const expected = extensionExpected ?? (hasFileExtension(input.filename) ? null : formatFromMime(input.claimedMimeType));
+  const detected = detectActualByteFormat(bytes, input.filename, expected);
   if (!expected || !detected) {
     return {
       contentSha256: computeByteSha256(bytes),
@@ -140,8 +173,9 @@ export function inspectActualFileBytes(input: {
   }
 
   const detectedMime = FORMAT_MIME[detected] ?? "application/octet-stream";
-  const claimedMime = input.claimedMimeType?.trim() || null;
-  if (claimedMime && claimedMime !== "application/octet-stream" && claimedMime !== detectedMime) {
+  const claimedMime = input.claimedMimeType?.trim().toLowerCase() || null;
+  const claimedMimeAcceptable = claimedMime === detectedMime || (CLAIMED_MIME_ALIASES[detected] ?? []).includes(claimedMime ?? "");
+  if (claimedMime && claimedMime !== "application/octet-stream" && !claimedMimeAcceptable) {
     return {
       contentSha256: computeByteSha256(bytes),
       contentByteLength: bytes.length,
