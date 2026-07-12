@@ -192,11 +192,7 @@ export async function POST(
             purpose: "regenerate-cvs",
             write: async (lockedTx) => {
               const existing = await lockedTx.generatedDocument.findFirst({
-                where: {
-                  tenderId,
-                  exactFileName: fileName,
-                  generationStatus: { not: "SUPERSEDED" },
-                },
+                where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
                 orderBy: { updatedAt: "desc" },
               });
 
