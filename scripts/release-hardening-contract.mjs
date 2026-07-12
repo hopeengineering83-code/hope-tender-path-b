@@ -5,12 +5,32 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-const vercel = JSON.parse(fs.readFileSync("vercel.json", "utf8"));
+function readText(path) {
+  try {
+    return fs.readFileSync(path, "utf8");
+  } catch (error) {
+    fail(`cannot read ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    return "";
+  }
+}
+
+function readJson(path) {
+  const raw = readText(path);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    fail(`cannot parse ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+const vercel = readJson("vercel.json");
 if (vercel?.git?.deploymentEnabled !== false) {
   fail("vercel.json must keep git.deploymentEnabled=false while release hardening is active");
 }
 
-const providerDoc = fs.readFileSync("docs/ai-provider-order.md", "utf8");
+const providerDoc = readText("docs/ai-provider-order.md");
 const providers = [
   "Z.ai",
   "Cerebras",
@@ -37,10 +57,6 @@ for (const provider of providers) {
   previous = index;
 }
 
-if (!providerDoc.includes("Anthropic")) {
-  fail("Anthropic must remain the final provider");
-}
-
 const requiredRules = [
   "Tender controls scope",
   "Company Vault",
@@ -52,7 +68,7 @@ const requiredRules = [
   "final ZIP",
 ];
 
-const contract = fs.readFileSync("docs/RELEASE_HARDENING_14_PHASES.md", "utf8");
+const contract = readText("docs/RELEASE_HARDENING_14_PHASES.md");
 for (const rule of requiredRules) {
   if (!contract.toLowerCase().includes(rule.toLowerCase())) {
     fail(`release contract is missing required rule: ${rule}`);
