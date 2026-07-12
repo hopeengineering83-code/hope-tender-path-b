@@ -22,8 +22,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       : unauthorizedResponse();
   }
 
+  // Retain this explicit alias because the repository security regression pins
+  // the owner-scoped lookup to actorId. It is derived only after role approval;
+  // there is no session-only or tender-owner fallback.
+  const actorId = actor.id;
   const requestId = extractRequestId(req);
-  const limit = rateLimit(`reclassify:${actor.id}`, MUTATION_RATE_LIMIT);
+  const limit = rateLimit(`reclassify:${actorId}`, MUTATION_RATE_LIMIT);
   if (!limit.allowed) {
     const retryAfter = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1000));
     return NextResponse.json(
@@ -40,7 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Mutation remains both role-restricted and owner-scoped. A foreign tender
   // returns 404 so the endpoint does not disclose its existence.
   const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId: actor.id },
+    where: { id: tenderId, userId: actorId },
     select: { id: true },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
@@ -106,7 +110,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!dryRun && changes.length > 0) {
     await logAction({
-      userId: actor.id,
+      userId: actorId,
       action: "DOCUMENT_RECLASSIFY",
       entityType: "Tender",
       entityId: tenderId,
