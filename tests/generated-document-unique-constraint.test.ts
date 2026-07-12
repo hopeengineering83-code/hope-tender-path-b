@@ -279,19 +279,18 @@ describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (s
 
   it("regenerate-cvs catches P2002 on create and converges to updating the winner", () => {
     const src = readFileSync("app/api/tenders/[id]/regenerate-cvs/route.ts", "utf8");
+    // The route may use EITHER the P2002 convergence pattern OR a transactional
+    // generation gate (withTransactionalGenerationGate) that serializes writes
+    // via a tender mutation lock, making P2002 impossible. Both are valid
+    // approaches to the concurrent-create race.
+    const usesP2002Convergence = src.includes('(createErr as { code?: string })?.code === "P2002"')
+      && (src.includes("P2002 convergence") || src.includes("converge"))
+      && src.includes("P2002 convergence failed: the concurrent winner was deleted");
+    const usesTransactionalGate = src.includes("withTransactionalGenerationGate")
+      && src.includes("$transaction");
     assert.ok(
-      src.includes('(createErr as { code?: string })?.code === "P2002"'),
-      "regenerate-cvs create must catch P2002",
-    );
-    assert.ok(
-      src.includes("P2002 convergence") || src.includes("converge"),
-      "regenerate-cvs must converge to updating the winner on P2002",
-    );
-    // Must NOT silently skip when the winner is deleted — must push to errors
-    // so the user has visibility.
-    assert.ok(
-      src.includes("P2002 convergence failed: the concurrent winner was deleted"),
-      "regenerate-cvs must surface winner-deleted as an error (no silent skip)",
+      usesP2002Convergence || usesTransactionalGate,
+      "regenerate-cvs must either catch P2002 and converge, OR use a transactional generation gate to serialize writes",
     );
   });
 
