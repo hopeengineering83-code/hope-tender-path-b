@@ -1,0 +1,69 @@
+name: Harden tender storage cleanup claim
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/tender-delete-storage-manifest-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Add optimistic manifest version to stale-task claim
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          helper = Path('lib/tender/tender-storage-cleanup-task.ts')
+          s = helper.read_text()
+          old = '''  const claim = await args.prisma.auditLog.updateMany({
+              where: { id: task.id, action: task.action },'''
+          new = '''  const claim = await args.prisma.auditLog.updateMany({
+              // The exact prior manifest is the optimistic version token. This is
+              // required when reclaiming stale RUNNING tasks because the action
+              // remains RUNNING; action-only matching could let two workers claim.
+              where: {
+                id: task.id,
+                action: task.action,
+                metadata: task.metadata,
+              },'''
+          if old not in s:
+              raise SystemExit('cleanup claim anchor not found')
+          s = s.replace(old, new, 1)
+          helper.write_text(s)
+
+          test = Path('tests/tender-storage-cleanup-task-current.test.ts')
+          t = test.read_text()
+          anchor = '''  it("reclaims a stale running task for retry", async () => {'''
+          guard = '''  it("uses the exact prior manifest as the optimistic claim version", () => {
+              const source = readFileSync("lib/tender/tender-storage-cleanup-task.ts", "utf8");
+              const claimStart = source.indexOf("const claim = await args.prisma.auditLog.updateMany");
+              const claimRegion = source.slice(claimStart, claimStart + 700);
+              assert.match(claimRegion, /metadata: task\.metadata/);
+              assert.match(claimRegion, /action: task\.action/);
+            });
+
+          '''
+          if anchor not in t:
+              raise SystemExit('cleanup claim test anchor not found')
+          if 'optimistic claim version' not in t:
+              t = t.replace(anchor, guard + anchor, 1)
+          test.write_text(t)
+          PY
+      - name: Commit claim hardening
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/tender/tender-storage-cleanup-task.ts tests/tender-storage-cleanup-task-current.test.ts
+          git commit -m "fix: serialize stale cleanup task claims"
+          git push origin HEAD:${{ github.head_ref }}
