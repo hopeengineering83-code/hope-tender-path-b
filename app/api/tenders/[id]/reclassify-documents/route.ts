@@ -1,45 +1,48 @@
 // POST /api/tenders/[id]/reclassify-documents
 // Reclassifies mistyped GeneratedDocument rows.
-// Auth: ADMIN or PROPOSAL_MANAGER or tender owner
+// Auth: ADMIN or PROPOSAL_MANAGER only.
 
 import { NextResponse } from "next/server";
-import { requireRole, getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../lib/engine/document-type-normalizer";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
-  const rl = rateLimit(`reclassify:${ip}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
-
-  let actorId: string;
+  let actor;
   try {
-    const actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-    actorId = actor.id;
-  } catch {
-    // Fall back to tender-owner check
-    const userId = await getSession();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    actorId = userId;
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
+  }
+
+  const requestId = extractRequestId(req);
+  const limit = rateLimit(`reclassify:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!limit.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Rate limit exceeded", code: "RATE_LIMITED", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
   }
 
   await prismaReady;
   const { id: tenderId } = await params;
-
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const dryRun = body.dryRun === true;
 
-  // Verify tender ownership. The fallback `?? findFirst({ where: { id } })`
-  // was removed (audit SEC-001, 2026-06-20) — it allowed any authenticated
-  // user (including VIEWER, who per RBAC only has TENDER_READ) to reclassify
-  // GeneratedDocument rows on ANY user's tender. The owner-scoped findFirst
-  // is the only safe lookup; if the tender doesn't belong to the actor,
-  // return 404 (not 403, to avoid leaking existence).
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actorId }, select: { id: true } });
+  // Mutation remains both role-restricted and owner-scoped. A foreign tender
+  // returns 404 so the endpoint does not disclose its existence.
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId: actor.id },
+    select: { id: true },
+  });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   const docs = await prisma.generatedDocument.findMany({
@@ -47,51 +50,69 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     select: { id: true, name: true, exactFileName: true, documentType: true, reviewStatus: true },
   });
 
-  const changes: Array<{ id: string; name: string; from: string; to: string; reviewStatusChange?: string }> = [];
+  const changes: Array<{
+    id: string;
+    name: string;
+    from: string;
+    to: string;
+    reviewStatusChange?: string;
+  }> = [];
 
   for (const doc of docs) {
     const normalized = normalizeDocumentType(doc.name, doc.exactFileName, doc.documentType);
     const currentType = (doc.documentType ?? "OTHER").toUpperCase();
     const newType = normalized.toUpperCase();
 
-    if (newType !== currentType && normalized !== "OTHER") {
-      const change: { id: string; name: string; from: string; to: string; reviewStatusChange?: string } = {
-        id: doc.id,
-        name: doc.name,
-        from: currentType,
-        to: newType,
-      };
+    if (newType === currentType || normalized === "OTHER") continue;
 
-      let newReviewStatus: string | undefined;
-      if (requiresOfficialOriginal(normalized) && doc.reviewStatus !== "REPLACE_WITH_ORIGINAL" && doc.reviewStatus !== "NOT_EXPORTABLE") {
-        newReviewStatus = "REPLACE_WITH_ORIGINAL";
-        change.reviewStatusChange = `${doc.reviewStatus ?? "null"} → REPLACE_WITH_ORIGINAL`;
-      } else if (isControlDocument(normalized) && doc.reviewStatus !== "NOT_EXPORTABLE") {
-        newReviewStatus = "NOT_EXPORTABLE";
-        change.reviewStatusChange = `${doc.reviewStatus ?? "null"} → NOT_EXPORTABLE`;
-      }
+    const change: {
+      id: string;
+      name: string;
+      from: string;
+      to: string;
+      reviewStatusChange?: string;
+    } = {
+      id: doc.id,
+      name: doc.name,
+      from: currentType,
+      to: newType,
+    };
 
-      changes.push(change);
+    let newReviewStatus: string | undefined;
+    if (
+      requiresOfficialOriginal(normalized)
+      && doc.reviewStatus !== "REPLACE_WITH_ORIGINAL"
+      && doc.reviewStatus !== "NOT_EXPORTABLE"
+    ) {
+      newReviewStatus = "REPLACE_WITH_ORIGINAL";
+      change.reviewStatusChange = `${doc.reviewStatus ?? "null"} → REPLACE_WITH_ORIGINAL`;
+    } else if (isControlDocument(normalized) && doc.reviewStatus !== "NOT_EXPORTABLE") {
+      newReviewStatus = "NOT_EXPORTABLE";
+      change.reviewStatusChange = `${doc.reviewStatus ?? "null"} → NOT_EXPORTABLE`;
+    }
 
-      if (!dryRun) {
-        await prisma.generatedDocument.update({
-          where: { id: doc.id },
-          data: {
-            documentType: newType,
-            ...(newReviewStatus ? { reviewStatus: newReviewStatus, validationStatus: "PENDING" } : {}),
-          },
-        });
-      }
+    changes.push(change);
+
+    if (!dryRun) {
+      await prisma.generatedDocument.update({
+        where: { id: doc.id },
+        data: {
+          documentType: newType,
+          ...(newReviewStatus ? { reviewStatus: newReviewStatus, validationStatus: "PENDING" } : {}),
+        },
+      });
     }
   }
 
   if (!dryRun && changes.length > 0) {
     await logAction({
-      userId: actorId,
+      userId: actor.id,
       action: "DOCUMENT_RECLASSIFY",
       entityType: "Tender",
       entityId: tenderId,
-      description: `Reclassified ${changes.length} document(s): ${changes.map((c) => `${c.name} (${c.from} → ${c.to})`).join(", ").slice(0, 500)}`,
+      description: `Reclassified ${changes.length} document(s): ${changes.map((change) => `${change.name} (${change.from} → ${change.to})`).join(", ").slice(0, 500)}`,
+      metadata: { tenderId, changed: changes.length },
+      requestId,
     });
   }
 
