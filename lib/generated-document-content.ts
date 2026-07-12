@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { getStorageAdapter } from "./storage";
 import { inspectActualFileBytes, requireVerifiedPersistedFileBytes } from "./engine/persisted-byte-integrity";
+import { markBufferCanonicallyVerified } from "./engine/file-byte-integrity";
 
 export type GeneratedContentSource = "storage" | "legacy";
 
@@ -40,7 +41,7 @@ export async function readGeneratedDocumentContent(
   const mimeType = inferMimeType(filename);
 
   const verifyWhenRequired = (buffer: Buffer) => {
-    if (!options.requireVerifiedIntegrity) return;
+    if (!options.requireVerifiedIntegrity) return buffer;
     requireVerifiedPersistedFileBytes({
       bytes: buffer,
       filename,
@@ -53,6 +54,7 @@ export async function readGeneratedDocumentContent(
         integrityStatus: doc.integrityStatus ?? "UNKNOWN",
       },
     });
+    return markBufferCanonicallyVerified(buffer);
   };
 
   if (doc.storagePath) {
@@ -66,7 +68,9 @@ export async function readGeneratedDocumentContent(
       verifyWhenRequired(buffer);
       return { buffer, base64: buffer.toString("base64"), filename, mimeType, source: "storage" };
     } catch {
-      // Storage read failed — fall through to legacy fileContent if available
+      // Storage read failed or storage bytes failed canonical integrity. Fall
+      // through only when legacy inline bytes are available; those bytes are
+      // independently verified below before they can be returned.
     }
   }
 
