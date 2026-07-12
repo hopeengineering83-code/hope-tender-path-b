@@ -83,6 +83,7 @@ const STATUS_COLORS: Record<string, string> = {
   REJECTED_DUPLICATE: "bg-red-100 text-red-700",
   PENDING: "bg-slate-100 text-slate-500",
   NEEDS_REVISION: "bg-amber-100 text-amber-700",
+  NEEDS_REVIEW: "bg-amber-100 text-amber-700",
 };
 
 function formatDate(iso: string): string {
