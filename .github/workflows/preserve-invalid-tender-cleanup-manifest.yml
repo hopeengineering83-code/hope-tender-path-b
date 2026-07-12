@@ -1,0 +1,103 @@
+name: Preserve invalid tender cleanup manifest
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/tender-delete-storage-manifest-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Preserve original manifest for operator recovery
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          helper = Path('lib/tender/tender-storage-cleanup-task.ts')
+          s = helper.read_text()
+          old = '''      data: {
+                action: TENDER_STORAGE_CLEANUP_INVALID,
+                description: "Tender storage cleanup task is invalid and requires operator review",
+                metadata: JSON.stringify({
+                  version: 1,
+                  status: "INVALID",
+                  failureCode: "INVALID_CLEANUP_MANIFEST",
+                  invalidAt: now.toISOString(),
+                }),
+              },'''
+          new = '''      data: {
+                action: TENDER_STORAGE_CLEANUP_INVALID,
+                // Preserve the original internal bytes. Even a malformed JSON
+                // document may contain the only recoverable storage pointers.
+                description: "Tender storage cleanup task is invalid and requires operator review",
+              },'''
+          if old not in s:
+              raise SystemExit('invalid manifest overwrite block not found')
+          helper.write_text(s.replace(old, new, 1))
+
+          test = Path('tests/tender-storage-cleanup-task-current.test.ts')
+          t = test.read_text()
+          t = t.replace(
+              '  TENDER_STORAGE_CLEANUP_COMPLETED,\n  TENDER_STORAGE_CLEANUP_PENDING,',
+              '  TENDER_STORAGE_CLEANUP_COMPLETED,\n  TENDER_STORAGE_CLEANUP_INVALID,\n  TENDER_STORAGE_CLEANUP_PENDING,',
+              1,
+          )
+          old_harness = '''        action = args.data.action;
+                metadata = args.data.metadata;
+                return { count: 1 };'''
+          new_harness = '''        action = args.data.action;
+                if (typeof args.data.metadata === "string") metadata = args.data.metadata;
+                return { count: 1 };'''
+          if old_harness not in t:
+              raise SystemExit('processor harness updateMany anchor not found')
+          t = t.replace(old_harness, new_harness, 1)
+
+          anchor = '''  it("claims, deletes every object, and marks the task completed", async () => {'''
+          case = '''  it("marks an invalid manifest for review without destroying its original bytes", async () => {
+              const original = "not-json: blob://recover-this-object";
+              const h = processorHarness({ metadata: original });
+              const result = await processTenderStorageCleanupTask({
+                prisma: h.prisma as any,
+                storage: h.storage as any,
+                taskId: "task-1",
+                now: new Date("2026-07-12T18:00:00.000Z"),
+              });
+
+              assert.deepEqual(result, {
+                found: true,
+                claimed: false,
+                completed: false,
+                cleaned: 0,
+                remaining: 0,
+                failures: 1,
+              });
+              assert.equal(h.state().action, TENDER_STORAGE_CLEANUP_INVALID);
+              assert.equal(h.state().metadata, original);
+              assert.ok(!h.events.some((event) => event.startsWith("storage:")));
+            });
+
+          '''
+          if anchor not in t:
+              raise SystemExit('task processing test anchor not found')
+          if 'without destroying its original bytes' not in t:
+              t = t.replace(anchor, case + anchor, 1)
+          test.write_text(t)
+          PY
+      - name: Commit preservation fix
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/tender/tender-storage-cleanup-task.ts tests/tender-storage-cleanup-task-current.test.ts
+          git commit -m "fix: preserve invalid cleanup manifests for recovery"
+          git push origin HEAD:${{ github.head_ref }}
