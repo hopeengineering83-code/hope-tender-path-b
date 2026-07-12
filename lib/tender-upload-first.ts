@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { inspectActualFileBytes, type PersistedByteIntegrity } from "./engine/persisted-byte-integrity";
 import { NextResponse } from "next/server";
 import { requireRole } from "./auth";
 import { logAction } from "./audit";
@@ -24,6 +25,7 @@ type StoredTenderUpload = {
   storagePath: string;
   fileContent: string | null;
   storageProvider: StorageProvider;
+  integrity: PersistedByteIntegrity;
   fileTypeLabel: string;
   extractedText: string;
   meaningful: boolean;
@@ -174,6 +176,9 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         storagePath: stored.storagePath,
         fileContent: stored.fileContent ?? null,
         storageProvider: stored.provider,
+        // Byte integrity is pinned from the ACTUAL uploaded bytes (truth
+        // recorded even when not VERIFIED — export gates enforce at read).
+        integrity: inspectActualFileBytes({ bytes: buffer, filename: validation.safeFileName, claimedMimeType: validation.normalizedMime }),
         fileTypeLabel: getFileTypeLabel(validation.normalizedMime, validation.safeFileName),
         extractedText,
         meaningful: isMeaningfulExtraction(extractedText),
@@ -275,6 +280,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             size: upload.size,
             storagePath: upload.storagePath,
             fileContent: upload.fileContent,
+            ...upload.integrity,
             classification: "Tender Document",
             extractedText: upload.extractedText || null,
             contentHash,

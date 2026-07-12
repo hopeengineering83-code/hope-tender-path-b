@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { inspectActualFileBytes } from "../../../../../../../lib/engine/persisted-byte-integrity";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../../lib/auth";
 import { logAction } from "../../../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../../../lib/prisma";
@@ -103,6 +104,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           format: formatForName(outputName),
           fileContent: stored.fileContent ?? null,
           storagePath: stored.storagePath || null,
+          ...inspectActualFileBytes({ bytes: buffer, filename: outputName, claimedMimeType: validation.normalizedMime }),
           generationStatus: "GENERATED",
           validationStatus: "VALIDATED",
           reviewStatus: "READY_FOR_EXPORT",

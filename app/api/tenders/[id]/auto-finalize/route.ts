@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { inspectActualFileBytes } from "../../../../../lib/engine/persisted-byte-integrity";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -425,7 +426,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       selfReviewScore,
     });
     // A document can only be READY_FOR_EXPORT if both hygiene AND the seven-pass gate allow it.
-    const ready = hygieneReady && gateEvaluation.finalApprovalAllowed;
+    // Pin the rebuilt bytes' integrity. A rebuild whose bytes do not verify
+    // must never be auto-marked READY_FOR_EXPORT (fail closed to review).
+    const rebuiltIntegrity = inspectActualFileBytes({ bytes: Buffer.from(rebuilt, "base64"), filename: doc.exactFileName ?? `${fileName}.docx`, claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    const ready = hygieneReady && gateEvaluation.finalApprovalAllowed && rebuiltIntegrity.integrityStatus === "VERIFIED";
 
     const priorStatus = doc.reviewStatus;
     const hygieneNotes = hygieneReady ? "" : `hygiene: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}`;
@@ -439,7 +443,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // without an audit trail (was non-atomic — broken "every approval is
     // audited" invariant).
     await prisma.$transaction(async (tx) => {
-      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
+      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
       if (ready && priorStatus !== "READY_FOR_EXPORT") await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
     });
     processed += 1;
