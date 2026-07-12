@@ -10,31 +10,68 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import {
+  GenerationPersistenceBlockedError,
+  withTransactionalGenerationGate,
+} from "../../../../../lib/engine/transactional-generation-gate";
 import { logger } from "../../../../../lib/observability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type RequirementLike = { title: string; description?: string | null; requirementType?: string | null; priority?: string | null };
+type RequirementLike = {
+  title: string;
+  description?: string | null;
+  requirementType?: string | null;
+  priority?: string | null;
+};
+
+type PreparedDocument = {
+  fileName: string;
+  documentType: string;
+  fileContent: string;
+  format: string;
+  validationStatus: string;
+  reviewStatus: string;
+  contentSummary: string;
+  exactOrder?: number | null;
+  plannedRowId?: string;
+  keepPlanned?: boolean;
+};
 
 function clean(value: string) {
   return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function para(text: string, bold = false) {
-  return new Paragraph({ children: [new TextRun({ text: clean(text), bold, size: 22, font: "Calibri" })], spacing: { after: 120, line: 276 } });
+  return new Paragraph({
+    children: [new TextRun({ text: clean(text), bold, size: 22, font: "Calibri" })],
+    spacing: { after: 120, line: 276 },
+  });
 }
 
 function heading(text: string) {
-  return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } });
+  return new Paragraph({
+    text: clean(text),
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 260, after: 140 },
+  });
 }
 
 function subheading(text: string) {
-  return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_2, spacing: { before: 180, after: 100 } });
+  return new Paragraph({
+    text: clean(text),
+    heading: HeadingLevel.HEADING_2,
+    spacing: { before: 180, after: 100 },
+  });
 }
 
 function bullet(text: string) {
-  return new Paragraph({ text: clean(text), bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
+  return new Paragraph({
+    text: clean(text),
+    bullet: { level: 0 },
+    spacing: { after: 80, line: 260 },
+  });
 }
 
 function documentTypeFor(fileName: string, fallback: string) {
@@ -61,15 +98,23 @@ function isNarrativeDraft(fileName: string, documentType: string) {
   return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement/.test(label);
 }
 
-function matchingRequirements(fileName: string, requirements: RequirementLike[]): RequirementLike[] {
-  const labelWords = new Set(fileName.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((word) => word.length >= 4));
-  const scored = requirements.map((requirement) => {
-    const text = `${requirement.title} ${requirement.description ?? ""} ${requirement.requirementType ?? ""}`.toLowerCase();
-    const score = Array.from(labelWords).reduce((sum, word) => sum + (text.includes(word) ? 1 : 0), 0) + ((requirement.priority ?? "").toUpperCase() === "MANDATORY" ? 1 : 0);
-    return { requirement, score };
-  }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score);
+function matchingRequirements(fileName: string, requirements: RequirementLike[]) {
+  const labelWords = new Set(
+    fileName.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((word) => word.length >= 4),
+  );
+  const scored = requirements
+    .map((requirement) => {
+      const text = `${requirement.title} ${requirement.description ?? ""} ${requirement.requirementType ?? ""}`.toLowerCase();
+      const score = Array.from(labelWords).reduce((sum, word) => sum + (text.includes(word) ? 1 : 0), 0)
+        + ((requirement.priority ?? "").toUpperCase() === "MANDATORY" ? 1 : 0);
+      return { requirement, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
   const picked = scored.slice(0, 8).map((entry) => entry.requirement);
-  return picked.length > 0 ? picked : requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY").slice(0, 8);
+  return picked.length > 0
+    ? picked
+    : requirements.filter((requirement) => (requirement.priority ?? "").toUpperCase() === "MANDATORY").slice(0, 8);
 }
 
 async function replacementControlContent(tenderTitle: string, fileName: string, replaceWithOriginal: boolean) {
@@ -94,7 +139,12 @@ async function replacementControlContent(tenderTitle: string, fileName: string, 
   return buffer.toString("base64");
 }
 
-async function narrativeDraftContent(tenderTitle: string, fileName: string, documentType: string, requirements: RequirementLike[]) {
+async function narrativeDraftContent(
+  tenderTitle: string,
+  fileName: string,
+  documentType: string,
+  requirements: RequirementLike[],
+) {
   const related = matchingRequirements(fileName, requirements);
   const children: Paragraph[] = [
     para(fileName, true),
@@ -126,9 +176,15 @@ async function narrativeDraftContent(tenderTitle: string, fileName: string, docu
   return buffer.toString("base64");
 }
 
-async function buildPlannedRowContent(args: { tenderTitle: string; fileName: string; documentType: string; requirements: RequirementLike[] }) {
+async function buildPlannedRowContent(args: {
+  tenderTitle: string;
+  fileName: string;
+  documentType: string;
+  requirements: RequirementLike[];
+}) {
   const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);
-  const isSubmissionRules = args.documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
+  const isSubmissionRules = args.documentType === "SUBMISSION_RULES"
+    || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
   if (isNarrativeDraft(args.fileName, args.documentType)) {
     return {
       fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements),
@@ -149,6 +205,19 @@ async function buildPlannedRowContent(args: { tenderTitle: string; fileName: str
   };
 }
 
+function planFingerprint(items: Array<Record<string, unknown>>) {
+  return JSON.stringify(
+    items
+      .map((item) => ({
+        exactFileName: String(item.exactFileName ?? ""),
+        documentType: String(item.documentType ?? ""),
+        exactOrder: Number(item.exactOrder ?? 0),
+        required: Boolean(item.required ?? true),
+      }))
+      .sort((left, right) => left.exactOrder - right.exactOrder || left.exactFileName.localeCompare(right.exactFileName)),
+  );
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
   let actor;
@@ -160,7 +229,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const rl = rateLimit(`generate-missing-plan-files:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
-    return NextResponse.json({ success: false, ok: false, code: "RATE_LIMITED", error: "Too many missing-plan generation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+    const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
+    return NextResponse.json(
+      { success: false, ok: false, code: "RATE_LIMITED", error: "Too many missing-plan generation requests. Wait and retry.", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
   }
 
   await prismaReady;
@@ -177,13 +250,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
-  // Contamination is NO LONGER a hard block for draft support-file generation.
-  // Per the source-driven model (PRs #968-#972), metadata contamination is a
-  // warning, not a blocker, for draft work. Final Submission Check remains
-  // strict (enforced via getFinalSubmissionReadiness / canonical resolver).
-  // The route logs contamination for observability but proceeds with generation.
-
-  // Never generate onto analysis produced from corrupted/weak extraction.
   const analysisStatus = tender.analysisExtractionStatus;
   if (analysisStatus === "OCR_REQUIRED") {
     return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", error: "AI analysis was skipped due to corrupted extraction; re-run AI Analyze before generating plan files.", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" }, { status: 422 });
@@ -194,17 +260,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
     return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_PARTIAL_EXTRACTION", error: "AI analysis ran on partial extraction; re-extract and re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
   }
-
-  // Client/procuring entity must be present (a document set with no client is
-  // never exportable).
-  const clientDisplayName = tender.clientName || tender.procuringEntityName;
-  if (!clientDisplayName) {
+  if (!(tender.clientName || tender.procuringEntityName)) {
     return NextResponse.json({ success: false, ok: false, code: "MISSING_CLIENT_DETAILS", error: "Document generation requires a client or procuring entity name. Run AI Analyze or enter the client name first.", nextAction: "EDIT_TENDER_METADATA" }, { status: 422 });
   }
 
-  // Central generation gate — this route is NOT a chicken-and-egg escape hatch.
-  // It must fail closed on every blocker (including BUILD_PLAN_MISSING /
-  // BUILD_PLAN_NOT_CONFIRMED); there is no SUBMISSION_PLAN_MISSING carve-out.
   const centralGate = await assertTenderReadyForGenerationAndExport({
     prisma,
     tenderId: id,
@@ -213,25 +272,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!centralGate.ok) {
     return NextResponse.json({
-      success: false, ok: false,
+      success: false,
+      ok: false,
       code: centralGate.blockerCode,
       error: centralGate.blockerDetail,
       nextAction: "Resolve the analysis readiness blocker before generating missing plan files.",
     }, { status: 422 });
   }
 
-  // "Missing plan files" are the files the CONFIRMED BuildPlan already specifies
-  // but which have not yet been generated — scope strictly to confirmedPlan.items,
-  // never a recomputed requirements plan (that would be an escape hatch).
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
   if (!confirmedPlan.ok) {
     return NextResponse.json({ success: false, ok: false, code: "BUILD_PLAN_NOT_CONFIRMED", error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`, nextAction: "CONFIRM_BUILD_PLAN" }, { status: 422 });
   }
-  const plan = { files: confirmedPlan.items };
 
-  // ── Operation gate (SUPPORT_PACKAGE_GENERATION) — authoritative metadata check ──
-  // For SUPPORT_PACKAGE_GENERATION, metadata NEVER blocks. The gate surfaces
-  // warnings for the UI. Defensive blocker check catches regressions.
   const operationGate = resolveTenderOperationGate({
     tender: {
       id: tender.id,
@@ -246,9 +299,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       metadataContaminated: tender.metadataContaminated,
       analysisExtractionStatus: tender.analysisExtractionStatus,
     },
-    requirements: tender.requirements.map((r: any) => ({
-      priority: r.priority,
-      sourceTenderFileId: r.sourceTenderFileId,
+    requirements: tender.requirements.map((requirement: any) => ({
+      priority: requirement.priority,
+      sourceTenderFileId: requirement.sourceTenderFileId,
     })),
     overrides: [],
     buildPlan: { ok: confirmedPlan.ok, items: confirmedPlan.items },
@@ -266,145 +319,226 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
+  const missing = findMissingGeneratedDocuments({ files: confirmedPlan.items }, tender.generatedDocuments);
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId: id, generationStatus: "PLANNED" },
     select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true },
   });
 
   if (missing.length === 0 && plannedRows.length === 0) {
-    await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0, convertedFromPlanned: 0 }, requestId });
+    await logAction({
+      userId: actor.id,
+      action: "DOCUMENT_GENERATE",
+      entityType: "Tender",
+      entityId: id,
+      description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`,
+      metadata: { tenderId: id, created: 0, updated: 0, convertedFromPlanned: 0 },
+      requestId,
+    });
     return NextResponse.json({ success: true, created: 0, updated: 0, convertedFromPlanned: 0, message: "No missing planned files remain." });
   }
 
-  const created: string[] = [];
-  const updated: string[] = [];
+  const preparedMissing: PreparedDocument[] = [];
   const skipped: string[] = [];
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
-    const existingByExactName = await prisma.generatedDocument.findFirst({
-      where: {
-        tenderId: id,
-        exactFileName: { equals: file.exactFileName, mode: "insensitive" },
-        generationStatus: { not: "SUPERSEDED" },
-      },
-      select: { id: true, generationStatus: true },
+    const generated = await buildPlannedRowContent({
+      tenderTitle: tender.title,
+      fileName: file.exactFileName,
+      documentType,
+      requirements: tender.requirements,
     });
-    if (existingByExactName && existingByExactName.generationStatus !== "PLANNED") {
-      skipped.push(file.exactFileName);
-      continue;
-    }
-
-    const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName: file.exactFileName, documentType, requirements: tender.requirements });
     if (generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx")) {
       skipped.push(`${file.exactFileName} (requires original or format-specific finalization)`);
       continue;
     }
-    const integrity = verifiedIntegrityDataFromBase64({
-      fileContent: generated.fileContent,
-      filename: file.exactFileName,
-      claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
-    // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
-    // preserved history back to GENERATED — and collide with the partial
-    // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED.
-    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({
-      where: { tenderId: id, exactFileName: file.exactFileName, generationStatus: { not: "SUPERSEDED" } },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    });
-    const data = {
-      name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+    preparedMissing.push({
+      fileName: file.exactFileName,
       documentType,
-      format: generated.format,
-      exactFileName: file.exactFileName,
       exactOrder: file.exactOrder,
-      fileContent: generated.fileContent,
-      ...integrity,
-      generationStatus: "GENERATED",
-      validationStatus: generated.validationStatus,
-      reviewStatus: generated.reviewStatus,
-      contentSummary: generated.contentSummary,
-      updatedAt: new Date(),
-    };
-    if (existing) {
-      await prisma.generatedDocument.update({ where: { id: existing.id }, data });
-      updated.push(file.exactFileName);
-    } else {
-      try {
-        await prisma.generatedDocument.create({ data: { tenderId: id, ...data } });
-        created.push(file.exactFileName);
-      } catch (createErr) {
-        // P2002 = the partial unique index caught a concurrent creator making
-        // the same active file between our check and this create. Converge
-        // idempotently: update the row the winner created instead of failing
-        // the whole route partway through.
-        if ((createErr as { code?: string })?.code === "P2002") {
-          const winner = await prisma.generatedDocument.findFirst({
-            where: { tenderId: id, exactFileName: file.exactFileName, generationStatus: { not: "SUPERSEDED" } },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true },
-          });
-          if (winner) {
-            await prisma.generatedDocument.update({ where: { id: winner.id }, data });
-            updated.push(file.exactFileName);
-          } else {
-            // Winner was deleted between the failed create and this lookup.
-            // Push to skipped so the user has visibility (no silent drop).
-            skipped.push(`${file.exactFileName} (P2002 convergence failed: winner deleted)`);
-          }
-        } else {
-          throw createErr;
-        }
-      }
-    }
+      ...generated,
+    });
   }
 
-  const convertedFromPlanned: string[] = [];
+  const preparedPlanned: PreparedDocument[] = [];
   for (const row of plannedRows) {
     const fileName = row.exactFileName ?? row.name ?? "Unnamed document";
     const documentType = documentTypeFor(fileName, row.documentType ?? "");
-    const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName, documentType, requirements: tender.requirements });
-    if (generated.format !== "DOCX" || !fileName.toLowerCase().endsWith(".docx")) {
-      await prisma.generatedDocument.update({
-        where: { id: row.id },
-        data: {
-          generationStatus: "PLANNED",
-          validationStatus: "PENDING",
-          reviewStatus: generated.reviewStatus,
-          fileContent: null,
-          contentSummary: generated.contentSummary,
-          integrityStatus: "UNKNOWN",
-          integrityVerifiedAt: null,
-          integrityFailureCode: "REQUIRES_ORIGINAL_OR_FORMAT_FINALIZATION",
-          updatedAt: new Date(),
+    const generated = await buildPlannedRowContent({
+      tenderTitle: tender.title,
+      fileName,
+      documentType,
+      requirements: tender.requirements,
+    });
+    preparedPlanned.push({
+      fileName,
+      documentType,
+      exactOrder: row.exactOrder,
+      plannedRowId: row.id,
+      keepPlanned: generated.format !== "DOCX" || !fileName.toLowerCase().endsWith(".docx"),
+      ...generated,
+    });
+  }
+
+  const expectedPlanFingerprint = planFingerprint(confirmedPlan.items as Array<Record<string, unknown>>);
+  const created: string[] = [];
+  const updated: string[] = [];
+  const convertedFromPlanned: string[] = [];
+
+  const persistBatch = async () => {
+    await prisma.$transaction(async (tx) => {
+      await withTransactionalGenerationGate({
+        prisma,
+        tx,
+        tenderId: id,
+        userId: actor.id,
+        purpose: "generate-missing-plan-files",
+        write: async (lockedTx) => {
+          const currentPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+          if (!currentPlan.ok || planFingerprint(currentPlan.items as Array<Record<string, unknown>>) !== expectedPlanFingerprint) {
+            throw new GenerationPersistenceBlockedError("BUILD_PLAN_CHANGED_BEFORE_PERSISTENCE");
+          }
+
+          for (const document of preparedMissing) {
+            const existing = await lockedTx.generatedDocument.findFirst({
+              where: {
+                tenderId: id,
+                exactFileName: { equals: document.fileName, mode: "insensitive" },
+                generationStatus: { not: "SUPERSEDED" },
+              },
+              orderBy: { updatedAt: "desc" },
+              select: { id: true, generationStatus: true },
+            });
+            if (existing && existing.generationStatus !== "PLANNED") {
+              skipped.push(document.fileName);
+              continue;
+            }
+
+            const integrity = verifiedIntegrityDataFromBase64({
+              fileContent: document.fileContent,
+              filename: document.fileName,
+              claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            });
+            const data = {
+              name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+              documentType: document.documentType,
+              format: document.format,
+              exactFileName: document.fileName,
+              exactOrder: document.exactOrder,
+              fileContent: document.fileContent,
+              ...integrity,
+              generationStatus: "GENERATED",
+              validationStatus: document.validationStatus,
+              reviewStatus: document.reviewStatus,
+              reviewedBy: null,
+              reviewedAt: null,
+              contentSummary: document.contentSummary,
+              updatedAt: new Date(),
+            };
+            if (existing) {
+              await lockedTx.generatedDocument.update({ where: { id: existing.id }, data });
+              updated.push(document.fileName);
+            } else {
+              await lockedTx.generatedDocument.create({ data: { tenderId: id, ...data } });
+              created.push(document.fileName);
+            }
+          }
+
+          for (const document of preparedPlanned) {
+            const row = await lockedTx.generatedDocument.findFirst({
+              where: { id: document.plannedRowId, tenderId: id, generationStatus: "PLANNED" },
+              select: { id: true, name: true, exactFileName: true },
+            });
+            if (!row) continue;
+
+            if (document.keepPlanned) {
+              await lockedTx.generatedDocument.update({
+                where: { id: row.id },
+                data: {
+                  generationStatus: "PLANNED",
+                  validationStatus: "PENDING",
+                  reviewStatus: document.reviewStatus,
+                  reviewedBy: null,
+                  reviewedAt: null,
+                  fileContent: null,
+                  contentSummary: document.contentSummary,
+                  integrityStatus: "UNKNOWN",
+                  integrityVerifiedAt: null,
+                  integrityFailureCode: "REQUIRES_ORIGINAL_OR_FORMAT_FINALIZATION",
+                  updatedAt: new Date(),
+                },
+              });
+              skipped.push(`${document.fileName} (kept PLANNED; requires original or format-specific finalization)`);
+              continue;
+            }
+
+            const integrity = verifiedIntegrityDataFromBase64({
+              fileContent: document.fileContent,
+              filename: document.fileName,
+              claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            });
+            await lockedTx.generatedDocument.update({
+              where: { id: row.id },
+              data: {
+                name: row.name ?? document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                exactFileName: row.exactFileName ?? document.fileName,
+                documentType: document.documentType,
+                format: document.format,
+                fileContent: document.fileContent,
+                ...integrity,
+                generationStatus: "GENERATED",
+                validationStatus: document.validationStatus,
+                reviewStatus: document.reviewStatus,
+                reviewedBy: null,
+                reviewedAt: null,
+                contentSummary: document.contentSummary,
+                updatedAt: new Date(),
+              },
+            });
+            convertedFromPlanned.push(document.fileName);
+          }
         },
       });
-      skipped.push(`${fileName} (kept PLANNED; requires original or format-specific finalization)`);
-      continue;
+    });
+  };
+
+  try {
+    try {
+      await persistBatch();
+    } catch (createErr) {
+      if ((createErr as { code?: string })?.code === "P2002") {
+        // Converge by retrying the entire atomic batch after the competing
+        // creator commits. The first transaction rolled back completely.
+        const activeWinners = await prisma.generatedDocument.findMany({
+          where: {
+            tenderId: id,
+            generationStatus: { not: "SUPERSEDED" },
+            exactFileName: { in: preparedMissing.map((document) => document.fileName) },
+          },
+          select: { id: true },
+        });
+        if (activeWinners.length === 0) {
+          throw new Error("P2002 convergence failed: winner deleted");
+        }
+        created.length = 0;
+        updated.length = 0;
+        convertedFromPlanned.length = 0;
+        await persistBatch();
+      } else {
+        throw createErr;
+      }
     }
-    const integrity = verifiedIntegrityDataFromBase64({
-      fileContent: generated.fileContent,
-      filename: fileName,
-      claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
-    await prisma.generatedDocument.update({
-      where: { id: row.id },
-      data: {
-        name: row.name ?? fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
-        exactFileName: row.exactFileName ?? fileName,
-        documentType,
-        format: generated.format,
-        fileContent: generated.fileContent,
-        ...integrity,
-        generationStatus: "GENERATED",
-        validationStatus: generated.validationStatus,
-        reviewStatus: generated.reviewStatus,
-        contentSummary: generated.contentSummary,
-        updatedAt: new Date(),
-      },
-    });
-    convertedFromPlanned.push(fileName);
+  } catch (error) {
+    if (error instanceof GenerationPersistenceBlockedError) {
+      return NextResponse.json({
+        success: false,
+        ok: false,
+        code: error.code,
+        error: "Missing-plan generation readiness changed before persistence. No batch document writes were committed.",
+        nextAction: "Refresh the tender, reconfirm the Build Plan, and retry.",
+      }, { status: 409 });
+    }
+    throw error;
   }
 
   await logAction({
@@ -413,7 +547,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     entityType: "Tender",
     entityId: id,
     description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file record(s), converted ${convertedFromPlanned.length} PLANNED rows, skipped ${skipped.length} duplicates, for "${tender.title}".`,
-    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, skipped, warning: "Narrative drafts and replacement controls are not final until validated and approved." },
+    metadata: {
+      tenderId: id,
+      createdCount: created.length,
+      updatedCount: updated.length,
+      created,
+      updated,
+      convertedFromPlanned,
+      skipped,
+      warning: "Narrative drafts and replacement controls are not final until validated and approved.",
+    },
     requestId,
   });
 
