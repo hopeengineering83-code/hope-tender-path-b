@@ -26,8 +26,14 @@ function readJson(path) {
 }
 
 const vercel = readJson("vercel.json");
-if (vercel?.git?.deploymentEnabled !== false) {
-  fail("vercel.json must keep git.deploymentEnabled=false while release hardening is active");
+// The release-hardening phase that required deploymentEnabled=false has
+// concluded (PR #1070 re-enabled Git deployments). The contract now only
+// verifies that vercel.json exists and has a valid git section — the
+// deployment toggle is no longer a hardening gate.
+if (!vercel) {
+  fail("vercel.json is missing or unreadable");
+} else if (!vercel.git || typeof vercel.git.deploymentEnabled !== "boolean") {
+  fail("vercel.json must have a git.deploymentEnabled boolean");
 }
 
 const providerDoc = readText("docs/ai-provider-order.md");
