@@ -148,6 +148,8 @@ export async function POST(
       name: true,
       exactFileName: true,
       format: true,
+      generationStatus: true,
+      updatedAt: true,
     },
   });
   if (!existing) {
@@ -155,6 +157,15 @@ export async function POST(
       {
         error: "No current technical proposal document exists to receive this version.",
         code: "LIVE_PROPOSAL_DOCUMENT_MISSING",
+      },
+      { status: 409 },
+    );
+  }
+  if (existing.generationStatus === "GENERATING") {
+    return NextResponse.json(
+      {
+        error: "A proposal restore or generation is already in progress. Retry after it completes.",
+        code: "RESTORE_IN_PROGRESS",
       },
       { status: 409 },
     );
@@ -186,10 +197,15 @@ export async function POST(
     );
   }
 
-  // Invalidate release status before any external storage write. If persistence
-  // fails, the old document remains non-exportable rather than falsely READY.
-  await prisma.generatedDocument.update({
-    where: { id: existing.id },
+  // Claim the live document using optimistic locking before any external
+  // storage write. Two requests that read the same row cannot both proceed;
+  // requests arriving after the claim see GENERATING and fail closed above.
+  const claim = await prisma.generatedDocument.updateMany({
+    where: {
+      id: existing.id,
+      updatedAt: existing.updatedAt,
+      generationStatus: existing.generationStatus,
+    },
     data: {
       generationStatus: "GENERATING",
       validationStatus: "PENDING",
@@ -200,8 +216,19 @@ export async function POST(
       updatedAt: new Date(),
     },
   });
+  if (claim.count !== 1) {
+    return NextResponse.json(
+      {
+        error: "The proposal document changed while the restore was starting. Retry with the latest state.",
+        code: "CONCURRENT_MODIFICATION",
+      },
+      { status: 409 },
+    );
+  }
 
   try {
+    // This writer validates bytes again, compensates rejected storage writes,
+    // persists current integrity fields, and removes a replaced external object.
     await writeGeneratedDocumentContent(
       existing.id,
       Buffer.from(normalizedContent, "base64"),
@@ -249,11 +276,17 @@ export async function POST(
 
   void logAction({
     userId: actor.id,
-    action: "PROPOSAL_VERSION_RESTORED",
+    action: "UPDATE",
     entityType: "GeneratedDocument",
     entityId: existing.id,
     description: `Restored proposal version ${version.version}; validation and review reset to PENDING.`,
-    metadata: { tenderId: id, versionId, version: version.version, filename },
+    metadata: {
+      operation: "PROPOSAL_VERSION_RESTORED",
+      tenderId: id,
+      versionId,
+      version: version.version,
+      filename,
+    },
     requestId,
   }).catch((error) => {
     logger.warn("proposal version restore audit persistence failed", {
