@@ -3,6 +3,8 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { userOwnsTenderForProposalJob } from "../lib/engine/ai-proposal-job-ownership";
 
+// This test intentionally pins source order because zero cross-tenant AiJob
+// side effects is the security property under review.
 describe("AI proposal job ownership guard", () => {
   it("queries tender ownership using both tender and user IDs", async () => {
     let received: unknown = null;
