@@ -84,6 +84,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const activeDocs = tender.generatedDocuments.filter((d: any) => isFinalExportCandidateDocument(d));
+    // Explicit document IDs are scoped to the already owner-filtered tender.
+    // Return the same non-enumerating 404 for nonexistent and foreign IDs.
+    if (docId && !activeDocs.some((document: any) => document.id === docId)) {
+      return err("Source document not found", 404, { code: "PDF_SOURCE_NOT_FOUND" });
+    }
     // A required PDF counts as satisfied only when the row's REAL bytes carry
     // the %PDF signature. A DOCX accidentally stored under the .pdf name, or
     // junk bytes, must stay eligible for (re)finalization — otherwise this
