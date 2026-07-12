@@ -96,7 +96,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       AI_ANALYZE_JOB_TYPE,
       contentHash,
     );
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey.toString()}::bigint)`;
 
     // Step 2: Recheck for existing active job AFTER holding the lock.
     // Only the first caller creates a new job; all others return the existing
