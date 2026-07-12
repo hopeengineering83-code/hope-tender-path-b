@@ -26,6 +26,7 @@ import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChun
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
 import { restoreHealthFromDbBounded, persistAllHealthToDbBounded } from "../ai-provider-health-db";
 import { logger } from "../observability";
+import { getExtractedRequirementCount } from "./analysis-result-metrics";
 
 export type AnalysisOrchestrationOptions = {
   force?: boolean;
@@ -420,7 +421,7 @@ export async function executeAnalysis(
   }
 
   // Phase: Complete
-  const requirementCount = analysisMeta?.result?.requirements?.length ?? 0;
+  const requirementCount = getExtractedRequirementCount(analysisMeta?.result);
   await onProgress?.({
     phase: "complete",
     status: analysisMeta?.isPartial ? "PARTIAL" : "SUCCESS",
@@ -431,7 +432,7 @@ export async function executeAnalysis(
     jobId,
     success: !errorMessage && !analysisMeta?.isPartial,
     analysisSource,
-    requirementCount: analysisMeta?.chunkResults.length ?? 0,
+    requirementCount,
     isPartial: analysisMeta?.isPartial ?? false,
     totalChunks: analysisMeta?.totalChunks ?? totalChunks,
     completedChunks: analysisMeta?.completedChunks ?? 0,
