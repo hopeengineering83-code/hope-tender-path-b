@@ -28,18 +28,26 @@ describe("round 11 — T1: worker.ts atomic job claiming", () => {
   });
 });
 
-describe("round 11 — T2: tender delete blob cleanup", () => {
-  const src = read("app/api/tenders/[id]/route.ts");
+describe("round 11 — T2: tender delete durable storage cleanup", () => {
+  const route = read("app/api/tenders/[id]/route.ts");
+  const deletion = read("lib/tender/delete-tender.ts");
+  const task = read("lib/tender/tender-storage-cleanup-task.ts");
 
-  it("reads storagePaths BEFORE the transaction", () => {
-    assert.ok(src.includes("filesForCleanup"), "must read filesForCleanup before the transaction");
-    assert.ok(src.includes("tenderFile.findMany"), "must query TenderFile for storage paths");
+  it("captures external storage pointers and commits the task before Tender deletion", () => {
+    assert.ok(deletion.includes("tenderFile.findMany"), "must query TenderFile storage paths inside deletion transaction");
+    assert.ok(deletion.includes("generatedDocument.findMany"), "must query GeneratedDocument storage paths inside deletion transaction");
+    const taskPos = deletion.indexOf("createTenderStorageCleanupTask({");
+    const tenderDeletePos = deletion.indexOf('wrapDelete("Tender"');
+    assert.ok(taskPos >= 0 && tenderDeletePos > taskPos, "cleanup task must be durable before final Tender deletion");
   });
 
-  it("cleans up blobs AFTER the transaction commits", () => {
-    assert.ok(src.includes("blob cleanup"), "must have blob cleanup after transaction");
-    assert.ok(src.includes("storage.deleteFile"), "must call storage.deleteFile for each file");
-    assert.ok(src.includes(".catch((err)"), "must be best-effort (catch, don't fail)");
+  it("processes the committed task after transaction and preserves retry state", () => {
+    assert.ok(route.includes("processTenderStorageCleanupTask"), "must process the durable cleanup task after commit");
+    assert.ok(route.includes("storageCleanupPending"), "must report pending cleanup without exposing internal paths");
+    assert.ok(task.includes("remaining.push(file)"), "failed objects must remain in the manifest for retry");
+    assert.ok(!route.includes("filesForCleanup"), "ephemeral cleanup arrays must not return");
+    const deleteRegion = route.slice(route.indexOf("export async function DELETE"));
+    assert.ok(!deleteRegion.includes(".deleteFile({"), "the route must not perform direct best-effort Blob deletion");
   });
 });
 
