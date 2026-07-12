@@ -1,4 +1,5 @@
-import { getSession } from "../lib/auth";
+import { getCurrentUser } from "../lib/auth";
+import { canMutateTender } from "../lib/recovery-command-actions";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
@@ -37,8 +38,15 @@ function analysisSourceFromNotes(notes: string | null | undefined): string {
 }
 
 export async function BidControlVerdictPanel({ tenderId }: { tenderId: string }) {
-  const userId = await getSession();
-  if (!userId) return null;
+  // Role gate: the BidDecisionForm renders an "Evaluate & Record Bid Decision"
+  // button that POSTs to /api/tenders/[id]/bid-decision — a mutation route
+  // server-gated to ADMIN/PROPOSAL_MANAGER. REVIEWER/VIEWER must never see the
+  // form. Previously this used getSession() (which returns only userId, never
+  // role) and rendered the form unconditionally.
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const userId = user.id;
+  const canMutate = canMutateTender(user.role);
 
   try {
     await prismaReady;
@@ -223,7 +231,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <ul className="mt-2 list-disc space-y-1 pl-5">{warnings.slice(0, 8).map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       )}
-      <BidDecisionForm tenderId={tenderId} />
+      {canMutate && <BidDecisionForm tenderId={tenderId} />}
     </section>
   );
   } catch (error) {

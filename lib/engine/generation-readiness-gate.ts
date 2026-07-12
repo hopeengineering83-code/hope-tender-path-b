@@ -106,7 +106,6 @@ export type GenerationBlockerCode =
   | "REQUIREMENT_SOURCE_UNGROUNDED"
   | "REQUIREMENT_QUOTE_NOT_IN_FILE"
   | "TENDER_FACTS_INVALID"
-  | "TENDER_FACTS_INVALID"
   | "BUILD_PLAN_MISSING"
   | "BUILD_PLAN_STALE"
   | "BUILD_PLAN_ITEMS_INVALID"
@@ -780,7 +779,14 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         // Final purpose — run the BuildPlan validator
         // (returned via async IIFE below — this branch is synchronous)
         return true; // placeholder — async check below overrides this
-      })() && (purpose === "export" || purpose === "final-zip" ? !(await (async () => {
+      })() && (purpose === "export" || purpose === "final-zip" ? (await (async () => {
+        // Defense-in-depth metadata validation for final purposes. The async
+        // IIFE returns true when the metadata is VALID (metaValidation.ok=true).
+        // The outer expression therefore yields true (allow) only when
+        // validation passes, and false (block) when validation fails or throws.
+        // Previously this had a spurious `!` that inverted the check — valid
+        // metadata was blocked and invalid metadata was allowed. The catch
+        // returns false (fail-closed) so a validator error blocks the export.
         try {
           const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
           const fullTender = await prisma.tender.findFirst({

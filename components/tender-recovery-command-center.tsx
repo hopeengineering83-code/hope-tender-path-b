@@ -135,7 +135,7 @@ function stateColor(state: LifecycleState, finalStatus: "BLOCKED" | "PARTIAL" | 
   if (state === "ANALYSIS_APPROVED" && finalStatus === "BLOCKED") {
     return "bg-amber-100 text-amber-800 border-amber-300";
   }
-  if (state.includes("REQUIRED") || state.includes("MISSING") || state.includes("FAILED") || state.includes("UNAPPROVED") || state.includes("EMPTY") || state.includes("UNCONFIRMED") || state.includes("BLOCKED") || state.includes("PARTIAL_AI")) return "bg-red-100 text-red-800 border-red-300";
+  if (state.includes("REQUIRED") || state.includes("FAILED") || state.includes("UNAPPROVED") || state.includes("EMPTY") || state.includes("UNCONFIRMED") || state.includes("BLOCKED") || state.includes("PARTIAL_AI")) return "bg-red-100 text-red-800 border-red-300";
   return "bg-amber-100 text-amber-800 border-amber-300";
 }
 
@@ -157,7 +157,10 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<number | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
-  const [ocrProvider, setOcrProvider] = useState<string>("auto");
+  // NOTE: The old `ocrProvider` state was dead — setOcrProvider was never
+  // called (no <select> or programmatic setter), so the state was always
+  // "auto" and the `isReExtract && ocrProvider !== "auto"` branch below was
+  // unreachable. Removed to avoid implying an OCR-provider selector exists.
 
   function scrollToPanel(anchorId: string, fallbackMessage: string) {
     const el = document.getElementById(anchorId);
@@ -356,12 +359,8 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           router.refresh();
           return;
         }
-        const isReExtract = action === "RE_EXTRACT_METADATA";
         const fetchOptions: RequestInit = {
           method: spec.method ?? "POST",
-          ...(isReExtract && ocrProvider !== "auto"
-            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ocrProvider }) }
-            : {}),
         };
         const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), fetchOptions);
         const json = await res.json().catch(() => ({}));

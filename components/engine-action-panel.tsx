@@ -420,7 +420,12 @@ export function EngineActionPanel({
 
   const ok = result?.success === true;
   const action = actionLabel(result?.nextAction);
-  const extractionBlocked = result?.code === "EXTRACTION_NOT_READY";
+  // NOTE: The old `extractionBlocked = result?.code === "EXTRACTION_NOT_READY"`
+  // branch was dead code — the engine route never returns EXTRACTION_NOT_READY
+  // (that code belongs to the ai-analyze route). The "Force run once" button
+  // was therefore never rendered, and even if it had been, the engine route
+  // explicitly ignores ?force=true ("there is deliberately no ?force= escape
+  // hatch"). Removed to avoid implying a force-run affordance exists.
 
   return (
     <section id="run-engine-action" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -433,16 +438,6 @@ export function EngineActionPanel({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canMutate && extractionBlocked && (
-            <button
-              onClick={() => runEngine(true)}
-              disabled={running || isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-              title="Force run Engine once, bypassing the extraction-quality gate"
-            >
-              <BoltIcon /> Force run once
-            </button>
-          )}
           {/* Sync run — only show for small vaults; large vaults should
               always go async+safe to avoid the 60s Vercel cap */}
           {canMutate && !isLargeVault && (

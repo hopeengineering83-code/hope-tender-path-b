@@ -238,7 +238,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
     max: 10,
     detail: hasPlan ? `${requiredDocs.length}/${plannedDocs.length} required/planned package docs` : "Not built",
     status: hasPlan ? "PASS" : "FAIL",
-    ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#ai-analyze-section" } : {}),
+    ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#submission-plan-reconciliation" } : {}),
   });
 
   // ── 6. Document readiness (15 pts) ──────────────────────────────────────
@@ -259,7 +259,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
     max: 15,
     detail: docDetail,
     status: docStatusLabel,
-    ...(docStatusLabel !== "PASS" ? { actionLabel: activeDocs.length === 0 || missingDocs.length > 0 ? "Generate documents" : "View documents", actionHref: activeDocs.length === 0 || missingDocs.length > 0 ? "#generated-documents" : "#generated-documents" } : {}),
+    ...(docStatusLabel !== "PASS" ? { actionLabel: activeDocs.length === 0 || missingDocs.length > 0 ? "Generate documents" : "View documents", actionHref: "#generated-documents" } : {}),
   });
 
   // ── 7. Compliance gaps (10 pts) ──────────────────────────────────────────

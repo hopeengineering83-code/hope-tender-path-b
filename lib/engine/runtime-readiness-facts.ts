@@ -145,17 +145,26 @@ export async function getRuntimeReadinessFacts(
   // Get effective tender facts (ledger → parser → scalar)
   const effective = await getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null);
 
-  // Load tender for analysis/build-plan state
+  // Load tender for analysis/build-plan state. The select MUST mirror the
+  // field set used by generation-readiness-gate.ts so the canonical content
+  // hash computed here matches the gate's hash. Previously this select omitted
+  // title/description/intakeSummary and per-file originalFileName/classification/
+  // createdAt, which made buildTenderAnalysisContent resolve them to undefined
+  // and produce a structurally different hash — hasGoodAnalysisForCurrentSource
+  // was always false and every consuming panel saw stale-analysis state.
   const tender = await (prisma as any).tender.findFirst({
     where: { id: tenderId, userId },
     select: {
       id: true,
+      title: true,
+      description: true,
+      intakeSummary: true,
       analysisExtractionStatus: true,
       analysisInputHash: true,
       status: true,
       files: {
         where: { deletionStatus: "ACTIVE" },
-        select: { id: true, extractedText: true, contentHash: true },
+        select: { id: true, originalFileName: true, classification: true, createdAt: true, extractedText: true, contentHash: true, deletionStatus: true },
       },
     },
   });
