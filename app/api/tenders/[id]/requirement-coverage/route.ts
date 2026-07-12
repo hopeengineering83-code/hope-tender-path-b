@@ -1,37 +1,24 @@
 import { logger } from "../../../../../lib/observability";
-// GET /api/tenders/[id]/requirement-coverage
-//
-// Returns per-requirement mandatory coverage: title, type, source reference,
-// support level, linked evidence rows, and recommended next action.
-//
-// Used by the Mandatory Requirement Coverage panel on the tender detail page.
-// Only surfaces MANDATORY requirements — advisory/optional ones are out of scope.
-//
-// Auth: ADMIN, PROPOSAL_MANAGER, REVIEWER
-// Rate: API_RATE_LIMIT (read-only)
-
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
-
 type EvidenceLink = {
   id: string;
   evidenceType: string;
   evidenceSource: string;
   evidenceReference: string | null;
   supportLevel: string;
-  autoLinked?: boolean; // true = derived from vault match, not a stored compliance row
+  autoLinked?: boolean;
 };
-
 type RequirementCoverageRow = {
   id: string;
   title: string;
@@ -48,66 +35,47 @@ type RequirementCoverageRow = {
   isFullyCovered: boolean;
   nextAction: string;
 };
-
-// ── Auto-linking category keywords ──────────────────────────────────────────
-
-const PERSONNEL_KEYWORDS = /personnel|team|expert|staffing|key personnel|staff|workforce|human resource/i;
-const EXPERIENCE_KEYWORDS = /experience|references|similar projects|track record|past performance|portfolio/i;
-const COMPANY_KEYWORDS = /company profile|organization|legal entity|firm profile|corporate profile/i;
-const FINANCIAL_KEYWORDS = /financial capacity|turnover|audited statements|financial statements|annual revenue|bank/i;
-
-// Returns a support level for auto-linked evidence.
-// REVIEWED evidence → PARTIAL (display only, not final — user must confirm).
-// UNREVIEWED evidence → cannot count toward coverage per constraints.
-function autoLinkSupportLevel(isReviewed: boolean): SupportLevel {
-  return isReviewed ? "PARTIAL" : "NONE";
-}
-
 type VaultEvidence = {
   id: string;
   name: string;
-  type: "EXPERT" | "PROJECT" | "COMPANY" | "FINANCIAL";
+  type: "EXPERT" | "PROJECT";
   isReviewed: boolean;
 };
 
+const PERSONNEL_KEYWORDS = /personnel|team|expert|staffing|key personnel|staff|workforce|human resource/i;
+const EXPERIENCE_KEYWORDS = /experience|references|similar projects|track record|past performance|portfolio/i;
+
 function buildAutoLinks(
-  req: { id: string; title: string; requirementType: string },
+  requirement: { id: string; title: string; requirementType: string },
   vault: VaultEvidence[],
 ): EvidenceLink[] {
-  const title = req.title.toLowerCase();
-  const autoLinks: EvidenceLink[] = [];
-
-  for (const v of vault) {
-    if (!v.isReviewed) continue; // only REVIEWED vault items can be auto-linked (even partially)
-
-    let matches = false;
-    if (v.type === "EXPERT" && (PERSONNEL_KEYWORDS.test(title) || req.requirementType === "EXPERT")) matches = true;
-    if (v.type === "PROJECT" && (EXPERIENCE_KEYWORDS.test(title) || req.requirementType === "PROJECT_EXPERIENCE")) matches = true;
-    if (v.type === "COMPANY" && COMPANY_KEYWORDS.test(title)) matches = true;
-    if (v.type === "FINANCIAL" && FINANCIAL_KEYWORDS.test(title)) matches = true;
-
-    if (matches) {
-      autoLinks.push({
-        id: `auto-${v.id}-${req.id}`,
-        evidenceType: v.type,
-        evidenceSource: "VAULT_AUTO_LINK",
-        evidenceReference: v.name,
-        supportLevel: "PARTIAL", // auto-links are at most PARTIAL; user must confirm for FULL
-        autoLinked: true,
-      });
-    }
+  const title = requirement.title.toLowerCase();
+  const links: EvidenceLink[] = [];
+  for (const evidence of vault) {
+    if (!evidence.isReviewed) continue;
+    const matches = evidence.type === "EXPERT"
+      ? PERSONNEL_KEYWORDS.test(title) || requirement.requirementType === "EXPERT"
+      : EXPERIENCE_KEYWORDS.test(title) || requirement.requirementType === "PROJECT_EXPERIENCE";
+    if (!matches) continue;
+    links.push({
+      id: `auto-${evidence.id}-${requirement.id}`,
+      evidenceType: evidence.type,
+      evidenceSource: "VAULT_AUTO_LINK",
+      evidenceReference: evidence.name,
+      supportLevel: "PARTIAL",
+      autoLinked: true,
+    });
   }
-
-  return autoLinks;
+  return links;
 }
 
 function deriveSupportLevel(links: EvidenceLink[]): SupportLevel {
   if (links.length === 0) return "NONE";
-  const levels = links.map((l) => normalizeSupportLevel(l.supportLevel));
-  if (levels.some((l) => l === "FULL")) return "FULL";
-  if (levels.some((l) => l === "SUBSTANTIAL")) return "SUBSTANTIAL";
-  if (levels.some((l) => l === "PARTIAL")) return "PARTIAL";
-  if (levels.some((l) => l === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
+  const levels = links.map((link) => normalizeSupportLevel(link.supportLevel));
+  if (levels.includes("FULL")) return "FULL";
+  if (levels.includes("SUBSTANTIAL")) return "SUBSTANTIAL";
+  if (levels.includes("PARTIAL")) return "PARTIAL";
+  if (levels.includes("NOT_APPLICABLE")) return "NOT_APPLICABLE";
   return "NONE";
 }
 
@@ -129,35 +97,36 @@ function nextActionFor(row: {
   return "Requirement is covered. Verify evidence is marked REVIEWED.";
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-    catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+    catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`req-coverage:${actor.id}`, API_RATE_LIMIT);
     if (!rl.allowed) {
+      const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
       return NextResponse.json(
-        { error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
-        { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+        { error: "Too many requests", code: "RATE_LIMITED", retryAfter },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
       );
     }
 
     await prismaReady;
     const { id } = await params;
-
     const tender = await prisma.tender.findFirst({
       where: { id, userId: actor.id },
       select: { id: true, userId: true },
     });
-    if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
+    if (!tender) {
+      return NextResponse.json({ ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    }
 
-    // Find the company for this user to look up vault evidence
     const company = await prisma.company.findUnique({
       where: { userId: tender.userId },
       select: { id: true },
     });
-
     const finalPackageModel = await getFinalPackageReadinessModel(prisma, id, actor.id);
 
     const [requirements, vaultExperts, vaultProjects] = await Promise.all([
@@ -185,13 +154,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           },
         },
       }),
-      // Load reviewed experts for auto-linking (company-scoped)
       company ? prisma.expert.findMany({
         where: { companyId: company.id, deletedAt: null },
         select: { id: true, fullName: true, trustLevel: true },
         take: 50,
       }) : Promise.resolve([]),
-      // Load reviewed projects for auto-linking (company-scoped)
       company ? prisma.project.findMany({
         where: { companyId: company.id, deletedAt: null },
         select: { id: true, name: true, trustLevel: true },
@@ -199,72 +166,74 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }) : Promise.resolve([]),
     ]);
 
-    // Build vault evidence list for auto-linking (display only)
     const vaultEvidence: VaultEvidence[] = [
-      ...vaultExperts.map((e) => ({
-        id: e.id,
-        name: e.fullName ?? "Expert",
+      ...vaultExperts.map((expert) => ({
+        id: expert.id,
+        name: expert.fullName ?? "Expert",
         type: "EXPERT" as const,
-        isReviewed: e.trustLevel === "REVIEWED",
+        isReviewed: expert.trustLevel === "REVIEWED",
       })),
-      ...vaultProjects.map((p) => ({
-        id: p.id,
-        name: p.name ?? "Project",
+      ...vaultProjects.map((project) => ({
+        id: project.id,
+        name: project.name ?? "Project",
         type: "PROJECT" as const,
-        isReviewed: p.trustLevel === "REVIEWED",
+        isReviewed: project.trustLevel === "REVIEWED",
       })),
     ];
 
-    const rows: RequirementCoverageRow[] = requirements.map((req) => {
-      const storedLinks: EvidenceLink[] = req.complianceMatrixRows.map((r) => ({
-        id: r.id,
-        evidenceType: r.evidenceType,
-        evidenceSource: r.evidenceSource,
-        evidenceReference: r.evidenceReference,
-        supportLevel: r.supportLevel,
+    const rows: RequirementCoverageRow[] = requirements.map((requirement) => {
+      const storedLinks: EvidenceLink[] = requirement.complianceMatrixRows.map((row) => ({
+        id: row.id,
+        evidenceType: row.evidenceType,
+        evidenceSource: row.evidenceSource,
+        evidenceReference: row.evidenceReference,
+        supportLevel: row.supportLevel,
         autoLinked: false,
       }));
-
-      // Auto-link reviewed vault evidence for display (at most PARTIAL, user must confirm for FULL)
-      // Only add auto-links when there are no stored compliance matrix rows for this requirement
-      const autoLinks = storedLinks.length === 0
-        ? buildAutoLinks(req, vaultEvidence)
-        : [];
-
+      const autoLinks = storedLinks.length === 0 ? buildAutoLinks(requirement, vaultEvidence) : [];
       const links = [...storedLinks, ...autoLinks];
-      // Auto-linked evidence from unreviewed sources cannot count toward coverage;
-      // stored rows reflect actual user-confirmed links.
-      const effectiveLinks = links.filter((l) => !l.autoLinked || l.supportLevel !== "NONE");
+      const effectiveLinks = links.filter((link) => !link.autoLinked || link.supportLevel !== "NONE");
       const supportLevel = deriveSupportLevel(effectiveLinks);
       const hasSourceRef = Boolean(
-        req.sectionReference || req.sourcePageNumber || req.sourceExactQuote || (req.sourceConfidence ?? 0) > 0,
+        requirement.sectionReference
+        || requirement.sourcePageNumber
+        || requirement.sourceExactQuote
+        || (requirement.sourceConfidence ?? 0) > 0,
       );
-      // Auto-linked evidence cannot make a requirement isFullyCovered — user must confirm
       const hasOnlyAutoLinks = storedLinks.length === 0 && autoLinks.length > 0;
-      const isFullyCovered = supportLevel === "NOT_APPLICABLE" || (!hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef);
+      const isFullyCovered = supportLevel === "NOT_APPLICABLE"
+        || (!hasOnlyAutoLinks
+          && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL")
+          && hasSourceRef);
+
       return {
-        id: req.id,
-        title: req.title,
-        requirementType: req.requirementType,
-        priority: req.priority,
-        sectionReference: req.sectionReference,
-        sourcePageNumber: req.sourcePageNumber,
-        sourceSectionHeading: req.sourceSectionHeading,
-        sourceExactQuote: req.sourceExactQuote,
-        sourceConfidence: req.sourceConfidence ?? 0,
+        id: requirement.id,
+        title: requirement.title,
+        requirementType: requirement.requirementType,
+        priority: requirement.priority,
+        sectionReference: requirement.sectionReference,
+        sourcePageNumber: requirement.sourcePageNumber,
+        sourceSectionHeading: requirement.sourceSectionHeading,
+        sourceExactQuote: requirement.sourceExactQuote,
+        sourceConfidence: requirement.sourceConfidence ?? 0,
         hasSourceRef,
         evidenceLinks: links,
         supportLevel,
         isFullyCovered,
-        nextAction: nextActionFor({ supportLevel, hasSourceRef, requirementType: req.requirementType, evidenceLinks: effectiveLinks }),
+        nextAction: nextActionFor({
+          supportLevel,
+          hasSourceRef,
+          requirementType: requirement.requirementType,
+          evidenceLinks: effectiveLinks,
+        }),
       };
     });
 
     const totalMandatory = rows.length;
-    const fullyCovered = rows.filter((r) => r.isFullyCovered).length;
-    const partiallyCovered = rows.filter((r) => r.supportLevel === "PARTIAL" || r.supportLevel === "SUBSTANTIAL").length;
-    const uncovered = rows.filter((r) => r.supportLevel === "NONE").length;
-    const missingSourceRef = rows.filter((r) => !r.hasSourceRef).length;
+    const fullyCovered = rows.filter((row) => row.isFullyCovered).length;
+    const partiallyCovered = rows.filter((row) => row.supportLevel === "PARTIAL" || row.supportLevel === "SUBSTANTIAL").length;
+    const uncovered = rows.filter((row) => row.supportLevel === "NONE").length;
+    const missingSourceRef = rows.filter((row) => !row.hasSourceRef).length;
     const coverageRatio = totalMandatory > 0 ? fullyCovered / totalMandatory : 1;
 
     return NextResponse.json({
@@ -283,7 +252,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    logger.error("requirement-coverage GET failed", { detail: error });
-    return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
+    logger.error("requirement-coverage GET failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Requirement coverage could not be loaded.",
+        code: "REQUIREMENT_COVERAGE_RUNTIME_ERROR",
+        requestId,
+      },
+      { status: 500 },
+    );
   }
 }
