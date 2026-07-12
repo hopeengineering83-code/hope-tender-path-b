@@ -1,0 +1,55 @@
+name: Preserve invalid cleanup helper state
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/tender-delete-storage-manifest-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Preserve malformed manifest bytes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/tender/tender-storage-cleanup-task.ts')
+          s = p.read_text()
+          branch_start = s.find('  if (!manifest) {')
+          return_start = s.find('    return {', branch_start)
+          if branch_start < 0 or return_start < 0:
+              raise SystemExit('invalid manifest branch markers not found')
+          branch = s[branch_start:return_start]
+          metadata_start = branch.find('        metadata: JSON.stringify({')
+          metadata_end = branch.find('        }),', metadata_start)
+          if metadata_start < 0 or metadata_end < 0:
+              raise SystemExit('invalid manifest overwrite markers not found')
+          metadata_end += len('        }),\n')
+          branch = branch[:metadata_start] + branch[metadata_end:]
+          description = '        description: "Tender storage cleanup task is invalid and requires operator review",'
+          protected = '''        // Preserve the original internal bytes. Even malformed JSON may
+                  // contain the only recoverable storage pointers for operator repair.
+                  description: "Tender storage cleanup task is invalid and requires operator review",'''
+          if description not in branch:
+              raise SystemExit('invalid manifest description not found')
+          branch = branch.replace(description, protected, 1)
+          p.write_text(s[:branch_start] + branch + s[return_start:])
+          PY
+      - name: Commit helper fix
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/tender/tender-storage-cleanup-task.ts
+          git commit -m "fix: preserve invalid cleanup manifests for recovery"
+          git push origin HEAD:${{ github.head_ref }}
