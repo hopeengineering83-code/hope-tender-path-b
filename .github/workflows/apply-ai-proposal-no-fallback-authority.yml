@@ -1,0 +1,263 @@
+name: Apply AI proposal no-fallback authority
+
+on:
+  push:
+    branches:
+      - fix/ai-proposal-no-fallback-authority-current
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ai-proposal-no-fallback-authority-current
+      - name: Patch AI proposal authority boundaries
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/api/tenders/[id]/ai-proposal/route.ts')
+          source = path.read_text()
+
+          source = source.replace(
+              'import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";\n',
+              'import { selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";\n',
+              1,
+          )
+          source = source.replace(
+              'import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";\n',
+              '',
+              1,
+          )
+          request_import = 'import { extractRequestId } from "../../../../../lib/request-id";\n'
+          if request_import not in source:
+              anchor = 'import { sanitizeError } from "../../../../../lib/sanitize-error";\n'
+              if anchor not in source:
+                  raise SystemExit('request-id import anchor not found')
+              source = source.replace(anchor, anchor + request_import, 1)
+
+          start_anchor = 'export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {\n  let actor;'
+          if start_anchor in source:
+              source = source.replace(
+                  start_anchor,
+                  'export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {\n  const requestId = extractRequestId(req);\n  let actor;',
+                  1,
+              )
+
+          gate_anchor = '  const tenderId = id as string;\n  const uid = userId as string;\n'
+          gate_block = '''  const tenderId = id as string;
+          const uid = userId as string;
+
+          // Proposal text itself is generation output. Resolve the canonical gate
+          // before creating/resuming an AiJob, reading cached chunks, or building
+          // any prompt. Foreign, stale, fallback, partial, ungrounded, or
+          // unconfirmed tenders create zero job/output side effects.
+          const initialGenerationGate = await assertTenderReadyForGenerationAndExport({
+            prisma,
+            tenderId,
+            userId: uid,
+            purpose: "ai-proposal",
+          });
+          if (!initialGenerationGate.ok) {
+            const notFound = initialGenerationGate.blockerCode === "OWNERSHIP_TENDER_NOT_FOUND";
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              code: notFound ? "TENDER_NOT_FOUND" : initialGenerationGate.blockerCode,
+              error: notFound ? "Tender not found" : initialGenerationGate.blockerDetail,
+              nextAction: notFound ? undefined : "Resolve the canonical generation-readiness blocker before generating proposal text.",
+            }, { status: notFound ? 404 : 422 });
+          }
+'''
+          if 'const initialGenerationGate =' not in source:
+              if gate_anchor not in source:
+                  raise SystemExit('initial gate anchor not found')
+              source = source.replace(gate_anchor, gate_block, 1)
+
+          source = source.replace(
+              '    if (cached) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: cached.fallback, cached: true });',
+              '    if (cached && !cached.fallback) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: false, cached: true });',
+              1,
+          )
+
+          analysis_start = source.find('  // ── Regex-fallback analysis gate')
+          company_name = source.find('  const companyName =', analysis_start)
+          if analysis_start >= 0 and company_name > analysis_start:
+              source = source[:analysis_start] + source[company_name:]
+
+          fallback_start = source.find('  if (!isAIEnabled() || !company) {')
+          experts_start = source.find('  let experts =', fallback_start)
+          if fallback_start >= 0 and experts_start > fallback_start:
+              replacement = '''  if (!company) {
+            return NextResponse.json({
+              success: false,
+              error: "Company Vault not found",
+              code: "COMPANY_NOT_FOUND",
+            }, { status: 404 });
+          }
+          if (!isAIEnabled()) {
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              fallback: true,
+              fallbackApplied: false,
+              error: "AI proposal generation is unavailable. No deterministic proposal was generated.",
+              code: "AI_PROPOSAL_UNAVAILABLE",
+              requestId,
+            }, { status: 503 });
+          }
+
+'''
+              source = source[:fallback_start] + replacement + source[experts_start:]
+          else:
+              raise SystemExit('AI-disabled fallback block not found')
+
+          source = source.replace('    let fallback = false;\n', '', 1)
+
+          catch_start = source.find('    } catch (aiError) {')
+          cache_marker = source.find('    if (!fallback && !sectionFilter)', catch_start)
+          if catch_start < 0 or cache_marker < 0:
+              raise SystemExit('AI catch/cache marker not found')
+          catch_replacement = '''    } catch (aiError) {
+            const msg = sanitizeError(aiError);
+            logger.error("Benchmark AI proposal failed in /ai-proposal route:", {
+              requestId,
+              errorClass: aiError instanceof Error ? aiError.constructor.name : "UnknownError",
+            });
+
+            if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
+              return NextResponse.json({
+                success: false,
+                error: "AI provider rate limit reached. Please wait 30–60 seconds and try again.",
+                code: "AI_RATE_LIMITED",
+                rateLimitRetry: true,
+                proposalJobId,
+              }, { status: 429 });
+            }
+
+            void prisma.aiJob.update({
+              where: { id: proposalJobId },
+              data: {
+                status: "FAILED",
+                errorMessage: "AI_PROPOSAL_UNAVAILABLE",
+                finishedAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }).catch(() => {});
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              fallback: true,
+              fallbackApplied: false,
+              code: "AI_PROPOSAL_UNAVAILABLE",
+              error: "AI proposal generation did not complete. No deterministic fallback was returned.",
+              proposalJobId,
+              requestId,
+            }, { status: 503 });
+          }
+
+'''
+          source = source[:catch_start] + catch_replacement + source[cache_marker:]
+
+          source = source.replace('    if (!fallback && !sectionFilter)', '    if (!sectionFilter)', 1)
+          source = source.replace('    if (!fallback && chunkNum !== undefined)', '    if (chunkNum !== undefined)', 1)
+          source = source.replace('    if (!fallback && isSubstantial', '    if (isSubstantial', 1)
+          source = source.replace('data: { status: fallback ? "FAILED" : "SUCCEEDED",', 'data: { status: "SUCCEEDED",', 1)
+          source = source.replace('      fallback,\n      cached: false,', '      fallback: false,\n      cached: false,', 1)
+
+          blocked_comment = '''        // Skip the persist — the proposal is still returned to the UI above.
+                  } else {'''
+          blocked_replacement = '''        void prisma.aiJob.update({
+                    where: { id: proposalJobId },
+                    data: {
+                      status: "FAILED",
+                      errorMessage: persistBlockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+                      finishedAt: new Date(),
+                      updatedAt: new Date(),
+                    },
+                  }).catch(() => {});
+                  return NextResponse.json({
+                    success: false,
+                    ok: false,
+                    code: persistBlockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+                    error: persistBlockerDetail ?? "Proposal readiness changed before persistence.",
+                    proposalJobId,
+                    requestId,
+                  }, { status: 409 });
+                  } else {'''
+          if blocked_comment not in source:
+              raise SystemExit('persist-blocked comment anchor not found')
+          source = source.replace(blocked_comment, blocked_replacement, 1)
+
+          response_gate_marker = '    // ── Update AiJob status ───────────────────────────────────────────────\n'
+          response_gate = '''    // Recheck immediately before returning any proposal chunk. This catches a
+          // source revision, analysis promotion change, or Build Plan change that
+          // occurs while the provider call is running. Blocked output is neither
+          // cached nor returned to the browser.
+          const responseGenerationGate = await assertTenderReadyForGenerationAndExport({
+            prisma,
+            tenderId: id,
+            userId,
+            purpose: "ai-proposal",
+          });
+          if (!responseGenerationGate.ok) {
+            void prisma.aiJob.update({
+              where: { id: proposalJobId },
+              data: {
+                status: "FAILED",
+                errorMessage: responseGenerationGate.blockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+                finishedAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }).catch(() => {});
+            return NextResponse.json({
+              success: false,
+              ok: false,
+              code: responseGenerationGate.blockerCode ?? "AI_PROPOSAL_READINESS_CHANGED",
+              error: responseGenerationGate.blockerDetail ?? "Proposal readiness changed while AI generation was running.",
+              proposalJobId,
+              requestId,
+            }, { status: 409 });
+          }
+
+'''
+          if 'const responseGenerationGate =' not in source:
+              if response_gate_marker not in source:
+                  raise SystemExit('response gate marker not found')
+              source = source.replace(response_gate_marker, response_gate + response_gate_marker, 1)
+
+          forbidden = [
+              'fallbackProposal({',
+              'let fallback = false',
+              'fallback ? "FAILED" : "SUCCEEDED"',
+              'success: true, proposal, fallback: true',
+              'AI provider unavailable; deterministic fallback used.',
+          ]
+          remaining = [item for item in forbidden if item in source]
+          if remaining:
+              raise SystemExit(f'fallback authority remains: {remaining}')
+
+          initial_pos = source.index('const initialGenerationGate =')
+          create_pos = source.index('prisma.aiJob.create({')
+          if initial_pos >= create_pos:
+              raise SystemExit('initial generation gate must precede AiJob.create')
+          if 'const responseGenerationGate =' not in source:
+              raise SystemExit('response generation gate missing')
+
+          path.write_text(source)
+          PY
+      - name: Commit repair
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/tenders/[id]/ai-proposal/route.ts
+          git commit -m "fix: block AI proposal fallback authority"
+          git push origin HEAD:fix/ai-proposal-no-fallback-authority-current
