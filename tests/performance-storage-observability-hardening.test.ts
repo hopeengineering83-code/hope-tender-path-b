@@ -2,7 +2,7 @@
 //
 // Tests the fixes from the performance/storage/observability hardening audit:
 //   1. Cleanup cron deletes old ExportPackage + superseded GeneratedDocument
-//   2. Tender deletion returns generated doc paths for blob cleanup
+//   2. Tender deletion commits a durable external-storage cleanup manifest
 //   3. Source-file deletion nullifies TenderFactsLedger references
 //   4. Copilot messages pagination returns latest (not oldest)
 //   5. Workflow-status route doesn't load fileContent blobs
@@ -98,27 +98,50 @@ describe("Cleanup cron — stale artifact cleanup", () => {
   });
 });
 
-// ─── 2. Tender deletion blob cleanup ────────────────────────────────────────
+// ─── 2. Tender deletion durable storage cleanup ─────────────────────────────
 
-describe("Tender deletion — GeneratedDocument blob cleanup", () => {
-  it("executeTenderDeletion returns generated doc paths for post-commit cleanup", () => {
-    const src = read("lib/tender/delete-tender.ts");
-    assert.ok(
-      src.includes("generatedDocPaths"),
-      "must return generated doc paths for blob cleanup",
-    );
-    assert.ok(
-      src.includes("storagePath: true"),
-      "must select storagePath before deleting GeneratedDocument rows",
-    );
+describe("Tender deletion — durable external-storage cleanup", () => {
+  const route = read("app/api/tenders/[id]/route.ts");
+  const deletion = read("lib/tender/delete-tender.ts");
+  const task = read("lib/tender/tender-storage-cleanup-task.ts");
+  const retryRoute = read("app/api/cron/cleanup-tender-storage/route.ts");
+  const auditRoute = read("app/api/audit/route.ts");
+
+  it("commits a durable cleanup task before deleting the final Tender row", () => {
+    const taskPos = deletion.indexOf("createTenderStorageCleanupTask({");
+    const tenderDeletePos = deletion.indexOf('wrapDelete("Tender"');
+    assert.ok(taskPos >= 0 && tenderDeletePos > taskPos);
+    assert.match(deletion, /tenderFile\.findMany/);
+    assert.match(deletion, /generatedDocument\.findMany/);
+    assert.match(deletion, /userId: actorId/);
+    assert.doesNotMatch(deletion, /generatedDocPaths/);
   });
 
-  it("DELETE route uses returned paths for blob cleanup", () => {
-    const src = read("app/api/tenders/[id]/route.ts");
-    assert.ok(
-      src.includes("result.generatedDocPaths"),
-      "must use returned generatedDocPaths for blob cleanup",
-    );
+  it("uses only the durable task after commit, never an ephemeral path array", () => {
+    assert.match(route, /processTenderStorageCleanupTask\(/);
+    assert.match(route, /storageCleanupPending/);
+    assert.doesNotMatch(route, /filesForCleanup/);
+    assert.doesNotMatch(route, /result\.generatedDocPaths/);
+    const deleteRegion = route.slice(route.indexOf("export async function DELETE"));
+    assert.doesNotMatch(deleteRegion, /\.deleteFile\(\{/);
+    assert.doesNotMatch(deleteRegion, /storageCleanupTaskId\s*[,}]/);
+  });
+
+  it("retains failed paths and protects processing with claim state", () => {
+    assert.match(task, /TENDER_STORAGE_CLEANUP_PENDING/);
+    assert.match(task, /TENDER_STORAGE_CLEANUP_RUNNING/);
+    assert.match(task, /TENDER_STORAGE_CLEANUP_COMPLETED/);
+    assert.match(task, /claimIsFresh/);
+    assert.match(task, /remaining\.push\(file\)/);
+    assert.match(task, /files: remaining/);
+    assert.doesNotMatch(task, /error\.message/);
+  });
+
+  it("has a secret-protected retry worker and hides internal manifests from public audit", () => {
+    assert.match(retryRoute, /CRON_SECRET/);
+    assert.match(retryRoute, /processPendingTenderStorageCleanupTasks\(/);
+    assert.match(auditRoute, /TenderStorageCleanup/);
+    assert.match(auditRoute, /NOT: \{ entityType: INTERNAL_AUDIT_ENTITY_TYPE \}/);
   });
 });
 
