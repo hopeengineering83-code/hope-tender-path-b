@@ -55,8 +55,12 @@ describe("canonical workflow Tender Facts authority", () => {
     });
 
     assert.equal(decision.currentBlockingStage, "EXPORT_BLOCKED");
+    assert.deepEqual(decision.blockerCodes, ["EXPORT_BLOCKED"]);
     assert.equal(decision.stageAvailability["GENERATE_DOCUMENTS"], false);
-    assert.equal(decision.stageStates["EXPORT_ZIP"], "BLOCKED");
+    // Stage rendering suppresses the export action behind the canonical
+    // EXPORT_BLOCKED decision instead of inventing a second local blocker.
+    assert.equal(decision.stageStates["EXPORT_ZIP"], "BLOCKED_BY_PRIOR_STEP");
+    assert.equal(decision.stageAvailability["EXPORT_ZIP"], false);
   });
 });
 
