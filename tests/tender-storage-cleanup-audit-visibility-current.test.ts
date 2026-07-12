@@ -12,6 +12,13 @@ describe("tender storage cleanup manifest visibility", () => {
     assert.match(auditRoute, /auditLog\.count\(\{ where \}\)/);
   });
 
+  it("excludes internal cleanup rows from dashboard activity feeds", () => {
+    const dashboard = readFileSync("app/dashboard/page.tsx", "utf8");
+    const analytics = readFileSync("app/dashboard/analytics/page.tsx", "utf8");
+    assert.match(dashboard, /NOT: \{ entityType: "TenderStorageCleanup" \}/);
+    assert.match(analytics, /NOT: \{ entityType: "TenderStorageCleanup" \}/);
+  });
+
   it("never returns raw storage paths or internal task IDs from tender deletion", () => {
     assert.match(tenderRoute, /storageCleanupPending/);
     assert.doesNotMatch(tenderRoute, /storageCleanupTaskId\s*[,}]/);
