@@ -15,8 +15,11 @@ describe("document reclassification mutation RBAC", () => {
     assert.doesNotMatch(source, /"REVIEWER"|"VIEWER"/);
   });
 
-  it("keeps every mutation owner-scoped", () => {
-    assert.match(source, /where: \{ id: tenderId, userId: actor\.id \}/);
+  it("derives actorId only after role authorization and keeps every mutation owner-scoped", () => {
+    const rolePos = source.indexOf('requireRole("ADMIN", "PROPOSAL_MANAGER")');
+    const aliasPos = source.indexOf("const actorId = actor.id");
+    const ownerPos = source.indexOf("where: { id: tenderId, userId: actorId }");
+    assert.ok(rolePos >= 0 && aliasPos > rolePos && ownerPos > aliasPos);
     assert.match(source, /Tender not found/);
     assert.match(source, /status: 404/);
   });
@@ -32,8 +35,9 @@ describe("document reclassification mutation RBAC", () => {
   });
 
   it("uses actor-scoped throttling and correlated audit", () => {
-    assert.match(source, /rateLimit\(`reclassify:\$\{actor\.id\}`/);
+    assert.match(source, /rateLimit\(`reclassify:\$\{actorId\}`/);
     assert.match(source, /extractRequestId\(req\)/);
+    assert.match(source, /userId: actorId/);
     assert.match(source, /action: "DOCUMENT_RECLASSIFY"/);
     assert.match(source, /requestId/);
   });
