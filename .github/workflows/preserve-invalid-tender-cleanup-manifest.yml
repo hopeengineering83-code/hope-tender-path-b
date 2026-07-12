@@ -22,44 +22,60 @@ jobs:
 
           helper = Path('lib/tender/tender-storage-cleanup-task.ts')
           s = helper.read_text()
-          old = '''      data: {
-                action: TENDER_STORAGE_CLEANUP_INVALID,
-                description: "Tender storage cleanup task is invalid and requires operator review",
-                metadata: JSON.stringify({
-                  version: 1,
-                  status: "INVALID",
-                  failureCode: "INVALID_CLEANUP_MANIFEST",
-                  invalidAt: now.toISOString(),
-                }),
-              },'''
-          new = '''      data: {
-                action: TENDER_STORAGE_CLEANUP_INVALID,
-                // Preserve the original internal bytes. Even a malformed JSON
-                // document may contain the only recoverable storage pointers.
-                description: "Tender storage cleanup task is invalid and requires operator review",
-              },'''
-          if old not in s:
-              raise SystemExit('invalid manifest overwrite block not found')
-          helper.write_text(s.replace(old, new, 1))
+          overwrite = '''        metadata: JSON.stringify({
+                    version: 1,
+                    status: "INVALID",
+                    failureCode: "INVALID_CLEANUP_MANIFEST",
+                    invalidAt: now.toISOString(),
+                  }),
+          '''
+          if overwrite not in s:
+              raise SystemExit('invalid manifest metadata overwrite not found')
+          s = s.replace(overwrite, '', 1)
+          description = '        description: "Tender storage cleanup task is invalid and requires operator review",'
+          protected = '''        // Preserve the original internal bytes. Even malformed JSON may
+                  // contain the only recoverable storage pointers for operator repair.
+                  description: "Tender storage cleanup task is invalid and requires operator review",'''
+          if description not in s:
+              raise SystemExit('invalid manifest description anchor not found')
+          s = s.replace(description, protected, 1)
+          helper.write_text(s)
 
           test = Path('tests/tender-storage-cleanup-task-current.test.ts')
           t = test.read_text()
-          t = t.replace(
-              '  TENDER_STORAGE_CLEANUP_COMPLETED,\n  TENDER_STORAGE_CLEANUP_PENDING,',
-              '  TENDER_STORAGE_CLEANUP_COMPLETED,\n  TENDER_STORAGE_CLEANUP_INVALID,\n  TENDER_STORAGE_CLEANUP_PENDING,',
-              1,
-          )
-          old_harness = '''        action = args.data.action;
+          import_old = '''  TENDER_STORAGE_CLEANUP_COMPLETED,
+            TENDER_STORAGE_CLEANUP_PENDING,'''
+          import_new = '''  TENDER_STORAGE_CLEANUP_COMPLETED,
+            TENDER_STORAGE_CLEANUP_INVALID,
+            TENDER_STORAGE_CLEANUP_PENDING,'''
+          if import_old not in t:
+              raise SystemExit('invalid constant import anchor not found')
+          t = t.replace(import_old, import_new, 1)
+
+          harness_old = '''        action = args.data.action;
                 metadata = args.data.metadata;
                 return { count: 1 };'''
-          new_harness = '''        action = args.data.action;
+          harness_new = '''        action = args.data.action;
                 if (typeof args.data.metadata === "string") metadata = args.data.metadata;
                 return { count: 1 };'''
-          if old_harness not in t:
+          if harness_old not in t:
               raise SystemExit('processor harness updateMany anchor not found')
-          t = t.replace(old_harness, new_harness, 1)
+          t = t.replace(harness_old, harness_new, 1)
 
-          anchor = '''  it("claims, deletes every object, and marks the task completed", async () => {'''
+          state_old = '''    state: () => ({ action, metadata: JSON.parse(metadata) as Record<string, any> }),'''
+          state_new = '''    state: () => ({
+                  action,
+                  metadataRaw: metadata,
+                  metadata: (() => {
+                    try { return JSON.parse(metadata) as Record<string, any>; }
+                    catch { return null; }
+                  })(),
+                }),'''
+          if state_old not in t:
+              raise SystemExit('processor state anchor not found')
+          t = t.replace(state_old, state_new, 1)
+
+          anchor = '  it("claims, deletes every object, and marks the task completed", async () => {'
           case = '''  it("marks an invalid manifest for review without destroying its original bytes", async () => {
               const original = "not-json: blob://recover-this-object";
               const h = processorHarness({ metadata: original });
@@ -79,7 +95,8 @@ jobs:
                 failures: 1,
               });
               assert.equal(h.state().action, TENDER_STORAGE_CLEANUP_INVALID);
-              assert.equal(h.state().metadata, original);
+              assert.equal(h.state().metadataRaw, original);
+              assert.equal(h.state().metadata, null);
               assert.ok(!h.events.some((event) => event.startsWith("storage:")));
             });
 
