@@ -125,7 +125,8 @@ export async function POST(
     select: { id: true, version: true, fileContent: true, summary: true },
   });
   if (!version) return NextResponse.json({ error: "Version not found" }, { status: 404 });
-  if (!version.fileContent?.trim()) {
+  const versionFileContent = version.fileContent?.trim();
+  if (!versionFileContent) {
     return NextResponse.json(
       {
         error: "This proposal version has no saved document bytes and cannot be restored.",
@@ -161,7 +162,7 @@ export async function POST(
 
   const filename = restoreFilename(existing);
   const mimeType = mimeTypeForFilename(filename);
-  const normalizedContent = version.fileContent.replace(/\s+/g, "");
+  const normalizedContent = versionFileContent.replace(/\s+/g, "");
   try {
     verifiedIntegrityDataFromBase64({
       fileContent: normalizedContent,
