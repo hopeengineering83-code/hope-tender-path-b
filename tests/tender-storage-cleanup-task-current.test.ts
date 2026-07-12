@@ -200,6 +200,14 @@ describe("durable tender storage cleanup task processing", () => {
     assert.deepEqual(h.events, ["db:read"]);
   });
 
+  it("uses the exact prior manifest as the optimistic claim version", () => {
+    const source = readFileSync("lib/tender/tender-storage-cleanup-task.ts", "utf8");
+    const claimStart = source.indexOf("const claim = await args.prisma.auditLog.updateMany");
+    const claimRegion = source.slice(claimStart, claimStart + 700);
+    assert.match(claimRegion, /metadata: task\.metadata/);
+    assert.match(claimRegion, /action: task\.action/);
+  });
+
   it("reclaims a stale running task for retry", async () => {
     const h = processorHarness({
       action: TENDER_STORAGE_CLEANUP_RUNNING,

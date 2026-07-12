@@ -229,7 +229,14 @@ export async function processTenderStorageCleanupTask(args: {
     lastAttemptAt: now.toISOString(),
   };
   const claim = await args.prisma.auditLog.updateMany({
-    where: { id: task.id, action: task.action },
+    // The exact prior manifest is the optimistic version token. This is
+    // required when reclaiming stale RUNNING tasks because the action
+    // remains RUNNING; action-only matching could let two workers claim.
+    where: {
+      id: task.id,
+      action: task.action,
+      metadata: task.metadata,
+    },
     data: {
       action: TENDER_STORAGE_CLEANUP_RUNNING,
       description: "External tender storage cleanup is running",
