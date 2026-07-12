@@ -489,12 +489,11 @@ export async function getCanonicalTenderWorkflowDecision(
   // decision we treat PARTIAL_NEEDS_RESUME as resumable.
   const resumableAnalysisAvailable = analysisState === "PARTIAL_NEEDS_RESUME";
 
-  // ─── Tender Details (metadata) ──────────────────────────────────────────
-  // METADATA IS NO LONGER A HARD BLOCKER per the unified runtime model —
-  // snapshot.metadata.gateValid is always true. We mirror that here so the
-  // canonical decision never blocks on metadata. (If metadata regains
-  // blocker status in the future, this is the single place to change.)
-  const criticalTenderDetailsValid = true;
+  // ─── Tender Details authority ─────────────────────────────────────────
+  // Pre-generation workflow stages use the canonical DRAFT authority signal.
+  // Final-only source/audit authority is deliberately not applied here; it is
+  // already enforced by snapshot.finalZipEligible at the export boundary.
+  const criticalTenderDetailsValid = !snapshot.metadata.hasGenerationBlocker;
 
   // ─── Requirements ───────────────────────────────────────────────────────
   const mandatoryRequirementCount = snapshot.requirements.mandatory;
