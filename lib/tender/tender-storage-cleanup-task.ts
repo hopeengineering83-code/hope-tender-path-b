@@ -192,13 +192,9 @@ export async function processTenderStorageCleanupTask(args: {
       where: { id: task.id, action: task.action },
       data: {
         action: TENDER_STORAGE_CLEANUP_INVALID,
+        // Preserve the original internal bytes. Even malformed JSON may
+        // contain the only recoverable storage pointers for operator repair.
         description: "Tender storage cleanup task is invalid and requires operator review",
-        metadata: JSON.stringify({
-          version: 1,
-          status: "INVALID",
-          failureCode: "INVALID_CLEANUP_MANIFEST",
-          invalidAt: now.toISOString(),
-        }),
       },
     });
     return {
