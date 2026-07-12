@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
@@ -19,17 +19,17 @@ function requestDiagnosticId() {
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const diagnosticId = requestDiagnosticId();
-  const userId = await getSession();
-  if (!userId) {
-    return NextResponse.json({
-      error: "Unauthorized. Sign in again before running the tender engine.",
-      code: "UNAUTHORIZED",
-      nextAction: "LOGIN_AGAIN",
-      diagnosticId,
-    }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
   }
+  const userId = actor.id;
 
-  // Persistent AI throttling — prevents abuse across serverless instances
+  // Persistent AI throttling — prevents abuse across serverless instances.
   const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
     return NextResponse.json({
@@ -46,9 +46,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { id } = await params;
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
-      // Select the stored entity/metadata fields the sanitizer validates so
-      // contaminated values can be nullified BEFORE the engine run — otherwise
-      // polluted client/reference/entity text would flow into matching and AI.
       select: {
         id: true, analysisExtractionStatus: true,
         title: true, clientName: true, reference: true, country: true, clientContactName: true,
@@ -73,17 +70,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    // Nullify any contaminated stored metadata (placeholder/label/portal noise)
-    // before the run so the sanitizer — not the engine — owns data hygiene.
+    // Nullify any contaminated stored metadata before the run so the sanitizer
+    // — not the engine — owns data hygiene.
     const invalidFields = listInvalidStoredFields(tender);
     if (invalidFields.length > 0) {
       const patch = computeStoredMetadataPatch(tender);
       await prisma.tender.update({ where: { id: tender.id }, data: patch });
     }
 
-    // Shared, non-bypassable extraction gate (same predicate every generation
-    // path uses). Run Engine cannot be forced through corrupted, unknown-page,
-    // or incomplete extraction — there is deliberately no ?force= escape hatch.
+    // Shared, non-bypassable extraction gate.
     const effectiveExtractionFiles = tender.files.map((file) => {
       const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
       return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
@@ -109,9 +104,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    // After the extraction-quality gate: block when the stored AI analysis was
-    // itself produced from corrupted or weak extraction (regex fallback / OCR
-    // required). A confident engine run must not build on untrustworthy analysis.
     const engineAnalysisStatus = tender.analysisExtractionStatus;
     if (engineAnalysisStatus === "OCR_REQUIRED") {
       return NextResponse.json({ error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.", code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
@@ -123,16 +115,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
-    // Pass a 50s deadline to the engine so AI rematch is skipped when
-    // insufficient time remains within the 60s Vercel Hobby function limit.
-    // 50s leaves 10s for DB persistence + response serialization. When the
-    // deadline is near, the engine skips AI rematch, uses deterministic
-    // matching, and returns partial=true so the UI surfaces the real state.
     const deadlineAt = Date.now() + 50_000;
     const result = await runTenderEngine(id, userId, undefined, { deadlineAt });
-    // Engine response honesty: propagate partial/blockers/nextAction so the
-    // UI can surface the real state instead of a misleading "engine completed"
-    // green when AI matching failed but deterministic extraction succeeded.
     const engineMeta = result as {
       partial?: boolean;
       blockers?: string[];
@@ -141,11 +125,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       evidenceMatchingBlocker?: { code: string; message: string } | null;
     };
     const isPartial = engineMeta.partial ?? false;
-    // When partial=true, return HTTP 200 but with success=false so the UI's
-    // `!res.ok` check DOES NOT fire (we want to show the partial result, not
-    // an error), BUT the `success: false` field tells the UI to surface the
-    // blockers instead of "Engine run completed". The UI reads `data.success`
-    // and `data.partial` to decide which message to show.
     return NextResponse.json({
       success: !isPartial,
       ok: !isPartial,
@@ -159,10 +138,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       diagnosticId,
     });
   } catch (error) {
-    // Sanitized logging — never log the raw error object (may contain provider
-    // keys, org IDs, prompt text, or Prisma connection strings). Log only the
-    // error name + a safe diagnostic ID. The full error is mapped to a safe
-    // public body via actionableEngineError below.
     const errorName = error instanceof Error ? error.constructor.name : typeof error;
     console.error("Engine run failed:", { diagnosticId, errorName });
     const mapped = actionableEngineError(error);
