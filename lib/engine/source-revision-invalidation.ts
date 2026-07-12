@@ -19,12 +19,19 @@ export type SourceRevisionInvalidationResult = {
   exportPackages: number;
   sectionMaps: number;
   facts: number;
+  aiJobs: number;
+  aiChunks: number;
+  retryStates: number;
 };
 
 /**
  * Invalidate all source-derived release state under the same stable tender lock
  * used by AI promotion and engine persistence. Historical rows are preserved:
  * they are marked stale/superseded or deselected, never silently deleted.
+ *
+ * Active AI work is also canceled in the same transaction. Otherwise a worker
+ * that started before the source revision could promote results derived from
+ * obsolete bytes after the rest of the tender had already been invalidated.
  */
 export async function invalidateTenderForSourceRevision(
   tx: Prisma.TransactionClient,
@@ -33,6 +40,9 @@ export async function invalidateTenderForSourceRevision(
 ): Promise<SourceRevisionInvalidationResult> {
   const lockKey = computeTenderMutationLockKey(tenderId);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+
+  const now = new Date();
+  const safeReason = `Tender source revision changed (${reason}).`;
 
   const [
     requirements,
@@ -45,6 +55,9 @@ export async function invalidateTenderForSourceRevision(
     exportPackages,
     sectionMaps,
     facts,
+    aiJobs,
+    aiChunks,
+    retryStates,
   ] = await Promise.all([
     tx.tenderRequirement.updateMany({
       where: { tenderId },
@@ -77,6 +90,8 @@ export async function invalidateTenderForSourceRevision(
         validationStatus: "SUPERSEDED",
         reviewStatus: "SUPERSEDED",
         reviewNotes: `Superseded because tender source revision changed (${reason}).`,
+        reviewedBy: null,
+        reviewedAt: null,
       },
     }),
     tx.buildPlan.updateMany({
@@ -110,6 +125,37 @@ export async function invalidateTenderForSourceRevision(
       where: { tenderId, sourceStatus: "active" },
       data: { sourceStatus: "stale", reviewState: "pending" },
     }),
+    tx.aiJob.updateMany({
+      where: { tenderId, status: { in: ["QUEUED", "RUNNING"] } },
+      data: {
+        status: "CANCELED",
+        errorMessage: safeReason,
+        finishedAt: now,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: null,
+      },
+    }),
+    tx.aiAnalyzeChunk.updateMany({
+      where: { tenderId, status: { in: ["QUEUED", "RUNNING"] } },
+      data: {
+        status: "SKIPPED",
+        failureCategory: "SOURCE_REVISION_CHANGED",
+        errorMessage: safeReason,
+        finishedAt: now,
+      },
+    }),
+    tx.aiAnalyzeRetryState.updateMany({
+      where: { tenderId },
+      data: {
+        nonRetryable: true,
+        nextRetryAt: null,
+        retryReason: "SOURCE_REVISION_CHANGED",
+        failureCategory: "SOURCE_REVISION_CHANGED",
+        lastProviderAvailable: false,
+        lastCheckedAt: now,
+      },
+    }),
   ]);
 
   await tx.matchScoreBreakdown.updateMany({
@@ -140,6 +186,7 @@ export async function invalidateTenderForSourceRevision(
       stage: "ANALYSIS",
       analysisExtractionStatus: "SOURCE_REVISION_CHANGED",
       readinessScore: 0,
+      analysisSummary: null,
     },
   });
 
@@ -154,5 +201,8 @@ export async function invalidateTenderForSourceRevision(
     exportPackages: exportPackages.count,
     sectionMaps: sectionMaps.count,
     facts: facts.count,
+    aiJobs: aiJobs.count,
+    aiChunks: aiChunks.count,
+    retryStates: retryStates.count,
   };
 }
