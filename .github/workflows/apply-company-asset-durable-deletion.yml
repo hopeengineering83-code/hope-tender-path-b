@@ -33,36 +33,30 @@ jobs:
                   raise SystemExit('collection import anchor not found')
               s = s.replace(import_anchor, import_block, 1)
 
-          where_anchor = '''    where: {
-                companyId: company.id,
-                ...(assetType ? { assetType } : {}),
-              },'''
+          where_anchor = '    where: { companyId: company.id },'
           where_replacement = '''    where: {
                 companyId: company.id,
                 NOT: { metadata: { contains: COMPANY_ASSET_PENDING_DELETE_MARKER } },
-                ...(assetType ? { assetType } : {}),
               },'''
           if where_anchor not in s:
               raise SystemExit('collection list filter anchor not found')
           s = s.replace(where_anchor, where_replacement, 1)
 
-          start_marker = '''    const asset = await prisma.companyAsset.findFirst({
-                where: { id, companyId: company.id },
-              });'''
+          start_marker = '''  const asset = await prisma.companyAsset.findFirst({ where: { id, companyId: company.id } });'''
           end_marker = '''    await prisma.companyAsset.delete({ where: { id } });'''
           start = s.find(start_marker)
           end = s.find(end_marker, start)
           if start < 0 or end < 0:
               raise SystemExit('collection delete block markers not found')
           end += len(end_marker)
-          replacement = '''    const result = await deleteCompanyAssetDurably({
+          replacement = '''  const result = await deleteCompanyAssetDurably({
                 prisma,
                 storage: getStorageAdapter(),
                 companyId: company.id,
                 assetId: id,
               });
               if (!result.ok) {
-                return NextResponse.json(
+                return privateJson(
                   {
                     error: result.code === "NOT_FOUND"
                       ? "Asset not found"
@@ -73,13 +67,20 @@ jobs:
                 );
               }'''
           s = s[:start] + replacement + s[end:]
+          s = s.replace(
+              '    description: `Deleted ${asset.assetType} company asset`,',
+              '    description: "Deleted a company asset",',
+              1,
+          )
           if 'getStorageAdapter().deleteFile' in s:
               raise SystemExit('storage-first collection delete remains')
+          if 'asset.assetType' in s[s.find('export async function DELETE'):]:
+              raise SystemExit('deleted asset variable still referenced')
           collection.write_text(s)
 
           detail = Path('app/api/company/assets/[id]/route.ts')
           d = detail.read_text()
-          detail_import_anchor = '''import { getStorageAdapter } from "../../../../../lib/storage";'''
+          detail_import_anchor = 'import { getStorageAdapter } from "../../../../../lib/storage";'
           detail_import_block = '''import { getStorageAdapter } from "../../../../../lib/storage";
           import { isCompanyAssetPendingDeletion } from "../../../../../lib/company-asset-durable-deletion";'''
           if 'isCompanyAssetPendingDeletion' not in d:
@@ -94,7 +95,7 @@ jobs:
           d = d.replace(detail_where, detail_where_replacement, 1)
 
           select_anchor = '''      size: true,
-                },'''
+              },'''
           select_replacement = '''      size: true,
                 metadata: true,
               },'''
@@ -102,7 +103,7 @@ jobs:
               raise SystemExit('detail metadata select anchor not found')
           d = d.replace(select_anchor, select_replacement, 1)
 
-          check_anchor = '''  if (!asset || (!asset.fileContent && !asset.storagePath)) return privateText("Not found", 404);'''
+          check_anchor = '  if (!asset || (!asset.fileContent && !asset.storagePath)) return privateText("Not found", 404);'
           check_replacement = '''  if (
                 !asset ||
                 isCompanyAssetPendingDeletion(asset.metadata) ||
