@@ -105,10 +105,8 @@ function matchingRequirements(fileName: string, requirements: RequirementLike[])
   const scored = requirements
     .map((requirement) => {
       const text = `${requirement.title} ${requirement.description ?? ""} ${requirement.requirementType ?? ""}`.toLowerCase();
-      const score = Array.from(labelWords).reduce(
-        (sum, word) => sum + (text.includes(word) ? 1 : 0),
-        0,
-      ) + ((requirement.priority ?? "").toUpperCase() === "MANDATORY" ? 1 : 0);
+      const score = Array.from(labelWords).reduce((sum, word) => sum + (text.includes(word) ? 1 : 0), 0)
+        + ((requirement.priority ?? "").toUpperCase() === "MANDATORY" ? 1 : 0);
       return { requirement, score };
     })
     .filter((entry) => entry.score > 0)
@@ -185,7 +183,8 @@ async function buildPlannedRowContent(args: {
   requirements: RequirementLike[];
 }) {
   const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);
-  const isSubmissionRules = args.documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
+  const isSubmissionRules = args.documentType === "SUBMISSION_RULES"
+    || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
   if (isNarrativeDraft(args.fileName, args.documentType)) {
     return {
       fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements),
@@ -261,7 +260,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
     return NextResponse.json({ success: false, ok: false, code: "ANALYSIS_FROM_PARTIAL_EXTRACTION", error: "AI analysis ran on partial extraction; re-extract and re-run AI Analyze before generating plan files.", nextAction: "RERUN_AI_ANALYZE" }, { status: 422 });
   }
-
   if (!(tender.clientName || tender.procuringEntityName)) {
     return NextResponse.json({ success: false, ok: false, code: "MISSING_CLIENT_DETAILS", error: "Document generation requires a client or procuring entity name. Run AI Analyze or enter the client name first.", nextAction: "EDIT_TENDER_METADATA" }, { status: 422 });
   }
@@ -387,7 +385,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const updated: string[] = [];
   const convertedFromPlanned: string[] = [];
 
-  try {
+  const persistBatch = async () => {
     await prisma.$transaction(async (tx) => {
       await withTransactionalGenerationGate({
         prisma,
@@ -502,6 +500,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
       });
     });
+  };
+
+  try {
+    try {
+      await persistBatch();
+    } catch (createErr) {
+      if ((createErr as { code?: string })?.code === "P2002") {
+        // Converge by retrying the entire atomic batch after the competing
+        // creator commits. The first transaction rolled back completely.
+        const activeWinners = await prisma.generatedDocument.findMany({
+          where: {
+            tenderId: id,
+            generationStatus: { not: "SUPERSEDED" },
+            exactFileName: { in: preparedMissing.map((document) => document.fileName) },
+          },
+          select: { id: true },
+        });
+        if (activeWinners.length === 0) {
+          throw new Error("P2002 convergence failed: winner deleted");
+        }
+        created.length = 0;
+        updated.length = 0;
+        convertedFromPlanned.length = 0;
+        await persistBatch();
+      } else {
+        throw createErr;
+      }
+    }
   } catch (error) {
     if (error instanceof GenerationPersistenceBlockedError) {
       return NextResponse.json({
