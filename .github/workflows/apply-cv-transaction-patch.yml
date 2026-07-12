@@ -65,10 +65,7 @@ jobs:
                         updatedAt: new Date(),
                       };
                       if (existing) {
-                        await lockedTx.generatedDocument.update({
-                          where: { id: existing.id },
-                          data,
-                        });
+                        await lockedTx.generatedDocument.update({ where: { id: existing.id }, data });
                         return;
                       }
                       await lockedTx.generatedDocument.create({
@@ -91,9 +88,6 @@ jobs:
                 await persistCv();
               } catch (createErr) {
                 if ((createErr as { code?: string })?.code === "P2002") {
-                  // The first transaction rolled back completely. Confirm the
-                  // concurrent winner still exists, then retry the whole locked
-                  // transaction so it converges to an update under the same gate.
                   const winner = await prisma.generatedDocument.findFirst({
                     where: { tenderId, exactFileName: fileName, generationStatus: { not: "SUPERSEDED" } },
                     orderBy: { updatedAt: "desc" },
@@ -107,6 +101,8 @@ jobs:
                     });
                     continue;
                   }
+                  // The first transaction rolled back completely. Retrying the
+                  // whole locked write converges to updating the winner.
                   await persistCv();
                 } else {
                   throw createErr;
@@ -115,27 +111,41 @@ jobs:
               regenerated += 1;'''
           s = s[:start] + replacement + s[end:]
 
-          old_return = '''  return NextResponse.json({
-              success: true,
-              regenerated,
-              skipped: 0,
-              errors,
-              note: regenerated > 0
-                ? `Regenerated ${regenerated} CV(s). Each is now PENDING re-validation; the next ZIP download triggers it automatically.`
-                : "No CVs regenerated. Check the errors array.",
-            });'''
-          new_return = '''  return NextResponse.json({
-              success: errors.length === 0,
-              regenerated,
-              skipped: 0,
-              errors,
-              note: regenerated > 0
-                ? `Regenerated ${regenerated} CV(s). Each is now PENDING re-validation; the next ZIP download triggers it automatically.`
-                : "No CVs regenerated. Check the errors array.",
-            }, { status: errors.some((error) => error.error.startsWith("Generation readiness changed")) ? 409 : 200 });'''
-          if old_return not in s:
-              raise SystemExit('CV response anchor not found')
-          s = s.replace(old_return, new_return, 1)
+          old_catch = '''    } catch (err) {
+              errors.push({ expertId: expert.id, fullName: expert.fullName, error: sanitizeError(err).slice(0, 200) });
+            }'''
+          new_catch = '''    } catch (err) {
+              if (err instanceof GenerationPersistenceBlockedError) {
+                errors.push({
+                  expertId: expert.id,
+                  fullName: expert.fullName,
+                  error: `Generation readiness changed before persistence: ${err.code}`,
+                });
+                break;
+              }
+              errors.push({ expertId: expert.id, fullName: expert.fullName, error: sanitizeError(err).slice(0, 200) });
+            }'''
+          if old_catch not in s:
+              raise SystemExit('outer CV catch anchor not found')
+          s = s.replace(old_catch, new_catch, 1)
+
+          response_start = s.rfind('  return NextResponse.json({')
+          if response_start < 0:
+              raise SystemExit('CV response start not found')
+          response = s[response_start:]
+          if '    success: true,' not in response:
+              raise SystemExit('CV success field anchor not found')
+          response = response.replace('    success: true,', '    success: errors.length === 0,', 1)
+          closing = '  });\n}'
+          closing_at = response.rfind(closing)
+          if closing_at < 0:
+              raise SystemExit('CV response closing marker not found')
+          response = (
+              response[:closing_at]
+              + '  }, { status: errors.some((error) => error.error.startsWith("Generation readiness changed")) ? 409 : 200 });\n}'
+              + response[closing_at + len(closing):]
+          )
+          s = s[:response_start] + response
 
           if 'await prisma.generatedDocument.create' in s or 'await prisma.generatedDocument.update' in s:
               raise SystemExit('root-client GeneratedDocument write remains')
