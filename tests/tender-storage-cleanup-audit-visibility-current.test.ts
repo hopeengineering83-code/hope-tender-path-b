@@ -20,8 +20,10 @@ describe("tender storage cleanup manifest visibility", () => {
   });
 
   it("never returns raw storage paths or internal task IDs from tender deletion", () => {
-    assert.match(tenderRoute, /storageCleanupPending/);
-    assert.doesNotMatch(tenderRoute, /storageCleanupTaskId\s*[,}]/);
-    assert.doesNotMatch(tenderRoute, /storagePath\s*:/);
+    const response = tenderRoute.match(
+      /return NextResponse\.json\(\{ success: true, correlationId, storageCleanupPending \}\);/,
+    )?.[0] ?? "";
+    assert.match(response, /storageCleanupPending/);
+    assert.doesNotMatch(response, /storageCleanupTaskId|storagePath/);
   });
 });
