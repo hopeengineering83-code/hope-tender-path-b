@@ -8,6 +8,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { buildAndHashTenderAnalysisContent } from "./content-hash";
 
 export type AnalysisState =
   | "NOT_STARTED"
@@ -34,8 +35,9 @@ export interface AnalysisStateResult {
  *
  * Authority hierarchy:
  * 1. Latest non-superseded AiJob status
- * 2. AiAnalyzeChunk completion status (for PARTIAL_NEEDS_RESUME detection)
- * 3. If no job exists: NOT_STARTED
+ * 2. Canonical promotion and current-content hash binding
+ * 3. AiAnalyzeChunk completion status
+ * 4. If no job exists: NOT_STARTED
  *
  * Returns fail-closed error if database is unreachable.
  */
@@ -45,7 +47,6 @@ export async function getTenderAnalysisState(
   prismaClient: PrismaClient,
 ): Promise<AnalysisStateResult> {
   try {
-    // Query latest non-superseded job for this tender
     const latestJob = await prismaClient.aiJob.findFirst({
       where: {
         tenderId,
@@ -59,6 +60,7 @@ export async function getTenderAnalysisState(
         status: true,
         analysisVersion: true,
         analysisInputHash: true,
+        promotedAt: true,
         analyzeChunks: {
           select: {
             chunkIndex: true,
@@ -68,7 +70,6 @@ export async function getTenderAnalysisState(
       },
     });
 
-    // No job found: NOT_STARTED
     if (!latestJob) {
       return {
         state: "NOT_STARTED",
@@ -80,7 +81,6 @@ export async function getTenderAnalysisState(
     const jobId = latestJob.id;
     const analysisVersion = Number(latestJob.analysisVersion);
 
-    // Map job status to analysis state
     if (jobStatus === "QUEUED") {
       return {
         state: "QUEUED",
@@ -91,13 +91,11 @@ export async function getTenderAnalysisState(
     }
 
     if (jobStatus === "RUNNING") {
-      // Check if we have completed chunks
       const completedCount = latestJob.analyzeChunks.filter(
-        (c) => c.status === "SUCCEEDED",
+        (chunk) => chunk.status === "SUCCEEDED",
       ).length;
       const totalCount = latestJob.analyzeChunks.length;
 
-      // If some chunks completed but status is still RUNNING, it's partial
       if (completedCount > 0 && totalCount > 0 && completedCount < totalCount) {
         return {
           state: "PARTIAL_NEEDS_RESUME",
@@ -108,7 +106,6 @@ export async function getTenderAnalysisState(
         };
       }
 
-      // Still running, no chunks yet
       return {
         state: "RUNNING",
         jobId,
@@ -117,16 +114,71 @@ export async function getTenderAnalysisState(
       };
     }
 
-    if (jobStatus === "SUCCEEDED" || jobStatus === "PARTIAL_SUCCESS") {
-      // SUCCEEDED allows generation
-      // PARTIAL_SUCCESS blocks generation (user must resume and complete)
-      const canGenerate = jobStatus === "SUCCEEDED";
+    if (jobStatus === "PARTIAL_SUCCESS") {
       return {
-        state: canGenerate ? "AI_SUCCEEDED" : "PARTIAL_NEEDS_RESUME",
+        state: "PARTIAL_NEEDS_RESUME",
         jobId,
         analysisVersion,
-        canGenerate,
-        requiresResume: !canGenerate,
+        canGenerate: false,
+        requiresResume: true,
+      };
+    }
+
+    if (jobStatus === "SUCCEEDED") {
+      if (!latestJob.promotedAt) {
+        return {
+          state: "FAILED",
+          jobId,
+          analysisVersion,
+          canGenerate: false,
+          error: "Analysis succeeded but was not promoted to the canonical state",
+        };
+      }
+
+      if (!latestJob.analysisInputHash) {
+        return {
+          state: "SUPERSEDED",
+          jobId,
+          analysisVersion,
+          canGenerate: false,
+          error: "Analysis has no content-hash binding",
+        };
+      }
+
+      const { hash: currentHash } = await buildAndHashTenderAnalysisContent(
+        tenderId,
+        userId,
+        prismaClient,
+      );
+      if (currentHash !== latestJob.analysisInputHash) {
+        return {
+          state: "SUPERSEDED",
+          jobId,
+          analysisVersion,
+          canGenerate: false,
+          error: "Tender content changed after AI Analyze",
+        };
+      }
+
+      if (
+        latestJob.analyzeChunks.length > 0
+        && latestJob.analyzeChunks.some((chunk) => chunk.status !== "SUCCEEDED")
+      ) {
+        return {
+          state: "PARTIAL_NEEDS_RESUME",
+          jobId,
+          analysisVersion,
+          canGenerate: false,
+          requiresResume: true,
+          error: "Analysis chunks are incomplete",
+        };
+      }
+
+      return {
+        state: "AI_SUCCEEDED",
+        jobId,
+        analysisVersion,
+        canGenerate: true,
       };
     }
 
@@ -144,7 +196,8 @@ export async function getTenderAnalysisState(
         state: "HUMAN_APPROVED_FALLBACK",
         jobId,
         analysisVersion,
-        canGenerate: true, // Only approved fallback can generate
+        canGenerate: false,
+        error: "Human review records the fallback for audit only; regex fallback cannot authorize generation or export",
       };
     }
 
@@ -167,19 +220,17 @@ export async function getTenderAnalysisState(
       };
     }
 
-    // Unknown status
     return {
-      state: "FAILED" as AnalysisState,
+      state: "FAILED",
       jobId,
       analysisVersion,
       canGenerate: false,
       error: `Unknown job status: ${jobStatus}`,
     };
   } catch (err) {
-    // Fail closed: database error prevents state determination
     const message = err instanceof Error ? err.message : String(err);
     return {
-      state: "FAILED" as AnalysisState,
+      state: "FAILED",
       canGenerate: false,
       error: `State resolver unavailable: ${message}`,
     };
@@ -189,26 +240,26 @@ export async function getTenderAnalysisState(
 /**
  * Check if analysis state permits generation/export/final-zip.
  *
- * Only AI_SUCCEEDED and HUMAN_APPROVED_FALLBACK allow generation.
+ * Only a promoted, current-hash, complete AI success may authorize downstream
+ * work. Regex, deterministic, partial, legacy, stale, or human-approved
+ * fallback states remain audit/recovery states only.
  */
 export function canGenerateFromState(state: AnalysisState): boolean {
-  return state === "AI_SUCCEEDED" || state === "HUMAN_APPROVED_FALLBACK";
+  return state === "AI_SUCCEEDED";
 }
 
-/**
- * Get user-facing message for analysis state.
- */
+/** Get a user-facing message for analysis state. */
 export function getStateMessage(state: AnalysisState): string {
   const messages: Record<AnalysisState, string> = {
     NOT_STARTED: "Analysis not started. Click AI Analyze to begin.",
     QUEUED: "AI Analyze queued. Processing will start shortly.",
     RUNNING: "Analysis in progress. Please wait.",
     PARTIAL_NEEDS_RESUME: "Analysis partially complete. Click Resume Analysis to continue.",
-    AI_SUCCEEDED: "Analysis complete. Ready to proceed.",
-    REGEX_FALLBACK_UNAPPROVED: "Analysis failed — using regex fallback. Click Retry or Approve Fallback.",
-    HUMAN_APPROVED_FALLBACK: "Analysis complete (human-approved fallback). Proceed with caution.",
+    AI_SUCCEEDED: "Analysis complete and current. Ready to proceed.",
+    REGEX_FALLBACK_UNAPPROVED: "AI Analyze did not complete. A regex diagnostic draft is available, but it cannot authorize generation or export.",
+    HUMAN_APPROVED_FALLBACK: "Fallback reviewed for audit only. Re-run AI Analyze before generation or export.",
     FAILED: "Analysis failed. Click Retry AI Analyze.",
-    SUPERSEDED: "A newer analysis exists. Review the latest analysis.",
+    SUPERSEDED: "Tender content changed or a newer analysis exists. Run AI Analyze again.",
   };
   return messages[state];
 }
