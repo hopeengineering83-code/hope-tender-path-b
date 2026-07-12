@@ -26,7 +26,10 @@ function assertBatchReviewContract(source: string, entity: "expert" | "project")
   assert.match(source, /reviewedBy: actor\.id/);
   assert.match(source, /reviewedAt: new Date\(\)/);
 
-  assert.match(source, new RegExp(`rateLimitPersistent\\(\\\`${entity}s-batch-review:\\$\\{actor\\.id\\}\\\``));
+  assert.ok(
+    source.includes(`rateLimitPersistent(\`${entity}s-batch-review:\${actor.id}\``),
+    `${entity} batch route must use persistent actor-scoped throttling`,
+  );
   assert.match(source, /extractRequestId\(req\)/);
   assert.match(source, /void logAction\(/);
   assert.match(source, /\.catch\(\(error\) =>/);
