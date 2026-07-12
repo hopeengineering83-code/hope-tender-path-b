@@ -7,6 +7,7 @@ import {
 } from "../lib/engine/regenerate-section-evidence";
 
 const route = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
+const evidenceSource = readFileSync("lib/engine/regenerate-section-evidence.ts", "utf8");
 const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
 
 describe("reviewed-only section evidence resolver", () => {
@@ -90,8 +91,8 @@ describe("section regeneration release authority", () => {
     assert.doesNotMatch(route, /experts\s*=\s*tender\.expertMatches\.map/);
     assert.doesNotMatch(route, /projects\s*=\s*tender\.projectMatches\.map/);
     assert.match(route, /resolveReviewedSectionEvidence/);
-    assert.match(route, /NO_REVIEWED_EXPERT_EVIDENCE/);
-    assert.match(route, /NO_REVIEWED_PROJECT_EVIDENCE/);
+    assert.match(evidenceSource, /NO_REVIEWED_EXPERT_EVIDENCE/);
+    assert.match(evidenceSource, /NO_REVIEWED_PROJECT_EVIDENCE/);
   });
 
   it("never returns deterministic fallback markdown as successful generation", () => {
