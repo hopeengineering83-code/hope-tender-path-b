@@ -92,21 +92,29 @@ describe("round 13 — T6: export route tender status in transaction", () => {
   });
 });
 
-describe("round 13 — O4: company doc delete surfaces orphaned REVIEWED records", () => {
-  const src = read("app/api/company/documents/[id]/route.ts");
+describe("round 13 — O4: company doc delete preserves REVIEWED provenance", () => {
+  const service = read("lib/company-document-durable-deletion.ts");
+  const collection = read("app/api/company/documents/route.ts");
+  const detail = read("app/api/company/documents/[id]/route.ts");
 
-  it("counts REVIEWED experts/projects that will lose provenance", () => {
+  it("counts REVIEWED dependencies and blocks instead of orphaning them", () => {
     assert.ok(
-      src.includes("reviewedExpertsOrphaned"),
-      "must count reviewedExpertsOrphaned before delete",
+      service.includes("reviewedExperts") && service.includes("reviewedProjects"),
+      "must count reviewed expert and project dependencies before deletion",
     );
     assert.ok(
-      src.includes("reviewedProjectsOrphaned"),
-      "must count reviewedProjectsOrphaned before delete",
+      service.includes('trustLevel: "REVIEWED"'),
+      "must filter source dependencies by REVIEWED trust level",
     );
     assert.ok(
-      src.includes('trustLevel: "REVIEWED"'),
-      "must filter by trustLevel REVIEWED",
+      service.includes('code: "REVIEWED_PROVENANCE_DEPENDENCY"'),
+      "must return a fail-closed provenance blocker",
     );
+  });
+
+  it("uses the same durable deletion service from both routes", () => {
+    assert.ok(collection.includes("deleteCompanyDocumentDurably("));
+    assert.ok(detail.includes("deleteCompanyDocumentDurably("));
+    assert.ok(!collection.includes("prisma.companyDocument.delete({"));
   });
 });

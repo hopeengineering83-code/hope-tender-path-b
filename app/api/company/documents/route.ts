@@ -1,9 +1,19 @@
 import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../lib/auth";
+import {
+  forbiddenResponse,
+  getSession,
+  requireRole,
+  unauthorizedResponse,
+} from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { logAction } from "../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
+import { getStorageAdapter } from "../../../../lib/storage";
+import {
+  COMPANY_DOCUMENT_PENDING_DELETE_MARKER,
+  deleteCompanyDocumentDurably,
+} from "../../../../lib/company-document-durable-deletion";
 
 export async function GET(req: Request) {
   const userId = await getSession();
@@ -22,6 +32,9 @@ export async function GET(req: Request) {
   const documents = await prisma.companyDocument.findMany({
     where: {
       companyId: company.id,
+      NOT: {
+        metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER },
+      },
       ...(category ? { category } : {}),
       ...(q ? { OR: [{ fileName: { contains: q } }, { originalFileName: { contains: q } }, { category: { contains: q } }] } : {}),
     },
@@ -62,11 +75,22 @@ export async function GET(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
+  }
 
-  const rl = rateLimit(`docs-delete:${userId}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  const rl = rateLimit(`docs-delete:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   try {
     await prismaReady;
@@ -75,25 +99,43 @@ export async function DELETE(req: Request) {
     const id = searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-    const company = await prisma.company.findUnique({ where: { userId } });
+    const company = await prisma.company.findUnique({ where: { userId: actor.id } });
     if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-    const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
-    if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    const result = await deleteCompanyDocumentDurably({
+      prisma,
+      storage: getStorageAdapter(),
+      companyId: company.id,
+      documentId: id,
+    });
 
-    await prisma.companyDocument.delete({ where: { id } });
+    if (!result.ok) {
+      const error = result.code === "REVIEWED_PROVENANCE_DEPENDENCY"
+        ? "Deletion blocked because reviewed experts or projects still depend on this source document."
+        : result.code === "NOT_FOUND"
+          ? "Document not found"
+          : "Document deletion is pending a safe retry.";
+      return NextResponse.json({ error, ...result }, { status: result.status });
+    }
 
     await logAction({
-      userId,
+      userId: actor.id,
       action: "COMPANY_DOCUMENT_DELETE",
       entityType: "CompanyDocument",
       entityId: id,
-      description: `Deleted company document "${doc.originalFileName}"`,
+      description: "Deleted a company source document and its unreviewed derived records",
+      metadata: {
+        companyId: company.id,
+        draftExpertsRemoved: result.draftExpertsRemoved,
+        draftProjectsRemoved: result.draftProjectsRemoved,
+      },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, ...result });
   } catch (error) {
-    logger.error("Company document DELETE failed", { detail: error });
-    return NextResponse.json({ error: "Failed to delete document" }, { status: 500 });
+    logger.error("Company document DELETE failed", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json({ error: "Failed to delete document safely" }, { status: 500 });
   }
 }

@@ -1,6 +1,11 @@
 import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
-import { getSession, requireRole } from "../../../../../lib/auth";
+import {
+  forbiddenResponse,
+  getSession,
+  requireRole,
+  unauthorizedResponse,
+} from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
@@ -8,6 +13,10 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-
 import { runCompanyKnowledgeSafetyImport } from "../../../../../lib/company-knowledge-safety-import";
 import { getStorageAdapter } from "../../../../../lib/storage";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import {
+  deleteCompanyDocumentDurably,
+  isCompanyDocumentPendingDeletion,
+} from "../../../../../lib/company-document-durable-deletion";
 
 async function companyForUser(userId: string) {
   return prisma.company.findUnique({ where: { userId } });
@@ -30,7 +39,9 @@ export async function GET(
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
-  if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!doc || isCompanyDocumentPendingDeletion(doc.metadata)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   if (!doc.fileContent && !doc.storagePath) {
     return NextResponse.json({ error: "File content not available" }, { status: 404 });
   }
@@ -63,8 +74,10 @@ export async function POST(
   let actor;
   try {
     actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
   }
 
   const limit = await rateLimitPersistent(`doc-reimport:${actor.id}`, MUTATION_RATE_LIMIT);
@@ -79,7 +92,9 @@ export async function POST(
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
-  if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!doc || isCompanyDocumentPendingDeletion(doc.metadata)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   if (!doc.fileContent && !doc.storagePath) return NextResponse.json({ error: "File content not stored" }, { status: 400 });
 
   let buffer: Buffer;
@@ -96,8 +111,8 @@ export async function POST(
   const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
   const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
   const meaningful = isMeaningfulExtraction(extractedText);
-  let metadata: Record<string, unknown> = {};
-  try { metadata = JSON.parse(doc.metadata || "{}"); } catch { metadata = {}; }
+  let details: Record<string, unknown> = {};
+  try { details = JSON.parse(doc.metadata || "{}"); } catch { details = {}; }
 
   await prisma.companyDocument.update({
     where: { id },
@@ -107,7 +122,7 @@ export async function POST(
       aiExtractedAt: null,
       aiExtractionError: meaningful ? null : "No usable text extracted from document",
       metadata: JSON.stringify({
-        ...metadata,
+        ...details,
         fileType,
         reExtractedAt: new Date().toISOString(),
         extracted: meaningful,
@@ -158,8 +173,10 @@ export async function DELETE(
   let actor;
   try {
     actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
   }
 
   const limit = await rateLimitPersistent(`doc-delete:${actor.id}`, MUTATION_RATE_LIMIT);
@@ -173,56 +190,34 @@ export async function DELETE(
   const company = await companyForUser(actor.id);
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
-  if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  try {
-    await getStorageAdapter().deleteFile({
-      storagePath: doc.storagePath,
-      fileContent: doc.fileContent,
-      fileName: doc.originalFileName,
-    });
-  } catch {
-    return NextResponse.json({ error: "Stored file could not be deleted safely" }, { status: 502 });
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
-    const draftExpertsRemoved = await tx.expert.deleteMany({
-      where: { companyId: company.id, sourceDocumentId: id, trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] } },
-    });
-    const draftProjectsRemoved = await tx.project.deleteMany({
-      where: { companyId: company.id, sourceDocumentId: id, trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] } },
-    });
-    // Count REVIEWED records that will lose their provenance when the source
-    // document is deleted. The schema's onDelete: SetNull will null their
-    // sourceDocumentId, making them "phantom" reviewed records with no
-    // provenance. We surface this count in the response so the user knows.
-    const reviewedExpertsOrphaned = await tx.expert.count({
-      where: { companyId: company.id, sourceDocumentId: id, trustLevel: "REVIEWED" },
-    });
-    const reviewedProjectsOrphaned = await tx.project.count({
-      where: { companyId: company.id, sourceDocumentId: id, trustLevel: "REVIEWED" },
-    });
-    await tx.companyDocument.delete({ where: { id } });
-    return { draftExpertsRemoved, draftProjectsRemoved, reviewedExpertsOrphaned, reviewedProjectsOrphaned };
+  const result = await deleteCompanyDocumentDurably({
+    prisma,
+    storage: getStorageAdapter(),
+    companyId: company.id,
+    documentId: id,
   });
+
+  if (!result.ok) {
+    const error = result.code === "REVIEWED_PROVENANCE_DEPENDENCY"
+      ? "Deletion blocked because reviewed experts or projects still depend on this source document."
+      : result.code === "NOT_FOUND"
+        ? "Not found"
+        : "Document deletion is pending a safe retry.";
+    return NextResponse.json({ error, ...result }, { status: result.status });
+  }
 
   await logAction({
     userId: actor.id,
     action: "COMPANY_DOCUMENT_DELETE",
     entityType: "CompanyDocument",
     entityId: id,
-    description: `Deleted company document "${doc.originalFileName}" and its unreviewed derived records`,
+    description: "Deleted a company source document and its unreviewed derived records",
     metadata: {
       companyId: company.id,
-      draftExpertsRemoved: result.draftExpertsRemoved.count,
-      draftProjectsRemoved: result.draftProjectsRemoved.count,
+      draftExpertsRemoved: result.draftExpertsRemoved,
+      draftProjectsRemoved: result.draftProjectsRemoved,
     },
   });
 
-  return NextResponse.json({
-    success: true,
-    draftExpertsRemoved: result.draftExpertsRemoved.count,
-    draftProjectsRemoved: result.draftProjectsRemoved.count,
-  });
+  return NextResponse.json({ success: true, ...result });
 }
