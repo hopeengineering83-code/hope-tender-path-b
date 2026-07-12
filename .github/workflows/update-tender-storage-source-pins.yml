@@ -1,0 +1,95 @@
+name: Update tender storage cleanup source pins
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/tender-delete-storage-manifest-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Replace obsolete ephemeral cleanup assertions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/performance-storage-observability-hardening.test.ts')
+          s = p.read_text()
+          s = s.replace(
+              '  2. Tender deletion returns generated doc paths for blob cleanup',
+              '  2. Tender deletion commits a durable external-storage cleanup manifest',
+              1,
+          )
+          start_marker = '// ─── 2. Tender deletion blob cleanup ────────────────────────────────────────'
+          end_marker = '// ─── 3. Source-file deletion orphan cleanup ─────────────────────────────────'
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('tender cleanup source-pin section markers not found')
+          replacement = '''// ─── 2. Tender deletion durable storage cleanup ─────────────────────────────
+
+          describe("Tender deletion — durable external-storage cleanup", () => {
+            const route = read("app/api/tenders/[id]/route.ts");
+            const deletion = read("lib/tender/delete-tender.ts");
+            const task = read("lib/tender/tender-storage-cleanup-task.ts");
+            const retryRoute = read("app/api/cron/cleanup-tender-storage/route.ts");
+            const auditRoute = read("app/api/audit/route.ts");
+
+            it("commits a durable cleanup task before deleting the final Tender row", () => {
+              const taskPos = deletion.indexOf("createTenderStorageCleanupTask({");
+              const tenderDeletePos = deletion.indexOf('wrapDelete("Tender"');
+              assert.ok(taskPos >= 0 && tenderDeletePos > taskPos);
+              assert.match(deletion, /tenderFile\.findMany/);
+              assert.match(deletion, /generatedDocument\.findMany/);
+              assert.match(deletion, /userId: actorId/);
+              assert.doesNotMatch(deletion, /generatedDocPaths/);
+            });
+
+            it("uses only the durable task after commit, never an ephemeral path array", () => {
+              assert.match(route, /processTenderStorageCleanupTask\(/);
+              assert.match(route, /storageCleanupPending/);
+              assert.doesNotMatch(route, /filesForCleanup/);
+              assert.doesNotMatch(route, /result\.generatedDocPaths/);
+              const deleteRegion = route.slice(route.indexOf("export async function DELETE"));
+              assert.doesNotMatch(deleteRegion, /\.deleteFile\(\{/);
+              assert.doesNotMatch(deleteRegion, /storageCleanupTaskId\s*[,}]/);
+            });
+
+            it("retains failed paths and protects processing with claim state", () => {
+              assert.match(task, /TENDER_STORAGE_CLEANUP_PENDING/);
+              assert.match(task, /TENDER_STORAGE_CLEANUP_RUNNING/);
+              assert.match(task, /TENDER_STORAGE_CLEANUP_COMPLETED/);
+              assert.match(task, /claimIsFresh/);
+              assert.match(task, /remaining\.push\(file\)/);
+              assert.match(task, /files: remaining/);
+              assert.doesNotMatch(task, /error\.message/);
+            });
+
+            it("has a secret-protected retry worker and hides internal manifests from public audit", () => {
+              assert.match(retryRoute, /CRON_SECRET/);
+              assert.match(retryRoute, /processPendingTenderStorageCleanupTasks\(/);
+              assert.match(auditRoute, /TenderStorageCleanup/);
+              assert.match(auditRoute, /NOT: \{ entityType: INTERNAL_AUDIT_ENTITY_TYPE \}/);
+            });
+          });
+
+          '''
+          p.write_text(s[:start] + replacement + s[end:])
+          PY
+      - name: Commit source-pin update
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/performance-storage-observability-hardening.test.ts
+          git commit -m "test: pin durable tender storage cleanup"
+          git push origin HEAD:${{ github.head_ref }}
