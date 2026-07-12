@@ -1,0 +1,113 @@
+name: Apply current AI job idempotency repair
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/ai-job-idempotency-current'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Apply exact current-base repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service = Path('lib/ai-jobs/analysis-job-service.ts')
+          s = service.read_text()
+          old_lock = '''    // Cast to string and use Prisma.raw to inject the bigint literal directly
+              // into the SQL. Prisma's $executeRaw parameterized query doesn't handle
+              // bigint parameters correctly — the parameter is sent as a string but
+              // pg_advisory_xact_lock expects a bigint, and the cast doesn't work
+              // through the parameterized path. Using Prisma.raw() with the string
+              // value ensures the SQL contains the literal bigint value.
+              const lockKeyStr = lockKey.toString();
+              await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${lockKeyStr}::bigint)`);'''
+          new_lock = '''    // Parameterized tagged SQL keeps the computed bigint out of raw SQL text.
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;'''
+          if old_lock not in s:
+              raise SystemExit('unsafe advisory-lock block not found')
+          s = s.replace(old_lock, new_lock, 1)
+
+          create_anchor = '''        status: "QUEUED",
+                runId: require("crypto").randomUUID(),'''
+          create_replacement = '''        status: "QUEUED",
+                analysisInputHash: contentHash,
+                runId: require("crypto").randomUUID(),'''
+          if create_anchor not in s:
+              raise SystemExit('new job creation anchor not found')
+          s = s.replace(create_anchor, create_replacement, 1)
+          if '$executeRawUnsafe' in s[s.find('export async function createAnalysisJob'):s.find('export async function runNextChunk')]:
+              raise SystemExit('unsafe raw SQL remains in createAnalysisJob')
+          service.write_text(s)
+
+          test = Path('tests/ai-job-concurrency.test.ts')
+          t = test.read_text()
+          start_marker = '  it("advisory lock reduces job duplication (at most 8 jobs, not 8 unique)", async () => {'
+          end_marker = '  it("does not re-arm a non-retryable FAILED job", async () => {'
+          start = t.find(start_marker)
+          end = t.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('weak concurrency test markers not found')
+          strict_test = '''  it("creates exactly one active job from 8 simultaneous calls", async () => {
+                const promises = Array.from({ length: 8 }, () =>
+                  createAnalysisJob({ tenderId, userId })
+                );
+
+                const results = await Promise.all(promises);
+                const jobIds = results.map((result) => result.jobId);
+                const uniqueJobIds = new Set(jobIds);
+                assert.equal(
+                  uniqueJobIds.size,
+                  1,
+                  `Expected exactly 1 unique jobId, got ${uniqueJobIds.size}: ${Array.from(uniqueJobIds).join(", ")}`,
+                );
+
+                const jobId = jobIds[0];
+                const jobs = await prisma.aiJob.findMany({
+                  where: {
+                    userId,
+                    tenderId,
+                    jobType: "AI_ANALYZE",
+                    status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
+                  },
+                });
+                assert.equal(jobs.length, 1, `Expected 1 active AiJob row, found ${jobs.length}`);
+                assert.equal(jobs[0].id, jobId, "The single job row should match the returned jobId");
+                assert.ok(jobs[0].analysisInputHash, "The created job must persist its analysis input hash");
+
+                const chunks = await prisma.aiAnalyzeChunk.findMany({
+                  where: { jobId },
+                });
+                const chunkIndexes = chunks.map((chunk) => chunk.chunkIndex);
+                assert.equal(
+                  chunkIndexes.length,
+                  new Set(chunkIndexes).size,
+                  `Duplicate chunk indexes found: ${chunkIndexes.join(", ")}`,
+                );
+              });
+
+          '''
+          t = t[:start] + strict_test + t[end:]
+          if 'uniqueJobIds.size <= 8' in t or 'at most 8 jobs' in t:
+              raise SystemExit('weak concurrency acceptance remains')
+          test.write_text(t)
+          PY
+      - name: Commit repair
+        run: |
+          if git diff --quiet; then
+            echo "No patch required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/ai-jobs/analysis-job-service.ts tests/ai-job-concurrency.test.ts
+          git commit -m "fix: restore strict AI job idempotency"
+          git push origin HEAD:${{ github.head_ref }}
