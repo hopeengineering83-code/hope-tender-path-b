@@ -54,7 +54,7 @@ describe("release integrity upgrade", () => {
 
   it("supports schema validation even when expecting failed init migration via --require-schema", () => {
     const verifier = read("scripts/verify-retroactive-init.mjs");
-    assert.match(verifier, /if \(!expectFailedInit || requireSchema\)/);
+    assert.match(verifier, /if \(!expectFailedInit \|\| requireSchema\)/);
     // Ensure it still checks migration history in failed state
     assert.match(verifier, /unfinished\.length !== 1/);
     assert.match(verifier, /Checksum mismatch for unfinished/);
@@ -70,16 +70,22 @@ describe("release integrity upgrade", () => {
     assert.ok((ci.match(/git diff --exit-code/g) ?? []).length >= 3);
   });
 
-  it("runs real two-user isolation fixtures instead of synthetic missing IDs", () => {
+  it("runs real two-user supplied-ID isolation fixtures", () => {
     const seed = read("scripts/seed-e2e-user.mjs");
     const isolation = read("e2e/cross-user-isolation.spec.ts");
     assert.match(seed, /E2E_SEED_ALLOWED/);
     assert.match(seed, /E2E seed is disabled in production/);
     assert.match(seed, /Primary Owner Fixture/);
     assert.match(seed, /Secondary Owner Private Tender/);
-    assert.match(isolation, /primary user can read its own fixture but not the secondary fixture/);
-    assert.match(isolation, /primary user cannot mutate or share the secondary fixture/);
+    assert.match(seed, /33333333-3333-4333-8333-333333333333/);
+    assert.match(seed, /44444444-4444-4444-8444-444444444444/);
+    assert.match(isolation, /SECONDARY_DOCUMENT_ID/);
+    assert.match(isolation, /SECONDARY_FILE_ID/);
+    assert.match(isolation, /attach-original/);
+    assert.match(isolation, /finalize-pdf/);
+    assert.match(isolation, /files\/\$\{SECONDARY_FILE_ID\}/);
     assert.match(isolation, /Secondary Owner Private Tender/);
+    assert.match(isolation, /deletionStatus: "ACTIVE"/);
   });
 
   it("verifies deployment health, critical tables, and exact release SHA", () => {

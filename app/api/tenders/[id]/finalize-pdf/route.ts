@@ -57,6 +57,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
+    const activeDocs = tender.generatedDocuments.filter((document: any) =>
+      isFinalExportCandidateDocument(document),
+    );
+    // Resolve an explicitly supplied nested ID before exposing any tender
+    // readiness state. Foreign and nonexistent IDs are indistinguishable.
+    if (docId && !activeDocs.some((document: any) => document.id === docId)) {
+      return err("Source document not found", 404, { code: "PDF_SOURCE_NOT_FOUND" });
+    }
+
     // Central authoritative gate — PDF finalization produces a final-package
     // artifact, so it must hold the same fail-closed gate as the ZIP path
     // (current content hash, grounding, confirmed non-empty submission plan).
@@ -83,7 +92,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return err("This tender's submission plan does not name any required PDF file, so there is nothing to finalize.", 409, { code: "PDF_NOT_REQUIRED" });
     }
 
-    const activeDocs = tender.generatedDocuments.filter((d: any) => isFinalExportCandidateDocument(d));
     // A required PDF counts as satisfied only when the row's REAL bytes carry
     // the %PDF signature. A DOCX accidentally stored under the .pdf name, or
     // junk bytes, must stay eligible for (re)finalization — otherwise this
