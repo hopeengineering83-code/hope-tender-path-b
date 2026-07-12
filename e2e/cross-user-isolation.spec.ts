@@ -60,12 +60,13 @@ test.describe("authenticated cross-user isolation", () => {
   const secondaryEmail = process.env.E2E_SECOND_EMAIL ?? "";
   const secondaryPassword = process.env.E2E_SECOND_PASSWORD ?? "";
 
-  test("anonymous tender access is rejected", async ({ request }) => {
-    const response = await request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
-    expect(response.status()).toBe(401);
-  });
+  test("blocks supplied foreign IDs and preserves the secondary owner's resources", async ({ page, request }) => {
+    const anonymous = await request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
+    expect(anonymous.status()).toBe(401);
 
-  test("primary user can read its own fixture but not the secondary fixture", async ({ page }) => {
+    // Reuse one authenticated primary session for every attack. Repeated logins
+    // would test the login throttle instead of tenant isolation and can exceed
+    // the real production rate limit when Playwright projects/retries overlap.
     await login(page, primaryEmail, primaryPassword);
 
     const own = await page.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
@@ -75,10 +76,6 @@ test.describe("authenticated cross-user isolation", () => {
     const other = await page.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
     expect(other.status()).toBe(404);
     expect(await other.json()).toMatchObject({ error: "Not found" });
-  });
-
-  test("primary user cannot mutate or share the secondary fixture", async ({ page }) => {
-    await login(page, primaryEmail, primaryPassword);
 
     const update = await page.request.put(`/api/tenders/${SECONDARY_TENDER_ID}`, {
       data: { title: "Cross-user overwrite attempt" },
@@ -89,12 +86,8 @@ test.describe("authenticated cross-user isolation", () => {
       data: { label: "Cross-user share attempt" },
     });
     expect(share.status()).toBe(404);
-  });
 
-  test("primary user cannot attach bytes to a foreign generated-document ID", async ({ page }) => {
-    await login(page, primaryEmail, primaryPassword);
-
-    const response = await page.request.post(
+    const attach = await page.request.post(
       `/api/tenders/${PRIMARY_TENDER_ID}/documents/${SECONDARY_DOCUMENT_ID}/attach-original`,
       {
         multipart: {
@@ -109,38 +102,24 @@ test.describe("authenticated cross-user isolation", () => {
         },
       },
     );
+    expectHiddenOrForbidden(attach.status());
 
-    expectHiddenOrForbidden(response.status());
-  });
-
-  test("primary user cannot read or delete a foreign TenderFile ID through its own tender", async ({ page }) => {
-    await login(page, primaryEmail, primaryPassword);
-
-    const read = await page.request.get(
+    const readFile = await page.request.get(
       `/api/tenders/${PRIMARY_TENDER_ID}/files/${SECONDARY_FILE_ID}`,
     );
-    expectHiddenOrForbidden(read.status());
+    expectHiddenOrForbidden(readFile.status());
 
-    const remove = await page.request.delete(
+    const deleteFile = await page.request.delete(
       `/api/tenders/${PRIMARY_TENDER_ID}/files/${SECONDARY_FILE_ID}`,
     );
-    expectHiddenOrForbidden(remove.status());
-  });
+    expectHiddenOrForbidden(deleteFile.status());
 
-  test("primary user cannot finalize a foreign document ID as its own PDF", async ({ page }) => {
-    await login(page, primaryEmail, primaryPassword);
-
-    const response = await page.request.post(
+    const finalize = await page.request.post(
       `/api/tenders/${PRIMARY_TENDER_ID}/finalize-pdf`,
       { data: { docId: SECONDARY_DOCUMENT_ID } },
     );
-
-    expectHiddenOrForbidden(response.status());
-    expect(await response.json()).toMatchObject({ code: "PDF_SOURCE_NOT_FOUND" });
-  });
-
-  test("primary user cannot trigger export or final ZIP for the foreign tender", async ({ page }) => {
-    await login(page, primaryEmail, primaryPassword);
+    expectHiddenOrForbidden(finalize.status());
+    expect(await finalize.json()).toMatchObject({ code: "PDF_SOURCE_NOT_FOUND" });
 
     const exportAttempt = await page.request.post(
       `/api/tenders/${SECONDARY_TENDER_ID}/export`,
@@ -151,14 +130,15 @@ test.describe("authenticated cross-user isolation", () => {
       `/api/tenders/${SECONDARY_TENDER_ID}/download`,
     );
     expectHiddenOrForbidden(downloadAttempt.status());
-  });
 
-  test("secondary owner retains its tender, document, and file after every attack", async ({ page }) => {
+    // Switch identities only after all attack requests have completed, then
+    // prove the real secondary rows still have their original values/states.
+    await page.context().clearCookies();
     await login(page, secondaryEmail, secondaryPassword);
 
-    const own = await page.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
-    expect(own.status()).toBe(200);
-    const body = await own.json();
+    const secondaryOwn = await page.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
+    expect(secondaryOwn.status()).toBe(200);
+    const body = await secondaryOwn.json();
     expect(body.title).toBe("Secondary Owner Private Tender");
     expect(body.generatedDocuments).toEqual(
       expect.arrayContaining([
@@ -178,7 +158,7 @@ test.describe("authenticated cross-user isolation", () => {
       ]),
     );
 
-    const primary = await page.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
-    expect(primary.status()).toBe(404);
+    const primaryAsSecondary = await page.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
+    expect(primaryAsSecondary.status()).toBe(404);
   });
 });
