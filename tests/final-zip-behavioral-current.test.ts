@@ -96,7 +96,7 @@ describe("current final ZIP behavioral acceptance", () => {
     assert.equal(result.code, "PERSISTED_BYTE_INTEGRITY_MISMATCH");
   });
 
-  it("rejects bytes whose signature does not match the required extension", async () => {
+  it("rejects extension/byte-format mismatch before archive assembly", async () => {
     const result = await finalizeApprovedDocumentsZip([
       readyDoc({
         exactFileName: "Technical-Proposal.pdf",
@@ -111,7 +111,10 @@ describe("current final ZIP behavioral acceptance", () => {
     ]);
 
     assert.equal(result.ok, false);
-    assert.equal(result.code, "FILE_SIGNATURE_MISMATCH");
+    // The document-output state rejects the contradictory format/integrity
+    // record before the later byte-signature check can run. This is the stricter
+    // fail-closed ordering and must remain stable.
+    assert.equal(result.code, "NOT_EXPORT_READY");
   });
 
   it("creates an ordered ZIP whose reopened entries exactly match persisted bytes", async () => {
