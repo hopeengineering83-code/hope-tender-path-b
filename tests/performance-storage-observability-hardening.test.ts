@@ -124,7 +124,11 @@ describe("Tender deletion — durable external-storage cleanup", () => {
     assert.doesNotMatch(route, /result\.generatedDocPaths/);
     const deleteRegion = route.slice(route.indexOf("export async function DELETE"));
     assert.doesNotMatch(deleteRegion, /\.deleteFile\(\{/);
-    assert.doesNotMatch(deleteRegion, /storageCleanupTaskId\s*[,}]/);
+    const response = deleteRegion.match(
+      /return NextResponse\.json\(\{ success: true, correlationId, storageCleanupPending \}\);/,
+    )?.[0] ?? "";
+    assert.match(response, /storageCleanupPending/);
+    assert.doesNotMatch(response, /storageCleanupTaskId|storagePath/);
   });
 
   it("retains failed paths and protects processing with claim state", () => {
