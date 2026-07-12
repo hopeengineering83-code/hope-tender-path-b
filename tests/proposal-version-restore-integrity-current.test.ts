@@ -14,16 +14,27 @@ describe("proposal version restore byte integrity", () => {
     assert.doesNotMatch(source, /v\.fileContent \?\? existing\.fileContent/);
   });
 
-  it("verifies bytes before invalidating or persisting the live document", () => {
+  it("verifies bytes before claiming or persisting the live document", () => {
     const verifyPos = source.indexOf("verifiedIntegrityDataFromBase64({");
-    const invalidatePos = source.indexOf('generationStatus: "GENERATING"');
+    const claimPos = source.indexOf("prisma.generatedDocument.updateMany({");
+    const invalidatePos = source.indexOf('generationStatus: "GENERATING"', claimPos);
     const persistPos = source.indexOf("writeGeneratedDocumentContent(");
     const completePos = source.indexOf('generationStatus: "GENERATED"', persistPos);
     assert.ok(verifyPos >= 0);
-    assert.ok(invalidatePos > verifyPos);
+    assert.ok(claimPos > verifyPos);
+    assert.ok(invalidatePos > claimPos);
     assert.ok(persistPos > invalidatePos);
     assert.ok(completePos > persistPos);
     assert.match(source, /VERSION_BYTES_NOT_VERIFIED/);
+  });
+
+  it("serializes concurrent restores with status and updatedAt", () => {
+    assert.match(source, /existing\.generationStatus === "GENERATING"/);
+    assert.match(source, /RESTORE_IN_PROGRESS/);
+    assert.match(source, /updatedAt: existing\.updatedAt/);
+    assert.match(source, /generationStatus: existing\.generationStatus/);
+    assert.match(source, /claim\.count !== 1/);
+    assert.match(source, /CONCURRENT_MODIFICATION/);
   });
 
   it("uses the compensated generated-document storage writer", () => {
@@ -33,13 +44,14 @@ describe("proposal version restore byte integrity", () => {
   });
 
   it("invalidates validation, review, and reviewer identity before storage", () => {
-    const invalidateStart = source.indexOf('generationStatus: "GENERATING"');
+    const claimStart = source.indexOf("prisma.generatedDocument.updateMany({");
     const persistPos = source.indexOf("writeGeneratedDocumentContent(");
-    const invalidateRegion = source.slice(invalidateStart, persistPos);
-    assert.match(invalidateRegion, /validationStatus: "PENDING"/);
-    assert.match(invalidateRegion, /reviewStatus: "PENDING"/);
-    assert.match(invalidateRegion, /reviewedBy: null/);
-    assert.match(invalidateRegion, /reviewedAt: null/);
+    const claimRegion = source.slice(claimStart, persistPos);
+    assert.match(claimRegion, /generationStatus: "GENERATING"/);
+    assert.match(claimRegion, /validationStatus: "PENDING"/);
+    assert.match(claimRegion, /reviewStatus: "PENDING"/);
+    assert.match(claimRegion, /reviewedBy: null/);
+    assert.match(claimRegion, /reviewedAt: null/);
   });
 
   it("leaves failed restores non-exportable and returns stable diagnostics", () => {
@@ -50,11 +62,12 @@ describe("proposal version restore byte integrity", () => {
     assert.doesNotMatch(source, /error:\s*(?:error\.message|String\(error\))/);
   });
 
-  it("preserves owner/admin access and records a non-fatal audit event", () => {
+  it("preserves owner/admin access and records a typed non-fatal audit event", () => {
     const tenderAccessCalls = source.match(/requireTenderAccess\(/g) ?? [];
     assert.equal(tenderAccessCalls.length, 3);
     assert.match(source, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
-    assert.match(source, /PROPOSAL_VERSION_RESTORED/);
+    assert.match(source, /action: "UPDATE"/);
+    assert.match(source, /operation: "PROPOSAL_VERSION_RESTORED"/);
     assert.match(source, /\.catch\(\(error\) =>/);
   });
 
