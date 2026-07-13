@@ -343,7 +343,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     //    state should not persist after the tender is gone).
     //  - AiUsageRecord has a SetNull relation. Migration 20260628000000_add_aiusagerecord_tender_fk
     //    added the FK constraint; typed Prisma updateMany now works without raw SQL.
-    const deletionResult = await prisma.$transaction(
+    const result = await prisma.$transaction(
       async (tx) => executeTenderDeletion(
         tx,
         tenderId,
@@ -353,16 +353,34 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       { timeout: 30000, isolationLevel: "Serializable" },
     );
 
+    // Post-commit immediate blob cleanup for generated documents.
+    // Uses the returned generatedDocPaths to delete external storage objects
+    // after the database transaction has committed. If this fails, the
+    // durable manifest (storageCleanupTaskId) retains the pointers for
+    // cron-based retry.
+    const storage = getStorageAdapter();
+    for (const p of result.generatedDocPaths) {
+      if (p.storagePath || p.fileContent) {
+        storage.deleteFile({
+          storagePath: p.storagePath,
+          fileContent: p.fileContent,
+          fileName: p.exactFileName ?? "generated-document",
+        }).catch(() => {
+          // Best-effort — the durable manifest handles retry.
+        });
+      }
+    }
+
     // The cleanup pointer was committed inside the deletion transaction.
     // Attempt it immediately for responsiveness, but never lose retry state:
     // failed objects remain in the durable AuditLog manifest for the cron.
     let storageCleanupPending = false;
-    if (deletionResult.storageCleanupTaskId) {
+    if (result.storageCleanupTaskId) {
       try {
         const cleanup = await processTenderStorageCleanupTask({
           prisma,
           storage: getStorageAdapter(),
-          taskId: deletionResult.storageCleanupTaskId,
+          taskId: result.storageCleanupTaskId,
         });
         storageCleanupPending = !cleanup.completed;
       } catch (cleanupError) {

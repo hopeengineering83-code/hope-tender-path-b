@@ -28,7 +28,10 @@ export async function executeTenderDeletion(
   tenderId: string,
   correlationId: string,
   actorId: string,
-): Promise<{ storageCleanupTaskId: string | null }> {
+): Promise<{
+  storageCleanupTaskId: string | null;
+  generatedDocPaths: Array<{ storagePath: string | null; fileContent: string | null; exactFileName: string | null }>;
+}> {
   const logPhase = (phase: string, model: string) => {
     const msg = `[tender-delete] Phase: ${phase} | Model: ${model}`;
     console.log(`${msg} | tenderId: ${tenderId} | correlationId: ${correlationId}`);
@@ -86,6 +89,7 @@ export async function executeTenderDeletion(
     select: {
       id: true,
       storagePath: true,
+      fileContent: true,
       exactFileName: true,
     },
   });
@@ -180,5 +184,15 @@ export async function executeTenderDeletion(
   // Layer 10: Final Tender deletion
   await wrapDelete("Tender", tx.tender.delete({ where: { id: tenderId } }));
 
-  return { storageCleanupTaskId };
+  // Return generated doc paths for post-commit blob cleanup (the durable
+  // manifest handles retry, but immediate cleanup is attempted for
+  // responsiveness). Also return the storageCleanupTaskId for the cron.
+  return {
+    storageCleanupTaskId,
+    generatedDocPaths: generatedDocs.map((d) => ({
+      storagePath: d.storagePath,
+      fileContent: d.fileContent,
+      exactFileName: d.exactFileName,
+    })),
+  };
 }

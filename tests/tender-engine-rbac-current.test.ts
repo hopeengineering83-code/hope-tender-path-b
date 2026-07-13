@@ -47,7 +47,7 @@ describe("tender Engine mutation RBAC", () => {
     assert.match(source, /diagnosticId/);
   });
 
-  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.main, true);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });

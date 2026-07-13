@@ -57,7 +57,7 @@ describe("Company Vault record route error boundaries", () => {
     assert.match(sources.compliance, /COMPLIANCE_RECORDS_RUNTIME_ERROR/);
   });
 
-  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.main, true);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });

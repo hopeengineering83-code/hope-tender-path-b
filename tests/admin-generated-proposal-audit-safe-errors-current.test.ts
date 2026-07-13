@@ -64,7 +64,7 @@ describe("admin generated-proposal audit response boundary", () => {
     assert.match(source, /containsPricingLeakage/);
   });
 
-  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.main, true);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });

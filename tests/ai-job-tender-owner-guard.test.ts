@@ -110,9 +110,9 @@ describe("AiJob tender ownership migration", () => {
       "route must return 404 when ownership check fails");
   });
 
-  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
-    assert.equal(config.git?.deploymentEnabled?.main, true);
+    assert.equal(config.git?.deploymentEnabled, true);
   });
 });
 

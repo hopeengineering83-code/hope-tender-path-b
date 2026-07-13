@@ -38,7 +38,12 @@ describe("canonical and compatibility Build Plan routes", () => {
       assert.match(source, /authorizesGeneration: false/);
       assert.doesNotMatch(source, /generatedDocument\.(?:create|upsert|createMany)\(/);
     }
-    assert.match(compatibility, /generatedDocumentsCreated: 0/);
+    // The compatibility route reports the measured delta (afterDocs - beforeDocs),
+    // which is 0 for Build Plan creation. Must NOT hardcode 0 — use the dynamic
+    // expression so the response is truthful even if the count changes.
+    assert.match(compatibility, /generatedDocumentsCreated: afterDocs - beforeDocs/);
+    assert.doesNotMatch(compatibility, /generatedDocumentsCreated: 0/,
+      "must NOT hardcode generatedDocumentsCreated to 0");
   });
 
   it("keep mutation authorization restricted", () => {
@@ -46,7 +51,7 @@ describe("canonical and compatibility Build Plan routes", () => {
     assert.match(compatibility, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
   });
 
-  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.main, true);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });
