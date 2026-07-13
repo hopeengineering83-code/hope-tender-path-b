@@ -27,9 +27,9 @@ describe("AiJob tender ownership migration", () => {
     assert.doesNotMatch(sql, /EXECUTE\s+format|EXECUTE\s+NEW|\|\|/i);
   });
 
-  it("keeps Vercel Git deployment disabled", () => {
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
-    assert.equal(config.git?.deploymentEnabled, false);
+    assert.equal(config.git?.deploymentEnabled, true);
   });
 });
 
