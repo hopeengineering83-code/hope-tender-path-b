@@ -1,9 +1,15 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-const source = readFileSync("app/api/tenders/[id]/score-breakdown/route.ts", "utf8");
-const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const rootDir = join(__dirname, "..");
+
+const source = readFileSync(join(rootDir, "app/api/tenders/[id]/score-breakdown/route.ts"), "utf8");
+const vercel = JSON.parse(readFileSync(join(rootDir, "vercel.json"), "utf8"));
 
 describe("score-breakdown safe response boundary", () => {
   it("keeps runtime errors stable and correlated", () => {
