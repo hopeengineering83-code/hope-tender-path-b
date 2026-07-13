@@ -105,6 +105,7 @@ export default function CompanyPage() {
   const [expertForm, setExpertForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [expertSaving, setExpertSaving] = useState(false);
   const [editExpert, setEditExpert] = useState<Expert|null>(null);
+  const [expertEditSaving, setExpertEditSaving] = useState(false);
   const [expertEditForm, setExpertEditForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [deletingExpertId, setDeletingExpertId] = useState<string|null>(null);
   const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
@@ -113,6 +114,7 @@ export default function CompanyPage() {
   const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
   const [projectSaving, setProjectSaving] = useState(false);
   const [editProject, setEditProject] = useState<Project|null>(null);
+  const [projectEditSaving, setProjectEditSaving] = useState(false);
   const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
@@ -169,7 +171,10 @@ export default function CompanyPage() {
     setComplianceSaving(true);
     try {
       const res = await fetch("/api/company/compliance-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(complianceForm) });
-      if (res.ok) { setComplianceForm({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" }); void loadComplianceData(); }
+      if (!res.ok) { setError("We could not add that compliance record. Please check the required fields and try again."); return; }
+      setComplianceForm({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" }); await loadComplianceData();
+    } catch {
+      setError("Network interruption while adding the compliance record. Please retry when your connection is stable.");
     } finally { setComplianceSaving(false); }
   }
 
@@ -179,7 +184,10 @@ export default function CompanyPage() {
     setLegalSaving(true);
     try {
       const res = await fetch("/api/company/legal-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(legalForm) });
-      if (res.ok) { setLegalForm({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" }); void loadComplianceData(); }
+      if (!res.ok) { setError("We could not add that legal record. Please check the required fields and try again."); return; }
+      setLegalForm({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" }); await loadComplianceData();
+    } catch {
+      setError("Network interruption while adding the legal record. Please retry when your connection is stable.");
     } finally { setLegalSaving(false); }
   }
 
@@ -189,7 +197,10 @@ export default function CompanyPage() {
     setFinancialSaving(true);
     try {
       const res = await fetch("/api/company/financial-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...financialForm, fiscalYear: Number(financialForm.fiscalYear), amount: financialForm.amount ? Number(financialForm.amount) : null }) });
-      if (res.ok) { setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); void loadComplianceData(); }
+      if (!res.ok) { setError("We could not add that financial record. Please check the required fields and try again."); return; }
+      setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); await loadComplianceData();
+    } catch {
+      setError("Network interruption while adding the financial record. Please retry when your connection is stable.");
     } finally { setFinancialSaving(false); }
   }
 
@@ -350,12 +361,15 @@ export default function CompanyPage() {
     setReimporting(true); setReimportResult(null);
     try {
       const res = await fetch("/api/company/reimport", { method:"POST" });
+      if (!res.ok) { setError("We could not re-import Company Vault documents. Please retry, or re-extract the specific failed document first."); return; }
       const data = await res.json() as { expertsCreated?:number; projectsCreated?:number; docsProcessed?:number };
       setReimportResult({ expertsCreated: data.expertsCreated ?? 0, projectsCreated: data.projectsCreated ?? 0, docsProcessed: data.docsProcessed ?? 0 });
       await loadDocs();
       // Refresh experts/projects in company state
       const c = await fetch("/api/company").then(r=>r.json()) as Company;
       setCompany(prev => ({ ...prev, experts: c.experts ?? [], projects: c.projects ?? [] }));
+    } catch {
+      setError("Network interruption while re-importing Company Vault documents. Please retry when your connection is stable.");
     } finally {
       setReimporting(false);
     }
@@ -368,26 +382,33 @@ export default function CompanyPage() {
         method:"PUT", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({ ...company, serviceLines:serviceLinesTxt, sectors:sectorsTxt }),
       });
-      if (!res.ok) { setError("Failed to save"); return; }
+      if (!res.ok) { setError("We could not save the Company Profile. Please check the required fields and try again."); return; }
       const updated = await res.json() as Company;
       setCompany({ ...empty, ...updated });
       setServiceLinesTxt((updated.serviceLines||[]).join(", "));
       setSectorsTxt((updated.sectors||[]).join(", "));
       setSuccess(true); setTimeout(() => setSuccess(false), 3000);
-    } catch { setError("Network error"); } finally { setSaving(false); }
+    } catch { setError("Network interruption while saving the Company Profile. Please retry when your connection is stable."); } finally { setSaving(false); }
   }
 
   async function addExpert(e: React.FormEvent) {
-    e.preventDefault(); setExpertSaving(true);
-    const res = await fetch("/api/company/experts", {
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertForm),
-    });
-    if (res.ok) {
+    e.preventDefault();
+    if (expertSaving) return;
+    setExpertSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/company/experts", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertForm),
+      });
+      if (!res.ok) { setError("We could not add that expert record. Please check the required fields and try again."); return; }
       const expert = await res.json() as Expert;
       setCompany(c => ({ ...c, experts:[expert, ...(c.experts||[])] }));
       setExpertForm({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
+    } catch {
+      setError("Network interruption while adding the expert record. Please retry when your connection is stable.");
+    } finally {
+      setExpertSaving(false);
     }
-    setExpertSaving(false);
   }
 
   function startEditExpert(ex: Expert) {
@@ -400,14 +421,21 @@ export default function CompanyPage() {
   }
 
   async function saveEditExpert() {
-    if (!editExpert) return;
-    const res = await fetch(`/api/company/experts/${editExpert.id}`, {
-      method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertEditForm),
-    });
-    if (res.ok) {
+    if (!editExpert || expertEditSaving) return;
+    setExpertEditSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/experts/${editExpert.id}`, {
+        method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertEditForm),
+      });
+      if (!res.ok) { setError("We could not save that expert record. Please check the required fields and try again."); return; }
       const updated = await res.json() as Expert;
       setCompany(c => ({ ...c, experts:(c.experts||[]).map(x => x.id===editExpert.id ? updated : x) }));
       setEditExpert(null);
+    } catch {
+      setError("Network interruption while saving the expert record. Please retry when your connection is stable.");
+    } finally {
+      setExpertEditSaving(false);
     }
   }
 
@@ -431,16 +459,23 @@ export default function CompanyPage() {
   }
 
   async function addProject(e: React.FormEvent) {
-    e.preventDefault(); setProjectSaving(true);
-    const res = await fetch("/api/company/projects", {
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectForm),
-    });
-    if (res.ok) {
+    e.preventDefault();
+    if (projectSaving) return;
+    setProjectSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/company/projects", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectForm),
+      });
+      if (!res.ok) { setError("We could not add that project record. Please check the required fields and try again."); return; }
       const project = await res.json() as Project;
       setCompany(c => ({ ...c, projects:[project, ...(c.projects||[])] }));
       setProjectForm({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+    } catch {
+      setError("Network interruption while adding the project record. Please retry when your connection is stable.");
+    } finally {
+      setProjectSaving(false);
     }
-    setProjectSaving(false);
   }
 
   function startEditProject(p: Project) {
@@ -453,14 +488,21 @@ export default function CompanyPage() {
   }
 
   async function saveEditProject() {
-    if (!editProject) return;
-    const res = await fetch(`/api/company/projects/${editProject.id}`, {
-      method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectEditForm),
-    });
-    if (res.ok) {
+    if (!editProject || projectEditSaving) return;
+    setProjectEditSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/projects/${editProject.id}`, {
+        method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectEditForm),
+      });
+      if (!res.ok) { setError("We could not save that project record. Please check the required fields and try again."); return; }
       const updated = await res.json() as Project;
       setCompany(c => ({ ...c, projects:(c.projects||[]).map(x => x.id===editProject.id ? updated : x) }));
       setEditProject(null);
+    } catch {
+      setError("Network interruption while saving the project record. Please retry when your connection is stable.");
+    } finally {
+      setProjectEditSaving(false);
     }
   }
 
@@ -1162,9 +1204,9 @@ export default function CompanyPage() {
       {/* Edit Expert Modal */}
       {editExpert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={()=>setEditExpert(null)} />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-slate-900 mb-4">Edit Expert</h2>
+          <div className="absolute inset-0 bg-black/40" onClick={()=>{ if (!expertEditSaving) setEditExpert(null); }} />
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-expert-title" className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 id="edit-expert-title" className="text-lg font-semibold text-slate-900 mb-4">Edit Expert</h2>
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <input value={expertEditForm.fullName} onChange={e=>setExpertEditForm({...expertEditForm,fullName:e.target.value})} placeholder="Full name *" className="rounded-lg border px-3 py-2 text-sm" />
@@ -1177,8 +1219,8 @@ export default function CompanyPage() {
               <textarea value={expertEditForm.profile} onChange={e=>setExpertEditForm({...expertEditForm,profile:e.target.value})} rows={2} placeholder="Profile summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={saveEditExpert} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">Save</button>
-              <button onClick={()=>setEditExpert(null)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={saveEditExpert} disabled={expertEditSaving||!expertEditForm.fullName} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">{expertEditSaving?"Saving…":"Save"}</button>
+              <button onClick={()=>setEditExpert(null)} disabled={expertEditSaving} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-60">Cancel</button>
             </div>
           </div>
         </div>
@@ -1187,9 +1229,9 @@ export default function CompanyPage() {
       {/* Edit Project Modal */}
       {editProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={()=>setEditProject(null)} />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-slate-900 mb-4">Edit Project</h2>
+          <div className="absolute inset-0 bg-black/40" onClick={()=>{ if (!projectEditSaving) setEditProject(null); }} />
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-project-title" className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 id="edit-project-title" className="text-lg font-semibold text-slate-900 mb-4">Edit Project</h2>
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <input value={projectEditForm.name} onChange={e=>setProjectEditForm({...projectEditForm,name:e.target.value})} placeholder="Project name *" className="rounded-lg border px-3 py-2 text-sm" />
@@ -1205,8 +1247,8 @@ export default function CompanyPage() {
               <textarea value={projectEditForm.summary} onChange={e=>setProjectEditForm({...projectEditForm,summary:e.target.value})} rows={2} placeholder="Project summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={saveEditProject} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">Save</button>
-              <button onClick={()=>setEditProject(null)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={saveEditProject} disabled={projectEditSaving||!projectEditForm.name} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">{projectEditSaving?"Saving…":"Save"}</button>
+              <button onClick={()=>setEditProject(null)} disabled={projectEditSaving} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-60">Cancel</button>
             </div>
           </div>
         </div>

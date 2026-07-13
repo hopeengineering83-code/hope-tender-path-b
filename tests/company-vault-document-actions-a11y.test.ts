@@ -112,3 +112,41 @@ describe("Company Vault compliance/legal/financial delete actions", () => {
     assert.match(source, /Network interruption while deleting the financial record/);
   });
 });
+
+describe("Company Vault add/reimport mutation failures", () => {
+  it("surfaces safe failures for compliance, legal, financial, and reimport mutations", () => {
+    assert.match(source, /We could not add that compliance record/);
+    assert.match(source, /We could not add that legal record/);
+    assert.match(source, /We could not add that financial record/);
+    assert.match(source, /We could not re-import Company Vault documents/);
+    assert.match(source, /Network interruption while re-importing Company Vault documents/);
+    assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
+  });
+});
+
+
+describe("Company Vault profile, expert, and project save failures", () => {
+  it("surfaces safe failures and duplicate-submit guards for profile, expert, and project saves", () => {
+    assert.match(source, /We could not save the Company Profile/);
+    assert.match(source, /Network interruption while saving the Company Profile/);
+    assert.match(source, /if \(expertSaving\) return/);
+    assert.match(source, /if \(projectSaving\) return/);
+    assert.match(source, /We could not add that expert record/);
+    assert.match(source, /Network interruption while adding the expert record/);
+    assert.match(source, /We could not add that project record/);
+    assert.match(source, /Network interruption while adding the project record/);
+    assert.match(source, /if \(!editExpert \|\| expertEditSaving\) return/);
+    assert.match(source, /if \(!editProject \|\| projectEditSaving\) return/);
+    assert.match(source, /We could not save that expert record/);
+    assert.match(source, /We could not save that project record/);
+  });
+
+  it("marks edit modals as dialogs and prevents duplicate save clicks", () => {
+    assert.match(source, /role="dialog" aria-modal="true" aria-labelledby="edit-expert-title"/);
+    assert.match(source, /role="dialog" aria-modal="true" aria-labelledby="edit-project-title"/);
+    assert.match(source, /disabled=\{expertEditSaving\|\|!expertEditForm\.fullName\}/);
+    assert.match(source, /disabled=\{projectEditSaving\|\|!projectEditForm\.name\}/);
+    assert.match(source, /expertEditSaving\?"Saving…":"Save"/);
+    assert.match(source, /projectEditSaving\?"Saving…":"Save"/);
+  });
+});
