@@ -5,7 +5,8 @@
 //   GAP B: Engine route catch-block logs errorName only (not raw error)
 //   GAP C: Engine route passes deadlineAt to runTenderEngine
 //   GAP D: engine-action-panel checks data.partial before showing success
-//   GAP E: tender-detail checks engineData.partial before proceeding to generate
+//   GAP E: retired -- was pinned to the now-deleted, unreachable tender-detail.tsx;
+//          the live equivalent is covered by GAP D above.
 //   GAP G: No raw Unicode in audit-trail-list.tsx
 //   GAP H: No raw Unicode in build-version-badge.tsx
 
@@ -131,31 +132,6 @@ describe("GAP D — UI (engine-action-panel) consumes partial/blockers", () => {
   });
 });
 
-// ─── GAP E: tender-detail checks engineData.partial ──────────────────────────
-
-describe("GAP E — tender-detail checks engineData.partial", () => {
-  it("handleGenerateFullPackage checks engineData.partial before proceeding to generation", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    const okCheck = src.indexOf("if (!engineRes.ok)");
-    const partialCheck = src.indexOf("if (engineData.partial)");
-    assert.ok(okCheck > -1, "must check !engineRes.ok");
-    assert.ok(partialCheck > -1, "must check engineData.partial");
-    assert.ok(partialCheck > okCheck, "partial check must come AFTER the ok check");
-  });
-
-  it("partial path surfaces blocker text and returns before generation", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.match(src, /engineData\.blockers\?\.\[0\]/);
-    // The partial check must come before the generate fetch.
-    const engineFetch = src.indexOf('fetch(`/api/tenders/${tender.id}/engine`');
-    const partialCheck = src.indexOf("if (engineData.partial)");
-    const generateAfterPartial = src.indexOf("/api/tenders/${tender.id}/generate", partialCheck);
-    assert.ok(engineFetch > -1, "must have engine fetch");
-    assert.ok(partialCheck > -1, "must check engineData.partial");
-    assert.ok(partialCheck > engineFetch, "partial check must come AFTER the engine fetch");
-    assert.ok(generateAfterPartial > -1, "must have a generate fetch after the partial check");
-  });
-});
 
 // ─── GAP G: No raw Unicode in audit-trail-list.tsx ───────────────────────────
 

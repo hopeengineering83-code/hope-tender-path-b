@@ -6,11 +6,11 @@
 //   3. getMinCooldownExpiryMs returns > 0 ms when all providers are cooling down.
 //   4. The ai-analyze route exports providerRetryAfterMs in its response shape.
 //   5. The ai-analyze route exports resumableJobId in its response shape.
-//   6. The tender-detail UI includes auto-retry countdown state (autoRetryAt).
-//   7. The tender-detail UI includes cancelAutoRetry helper.
-//   8. The tender-detail UI includes scheduleAutoRetry helper.
-//   9. The tender-detail UI clears auto-retry when handleAnalyzeStreaming is called.
-//  10. The auto-retry countdown banner is rendered when autoRetrySecondsLeft > 0.
+//
+// (UI-side auto-retry checks against the old tender-detail.tsx monolith were
+// retired along with that dead, unreachable file -- the live ai-analyze-panel.tsx
+// has its own durable-job-based auto-retry mechanism, covered separately in
+// tests/durable-ai-analyze-workflow.test.ts.)
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,6 @@ import path from "node:path";
 
 const providerHealthSrc = readFileSync(path.join(process.cwd(), "lib/ai-provider-health.ts"), "utf-8");
 const routeSrc = readFileSync(path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"), "utf-8");
-const uiSrc = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
 
 // ── 1. getMinCooldownExpiryMs function exists ────────────────────────────────
 
@@ -92,110 +91,6 @@ describe("ai-analyze route — auto-retry fields in response", () => {
   });
 });
 
-// ── 3. UI — auto-retry state and helpers ─────────────────────────────────────
-
-describe("tender-detail UI — auto-retry state management", () => {
-  it("declares autoRetryAt state", () => {
-    assert.ok(
-      uiSrc.includes("autoRetryAt") && uiSrc.includes("setAutoRetryAt"),
-      "tender-detail must declare autoRetryAt state",
-    );
-  });
-
-  it("declares autoRetrySecondsLeft countdown state", () => {
-    assert.ok(
-      uiSrc.includes("autoRetrySecondsLeft") && uiSrc.includes("setAutoRetrySecondsLeft"),
-      "tender-detail must declare autoRetrySecondsLeft countdown state",
-    );
-  });
-
-  it("declares cancelAutoRetry helper", () => {
-    assert.ok(
-      uiSrc.includes("function cancelAutoRetry"),
-      "tender-detail must declare cancelAutoRetry helper",
-    );
-  });
-
-  it("declares scheduleAutoRetry helper", () => {
-    assert.ok(
-      uiSrc.includes("function scheduleAutoRetry"),
-      "tender-detail must declare scheduleAutoRetry helper",
-    );
-  });
-
-  it("scheduleAutoRetry sets a setTimeout that calls handleAnalyzeStreaming", () => {
-    assert.ok(
-      uiSrc.includes("handleAnalyzeStreaming") && uiSrc.includes("scheduleAutoRetry"),
-      "scheduleAutoRetry must schedule handleAnalyzeStreaming via setTimeout",
-    );
-  });
-
-  it("handleAnalyzeStreaming calls cancelAutoRetry at the start", () => {
-    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
-    const fnBody = streamingFn.slice(0, streamingFn.indexOf("\n  async function", 1) || 2000);
-    assert.ok(
-      fnBody.includes("cancelAutoRetry()"),
-      "handleAnalyzeStreaming must cancel any pending auto-retry when user manually triggers",
-    );
-  });
-
-  it("handleContinueAnalysis calls cancelAutoRetry at the start", () => {
-    const fn = uiSrc.slice(uiSrc.indexOf("async function handleContinueAnalysis"));
-    const fnBody = fn.slice(0, fn.indexOf("\n  async function", 1) || 2000);
-    assert.ok(
-      fnBody.includes("cancelAutoRetry()"),
-      "handleContinueAnalysis must cancel any pending auto-retry when user manually continues",
-    );
-  });
-
-  it("cleanup useEffect cancels timer on unmount", () => {
-    assert.ok(
-      uiSrc.includes("autoRetryTimerRef.current") && uiSrc.includes("clearTimeout") && uiSrc.includes("clearInterval"),
-      "a cleanup useEffect must cancel both the retry timer and the countdown interval on unmount",
-    );
-  });
-});
-
-// ── 4. UI — countdown banner rendered ────────────────────────────────────────
-
-describe("tender-detail UI — auto-retry countdown banner", () => {
-  it("renders countdown banner when autoRetrySecondsLeft > 0", () => {
-    assert.ok(
-      uiSrc.includes("autoRetrySecondsLeft !== null && autoRetrySecondsLeft > 0"),
-      "banner must only appear when countdown is active",
-    );
-  });
-
-  it("countdown banner shows seconds remaining", () => {
-    assert.ok(
-      uiSrc.includes("auto-retrying in {autoRetrySecondsLeft}s"),
-      "banner must display the live countdown seconds",
-    );
-  });
-
-  it("countdown banner has a Cancel button that calls cancelAutoRetry", () => {
-    assert.ok(
-      uiSrc.includes("onClick={cancelAutoRetry}"),
-      "banner must have a Cancel button wired to cancelAutoRetry",
-    );
-  });
-
-  it("indicates resume-from-checkpoint when resumableJobId is set", () => {
-    assert.ok(
-      uiSrc.includes("will resume from last checkpoint"),
-      "banner must inform the user that analysis will resume from the last checkpoint",
-    );
-  });
-
-  it("shows no-provider message when providerRetryAfterMs is null", () => {
-    assert.ok(
-      uiSrc.includes("providerRetryAfterMs === null") &&
-        uiSrc.includes("Configure an AI provider"),
-      "when no providers are configured, show a configure-provider message instead of countdown",
-    );
-  });
-});
-
 // ── 5. Streaming path structural fixes ───────────────────────────────────────
 
 describe("ai-analyze streaming path — structural fix for fallback + auto-retry", () => {
@@ -227,36 +122,4 @@ describe("ai-analyze streaming path — structural fix for fallback + auto-retry
     );
   });
 
-  it("handleAnalyzeStreaming calls setAnalyzeResult when SSE complete has fallback:true", () => {
-    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
-    const fnEnd = streamingFn.indexOf("\n  async function", 1);
-    const fnBody = streamingFn.slice(0, fnEnd > 0 ? fnEnd : 3000);
-    assert.ok(
-      fnBody.includes("event.fallback") && fnBody.includes("setAnalyzeResult"),
-      "streaming path must call setAnalyzeResult when event.fallback is true",
-    );
-  });
-
-  it("handleAnalyzeStreaming schedules auto-retry when SSE complete has providerRetryAfterMs", () => {
-    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
-    const fnEnd = streamingFn.indexOf("\n  async function", 1);
-    const fnBody = streamingFn.slice(0, fnEnd > 0 ? fnEnd : 3000);
-    assert.ok(
-      fnBody.includes("scheduleAutoRetry") && fnBody.includes("event.providerRetryAfterMs"),
-      "streaming path must call scheduleAutoRetry using event.providerRetryAfterMs",
-    );
-  });
-
-  it("handleAnalyzeStreaming does NOT call window.location.reload for fallback results", () => {
-    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
-    const fnEnd = streamingFn.indexOf("\n  async function", 1);
-    const fnBody = streamingFn.slice(0, fnEnd > 0 ? fnEnd : 3000);
-    // The reload must be conditional — only for non-fallback results
-    const reloadLine = fnBody.indexOf("window.location.reload()");
-    const streamedFallbackCheck = fnBody.indexOf("streamedFallback");
-    assert.ok(
-      reloadLine > 0 && streamedFallbackCheck > 0 && streamedFallbackCheck < reloadLine,
-      "window.location.reload() must be guarded by !streamedFallback so state is preserved for the countdown banner",
-    );
-  });
 });

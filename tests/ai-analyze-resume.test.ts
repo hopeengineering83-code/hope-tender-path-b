@@ -254,42 +254,6 @@ describe("tender GET route — surfaces latestPartialAnalysisJob", () => {
   });
 });
 
-// ── Frontend: initialises continueJobId from server data ─────────────────────
-
-describe("tender-detail.tsx — resume banner and continueJobId wiring", () => {
-  it("continueJobId initialised from latestPartialAnalysisJob on mount", () => {
-    const uiSource = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
-    assert.ok(
-      uiSource.includes("latestPartialAnalysisJob?.jobId"),
-      "tender-detail must initialise continueJobId from initial.latestPartialAnalysisJob?.jobId",
-    );
-  });
-
-  it("resume banner is shown when continueJobId is set and latestPartialAnalysisJob exists", () => {
-    const uiSource = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
-    assert.ok(
-      uiSource.includes("Previous analysis was interrupted"),
-      "tender-detail must render a resume banner when analysis was interrupted",
-    );
-  });
-
-  it("button label changes to Resume AI Analyze when continueJobId is set", () => {
-    const uiSource = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
-    assert.ok(
-      uiSource.includes("Resume AI Analyze"),
-      "AI Analyze button must say 'Resume AI Analyze' when a partial job is available",
-    );
-  });
-
-  it("start-fresh button clears continueJobId", () => {
-    const uiSource = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
-    assert.ok(
-      uiSource.includes("Start fresh") && uiSource.includes("setContinueJobId(null)"),
-      "tender-detail must provide a 'Start fresh' option that clears the resume state",
-    );
-  });
-});
-
 // ── Behavioral: successful chunk reuse ───────────────────────────────────────
 
 describe("analyzeWithAI — successful chunks are reused, not re-executed", () => {
