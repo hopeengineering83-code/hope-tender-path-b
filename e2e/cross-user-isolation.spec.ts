@@ -139,13 +139,15 @@ test.describe("authenticated cross-user isolation", () => {
     const secondaryState = JSON.parse(fs.readFileSync(secondaryStatePath, "utf8"));
     const cookies = secondaryState.cookies || [];
     if (cookies.length > 0) {
+      // Use url instead of domain for addCookies — this ensures the cookie
+      // is set for the correct origin regardless of domain matching rules.
+      const origin = new URL(baseURL);
       await page.context().addCookies(cookies.map((c: any) => ({
         name: c.name,
         value: c.value,
-        domain: c.domain,
-        path: c.path || "/",
+        url: origin.origin,
         httpOnly: c.httpOnly ?? true,
-        secure: false, // loopback HTTP
+        secure: false,
         sameSite: "Lax" as const,
       })));
     }
