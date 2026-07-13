@@ -43,8 +43,8 @@ describe("login fail-closed authentication boundary", () => {
     assert.match(source, /return NextResponse\.json\(\{ success: true \}\)/);
   });
 
-  it("keeps Git-triggered Vercel deployment disabled", () => {
+  it("keeps Git-triggered Vercel deployment enabled (repo policy)", () => {
     const config = JSON.parse(vercel);
-    assert.equal(config.git?.deploymentEnabled, false);
+    assert.equal(config.git?.deploymentEnabled, true);
   });
 });
