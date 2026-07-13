@@ -74,6 +74,23 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** Parallel Lane C product/output-quality micro-fix after scoped audit; remote `origin` was not configured, so latest main/open PR diffs could not be fetched from this checkout. Active Workboard was reviewed and this change avoids Lane A/B locked backend, AI, provenance, classifier, queue, auth, DB lifecycle, export-gate, and release-audit files.
+- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
+- **Ownership matrix:** `app/dashboard/company/page.tsx` Company Vault document row actions — production workflow Company Vault upload/evidence selection; open PR ownership not visible from this checkout; Lane A none expected; Lane B none expected; Lane C owns user-facing destructive-action clarity, keyboard discoverability, and touch targets; conflict risk low; allowed action: isolated frontend-only fix. `tests/company-vault-document-actions-a11y.test.ts` — Lane C behavioral/a11y regression coverage; conflict risk low; allowed action: new test. `operator_handoff.md` — required session log; shared coordination file; allowed action: append-only newest entry.
+- **Audit 1 (workflow truth):** Confirmed P1 Company Vault destructive action gap: document rows allowed one-click delete with no document-specific warning, optimistic removal even on failed DELETE, and no duplicate-click guard. Reproduction: open Company Vault Documents tab, hover any row, activate delete. Expected: confirm consequence, block duplicate mutation, and keep row if backend/network fails. Actual: immediate DELETE then local row removal. Evidence no known active lane overlap: Active Workboard locked backend/export/readiness files, not Company Vault page actions.
+- **Audit 2 (accessibility/responsive):** Confirmed P1 keyboard/mobile gap: document row actions were `opacity-0` until hover, so keyboard users could tab to invisible controls and touch users had very small targets. Expected: focus-visible controls, focus indicators, and phone/tablet-friendly target size. Actual: hover-only visual reveal and tiny icon buttons.
+- **Audit 3 (document/output):** No document-output code was changed; backend/document generator ownership remains with Lane A. Acceptance requirement for Lane A: run representative DOCX/PDF/ZIP structural and rendered-page checks before RC because this local environment has no authenticated seeded workflow or output fixtures.
+- **Rejected findings / deferred:** Full role journey, browser matrix, large-file upload, rendered DOCX/PDF/ZIP, and open-PR diff verification could not be completed without configured remote/open PR refs and authenticated seeded data. No backend-owned blocker was modified.
+- **Scope / files changed:** `app/dashboard/company/page.tsx`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (4/4); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `npm test -- tests/company-vault-document-actions-a11y.test.ts` WARN/FAIL because repo runner ignored the file filter and entered broader DB integration tests, stopping at existing `RUN_DB_INTEGRATION=true` requirement for `tests/ai-promotion-evidence-persistence.test.ts`.
+- **Patch artifact:** `parallel-product-output-quality.patch`.
+- **Known risks / assumptions:** `origin` is missing in this checkout, so open PR ownership could not be verified beyond local handoff/workboard. No screenshots were captured because the app was not run with authenticated seed data.
+- **Next action:** Lane A should apply the patch to the release-candidate branch, run authenticated Playwright/a11y matrix plus document-output validation, and decide whether any backend-owned acceptance requirements remain.
+- **Merge status:** not reviewed.
+
+
 ### 2026-07-11 UTC — Claude Code (Fable 5)
 
 - **Mode:** audit remediation, re-scoped twice to track fast-moving main: #1058 landed the canonical byte-integrity system (superseding #1050's approach — dropped from this PR), then #1057/#1061 fixed main's tsc break, the stale-gate tests, and the zip-finalization test (dropped from this PR as duplicates). PR #1059 now carries ONLY work that remains unique on latest main (3ae480e).

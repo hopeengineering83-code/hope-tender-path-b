@@ -93,6 +93,7 @@ export default function CompanyPage() {
   const [dragOver, setDragOver] = useState(false);
   const [searchDoc, setSearchDoc] = useState("");
   const [filterCat, setFilterCat] = useState("ALL");
+  const [deletingDocId, setDeletingDocId] = useState<string|null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -249,9 +250,29 @@ export default function CompanyPage() {
     }
   }, [docCategory]);
 
-  async function deleteDoc(id: string) {
-    await fetch(`/api/company/documents/${id}`, { method:"DELETE" });
-    setDocs(d => d.filter(x => x.id!==id));
+  async function deleteDoc(doc: CompanyDoc) {
+    if (deletingDocId) return;
+    const confirmed = window.confirm(
+      `Delete "${doc.originalFileName}" from the Company Vault?
+
+This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit.`
+    );
+    if (!confirmed) return;
+
+    setDeletingDocId(doc.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/documents/${doc.id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that Company Vault document. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setDocs(d => d.filter(x => x.id!==doc.id));
+    } catch {
+      setError("Network interruption while deleting the Company Vault document. Please retry when your connection is stable.");
+    } finally {
+      setDeletingDocId(null);
+    }
   }
 
   async function reextractDoc(id: string) {
@@ -614,10 +635,10 @@ export default function CompanyPage() {
                       {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
-                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
-                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
-                    <button onClick={()=>deleteDoc(doc.id)} aria-label={`Delete ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
+                  <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">↺</button>
+                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 min-w-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">↓</a>
+                    <button onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "…" : "✕"}</button>
                   </div>
                 </div>
               </div>
