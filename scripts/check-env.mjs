@@ -136,7 +136,12 @@ const OPERATIONAL_WARNINGS = [
   },
 ];
 
-const PRODUCTION_REQUIRED = [];
+const PRODUCTION_REQUIRED = [
+  {
+    name: "AI_JOBS_WORKER_SECRET",
+    description: "Shared secret the AI job worker uses to authenticate to the cron drainer. Without it (or CRON_SECRET), the worker queue cannot be drained by Vercel Cron in production. Production preflight fails when no valid worker/cron authentication method exists.",
+  },
+];
 
 // VERCEL=1 is set on ALL Vercel builds (preview + production) — do NOT use it alone.
 // Only VERCEL_ENV==="production" means an actual production deployment.
@@ -254,15 +259,18 @@ for (const spec of OPERATIONAL_WARNINGS) {
 
 for (const spec of PRODUCTION_REQUIRED) {
   const value = process.env[spec.name];
-  if (isProd && !value) {
+  // AI_JOBS_WORKER_SECRET is satisfied if either it OR CRON_SECRET is set
+  // (both authenticate the AI job cron drainer).
+  const hasAlternative = spec.name === "AI_JOBS_WORKER_SECRET" && process.env.CRON_SECRET;
+  if (isProd && !value && !hasAlternative) {
     errors.push(`  ✗ ${spec.name}: ${spec.description} [PRODUCTION REQUIRED]`);
     continue;
   }
-  if (!value) {
-    warnings.push(`  ⚠  ${spec.name}: Not set. AI extraction will be disabled — all records will be REGEX_DRAFT only.`);
+  if (!value && !hasAlternative) {
+    warnings.push(`  ⚠  ${spec.name}: Not set. ${spec.description}`);
     continue;
   }
-  if (spec.validate) {
+  if (spec.validate && value) {
     const err = spec.validate(value);
     if (err) {
       if (isProd) errors.push(`  ✗ ${spec.name}: ${err} [PRODUCTION REQUIRED]`);

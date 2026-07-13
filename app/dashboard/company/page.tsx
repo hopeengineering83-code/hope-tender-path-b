@@ -256,10 +256,17 @@ export default function CompanyPage() {
     } finally { setDeletingFinancialId(null); }
   }
 
-  async function loadDocs() {
-    const r = await fetch("/api/company/documents");
-    const d = await r.json() as { items?: CompanyDoc[] };
-    setDocs(d.items ?? []);
+  async function loadDocs(): Promise<boolean> {
+    try {
+      const r = await fetch("/api/company/documents");
+      if (!r.ok) return false;
+      const d = await r.json() as { items?: CompanyDoc[] };
+      if (!d || !Array.isArray(d.items)) return false;
+      setDocs(d.items);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   useEffect(() => {
@@ -336,7 +343,13 @@ export default function CompanyPage() {
         if (res.status === 404 || code === "NOT_FOUND") {
           // Idempotent: document was already deleted (or never existed). Reload
           // the authoritative list so the UI matches the server state.
-          await loadDocs();
+          const refreshed = await loadDocs();
+          if (!refreshed) {
+            // Deletion succeeded on the server but we can't confirm the list
+            // state. Tell the user separately — deletion succeeded, refresh failed.
+            setDocs(d => d.filter(x => x.id !== doc.id));
+            setError("The document was deleted, but the document list could not be refreshed. Please refresh the page to see the current list.");
+          }
           setConfirmingDeleteDocId(null);
           return;
         }
@@ -352,8 +365,14 @@ export default function CompanyPage() {
           // 502: deletion is pending a safe retry. The row is marked
           // PENDING_DELETE on the server. Reload the authoritative list so
           // the pending row cannot retain broken Download or Re-extract actions.
-          await loadDocs();
+          const refreshed = await loadDocs();
           setConfirmingDeleteDocId(null);
+          if (!refreshed) {
+            // Even if refresh fails, the server has marked the row as
+            // PENDING_DELETE. Optimistically disable the row's actions so
+            // the user can't click Download/Re-extract on a pending-delete doc.
+            setDocs(d => d.map(x => x.id === doc.id ? { ...x, aiExtractionStatus: "PENDING_DELETE" } : x));
+          }
           setError("Document deletion is in progress but has not completed yet. The document has been marked for pending deletion and its download/re-extract actions are disabled. It will be removed automatically when storage cleanup completes.");
           return;
         }
@@ -364,8 +383,14 @@ export default function CompanyPage() {
       }
       // Success: server confirmed deletion. Reload the authoritative list
       // (do NOT optimistically remove — the server is the source of truth).
-      await loadDocs();
+      const refreshed = await loadDocs();
       setConfirmingDeleteDocId(null);
+      if (!refreshed) {
+        // Deletion succeeded but list refresh failed. Tell the user clearly
+        // that deletion worked — the list is just stale.
+        setDocs(d => d.filter(x => x.id !== doc.id));
+        setError("The document was deleted successfully, but the document list could not be refreshed. Please refresh the page to see the updated list.");
+      }
     } catch {
       setError("Network interruption while deleting the Company Vault document. Please retry when your connection is stable.");
     } finally {
