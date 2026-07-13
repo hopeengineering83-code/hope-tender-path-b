@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
@@ -93,22 +93,32 @@ export default function CompanyPage() {
   const [dragOver, setDragOver] = useState(false);
   const [searchDoc, setSearchDoc] = useState("");
   const [filterCat, setFilterCat] = useState("ALL");
+  const [deletingDocId, setDeletingDocId] = useState<string|null>(null);
+  const [confirmingDeleteDocId, setConfirmingDeleteDocId] = useState<string|null>(null);
+  const [reextractingDocId, setReextractingDocId] = useState<string|null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const deleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const confirmDeleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   // Expert state
   const [expertForm, setExpertForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [expertSaving, setExpertSaving] = useState(false);
   const [editExpert, setEditExpert] = useState<Expert|null>(null);
+  const [expertEditSaving, setExpertEditSaving] = useState(false);
   const [expertEditForm, setExpertEditForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [deletingExpertId, setDeletingExpertId] = useState<string|null>(null);
+  const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
 
   // Project state
   const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+  const projectFormRef = useRef<HTMLFormElement>(null);
   const [projectSaving, setProjectSaving] = useState(false);
   const [editProject, setEditProject] = useState<Project|null>(null);
+  const [projectEditSaving, setProjectEditSaving] = useState(false);
   const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
+  const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
@@ -129,6 +139,9 @@ export default function CompanyPage() {
   const [deletingComplianceId, setDeletingComplianceId] = useState<string|null>(null);
   const [deletingLegalId, setDeletingLegalId] = useState<string|null>(null);
   const [deletingFinancialId, setDeletingFinancialId] = useState<string|null>(null);
+  const [confirmingDeleteComplianceId, setConfirmingDeleteComplianceId] = useState<string|null>(null);
+  const [confirmingDeleteLegalId, setConfirmingDeleteLegalId] = useState<string|null>(null);
+  const [confirmingDeleteFinancialId, setConfirmingDeleteFinancialId] = useState<string|null>(null);
   const [complianceSubTab, setComplianceSubTab] = useState<"compliance"|"legal"|"financial">("compliance");
   const [showAllExperts, setShowAllExperts] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
@@ -159,7 +172,10 @@ export default function CompanyPage() {
     setComplianceSaving(true);
     try {
       const res = await fetch("/api/company/compliance-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(complianceForm) });
-      if (res.ok) { setComplianceForm({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" }); void loadComplianceData(); }
+      if (!res.ok) { setError("We could not add that compliance record. Please check the required fields and try again."); return; }
+      setComplianceForm({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" }); await loadComplianceData();
+    } catch {
+      setError("Network interruption while adding the compliance record. Please retry when your connection is stable.");
     } finally { setComplianceSaving(false); }
   }
 
@@ -169,7 +185,10 @@ export default function CompanyPage() {
     setLegalSaving(true);
     try {
       const res = await fetch("/api/company/legal-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(legalForm) });
-      if (res.ok) { setLegalForm({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" }); void loadComplianceData(); }
+      if (!res.ok) { setError("We could not add that legal record. Please check the required fields and try again."); return; }
+      setLegalForm({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" }); await loadComplianceData();
+    } catch {
+      setError("Network interruption while adding the legal record. Please retry when your connection is stable.");
     } finally { setLegalSaving(false); }
   }
 
@@ -179,26 +198,62 @@ export default function CompanyPage() {
     setFinancialSaving(true);
     try {
       const res = await fetch("/api/company/financial-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...financialForm, fiscalYear: Number(financialForm.fiscalYear), amount: financialForm.amount ? Number(financialForm.amount) : null }) });
-      if (res.ok) { setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); void loadComplianceData(); }
+      if (!res.ok) { setError("We could not add that financial record. Please check the required fields and try again."); return; }
+      setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); await loadComplianceData();
+    } catch {
+      setError("Network interruption while adding the financial record. Please retry when your connection is stable.");
     } finally { setFinancialSaving(false); }
   }
 
   async function deleteComplianceRecord(id: string) {
+    if (deletingComplianceId) return;
     setDeletingComplianceId(id);
-    try { await fetch(`/api/company/compliance-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
-    finally { setDeletingComplianceId(null); }
+    setError("");
+    try {
+      const res = await fetch(`/api/company/compliance-records?id=${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that compliance record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setConfirmingDeleteComplianceId(null);
+      await loadComplianceData();
+    } catch {
+      setError("Network interruption while deleting the compliance record. Please retry when your connection is stable.");
+    } finally { setDeletingComplianceId(null); }
   }
 
   async function deleteLegalRecord(id: string) {
+    if (deletingLegalId) return;
     setDeletingLegalId(id);
-    try { await fetch(`/api/company/legal-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
-    finally { setDeletingLegalId(null); }
+    setError("");
+    try {
+      const res = await fetch(`/api/company/legal-records?id=${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that legal record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setConfirmingDeleteLegalId(null);
+      await loadComplianceData();
+    } catch {
+      setError("Network interruption while deleting the legal record. Please retry when your connection is stable.");
+    } finally { setDeletingLegalId(null); }
   }
 
   async function deleteFinancialRecord(id: string) {
+    if (deletingFinancialId) return;
     setDeletingFinancialId(id);
-    try { await fetch(`/api/company/financial-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
-    finally { setDeletingFinancialId(null); }
+    setError("");
+    try {
+      const res = await fetch(`/api/company/financial-records?id=${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that financial record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setConfirmingDeleteFinancialId(null);
+      await loadComplianceData();
+    } catch {
+      setError("Network interruption while deleting the financial record. Please retry when your connection is stable.");
+    } finally { setDeletingFinancialId(null); }
   }
 
   async function loadDocs() {
@@ -244,31 +299,78 @@ export default function CompanyPage() {
           await loadDocs();
         }
       } catch {
-        setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network error" } : x));
+        setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network interruption — please retry" } : x));
       }
     }
   }, [docCategory]);
 
-  async function deleteDoc(id: string) {
-    await fetch(`/api/company/documents/${id}`, { method:"DELETE" });
-    setDocs(d => d.filter(x => x.id!==id));
+  function openDeleteConfirmation(docId: string) {
+    setConfirmingDeleteDocId(docId);
+    setError("");
   }
 
-  async function reextractDoc(id: string) {
-    await fetch(`/api/company/documents/${id}`, { method:"POST" });
-    await loadDocs();
+  function cancelDeleteConfirmation(docId: string) {
+    setConfirmingDeleteDocId(null);
+    requestAnimationFrame(() => deleteButtonRefs.current[docId]?.focus());
+  }
+
+  function onDeleteConfirmationKeyDown(event: React.KeyboardEvent<HTMLDivElement>, docId: string) {
+    if (event.key !== "Escape" || deletingDocId === docId) return;
+    event.preventDefault();
+    cancelDeleteConfirmation(docId);
+  }
+
+  async function deleteDoc(doc: CompanyDoc) {
+    if (deletingDocId) return;
+
+    setDeletingDocId(doc.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/documents/${doc.id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that Company Vault document. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setDocs(d => d.filter(x => x.id!==doc.id));
+      setConfirmingDeleteDocId(null);
+    } catch {
+      setError("Network interruption while deleting the Company Vault document. Please retry when your connection is stable.");
+    } finally {
+      setDeletingDocId(null);
+    }
+  }
+
+  async function reextractDoc(doc: CompanyDoc) {
+    if (reextractingDocId) return;
+    setReextractingDocId(doc.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/documents/${doc.id}`, { method:"POST" });
+      if (!res.ok) {
+        setError("We could not re-extract text from that Company Vault document. Please retry, or upload a clearer source file if the problem continues.");
+        return;
+      }
+      await loadDocs();
+    } catch {
+      setError("Network interruption while re-extracting the Company Vault document. Please retry when your connection is stable.");
+    } finally {
+      setReextractingDocId(null);
+    }
   }
 
   async function reimportAll() {
     setReimporting(true); setReimportResult(null);
     try {
       const res = await fetch("/api/company/reimport", { method:"POST" });
+      if (!res.ok) { setError("We could not re-import Company Vault documents. Please retry, or re-extract the specific failed document first."); return; }
       const data = await res.json() as { expertsCreated?:number; projectsCreated?:number; docsProcessed?:number };
       setReimportResult({ expertsCreated: data.expertsCreated ?? 0, projectsCreated: data.projectsCreated ?? 0, docsProcessed: data.docsProcessed ?? 0 });
       await loadDocs();
       // Refresh experts/projects in company state
       const c = await fetch("/api/company").then(r=>r.json()) as Company;
       setCompany(prev => ({ ...prev, experts: c.experts ?? [], projects: c.projects ?? [] }));
+    } catch {
+      setError("Network interruption while re-importing Company Vault documents. Please retry when your connection is stable.");
     } finally {
       setReimporting(false);
     }
@@ -281,26 +383,33 @@ export default function CompanyPage() {
         method:"PUT", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({ ...company, serviceLines:serviceLinesTxt, sectors:sectorsTxt }),
       });
-      if (!res.ok) { setError("Failed to save"); return; }
+      if (!res.ok) { setError("We could not save the Company Profile. Please check the required fields and try again."); return; }
       const updated = await res.json() as Company;
       setCompany({ ...empty, ...updated });
       setServiceLinesTxt((updated.serviceLines||[]).join(", "));
       setSectorsTxt((updated.sectors||[]).join(", "));
       setSuccess(true); setTimeout(() => setSuccess(false), 3000);
-    } catch { setError("Network error"); } finally { setSaving(false); }
+    } catch { setError("Network interruption while saving the Company Profile. Please retry when your connection is stable."); } finally { setSaving(false); }
   }
 
   async function addExpert(e: React.FormEvent) {
-    e.preventDefault(); setExpertSaving(true);
-    const res = await fetch("/api/company/experts", {
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertForm),
-    });
-    if (res.ok) {
+    e.preventDefault();
+    if (expertSaving) return;
+    setExpertSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/company/experts", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertForm),
+      });
+      if (!res.ok) { setError("We could not add that expert record. Please check the required fields and try again."); return; }
       const expert = await res.json() as Expert;
       setCompany(c => ({ ...c, experts:[expert, ...(c.experts||[])] }));
       setExpertForm({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
+    } catch {
+      setError("Network interruption while adding the expert record. Please retry when your connection is stable.");
+    } finally {
+      setExpertSaving(false);
     }
-    setExpertSaving(false);
   }
 
   function startEditExpert(ex: Expert) {
@@ -313,36 +422,61 @@ export default function CompanyPage() {
   }
 
   async function saveEditExpert() {
-    if (!editExpert) return;
-    const res = await fetch(`/api/company/experts/${editExpert.id}`, {
-      method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertEditForm),
-    });
-    if (res.ok) {
+    if (!editExpert || expertEditSaving) return;
+    setExpertEditSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/experts/${editExpert.id}`, {
+        method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(expertEditForm),
+      });
+      if (!res.ok) { setError("We could not save that expert record. Please check the required fields and try again."); return; }
       const updated = await res.json() as Expert;
       setCompany(c => ({ ...c, experts:(c.experts||[]).map(x => x.id===editExpert.id ? updated : x) }));
       setEditExpert(null);
+    } catch {
+      setError("Network interruption while saving the expert record. Please retry when your connection is stable.");
+    } finally {
+      setExpertEditSaving(false);
     }
   }
 
   async function deleteExpert(id: string) {
-    if (!confirm("Delete this expert?")) return;
+    if (deletingExpertId) return;
     setDeletingExpertId(id);
-    const res = await fetch(`/api/company/experts/${id}`, { method:"DELETE" });
-    if (res.ok) setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
-    setDeletingExpertId(null);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/experts/${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that expert record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
+      setConfirmingDeleteExpertId(null);
+    } catch {
+      setError("Network interruption while deleting the expert record. Please retry when your connection is stable.");
+    } finally {
+      setDeletingExpertId(null);
+    }
   }
 
   async function addProject(e: React.FormEvent) {
-    e.preventDefault(); setProjectSaving(true);
-    const res = await fetch("/api/company/projects", {
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectForm),
-    });
-    if (res.ok) {
+    e.preventDefault();
+    if (projectSaving) return;
+    setProjectSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/company/projects", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectForm),
+      });
+      if (!res.ok) { setError("We could not add that project record. Please check the required fields and try again."); return; }
       const project = await res.json() as Project;
       setCompany(c => ({ ...c, projects:[project, ...(c.projects||[])] }));
       setProjectForm({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+    } catch {
+      setError("Network interruption while adding the project record. Please retry when your connection is stable.");
+    } finally {
+      setProjectSaving(false);
     }
-    setProjectSaving(false);
   }
 
   function startEditProject(p: Project) {
@@ -355,24 +489,47 @@ export default function CompanyPage() {
   }
 
   async function saveEditProject() {
-    if (!editProject) return;
-    const res = await fetch(`/api/company/projects/${editProject.id}`, {
-      method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectEditForm),
-    });
-    if (res.ok) {
+    if (!editProject || projectEditSaving) return;
+    setProjectEditSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/projects/${editProject.id}`, {
+        method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(projectEditForm),
+      });
+      if (!res.ok) { setError("We could not save that project record. Please check the required fields and try again."); return; }
       const updated = await res.json() as Project;
       setCompany(c => ({ ...c, projects:(c.projects||[]).map(x => x.id===editProject.id ? updated : x) }));
       setEditProject(null);
+    } catch {
+      setError("Network interruption while saving the project record. Please retry when your connection is stable.");
+    } finally {
+      setProjectEditSaving(false);
     }
   }
 
   async function deleteProject(id: string) {
-    if (!confirm("Delete this project?")) return;
+    if (deletingProjectId) return;
     setDeletingProjectId(id);
-    const res = await fetch(`/api/company/projects/${id}`, { method:"DELETE" });
-    if (res.ok) setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
-    setDeletingProjectId(null);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/projects/${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that project record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
+      setConfirmingDeleteProjectId(null);
+    } catch {
+      setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
+    } finally {
+      setDeletingProjectId(null);
+    }
   }
+
+  useEffect(() => {
+    if (!confirmingDeleteDocId) return;
+    requestAnimationFrame(() => confirmDeleteButtonRefs.current[confirmingDeleteDocId]?.focus());
+  }, [confirmingDeleteDocId]);
 
   const filteredDocs = docs.filter(d => {
     const ms = !searchDoc || d.originalFileName.toLowerCase().includes(searchDoc.toLowerCase());
@@ -394,7 +551,7 @@ export default function CompanyPage() {
     (p.sector ?? "").toLowerCase().includes(searchProject.toLowerCase())
   );
 
-  if (loading) return <div className="text-sm text-slate-400 py-16 text-center">Loading…</div>;
+  if (loading) return <div role="status" aria-live="polite" className="text-sm text-slate-400 py-16 text-center">Loading Company Vault…</div>;
 
   const TABS: { id: Tab; label: string; count?: number }[] = [
     { id:"profile", label:"Company Profile" },
@@ -495,7 +652,7 @@ export default function CompanyPage() {
         ))}
       </div>
 
-      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {error && <div role="alert" aria-live="assertive" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
 
       {/* Profile Tab */}
@@ -553,7 +710,7 @@ export default function CompanyPage() {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <h2 className="font-semibold text-slate-900">Document Library</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · All types extracted fully</p>
+              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Review each file before using it as tender evidence</p>
             </div>
             <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
@@ -580,7 +737,7 @@ export default function CompanyPage() {
             <p className="mt-1 text-xs text-slate-400">PDF · DOCX · XLSX · Images · and more · Up to 10 MB</p>
           </div>
           {uploadQueue.length>0 && (
-            <div className="space-y-1.5">
+            <div role="status" aria-live="polite" aria-label="Upload progress" className="space-y-1.5">
               {uploadQueue.slice(0,6).map((item,i) => (
                 <div key={i} className={`rounded-lg border px-3 py-2 text-xs flex items-center justify-between gap-2 ${item.status==="done"?"border-green-200 bg-green-50":item.status==="error"?"border-red-200 bg-red-50":item.status==="uploading"?"border-blue-200 bg-blue-50":"border-slate-200"}`}>
                   <span className="truncate font-medium">{item.file.name}</span>
@@ -614,12 +771,22 @@ export default function CompanyPage() {
                       {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
-                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
-                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
-                    <button onClick={()=>deleteDoc(doc.id)} aria-label={`Delete ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
+                  <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                    <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-slate-200" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
+                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
+                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                   </div>
                 </div>
+                {confirmingDeleteDocId===doc.id && (
+                  <div id={`delete-confirm-${doc.id}`} role="region" aria-labelledby={`delete-confirm-title-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} onKeyDown={(event)=>onDeleteConfirmationKeyDown(event, doc.id)} className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+                    <p id={`delete-confirm-title-${doc.id}`} className="font-medium">Delete this Company Vault document?</p>
+                    <p id={`delete-confirm-help-${doc.id}`} className="mt-1 text-red-800">This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit. Press Escape to cancel.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button ref={(node)=>{ if (node) confirmDeleteButtonRefs.current[doc.id]=node; else delete confirmDeleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
+                      <button type="button" onClick={()=>cancelDeleteConfirmation(doc.id)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -686,18 +853,32 @@ export default function CompanyPage() {
                 </thead>
                 <tbody className="divide-y">
                   {(showAllExperts ? filteredExperts : filteredExperts.slice(0, ROWS_PREVIEW)).map(ex => (
-                    <tr key={ex.id} className="hover:bg-slate-50">
-                      <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell text-xs">{(ex.disciplines||[]).slice(0,3).join(", ")||"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
-                      <td className="px-5 py-3 text-right">
-                        <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                        <button onClick={()=>deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
-                          {deletingExpertId===ex.id?"…":"Delete"}
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={ex.id}>
+                      <tr className="hover:bg-slate-50">
+                        <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell text-xs">{(ex.disciplines||[]).slice(0,3).join(", ")||"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
+                        <td className="px-5 py-3 text-right">
+                          <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
+                          <button type="button" onClick={()=>setConfirmingDeleteExpertId(ex.id)} disabled={deletingExpertId!==null} aria-expanded={confirmingDeleteExpertId===ex.id} aria-controls={`expert-delete-confirm-${ex.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+                            {deletingExpertId===ex.id?"Deleting…":"Delete"}
+                          </button>
+                        </td>
+                      </tr>
+                      {confirmingDeleteExpertId===ex.id && (
+                        <tr id={`expert-delete-confirm-${ex.id}`} className="bg-red-50 text-xs text-red-900">
+                          <td colSpan={5} className="px-5 py-3">
+                            <p className="font-medium">Delete expert record for {ex.fullName}?</p>
+                            <p className="mt-1 text-red-800">This removes the expert from future evidence selection. Tender documents that already referenced this expert are not changed automatically.</p>
+                            <div className="mt-2 flex justify-end gap-2">
+                              <button type="button" onClick={()=>void deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingExpertId===ex.id?"Deleting…":"Yes, delete expert"}</button>
+                              <button type="button" onClick={()=>setConfirmingDeleteExpertId(null)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -719,7 +900,7 @@ export default function CompanyPage() {
         <div className="space-y-6">
           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
             <h2 className="font-semibold text-slate-900 mb-4">Add Project</h2>
-            <form onSubmit={addProject} className="space-y-3">
+            <form ref={projectFormRef} onSubmit={addProject} className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <input value={projectForm.name} onChange={e=>setProjectForm({...projectForm,name:e.target.value})} placeholder="Project name *" className="rounded-lg border px-3 py-2 text-sm" />
                 <input value={projectForm.clientName} onChange={e=>setProjectForm({...projectForm,clientName:e.target.value})} placeholder="Client name" className="rounded-lg border px-3 py-2 text-sm" />
@@ -755,7 +936,7 @@ export default function CompanyPage() {
                 <h3 className="text-sm font-semibold text-slate-700 mb-1">No projects in your portfolio</h3>
                 <p className="text-xs text-slate-400 max-w-xs mb-4">Add completed projects as references. They&apos;ll be matched to tender requirements.</p>
                 <button
-                  onClick={() => document.querySelector<HTMLFormElement>("form")?.scrollIntoView({ behavior: "smooth" })}
+                  onClick={() => projectFormRef.current?.scrollIntoView({ block: "start" })}
                   className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
                 >
                   Add your first project
@@ -777,18 +958,32 @@ export default function CompanyPage() {
                 </thead>
                 <tbody className="divide-y">
                   {(showAllProjects ? filteredProjects : filteredProjects.slice(0, ROWS_PREVIEW)).map(p => (
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.sector??"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
-                      <td className="px-5 py-3 text-right">
-                        <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                        <button onClick={()=>deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
-                          {deletingProjectId===p.id?"…":"Delete"}
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={p.id}>
+                      <tr className="hover:bg-slate-50">
+                        <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.sector??"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
+                        <td className="px-5 py-3 text-right">
+                          <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
+                          <button type="button" onClick={()=>setConfirmingDeleteProjectId(p.id)} disabled={deletingProjectId!==null} aria-expanded={confirmingDeleteProjectId===p.id} aria-controls={`project-delete-confirm-${p.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+                            {deletingProjectId===p.id?"Deleting…":"Delete"}
+                          </button>
+                        </td>
+                      </tr>
+                      {confirmingDeleteProjectId===p.id && (
+                        <tr id={`project-delete-confirm-${p.id}`} className="bg-red-50 text-xs text-red-900">
+                          <td colSpan={5} className="px-5 py-3">
+                            <p className="font-medium">Delete project record {p.name}?</p>
+                            <p className="mt-1 text-red-800">This removes the project from future evidence matching. Tender documents that already referenced this project are not changed automatically.</p>
+                            <div className="mt-2 flex justify-end gap-2">
+                              <button type="button" onClick={()=>void deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingProjectId===p.id?"Deleting…":"Yes, delete project"}</button>
+                              <button type="button" onClick={()=>setConfirmingDeleteProjectId(null)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -818,7 +1013,7 @@ export default function CompanyPage() {
             ))}
           </div>
 
-          {complianceLoading && <p className="text-sm text-slate-400">Loading…</p>}
+          {complianceLoading && <p role="status" aria-live="polite" className="text-sm text-slate-400">Loading compliance records…</p>}
 
           {/* Compliance Records */}
           {complianceSubTab==="compliance" && (
@@ -853,14 +1048,19 @@ export default function CompanyPage() {
                     </thead>
                     <tbody className="divide-y">
                       {(showAllCompliance ? complianceRecords : complianceRecords.slice(0, ROWS_PREVIEW)).map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-2 text-xs text-slate-500">{r.complianceType}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
-                          <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"…":"Delete"}</button></td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-xs text-slate-500">{r.complianceType}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
+                            <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteComplianceId(r.id)} disabled={deletingComplianceId!==null} aria-expanded={confirmingDeleteComplianceId===r.id} aria-controls={`compliance-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Delete"}</button></td>
+                          </tr>
+                          {confirmingDeleteComplianceId===r.id && (
+                            <tr id={`compliance-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={6} className="px-4 py-3"><p className="font-medium">Delete compliance record {r.title}?</p><p className="mt-1 text-red-800">This removes the credential from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Yes, delete compliance record"}</button><button type="button" onClick={()=>setConfirmingDeleteComplianceId(null)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -914,14 +1114,19 @@ export default function CompanyPage() {
                     </thead>
                     <tbody className="divide-y">
                       {(showAllLegal ? legalRecords : legalRecords.slice(0, ROWS_PREVIEW)).map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
-                          <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"…":"Delete"}</button></td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
+                            <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteLegalId(r.id)} disabled={deletingLegalId!==null} aria-expanded={confirmingDeleteLegalId===r.id} aria-controls={`legal-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Delete"}</button></td>
+                          </tr>
+                          {confirmingDeleteLegalId===r.id && (
+                            <tr id={`legal-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={6} className="px-4 py-3"><p className="font-medium">Delete legal record {r.title}?</p><p className="mt-1 text-red-800">This removes the credential from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Yes, delete legal record"}</button><button type="button" onClick={()=>setConfirmingDeleteLegalId(null)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -967,13 +1172,18 @@ export default function CompanyPage() {
                     </thead>
                     <tbody className="divide-y">
                       {(showAllFinancial ? financialRecords : financialRecords.slice(0, ROWS_PREVIEW)).map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"…":"Delete"}</button></td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteFinancialId(r.id)} disabled={deletingFinancialId!==null} aria-expanded={confirmingDeleteFinancialId===r.id} aria-controls={`financial-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Delete"}</button></td>
+                          </tr>
+                          {confirmingDeleteFinancialId===r.id && (
+                            <tr id={`financial-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={5} className="px-4 py-3"><p className="font-medium">Delete financial record for {r.fiscalYear}?</p><p className="mt-1 text-red-800">This removes the financial evidence from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Yes, delete financial record"}</button><button type="button" onClick={()=>setConfirmingDeleteFinancialId(null)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -995,9 +1205,9 @@ export default function CompanyPage() {
       {/* Edit Expert Modal */}
       {editExpert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={()=>setEditExpert(null)} />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-slate-900 mb-4">Edit Expert</h2>
+          <div className="absolute inset-0 bg-black/40" onClick={()=>{ if (!expertEditSaving) setEditExpert(null); }} />
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-expert-title" className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 id="edit-expert-title" className="text-lg font-semibold text-slate-900 mb-4">Edit Expert</h2>
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <input value={expertEditForm.fullName} onChange={e=>setExpertEditForm({...expertEditForm,fullName:e.target.value})} placeholder="Full name *" className="rounded-lg border px-3 py-2 text-sm" />
@@ -1010,8 +1220,8 @@ export default function CompanyPage() {
               <textarea value={expertEditForm.profile} onChange={e=>setExpertEditForm({...expertEditForm,profile:e.target.value})} rows={2} placeholder="Profile summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={saveEditExpert} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">Save</button>
-              <button onClick={()=>setEditExpert(null)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={saveEditExpert} disabled={expertEditSaving||!expertEditForm.fullName} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">{expertEditSaving?"Saving…":"Save"}</button>
+              <button onClick={()=>setEditExpert(null)} disabled={expertEditSaving} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-60">Cancel</button>
             </div>
           </div>
         </div>
@@ -1020,9 +1230,9 @@ export default function CompanyPage() {
       {/* Edit Project Modal */}
       {editProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={()=>setEditProject(null)} />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-slate-900 mb-4">Edit Project</h2>
+          <div className="absolute inset-0 bg-black/40" onClick={()=>{ if (!projectEditSaving) setEditProject(null); }} />
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-project-title" className="relative z-10 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 id="edit-project-title" className="text-lg font-semibold text-slate-900 mb-4">Edit Project</h2>
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <input value={projectEditForm.name} onChange={e=>setProjectEditForm({...projectEditForm,name:e.target.value})} placeholder="Project name *" className="rounded-lg border px-3 py-2 text-sm" />
@@ -1038,8 +1248,8 @@ export default function CompanyPage() {
               <textarea value={projectEditForm.summary} onChange={e=>setProjectEditForm({...projectEditForm,summary:e.target.value})} rows={2} placeholder="Project summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
             </div>
             <div className="flex gap-2 mt-4">
-              <button onClick={saveEditProject} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">Save</button>
-              <button onClick={()=>setEditProject(null)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={saveEditProject} disabled={projectEditSaving||!projectEditForm.name} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">{projectEditSaving?"Saving…":"Save"}</button>
+              <button onClick={()=>setEditProject(null)} disabled={projectEditSaving} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-60">Cancel</button>
             </div>
           </div>
         </div>
