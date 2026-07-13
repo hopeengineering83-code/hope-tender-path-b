@@ -48,7 +48,7 @@ describe("company batch review RBAC and explicit approval", () => {
     assert.match(projectSource, /project batch-review audit persistence failed/);
   });
 
-  it("keeps Vercel Git deployment disabled", () => {
-    assert.equal(vercel.git?.deploymentEnabled, false);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });
