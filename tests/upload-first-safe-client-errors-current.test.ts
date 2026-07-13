@@ -1,8 +1,14 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-const source = readFileSync("lib/tender-upload-first.ts", "utf8");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const rootDir = join(__dirname, "..");
+
+const source = readFileSync(join(rootDir, "lib/tender-upload-first.ts"), "utf8");
 
 describe("upload-first public error safety", () => {
   it("does not expose raw storage or extraction exception messages", () => {
