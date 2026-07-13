@@ -78,6 +78,23 @@ describe("extractClientContactTitle", () => {
   });
 });
 
+describe("extractBidBondAmount currency allowlist", () => {
+  it("does NOT capture an arbitrary 3-letter word as a currency code", () => {
+    const r = extractBidBondAmount({ files: [{ fileName: "f.pdf", extractedText: "Bid security in the amount of the 25000 shall be provided by all bidders prior to submission of their technical and financial proposals." }] });
+    assert.equal(r.found, true);
+    if (r.found) {
+      assert.equal(r.value.currency, null, "a non-currency word like 'the' must not be captured as a currency code");
+      assert.equal(r.value.amount, 25000);
+    }
+  });
+
+  it("still captures a real currency code", () => {
+    const r = extractBidBondAmount({ files: [{ fileName: "f.pdf", extractedText: "Bid security in the amount of ETB 25000 shall be provided by all bidders prior to submission of their technical and financial proposals." }] });
+    assert.equal(r.found, true);
+    if (r.found) assert.equal(r.value.currency, "ETB");
+  });
+});
+
 describe("Hard safety — extractors never invent on missing source", () => {
   for (const field of SUPPORTED_EXTRACTORS) {
     it(`${field} returns {found:false} on irrelevant tender text`, () => {

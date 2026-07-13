@@ -206,13 +206,25 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
   return pickBest(cands);
 }
 
+// Real currency codes only — with the case-insensitive /i flag below, a bare
+// [A-Z]{3} group matches ANY 3-letter word ("the", "abc", ...), not just an
+// actual currency code, and was silently captured as the bid bond's currency.
+const VALID_BID_BOND_CURRENCIES = new Set([
+  "USD", "EUR", "GBP", "AED", "SAR", "KWD", "QAR", "OMR", "EGP", "ETB", "NGN", "ZAR", "KES",
+  "UGX", "TZS", "RWF", "XOF", "XAF", "CAD", "AUD", "JPY", "CNY", "INR", "CHF", "GHS",
+]);
+
 export function extractBidBondAmount(input: ExtractorInput): ExtractedFieldOrMissing<{ amount: number; currency: string | null }> {
   const cands: ExtractedField<{ amount: number; currency: string | null }>[] = [];
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /(?:bid|proposal)\s*(?:bond|security|guarantee)\s*(?:in\s+the\s+amount\s+of|amount|of)?\s*[:\-]?\s*([A-Z]{3}|[$€£])?\s*([\d,.]+)/i.exec(text);
     if (m) {
-        cands.push({ found: true, value: { amount: parseFloat(m[2].replace(/,/g, "")), currency: m[1] ?? null }, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+        const rawCurrency = m[1] ?? null;
+        const currency = rawCurrency && rawCurrency.length === 3
+          ? (VALID_BID_BOND_CURRENCIES.has(rawCurrency.toUpperCase()) ? rawCurrency.toUpperCase() : null)
+          : rawCurrency;
+        cands.push({ found: true, value: { amount: parseFloat(m[2].replace(/,/g, "")), currency }, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
     } else {
         const m2 = /(?:bid|proposal)\s*(?:bond|security|guarantee)\s*of\s*([\d,.]+)\s*%/i.exec(text);
         if (m2) cands.push({ found: true, value: { amount: 0, currency: "PERCENT" }, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index, file?.totalPages), confidence: "MEDIUM" });
