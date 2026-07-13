@@ -51,7 +51,7 @@ describe("tender creation mutation RBAC", () => {
     assert.doesNotMatch(postRegion, /error:\s*(?:error\.message|String\(error\))/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

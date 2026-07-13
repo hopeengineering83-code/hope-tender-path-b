@@ -44,7 +44,7 @@ describe("tender diagnostic routes keep runtime failures server-side", () => {
     assert.match(advisory, /resolved: resolution !== "REOPEN"/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

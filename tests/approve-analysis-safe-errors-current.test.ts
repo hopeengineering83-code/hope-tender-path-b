@@ -35,7 +35,7 @@ describe("approve-analysis safe runtime errors", () => {
     assert.doesNotMatch(source, /requireRole\([^)]*"VIEWER"/);
   });
 
-  it("keeps Vercel Git deployments enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+  it("keeps Vercel Git deployments enabled for main (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

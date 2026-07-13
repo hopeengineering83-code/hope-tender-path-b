@@ -47,7 +47,7 @@ describe("manual requirement provenance", () => {
     assert.match(source, /sourceOrigin: isManual \? audit\?\.sourceOrigin \?\? "HUMAN_ENTERED" : "SOURCE_GROUNDED"/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

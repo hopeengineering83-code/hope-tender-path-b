@@ -41,7 +41,7 @@ describe("final-package readiness fail-closed response boundary", () => {
     assert.match(source, /Required docs count differs between plan and final package model/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

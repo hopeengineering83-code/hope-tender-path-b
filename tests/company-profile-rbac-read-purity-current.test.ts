@@ -48,7 +48,7 @@ describe("company profile RBAC and read purity", () => {
     assert.doesNotMatch(source, /error:\s*(?:error\.message|String\(error\))/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+  it("keeps Vercel Git deployment enabled for main (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });
