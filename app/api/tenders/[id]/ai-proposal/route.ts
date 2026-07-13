@@ -1,6 +1,4 @@
 import { logger } from "../../../../../lib/observability";
-import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
-import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -14,7 +12,6 @@ import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/eng
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
-import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
@@ -542,111 +539,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       void saveChunkOutput(proposalJobId, String(chunkNum), proposal).catch(() => {});
     }
 
-    // Persist the quick draft so users don't lose it on navigation.
-    // Only save on the final chunk (chunk 3) or non-chunked calls — partial
-    // chunk results are intermediate and should not be stored as documents.
-    // Minimum content guard: prevents thin AI responses (apologies, refusals,
-    // timeouts) from being stored as valid drafts. For chunked calls the final
-    // chunk (chunk 3) covers only the additional-and-declaration section group,
-    // which is legitimately short — use a lighter non-empty check so earlier
-    // chunks' substantial content is not lost.
+    // Legacy quick AI proposal is now DRAFT-ONLY.
     //
-    // Chunked-save merge: chunk 3 body may carry accumulatedProposal (chunks
-    // 1+2 stitched client-side) so the DB record holds the full proposal,
-    // not just Section D.
-    const isSubstantial =
-      chunkNum !== undefined
-        ? proposal.length > 100
-        : proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
-    // Track whether the persist was blocked by the central gate so the
-    // response can inform the client. Previously the route returned
-    // { success: true } even when the persist was skipped, leaving the UI
-    // with no indication that the proposal was NOT saved as a
-    // GeneratedDocument. The audit called this a UX gap (G5).
-    let persistBlocked = false;
-    let persistBlockerCode: string | null = null;
-    let persistBlockerDetail: string | null = null;
-    if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
-      const accumulated = typeof body.accumulatedProposal === "string" && body.accumulatedProposal.length > 200 && body.accumulatedProposal.length <= 500_000
-        ? body.accumulatedProposal
-        : null;
-      const contentToSave = accumulated ? `${accumulated}\n\n${proposal}` : proposal;
-
-      // ── Central generation readiness gate ──────────────────────────────
-      // Persisting a GENERATED GeneratedDocument is a generation act and
-      // Block on PARTIAL_EXTRACTION_AI_ANALYZED
-      if (tender.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
-        return NextResponse.json({ success: false, ok: false, error: "Cannot persist AI proposal: AI analysis ran on partial extraction. Re-extract and re-run AI Analyze.", code: "ANALYSIS_FROM_PARTIAL_EXTRACTION" }, { status: 422 });
-      }
-
-      // must pass the SAME central gate as /generate and the
-      // PROPOSAL_GENERATION background handler. Without this, the
-      // interactive AI-proposal path could create a GENERATED document
-      // on a tender whose analysis is partial/failed/regex-fallback,
-      // bypassing hash-binding, chunk-integrity, source-grounding, and
-      // submission-plan checks. Fail-closed: a blocked gate creates
-      // ZERO GeneratedDocument rows. We log but do NOT throw — the
-      // proposal text is still returned to the UI so the user can see
-      // the draft; it simply is not persisted as a GeneratedDocument
-      // until the tender is genuinely ready.
-      const centralGate = await assertTenderReadyForGenerationAndExport({
-        prisma,
-        tenderId: id,
-        userId,
-        purpose: "ai-proposal-persist",
-      });
-      if (!centralGate.ok) {
-        persistBlocked = true;
-        persistBlockerCode = centralGate.blockerCode ?? null;
-        persistBlockerDetail = centralGate.blockerDetail ?? null;
-        await logAction({
-          userId,
-          action: "AI_PROPOSAL_PERSIST_BLOCKED",
-          entityType: "Tender",
-          entityId: id,
-          description: `Quick-draft persist blocked by central gate (${centralGate.blockerCode}): ${centralGate.blockerDetail}`,
-        }).catch(() => {});
-        // Skip the persist — the proposal is still returned to the UI above.
-      } else {
-      try {
-        const quickDraftFileName = "AI-Proposal-Quick-Draft.md";
-        const quickDraftFileContent = Buffer.from(contentToSave, "utf8").toString("base64");
-        const quickDraftIntegrity = verifiedIntegrityDataFromBase64({
-          fileContent: quickDraftFileContent,
-          filename: quickDraftFileName,
-          claimedMimeType: "text/markdown",
-        });
-        await prisma.$transaction(async (tx) =>
-          withTransactionalGenerationGate({
-            prisma,
-            tx,
-            tenderId: id,
-            userId,
-            purpose: "ai-proposal-persist",
-            write: async (lockedTx) => {
-              return lockedTx.generatedDocument.create({
-          data: {
-            tenderId: id,
-            name: "AI Proposal (Quick Draft)",
-            documentType: "QUICK_DRAFT",
-            format: "MARKDOWN",
-            exactFileName: quickDraftFileName,
-            fileContent: quickDraftFileContent,
-            ...quickDraftIntegrity,
-            generationStatus: "GENERATED",
-            validationStatus: "PENDING",
-            reviewStatus: "NOT_EXPORTABLE",
-            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
-          },
-        })
-            },
-          }),
-        );;
-      } catch {
-        // Non-blocking — draft already returned to UI
-      }
-      } // end else (central gate passed)
-    }
+    // This route exists for interactive brainstorming/chunked preview only. It
+    // must not create GeneratedDocument rows, even NOT_EXPORTABLE quick drafts,
+    // because the canonical /generate route is the single persistence path for
+    // generated submission documents. Keeping this route read/return-only closes
+    // the tracked legacy monolithic proposal path without removing the UI
+    // preview experience.
+    const persistBlocked = true;
+    const persistBlockerCode = "LEGACY_AI_PROPOSAL_DRAFT_ONLY";
+    const persistBlockerDetail = "Quick AI proposal previews are not saved as GeneratedDocument rows. Use Generate Docs for the canonical persisted package.";
 
     // ── Update AiJob status ───────────────────────────────────────────────
     // Mark SUCCEEDED when the full proposal is done (chunk 3 or non-chunked).

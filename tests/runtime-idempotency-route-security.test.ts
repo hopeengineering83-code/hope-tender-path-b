@@ -425,9 +425,10 @@ describe("19. PARTIAL_EXTRACTION_AI_ANALYZED blocked on all generation/export ro
     assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "bulk-review must check PARTIAL_EXTRACTION_AI_ANALYZED");
   });
 
-  it("ai-proposal route blocks PARTIAL_EXTRACTION_AI_ANALYZED before persist", () => {
+  it("ai-proposal route is draft-only and has no persist path to bypass partial-extraction gates", () => {
     const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
-    assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "ai-proposal must check PARTIAL_EXTRACTION_AI_ANALYZED");
+    assert.doesNotMatch(src, /generatedDocument\.create/, "ai-proposal must not persist GeneratedDocument rows");
+    assert.match(src, /LEGACY_AI_PROPOSAL_DRAFT_ONLY/);
   });
 
   it("export route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {

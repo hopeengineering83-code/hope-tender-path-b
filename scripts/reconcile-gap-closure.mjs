@@ -7,7 +7,7 @@
 // consumers (policy, lib/ai.ts, health route, environment readiness) still
 // DERIVE from the catalog instead of hardcoding their own literal chains —
 // the failure mode that caused drift in the past.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -23,6 +23,10 @@ function read(path) {
   return readFileSync(path, "utf8");
 }
 
+function readOptional(path) {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
 function requireRule(label, condition) {
   if (!condition) failures.push(label);
 }
@@ -33,6 +37,7 @@ const health = read("app/api/ai/health/route.ts");
 const envReadiness = read("lib/ai-environment-readiness.ts");
 const download = read("app/api/tenders/[id]/download/route.ts");
 const self = read("scripts/reconcile-gap-closure.mjs");
+const aiProposal = readOptional("app/api/tenders/[id]/ai-proposal/route.ts");
 
 // 1. The catalog itself must match the documented canonical order exactly.
 requireRule(
@@ -77,7 +82,16 @@ requireRule("Final ZIP assembly helper is missing", download.includes("assembleF
 requireRule("Final ZIP private cache control is missing", download.includes('"Cache-Control": "private, no-store"'));
 requireRule("Final ZIP nosniff header is missing", download.includes('"X-Content-Type-Options": "nosniff"'));
 
-// 6. This reconciler must stay read-only.
+
+// 7. Legacy quick AI proposal containment. This route may return interactive
+// draft text, but persisted GeneratedDocument rows must come only from the
+// canonical /generate route or background canonical handlers.
+if (aiProposal.length > 0) {
+  requireRule("Legacy ai-proposal route reintroduced GeneratedDocument persistence", !/generatedDocument\.create/.test(aiProposal));
+  requireRule("Legacy ai-proposal route no longer advertises draft-only persistence status", aiProposal.includes("LEGACY_AI_PROPOSAL_DRAFT_ONLY"));
+}
+
+// 8. This reconciler must stay read-only.
 // We split the forbidden token names so they don't appear literally and
 // trigger a false positive when we test `self` against the pattern.
 const writeTokens = ["Sync", "appendFile", "rename", "unlink", "rm", "cp"].map((s, i) => i === 0 ? "writeFile" + s : s + "Sync");
@@ -96,6 +110,6 @@ if (failures.length > 0) {
     ok: true,
     message: "Protected gap-closure invariants verified without modifying repository files.",
     providerOrder: REQUIRED_LABELS,
-    trackedP1: "Legacy monolithic proposal paths still require migration to the canonical executor; tracked separately and not hidden by this audit.",
+    legacyProposalPath: "contained: /api/tenders/[id]/ai-proposal is draft-only and cannot create GeneratedDocument rows",
   }, null, 2));
 }

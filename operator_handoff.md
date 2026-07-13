@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** continued gap closure after repeated dissatisfaction; addressed the repo-reported tracked P1 legacy proposal path.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
+- **Scope:** Contained `/api/tenders/[id]/ai-proposal` as a draft-only preview route. It no longer imports persistence-only integrity/transactional gate helpers and no longer creates `GeneratedDocument` rows; it always returns `persistBlocked: true` with `LEGACY_AI_PROPOSAL_DRAFT_ONLY`, directing users to canonical Generate Docs for persisted submission documents. Updated central route/gate tests, partial-extraction safety tests, and the AI-proposal UX test to pin the stricter no-persistence invariant. Updated `scripts/reconcile-gap-closure.mjs` so the release audit verifies the route remains draft-only and reports the legacy proposal path as contained instead of unresolved.
+- **Files changed:** `app/api/tenders/[id]/ai-proposal/route.ts`, `scripts/reconcile-gap-closure.mjs`, `tests/central-generation-gate-coverage.test.ts`, `tests/ai-proposal-persist-blocked-ux.test.ts`, `tests/runtime-idempotency-route-security.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/reconcile-provider-order-truth.test.ts tests/central-generation-gate-coverage.test.ts tests/ai-proposal-persist-blocked-ux.test.ts tests/runtime-idempotency-route-security.test.ts` PASS (80/80); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS (now reports `legacyProposalPath: contained`); `npm run audit:workflow-state-consistency` PASS with one warning-only heuristic note for `lib/tender-next-action.ts`; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected missing optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** No `origin` remote is configured in this container, so live GitHub inline comments/open PR/CI state still cannot be fetched. No DB integration suite was run. UI callers of `/ai-proposal` should treat the route as preview-only; canonical `/generate` is the persistence path.
+- **Next action:** Push/update PR where a remote is available; run full CI and DB integration.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** follow-up after continued dissatisfaction; hardened the previous provider guidance patch for client/server import boundaries and stronger regression coverage.
 - **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
 - **Scope:** Added `lib/ai-provider-env.ts`, a browser-safe canonical provider env helper derived directly from `lib/ai-provider-catalog.cjs`, and moved operator-facing env-list consumers (including the tender detail client component) from the broader provider policy module to this helper. `lib/ai-provider-policy.ts` now re-exports the helper for compatibility while keeping provider runtime helpers separate. Added tests proving the env list matches catalog order and the client imports the browser-safe helper, not provider policy. Checked `audit:workflow-state-consistency`; remaining `lib/tender-next-action.ts` warning is heuristic-only for a pure next-action label resolver and was not changed.

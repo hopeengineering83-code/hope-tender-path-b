@@ -74,30 +74,24 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
     });
   });
 
-  // ─── Newly-guarded routes (this PR's fix) ─────────────────────────────
+  // ─── Legacy draft route containment ───────────────────────────────────
 
-  describe("ai-proposal route (NEWLY guarded)", () => {
-    it("imports the central gate", () => {
+  describe("ai-proposal route (draft-only legacy route)", () => {
+    it("does not persist GeneratedDocument rows", () => {
       const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
-      expectContains(src, /import\s*\{[^}]*assertTenderReadyForGenerationAndExport[^}]*\}\s*from\s*["'][^"']*generation-readiness-gate["']/);
+      assert.doesNotMatch(src, /generatedDocument\.create/,
+        "ai-proposal is a draft preview route and must not create GeneratedDocument rows");
+      assert.doesNotMatch(src, /withTransactionalGenerationGate/,
+        "ai-proposal must not use the transactional generation writer; canonical /generate owns persisted documents");
+      assert.doesNotMatch(src, /assertTenderReadyForGenerationAndExport/,
+        "ai-proposal must not retain the old persist gate now that it has no persist path");
     });
 
-    it("calls the gate before prisma.generatedDocument.create", () => {
+    it("surfaces a draft-only persistBlocked response", () => {
       const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
-      const gateIdx = src.indexOf("assertTenderReadyForGenerationAndExport(");
-      const createIdx = src.indexOf("generatedDocument.create");
-      assert.ok(gateIdx > -1 && createIdx > -1 && gateIdx < createIdx,
-        "ai-proposal route must call the central gate BEFORE generatedDocument.create");
-    });
-
-    it("uses a distinct purpose string for audit traceability", () => {
-      const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
-      expectContains(src, /purpose:\s*["']ai-proposal-persist["']/);
-    });
-
-    it("logs AI_PROPOSAL_PERSIST_BLOCKED when the gate blocks", () => {
-      const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
-      expectContains(src, /AI_PROPOSAL_PERSIST_BLOCKED/);
+      expectContains(src, /LEGACY_AI_PROPOSAL_DRAFT_ONLY/);
+      expectContains(src, /Quick AI proposal previews are not saved as GeneratedDocument rows/);
+      expectContains(src, /persistBlocked:\s*true/);
     });
   });
 
