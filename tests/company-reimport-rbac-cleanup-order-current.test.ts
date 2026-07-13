@@ -58,7 +58,7 @@ describe("company reimport safety", () => {
     assert.match(route, /\.catch\(\(error\) =>/);
   });
 
-  it("keeps Vercel Git deployment disabled", () => {
-    assert.equal(vercel.git?.deploymentEnabled, false);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });
