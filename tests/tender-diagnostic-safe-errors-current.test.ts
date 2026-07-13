@@ -1,10 +1,16 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-const submissionPlan = readFileSync("app/api/tenders/[id]/submission-plan/route.ts", "utf8");
-const advisory = readFileSync("app/api/tenders/[id]/advisory-resolutions/route.ts", "utf8");
-const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const rootDir = join(__dirname, "..");
+
+const submissionPlan = readFileSync(join(rootDir, "app/api/tenders/[id]/submission-plan/route.ts"), "utf8");
+const advisory = readFileSync(join(rootDir, "app/api/tenders/[id]/advisory-resolutions/route.ts"), "utf8");
+const vercel = JSON.parse(readFileSync(join(rootDir, "vercel.json"), "utf8"));
 
 function assertSafeRuntimeErrors(source: string, code: string) {
   assert.doesNotMatch(source, /sanitizeError/);
