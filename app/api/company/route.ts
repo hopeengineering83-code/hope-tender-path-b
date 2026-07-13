@@ -23,6 +23,33 @@ function keepOrNull(value: unknown): string | null {
   return text ? text : null;
 }
 
+/**
+ * Validate a date string and return a Date or null. Returns null for invalid
+ * inputs so the caller can persist null instead of an Invalid Date object.
+ * Accepts ISO 8601 strings and standard date-only formats.
+ */
+function parseDateOrNull(value: unknown): Date | null {
+  if (value === null || value === undefined) return null;
+  const text = clean(value);
+  if (!text) return null;
+  const date = new Date(text);
+  if (isNaN(date.getTime())) return null;
+  return date;
+}
+
+/**
+ * Validate a date string and return a Date or throw. Used for request-body
+ * dates that must be valid before any persistence — the caller catches and
+ * returns a stable 400.
+ */
+function parseDateOrThrow(value: unknown, fieldName: string): Date {
+  const date = parseDateOrNull(value);
+  if (!date) {
+    throw new Error(`INVALID_DATE:${fieldName}`);
+  }
+  return date;
+}
+
 function chooseIncomingOrExisting(incoming: unknown, existing: unknown): string | null {
   const incomingText = clean(incoming);
   if (incomingText) return incomingText;
@@ -167,6 +194,21 @@ export async function PUT(req: Request) {
   try {
     const body = await req.json().catch(() => null);
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+
+    // Validate setupCompletedAt BEFORE any database write. An invalid date
+    // string passed to new Date() creates an Invalid Date object that Prisma
+    // may reject at runtime, causing a 500 and leaving the company in an
+    // inconsistent state. Return a stable 400 instead.
+    if (body.setupCompletedAt !== undefined && body.setupCompletedAt !== null) {
+      const validated = parseDateOrNull(body.setupCompletedAt);
+      if (!validated) {
+        return NextResponse.json(
+          { error: "setupCompletedAt must be a valid ISO 8601 date string", code: "INVALID_DATE", field: "setupCompletedAt", requestId },
+          { status: 400 },
+        );
+      }
+    }
+
     const existing = await prisma.company.findUnique({ where: { userId: actor.id } });
 
     const company = await prisma.company.upsert({
@@ -185,7 +227,7 @@ export async function PUT(req: Request) {
         sectors: toJsonArray(body.sectors),
         profileSummary: keepOrNull(body.profileSummary),
         knowledgeMode: clean(body.knowledgeMode) || "PROFILE_FIRST",
-        setupCompletedAt: body.setupCompletedAt ? new Date(body.setupCompletedAt as string) : null,
+        setupCompletedAt: body.setupCompletedAt ? parseDateOrThrow(body.setupCompletedAt, "setupCompletedAt") : null,
         gmName: keepOrNull(body.gmName),
         gmTitle: keepOrNull(body.gmTitle),
         gmLicense: keepOrNull(body.gmLicense),
@@ -210,7 +252,7 @@ export async function PUT(req: Request) {
         sectors: toJsonArray(body.sectors, existing?.sectors),
         profileSummary: chooseIncomingOrExisting(body.profileSummary, existing?.profileSummary),
         ...(body.knowledgeMode !== undefined && { knowledgeMode: clean(body.knowledgeMode) || existing?.knowledgeMode || "PROFILE_FIRST" }),
-        ...(body.setupCompletedAt !== undefined && { setupCompletedAt: new Date(body.setupCompletedAt as string) }),
+        ...(body.setupCompletedAt !== undefined && { setupCompletedAt: body.setupCompletedAt === null ? null : parseDateOrThrow(body.setupCompletedAt, "setupCompletedAt") }),
         ...(body.gmName !== undefined && { gmName: chooseIncomingOrExisting(body.gmName, existing?.gmName) }),
         ...(body.gmTitle !== undefined && { gmTitle: chooseIncomingOrExisting(body.gmTitle, existing?.gmTitle) }),
         ...(body.gmLicense !== undefined && { gmLicense: chooseIncomingOrExisting(body.gmLicense, existing?.gmLicense) }),
