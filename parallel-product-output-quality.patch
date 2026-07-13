@@ -1,7 +1,14 @@
 diff --git a/app/dashboard/company/page.tsx b/app/dashboard/company/page.tsx
-index d3a840d6..58b92f19 100755
+index d3a840d6..c791e1fe 100755
 --- a/app/dashboard/company/page.tsx
 +++ b/app/dashboard/company/page.tsx
+@@ -1,5 +1,5 @@
+ "use client";
+-import { useEffect, useRef, useState, useCallback } from "react";
++import { Fragment, useEffect, useRef, useState, useCallback } from "react";
+ 
+ type CompanyDoc = {
+   id: string; originalFileName: string; mimeType: string; category: string;
 @@ -93,8 +93,13 @@ export default function CompanyPage() {
    const [dragOver, setDragOver] = useState(false);
    const [searchDoc, setSearchDoc] = useState("");
@@ -16,7 +23,23 @@ index d3a840d6..58b92f19 100755
  
    // Expert state
    const [expertForm, setExpertForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
-@@ -249,14 +254,58 @@ export default function CompanyPage() {
+@@ -102,6 +107,7 @@ export default function CompanyPage() {
+   const [editExpert, setEditExpert] = useState<Expert|null>(null);
+   const [expertEditForm, setExpertEditForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
+   const [deletingExpertId, setDeletingExpertId] = useState<string|null>(null);
++  const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
+ 
+   // Project state
+   const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+@@ -109,6 +115,7 @@ export default function CompanyPage() {
+   const [editProject, setEditProject] = useState<Project|null>(null);
+   const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
++  const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
+   const [reimporting, setReimporting] = useState(false);
+   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
+   const [assets, setAssets] = useState<CompanyAsset[]>([]);
+@@ -249,14 +256,58 @@ export default function CompanyPage() {
      }
    }, [docCategory]);
  
@@ -81,8 +104,57 @@ index d3a840d6..58b92f19 100755
    }
  
    async function reimportAll() {
-@@ -374,6 +423,11 @@ export default function CompanyPage() {
-     setDeletingProjectId(null);
+@@ -325,11 +376,22 @@ export default function CompanyPage() {
+   }
+ 
+   async function deleteExpert(id: string) {
+-    if (!confirm("Delete this expert?")) return;
++    if (deletingExpertId) return;
+     setDeletingExpertId(id);
+-    const res = await fetch(`/api/company/experts/${id}`, { method:"DELETE" });
+-    if (res.ok) setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
+-    setDeletingExpertId(null);
++    setError("");
++    try {
++      const res = await fetch(`/api/company/experts/${id}`, { method:"DELETE" });
++      if (!res.ok) {
++        setError("We could not delete that expert record. Please retry, or refresh to check whether it was already removed.");
++        return;
++      }
++      setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
++      setConfirmingDeleteExpertId(null);
++    } catch {
++      setError("Network interruption while deleting the expert record. Please retry when your connection is stable.");
++    } finally {
++      setDeletingExpertId(null);
++    }
+   }
+ 
+   async function addProject(e: React.FormEvent) {
+@@ -367,13 +429,29 @@ export default function CompanyPage() {
+   }
+ 
+   async function deleteProject(id: string) {
+-    if (!confirm("Delete this project?")) return;
++    if (deletingProjectId) return;
+     setDeletingProjectId(id);
+-    const res = await fetch(`/api/company/projects/${id}`, { method:"DELETE" });
+-    if (res.ok) setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
+-    setDeletingProjectId(null);
++    setError("");
++    try {
++      const res = await fetch(`/api/company/projects/${id}`, { method:"DELETE" });
++      if (!res.ok) {
++        setError("We could not delete that project record. Please retry, or refresh to check whether it was already removed.");
++        return;
++      }
++      setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
++      setConfirmingDeleteProjectId(null);
++    } catch {
++      setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
++    } finally {
++      setDeletingProjectId(null);
++    }
    }
  
 +  useEffect(() => {
@@ -93,7 +165,7 @@ index d3a840d6..58b92f19 100755
    const filteredDocs = docs.filter(d => {
      const ms = !searchDoc || d.originalFileName.toLowerCase().includes(searchDoc.toLowerCase());
      const mc = filterCat==="ALL" || d.category===filterCat;
-@@ -495,7 +549,7 @@ export default function CompanyPage() {
+@@ -495,7 +573,7 @@ export default function CompanyPage() {
          ))}
        </div>
  
@@ -102,7 +174,7 @@ index d3a840d6..58b92f19 100755
        {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
  
        {/* Profile Tab */}
-@@ -614,12 +668,22 @@ export default function CompanyPage() {
+@@ -614,12 +692,22 @@ export default function CompanyPage() {
                        {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                      </div>
                    </div>
@@ -129,14 +201,116 @@ index d3a840d6..58b92f19 100755
                </div>
              ))}
            </div>
+@@ -686,18 +774,32 @@ export default function CompanyPage() {
+                 </thead>
+                 <tbody className="divide-y">
+                   {(showAllExperts ? filteredExperts : filteredExperts.slice(0, ROWS_PREVIEW)).map(ex => (
+-                    <tr key={ex.id} className="hover:bg-slate-50">
+-                      <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
+-                      <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
+-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell text-xs">{(ex.disciplines||[]).slice(0,3).join(", ")||"-"}</td>
+-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
+-                      <td className="px-5 py-3 text-right">
+-                        <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
+-                        <button onClick={()=>deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+-                          {deletingExpertId===ex.id?"…":"Delete"}
+-                        </button>
+-                      </td>
+-                    </tr>
++                    <Fragment key={ex.id}>
++                      <tr className="hover:bg-slate-50">
++                        <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
++                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
++                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell text-xs">{(ex.disciplines||[]).slice(0,3).join(", ")||"-"}</td>
++                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
++                        <td className="px-5 py-3 text-right">
++                          <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
++                          <button type="button" onClick={()=>setConfirmingDeleteExpertId(ex.id)} disabled={deletingExpertId!==null} aria-expanded={confirmingDeleteExpertId===ex.id} aria-controls={`expert-delete-confirm-${ex.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
++                            {deletingExpertId===ex.id?"Deleting…":"Delete"}
++                          </button>
++                        </td>
++                      </tr>
++                      {confirmingDeleteExpertId===ex.id && (
++                        <tr id={`expert-delete-confirm-${ex.id}`} className="bg-red-50 text-xs text-red-900">
++                          <td colSpan={5} className="px-5 py-3">
++                            <p className="font-medium">Delete expert record for {ex.fullName}?</p>
++                            <p className="mt-1 text-red-800">This removes the expert from future evidence selection. Tender documents that already referenced this expert are not changed automatically.</p>
++                            <div className="mt-2 flex justify-end gap-2">
++                              <button type="button" onClick={()=>void deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingExpertId===ex.id?"Deleting…":"Yes, delete expert"}</button>
++                              <button type="button" onClick={()=>setConfirmingDeleteExpertId(null)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button>
++                            </div>
++                          </td>
++                        </tr>
++                      )}
++                    </Fragment>
+                   ))}
+                 </tbody>
+               </table>
+@@ -777,18 +879,32 @@ export default function CompanyPage() {
+                 </thead>
+                 <tbody className="divide-y">
+                   {(showAllProjects ? filteredProjects : filteredProjects.slice(0, ROWS_PREVIEW)).map(p => (
+-                    <tr key={p.id} className="hover:bg-slate-50">
+-                      <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
+-                      <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
+-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.sector??"-"}</td>
+-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
+-                      <td className="px-5 py-3 text-right">
+-                        <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
+-                        <button onClick={()=>deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+-                          {deletingProjectId===p.id?"…":"Delete"}
+-                        </button>
+-                      </td>
+-                    </tr>
++                    <Fragment key={p.id}>
++                      <tr className="hover:bg-slate-50">
++                        <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
++                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
++                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.sector??"-"}</td>
++                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
++                        <td className="px-5 py-3 text-right">
++                          <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
++                          <button type="button" onClick={()=>setConfirmingDeleteProjectId(p.id)} disabled={deletingProjectId!==null} aria-expanded={confirmingDeleteProjectId===p.id} aria-controls={`project-delete-confirm-${p.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
++                            {deletingProjectId===p.id?"Deleting…":"Delete"}
++                          </button>
++                        </td>
++                      </tr>
++                      {confirmingDeleteProjectId===p.id && (
++                        <tr id={`project-delete-confirm-${p.id}`} className="bg-red-50 text-xs text-red-900">
++                          <td colSpan={5} className="px-5 py-3">
++                            <p className="font-medium">Delete project record {p.name}?</p>
++                            <p className="mt-1 text-red-800">This removes the project from future evidence matching. Tender documents that already referenced this project are not changed automatically.</p>
++                            <div className="mt-2 flex justify-end gap-2">
++                              <button type="button" onClick={()=>void deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingProjectId===p.id?"Deleting…":"Yes, delete project"}</button>
++                              <button type="button" onClick={()=>setConfirmingDeleteProjectId(null)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button>
++                            </div>
++                          </td>
++                        </tr>
++                      )}
++                    </Fragment>
+                   ))}
+                 </tbody>
+               </table>
 diff --git a/operator_handoff.md b/operator_handoff.md
-index 1e7d7745..f8d0dfb7 100755
+index 1e7d7745..82b1abe5 100755
 --- a/operator_handoff.md
 +++ b/operator_handoff.md
-@@ -74,6 +74,71 @@ Never claim a fix is complete unless the stated tests passed.
+@@ -74,6 +74,83 @@ Never claim a fix is complete unless the stated tests passed.
  
  <!-- Add newest entry at the top. -->
  
++### 2026-07-13 UTC — ChatGPT (GPT-5.5)
++
++- **Mode:** Further Lane C Company Vault audit expansion, amended into latest follow-up commit to preserve the three-commit limit.
++- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
++- **Ownership recheck:** Same isolated Lane C frontend/test/handoff/patch scope. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
++- **Additional audit findings fixed:** Expert and project row deletes still used native confirm dialogs and had no safe failed-delete copy. Replaced them with in-table confirmation rows, duplicate-delete guards, fail-safe non-optimistic state updates, and safe backend/network error messages.
++- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (8/8); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
++- **Known risks / assumptions:** Same as prior entries: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
++- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
++- **Merge status:** not reviewed.
++
++
 +### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 +
 +- **Mode:** Expanded Lane C frontend audit for Company Vault document-row actions, amended into latest follow-up commit to preserve the three-commit limit.
@@ -207,10 +381,10 @@ index 1e7d7745..f8d0dfb7 100755
  - **Mode:** audit remediation, re-scoped twice to track fast-moving main: #1058 landed the canonical byte-integrity system (superseding #1050's approach — dropped from this PR), then #1057/#1061 fixed main's tsc break, the stale-gate tests, and the zip-finalization test (dropped from this PR as duplicates). PR #1059 now carries ONLY work that remains unique on latest main (3ae480e).
 diff --git a/tests/company-vault-document-actions-a11y.test.ts b/tests/company-vault-document-actions-a11y.test.ts
 new file mode 100644
-index 00000000..31449204
+index 00000000..15abaa0b
 --- /dev/null
 +++ b/tests/company-vault-document-actions-a11y.test.ts
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,88 @@
 +import { describe, it } from "node:test";
 +import assert from "node:assert/strict";
 +import { readFileSync } from "node:fs";
@@ -276,5 +450,26 @@ index 00000000..31449204
 +    assert.match(source, /We could not re-extract text from that Company Vault document/);
 +    assert.match(source, /Network interruption while re-extracting the Company Vault document/);
 +    assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
++  });
++});
++
++describe("Company Vault expert and project delete actions", () => {
++  it("uses in-page confirmations instead of native confirm dialogs for expert/project deletes", () => {
++    assert.doesNotMatch(source, /confirm\("Delete this (expert|project)\?"\)/);
++    assert.match(source, /confirmingDeleteExpertId/);
++    assert.match(source, /expert-delete-confirm-/);
++    assert.match(source, /Yes, delete expert/);
++    assert.match(source, /confirmingDeleteProjectId/);
++    assert.match(source, /project-delete-confirm-/);
++    assert.match(source, /Yes, delete project/);
++  });
++
++  it("keeps expert/project delete failures safe and non-optimistic", () => {
++    assert.match(source, /We could not delete that expert record/);
++    assert.match(source, /Network interruption while deleting the expert record/);
++    assert.match(source, /We could not delete that project record/);
++    assert.match(source, /Network interruption while deleting the project record/);
++    assert.match(source, /if \(deletingExpertId\) return/);
++    assert.match(source, /if \(deletingProjectId\) return/);
 +  });
 +});

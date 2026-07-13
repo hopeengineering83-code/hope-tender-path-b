@@ -65,3 +65,24 @@ describe("Company Vault document re-extraction action", () => {
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
   });
 });
+
+describe("Company Vault expert and project delete actions", () => {
+  it("uses in-page confirmations instead of native confirm dialogs for expert/project deletes", () => {
+    assert.doesNotMatch(source, /confirm\("Delete this (expert|project)\?"\)/);
+    assert.match(source, /confirmingDeleteExpertId/);
+    assert.match(source, /expert-delete-confirm-/);
+    assert.match(source, /Yes, delete expert/);
+    assert.match(source, /confirmingDeleteProjectId/);
+    assert.match(source, /project-delete-confirm-/);
+    assert.match(source, /Yes, delete project/);
+  });
+
+  it("keeps expert/project delete failures safe and non-optimistic", () => {
+    assert.match(source, /We could not delete that expert record/);
+    assert.match(source, /Network interruption while deleting the expert record/);
+    assert.match(source, /We could not delete that project record/);
+    assert.match(source, /Network interruption while deleting the project record/);
+    assert.match(source, /if \(deletingExpertId\) return/);
+    assert.match(source, /if \(deletingProjectId\) return/);
+  });
+});

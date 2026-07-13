@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
@@ -107,6 +107,7 @@ export default function CompanyPage() {
   const [editExpert, setEditExpert] = useState<Expert|null>(null);
   const [expertEditForm, setExpertEditForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [deletingExpertId, setDeletingExpertId] = useState<string|null>(null);
+  const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
 
   // Project state
   const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
@@ -114,6 +115,7 @@ export default function CompanyPage() {
   const [editProject, setEditProject] = useState<Project|null>(null);
   const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
+  const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
@@ -374,11 +376,22 @@ export default function CompanyPage() {
   }
 
   async function deleteExpert(id: string) {
-    if (!confirm("Delete this expert?")) return;
+    if (deletingExpertId) return;
     setDeletingExpertId(id);
-    const res = await fetch(`/api/company/experts/${id}`, { method:"DELETE" });
-    if (res.ok) setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
-    setDeletingExpertId(null);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/experts/${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that expert record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
+      setConfirmingDeleteExpertId(null);
+    } catch {
+      setError("Network interruption while deleting the expert record. Please retry when your connection is stable.");
+    } finally {
+      setDeletingExpertId(null);
+    }
   }
 
   async function addProject(e: React.FormEvent) {
@@ -416,11 +429,22 @@ export default function CompanyPage() {
   }
 
   async function deleteProject(id: string) {
-    if (!confirm("Delete this project?")) return;
+    if (deletingProjectId) return;
     setDeletingProjectId(id);
-    const res = await fetch(`/api/company/projects/${id}`, { method:"DELETE" });
-    if (res.ok) setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
-    setDeletingProjectId(null);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/projects/${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that project record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
+      setConfirmingDeleteProjectId(null);
+    } catch {
+      setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
+    } finally {
+      setDeletingProjectId(null);
+    }
   }
 
   useEffect(() => {
@@ -750,18 +774,32 @@ export default function CompanyPage() {
                 </thead>
                 <tbody className="divide-y">
                   {(showAllExperts ? filteredExperts : filteredExperts.slice(0, ROWS_PREVIEW)).map(ex => (
-                    <tr key={ex.id} className="hover:bg-slate-50">
-                      <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell text-xs">{(ex.disciplines||[]).slice(0,3).join(", ")||"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
-                      <td className="px-5 py-3 text-right">
-                        <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                        <button onClick={()=>deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
-                          {deletingExpertId===ex.id?"…":"Delete"}
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={ex.id}>
+                      <tr className="hover:bg-slate-50">
+                        <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell text-xs">{(ex.disciplines||[]).slice(0,3).join(", ")||"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
+                        <td className="px-5 py-3 text-right">
+                          <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
+                          <button type="button" onClick={()=>setConfirmingDeleteExpertId(ex.id)} disabled={deletingExpertId!==null} aria-expanded={confirmingDeleteExpertId===ex.id} aria-controls={`expert-delete-confirm-${ex.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+                            {deletingExpertId===ex.id?"Deleting…":"Delete"}
+                          </button>
+                        </td>
+                      </tr>
+                      {confirmingDeleteExpertId===ex.id && (
+                        <tr id={`expert-delete-confirm-${ex.id}`} className="bg-red-50 text-xs text-red-900">
+                          <td colSpan={5} className="px-5 py-3">
+                            <p className="font-medium">Delete expert record for {ex.fullName}?</p>
+                            <p className="mt-1 text-red-800">This removes the expert from future evidence selection. Tender documents that already referenced this expert are not changed automatically.</p>
+                            <div className="mt-2 flex justify-end gap-2">
+                              <button type="button" onClick={()=>void deleteExpert(ex.id)} disabled={deletingExpertId===ex.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingExpertId===ex.id?"Deleting…":"Yes, delete expert"}</button>
+                              <button type="button" onClick={()=>setConfirmingDeleteExpertId(null)} disabled={deletingExpertId===ex.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -841,18 +879,32 @@ export default function CompanyPage() {
                 </thead>
                 <tbody className="divide-y">
                   {(showAllProjects ? filteredProjects : filteredProjects.slice(0, ROWS_PREVIEW)).map(p => (
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.sector??"-"}</td>
-                      <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
-                      <td className="px-5 py-3 text-right">
-                        <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                        <button onClick={()=>deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
-                          {deletingProjectId===p.id?"…":"Delete"}
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={p.id}>
+                      <tr className="hover:bg-slate-50">
+                        <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.sector??"-"}</td>
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
+                        <td className="px-5 py-3 text-right">
+                          <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
+                          <button type="button" onClick={()=>setConfirmingDeleteProjectId(p.id)} disabled={deletingProjectId!==null} aria-expanded={confirmingDeleteProjectId===p.id} aria-controls={`project-delete-confirm-${p.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+                            {deletingProjectId===p.id?"Deleting…":"Delete"}
+                          </button>
+                        </td>
+                      </tr>
+                      {confirmingDeleteProjectId===p.id && (
+                        <tr id={`project-delete-confirm-${p.id}`} className="bg-red-50 text-xs text-red-900">
+                          <td colSpan={5} className="px-5 py-3">
+                            <p className="font-medium">Delete project record {p.name}?</p>
+                            <p className="mt-1 text-red-800">This removes the project from future evidence matching. Tender documents that already referenced this project are not changed automatically.</p>
+                            <div className="mt-2 flex justify-end gap-2">
+                              <button type="button" onClick={()=>void deleteProject(p.id)} disabled={deletingProjectId===p.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingProjectId===p.id?"Deleting…":"Yes, delete project"}</button>
+                              <button type="button" onClick={()=>setConfirmingDeleteProjectId(null)} disabled={deletingProjectId===p.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

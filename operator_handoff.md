@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** Further Lane C Company Vault audit expansion, amended into latest follow-up commit to preserve the three-commit limit.
+- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
+- **Ownership recheck:** Same isolated Lane C frontend/test/handoff/patch scope. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
+- **Additional audit findings fixed:** Expert and project row deletes still used native confirm dialogs and had no safe failed-delete copy. Replaced them with in-table confirmation rows, duplicate-delete guards, fail-safe non-optimistic state updates, and safe backend/network error messages.
+- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (8/8); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** Same as prior entries: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
+- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** Expanded Lane C frontend audit for Company Vault document-row actions, amended into latest follow-up commit to preserve the three-commit limit.
 - **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
 - **Ownership recheck:** Same isolated Lane C scope: `app/dashboard/company/page.tsx`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`, and regenerated patch artifact. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
