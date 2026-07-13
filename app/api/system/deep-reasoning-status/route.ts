@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/feature-flags";
-import { isAIEnabled, isClaudeEnabled, isOpenAIEnabled } from "../../../../lib/ai";
+import { isAIEnabled, isClaudeEnabled, isGeminiEnabled, isOpenAIEnabled } from "../../../../lib/ai";
+import { getSafeProviderStatus } from "../../../../lib/security/provider-status";
 import { getComprehensionCache } from "../../../../lib/engine/comprehension-cache";
 import { findStuckJobs, AI_JOB_STUCK_AFTER_MS } from "../../../../lib/ai-jobs";
 
@@ -26,9 +27,11 @@ import { findStuckJobs, AI_JOB_STUCK_AFTER_MS } from "../../../../lib/ai-jobs";
  *       },
  *     },
  *     providers: {
- *       claude: { configured: boolean, models: string[] },
- *       gemini: { configured: boolean, model: string | null },
- *       openai: { configured: boolean, model: string | null },
+ *       canonical: SafeProviderStatus[], // all registry providers in canonical order
+ *       configuredCount: number,
+ *       claude: { configured: boolean, models: string[] }, // compatibility view
+ *       gemini: { configured: boolean, model: string | null }, // compatibility view
+ *       openai: { configured: boolean, model: string | null }, // compatibility view
  *     },
  *     capabilities: {
  *       semanticComprehension: boolean,  // ON when flag + AI both set
@@ -51,8 +54,9 @@ export async function GET() {
   const enabled = isDeepReasoningEnabled();
   const toolUseGenerationFlag = isToolUseGenerationEnabled();
   const aiEnabled = isAIEnabled();
+  const providerStatus = getSafeProviderStatus();
   const claudeConfigured = isClaudeEnabled();
-  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+  const geminiConfigured = isGeminiEnabled();
   const openaiConfigured = isOpenAIEnabled();
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
 
@@ -86,6 +90,8 @@ export async function GET() {
       },
     },
     providers: {
+      canonical: providerStatus,
+      configuredCount: providerStatus.filter((provider) => provider.configured).length,
       claude: {
         configured: claudeConfigured,
         models: claudeConfigured ? claudeModels : [],

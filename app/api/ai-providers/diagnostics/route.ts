@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { buildProviderDiagnosticsSnapshot } from "../../../../lib/ai-provider-health";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../lib/ai-provider-env";
 import { selfTestAllProviders } from "../../../../lib/ai";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export async function GET(req: Request) {
     summary: anyWorking
       ? `${working.length} of ${configured.length} configured provider(s) responded OK — AI Analyze can run.`
       : configured.length === 0
-        ? "No AI provider is configured. Set at least one provider API key (e.g. ZAI_API_KEY, GROQ_API_KEY, GEMINI_API_KEY) in your environment and redeploy."
+        ? `No AI provider is configured. Set at least one provider API key (${CANONICAL_AI_PROVIDER_ENV_LIST}) in your environment and redeploy.`
         : "No configured provider responded. Every key is invalid, rate-limited, or cooling down — AI Analyze cannot run until at least one provider works.",
     perProvider: results,
   });

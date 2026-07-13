@@ -133,6 +133,8 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
 
 describe("operator-facing provider key guidance derives from canonical policy", () => {
   const aiSource = readFileSync("lib/ai.ts", "utf8");
+  const envCheckSource = readFileSync("lib/env-check.ts", "utf8");
+  const deepReasoningStatusRoute = readFileSync("app/api/system/deep-reasoning-status/route.ts", "utf8");
   const regenerateSectionRoute = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
   const adminDiagnosticsRoute = readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
   const tenderDetail = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
@@ -152,5 +154,14 @@ describe("operator-facing provider key guidance derives from canonical policy", 
   it("client tender detail imports the browser-safe env helper, not provider policy", () => {
     assert.match(tenderDetail, /from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/ai-provider-env"/);
     assert.ok(!/from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/ai-provider-policy"/.test(tenderDetail));
+  });
+
+  it("startup and deep-reasoning diagnostics no longer describe a stale Gemini-first subset", () => {
+    assert.ok(!envCheckSource.includes("Gemini →\n *     OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude"));
+    assert.ok(!envCheckSource.includes("manual diagnostics/adapters only"));
+    assert.match(envCheckSource, /ZAI_API_KEY \/ CEREBRAS_API_KEY \/ MISTRAL_API_KEY/);
+    assert.match(deepReasoningStatusRoute, /getSafeProviderStatus\(\)/);
+    assert.match(deepReasoningStatusRoute, /canonical: providerStatus/);
+    assert.ok(!/const geminiConfigured = Boolean\(process\.env\.GEMINI_API_KEY\)/.test(deepReasoningStatusRoute));
   });
 });

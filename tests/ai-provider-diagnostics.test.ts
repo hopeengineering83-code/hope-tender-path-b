@@ -12,6 +12,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { CANONICAL_AI_PROVIDER_ORDER } from "../lib/ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../lib/ai-provider-env";
 
 // Strip EVERY provider key (incl. the test-runner GEMINI placeholder) so the
 // self-test classifies all providers as unconfigured and makes ZERO outbound
@@ -76,6 +77,9 @@ describe("diagnostics endpoint", () => {
 
   it("tells the operator what to do when nothing is configured", () => {
     assert.match(route, /Set at least one provider API key/i);
+    assert.match(route, /CANONICAL_AI_PROVIDER_ENV_LIST/);
+    assert.ok(!route.includes("e.g. ZAI_API_KEY, GROQ_API_KEY, GEMINI_API_KEY"));
+    assert.ok(CANONICAL_AI_PROVIDER_ENV_LIST.includes("CEREBRAS_API_KEY"));
   });
 });
 

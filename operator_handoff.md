@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** full follow-up audit after continued dissatisfaction; focused on remaining provider-readiness drift outside the prior patch.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
+- **Scope:** Closed additional stale AI-provider guidance in operator diagnostics. `/api/ai-providers/diagnostics?live=1` now uses the canonical provider env list instead of a partial example; `/api/system/deep-reasoning-status` now exposes all canonical providers in registry order via the safe provider-status helper while retaining compatibility fields; `lib/env-check.ts` startup architecture comments now match the Z.ai-first all-provider automatic chain. Added regression coverage so these surfaces cannot drift back to the old Gemini/OpenRouter/OpenAI/Groq/DeepSeek/Anthropic subset.
+- **Files changed:** `app/api/ai-providers/diagnostics/route.ts`, `app/api/system/deep-reasoning-status/route.ts`, `lib/env-check.ts`, `tests/ai-provider-chain-policy.test.ts`, `tests/ai-provider-diagnostics.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/ai-provider-chain-policy.test.ts tests/ai-provider-diagnostics.test.ts` PASS (27/27); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS.
+- **Known risks / assumptions:** No `origin` remote is configured in this container, so live GitHub inline comments/open PR/CI state still cannot be fetched. DB integration suites were not rerun in this follow-up.
+- **Next action:** Push/update PR where a remote is available; run full CI and DB integration with fixtures.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** continued gap closure after repeated dissatisfaction; addressed the repo-reported tracked P1 legacy proposal path.
 - **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
 - **Scope:** Contained `/api/tenders/[id]/ai-proposal` as a draft-only preview route. It no longer imports persistence-only integrity/transactional gate helpers and no longer creates `GeneratedDocument` rows; it always returns `persistBlocked: true` with `LEGACY_AI_PROPOSAL_DRAFT_ONLY`, directing users to canonical Generate Docs for persisted submission documents. Updated central route/gate tests, partial-extraction safety tests, and the AI-proposal UX test to pin the stricter no-persistence invariant. Updated `scripts/reconcile-gap-closure.mjs` so the release audit verifies the route remains draft-only and reports the legacy proposal path as contained instead of unresolved.

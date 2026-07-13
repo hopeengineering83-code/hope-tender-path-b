@@ -6,12 +6,12 @@ import { logger } from "./observability";
  * a clear message rather than silently degrading.
  *
  * ARCHITECTURE: at least one automatic AI provider key is required in production:
- *   - GEMINI_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / GROQ_API_KEY /
- *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical automatic chain
- *     (single source of truth: lib/ai-provider-registry.ts) is Gemini →
- *     OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude. Z.ai,
- *     Cerebras, Mistral, and Together are manual diagnostics/adapters only and
- *     must not satisfy automatic runtime readiness.
+ *   - ZAI_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / GROQ_API_KEY /
+ *     OPENROUTER_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY /
+ *     TOGETHER_API_KEY / DEEPSEEK_API_KEY / ANTHROPIC_API_KEY.
+ *     The canonical automatic chain (single source of truth:
+ *     lib/ai-provider-catalog.cjs) is Z.ai → Cerebras → Mistral → Groq →
+ *     OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic.
  *
  * Without an automatic provider key:
  *   - Every imported expert/project is classified as REGEX_DRAFT
