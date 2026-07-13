@@ -112,6 +112,7 @@ export default function CompanyPage() {
 
   // Project state
   const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+  const projectFormRef = useRef<HTMLFormElement>(null);
   const [projectSaving, setProjectSaving] = useState(false);
   const [editProject, setEditProject] = useState<Project|null>(null);
   const [projectEditSaving, setProjectEditSaving] = useState(false);
@@ -298,7 +299,7 @@ export default function CompanyPage() {
           await loadDocs();
         }
       } catch {
-        setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network error" } : x));
+        setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network interruption — please retry" } : x));
       }
     }
   }, [docCategory]);
@@ -709,7 +710,7 @@ export default function CompanyPage() {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <h2 className="font-semibold text-slate-900">Document Library</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · All types extracted fully</p>
+              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Review each file before using it as tender evidence</p>
             </div>
             <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
@@ -899,7 +900,7 @@ export default function CompanyPage() {
         <div className="space-y-6">
           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
             <h2 className="font-semibold text-slate-900 mb-4">Add Project</h2>
-            <form onSubmit={addProject} className="space-y-3">
+            <form ref={projectFormRef} onSubmit={addProject} className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <input value={projectForm.name} onChange={e=>setProjectForm({...projectForm,name:e.target.value})} placeholder="Project name *" className="rounded-lg border px-3 py-2 text-sm" />
                 <input value={projectForm.clientName} onChange={e=>setProjectForm({...projectForm,clientName:e.target.value})} placeholder="Client name" className="rounded-lg border px-3 py-2 text-sm" />
@@ -935,7 +936,7 @@ export default function CompanyPage() {
                 <h3 className="text-sm font-semibold text-slate-700 mb-1">No projects in your portfolio</h3>
                 <p className="text-xs text-slate-400 max-w-xs mb-4">Add completed projects as references. They&apos;ll be matched to tender requirements.</p>
                 <button
-                  onClick={() => document.querySelector<HTMLFormElement>("form")?.scrollIntoView({ behavior: "smooth" })}
+                  onClick={() => projectFormRef.current?.scrollIntoView({ block: "start" })}
                   className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
                 >
                   Add your first project

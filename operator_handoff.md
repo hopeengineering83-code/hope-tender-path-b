@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** Additional Lane C Company Vault truth/reduced-motion cleanup, amended into latest follow-up commit to preserve the three-commit limit.
+- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
+- **Ownership recheck:** Same isolated Lane C frontend UX/accessibility/test/handoff/patch scope. No Lane A/B-owned backend, AI, provider ordering, provenance, classifier, auth/RBAC, queue, database lifecycle, export/document-output gate, or release-audit code changed.
+- **Additional audit findings fixed:** The Document Library header overstated that all uploaded types were fully extracted, upload network failures used terse technical copy, and the project empty-state CTA used a global `document.querySelector("form")` plus smooth scrolling that could target the wrong form and ignore reduced-motion preferences. Replaced with truth-preserving evidence guidance, clearer upload interruption copy, and a scoped project form ref with non-smooth scrolling.
+- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (16/16); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** No configured `origin`, no authenticated seed data/screenshots, no real AI-provider calls, and full browser/document-output matrix remains Lane A acceptance work.
+- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** Remaining Company Vault save/mutation cleanup, amended into latest follow-up commit to preserve the three-commit limit.
 - **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
 - **Ownership recheck:** Lane C-only frontend UX/accessibility, source-level regression tests, handoff, and patch artifact. No Lane A/B-owned backend, AI, provider ordering, provenance, classifier, auth/RBAC, queue, database lifecycle, export/document-output gate, or release-audit code changed.

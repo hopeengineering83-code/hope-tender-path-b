@@ -150,3 +150,24 @@ describe("Company Vault profile, expert, and project save failures", () => {
     assert.match(source, /projectEditSaving\?"Saving…":"Save"/);
   });
 });
+
+
+describe("Company Vault truthful guidance and reduced-motion navigation", () => {
+  it("does not claim every uploaded document is fully extracted", () => {
+    assert.doesNotMatch(source, /All types extracted fully/);
+    assert.match(source, /Review each file before using it as tender evidence/);
+  });
+
+  it("uses a scoped project form ref instead of a global querySelector smooth scroll", () => {
+    assert.match(source, /projectFormRef = useRef<HTMLFormElement>\(null\)/);
+    assert.match(source, /ref=\{projectFormRef\}/);
+    assert.match(source, /projectFormRef\.current\?\.scrollIntoView\(\{ block: "start" \}\)/);
+    assert.doesNotMatch(source, /document\.querySelector<HTMLFormElement>\("form"\)/);
+    assert.doesNotMatch(source, /behavior: "smooth"/);
+  });
+
+  it("keeps upload network failures non-technical and actionable", () => {
+    assert.match(source, /Network interruption — please retry/);
+    assert.doesNotMatch(source, /error:"Network error"/);
+  });
+});

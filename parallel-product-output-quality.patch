@@ -1,5 +1,5 @@
 diff --git a/app/dashboard/company/page.tsx b/app/dashboard/company/page.tsx
-index d3a840d6..7d842fd9 100755
+index d3a840d6..bfa43372 100755
 --- a/app/dashboard/company/page.tsx
 +++ b/app/dashboard/company/page.tsx
 @@ -1,5 +1,5 @@
@@ -9,7 +9,7 @@ index d3a840d6..7d842fd9 100755
  
  type CompanyDoc = {
    id: string; originalFileName: string; mimeType: string; category: string;
-@@ -93,22 +93,31 @@ export default function CompanyPage() {
+@@ -93,22 +93,32 @@ export default function CompanyPage() {
    const [dragOver, setDragOver] = useState(false);
    const [searchDoc, setSearchDoc] = useState("");
    const [filterCat, setFilterCat] = useState("ALL");
@@ -32,6 +32,7 @@ index d3a840d6..7d842fd9 100755
  
    // Project state
    const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
++  const projectFormRef = useRef<HTMLFormElement>(null);
    const [projectSaving, setProjectSaving] = useState(false);
    const [editProject, setEditProject] = useState<Project|null>(null);
 +  const [projectEditSaving, setProjectEditSaving] = useState(false);
@@ -41,7 +42,7 @@ index d3a840d6..7d842fd9 100755
    const [reimporting, setReimporting] = useState(false);
    const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
    const [assets, setAssets] = useState<CompanyAsset[]>([]);
-@@ -129,6 +138,9 @@ export default function CompanyPage() {
+@@ -129,6 +139,9 @@ export default function CompanyPage() {
    const [deletingComplianceId, setDeletingComplianceId] = useState<string|null>(null);
    const [deletingLegalId, setDeletingLegalId] = useState<string|null>(null);
    const [deletingFinancialId, setDeletingFinancialId] = useState<string|null>(null);
@@ -51,7 +52,7 @@ index d3a840d6..7d842fd9 100755
    const [complianceSubTab, setComplianceSubTab] = useState<"compliance"|"legal"|"financial">("compliance");
    const [showAllExperts, setShowAllExperts] = useState(false);
    const [showAllProjects, setShowAllProjects] = useState(false);
-@@ -159,7 +171,10 @@ export default function CompanyPage() {
+@@ -159,7 +172,10 @@ export default function CompanyPage() {
      setComplianceSaving(true);
      try {
        const res = await fetch("/api/company/compliance-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(complianceForm) });
@@ -63,7 +64,7 @@ index d3a840d6..7d842fd9 100755
      } finally { setComplianceSaving(false); }
    }
  
-@@ -169,7 +184,10 @@ export default function CompanyPage() {
+@@ -169,7 +185,10 @@ export default function CompanyPage() {
      setLegalSaving(true);
      try {
        const res = await fetch("/api/company/legal-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(legalForm) });
@@ -75,7 +76,7 @@ index d3a840d6..7d842fd9 100755
      } finally { setLegalSaving(false); }
    }
  
-@@ -179,26 +197,62 @@ export default function CompanyPage() {
+@@ -179,26 +198,62 @@ export default function CompanyPage() {
      setFinancialSaving(true);
      try {
        const res = await fetch("/api/company/financial-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...financialForm, fiscalYear: Number(financialForm.fiscalYear), amount: financialForm.amount ? Number(financialForm.amount) : null }) });
@@ -145,7 +146,13 @@ index d3a840d6..7d842fd9 100755
    }
  
    async function loadDocs() {
-@@ -249,26 +303,73 @@ export default function CompanyPage() {
+@@ -244,31 +299,78 @@ export default function CompanyPage() {
+           await loadDocs();
+         }
+       } catch {
+-        setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network error" } : x));
++        setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network interruption — please retry" } : x));
+       }
      }
    }, [docCategory]);
  
@@ -225,7 +232,7 @@ index d3a840d6..7d842fd9 100755
      } finally {
        setReimporting(false);
      }
-@@ -281,26 +382,33 @@ export default function CompanyPage() {
+@@ -281,26 +383,33 @@ export default function CompanyPage() {
          method:"PUT", headers:{"Content-Type":"application/json"},
          body:JSON.stringify({ ...company, serviceLines:serviceLinesTxt, sectors:sectorsTxt }),
        });
@@ -267,7 +274,7 @@ index d3a840d6..7d842fd9 100755
    }
  
    function startEditExpert(ex: Expert) {
-@@ -313,36 +421,61 @@ export default function CompanyPage() {
+@@ -313,36 +422,61 @@ export default function CompanyPage() {
    }
  
    async function saveEditExpert() {
@@ -344,7 +351,7 @@ index d3a840d6..7d842fd9 100755
    }
  
    function startEditProject(p: Project) {
-@@ -355,25 +488,48 @@ export default function CompanyPage() {
+@@ -355,25 +489,48 @@ export default function CompanyPage() {
    }
  
    async function saveEditProject() {
@@ -402,7 +409,7 @@ index d3a840d6..7d842fd9 100755
    const filteredDocs = docs.filter(d => {
      const ms = !searchDoc || d.originalFileName.toLowerCase().includes(searchDoc.toLowerCase());
      const mc = filterCat==="ALL" || d.category===filterCat;
-@@ -495,7 +651,7 @@ export default function CompanyPage() {
+@@ -495,7 +652,7 @@ export default function CompanyPage() {
          ))}
        </div>
  
@@ -411,7 +418,16 @@ index d3a840d6..7d842fd9 100755
        {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
  
        {/* Profile Tab */}
-@@ -614,12 +770,22 @@ export default function CompanyPage() {
+@@ -553,7 +710,7 @@ export default function CompanyPage() {
+           <div className="flex items-center justify-between flex-wrap gap-2">
+             <div>
+               <h2 className="font-semibold text-slate-900">Document Library</h2>
+-              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · All types extracted fully</p>
++              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Review each file before using it as tender evidence</p>
+             </div>
+             <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
+               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
+@@ -614,12 +771,22 @@ export default function CompanyPage() {
                        {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                      </div>
                    </div>
@@ -438,7 +454,7 @@ index d3a840d6..7d842fd9 100755
                </div>
              ))}
            </div>
-@@ -686,18 +852,32 @@ export default function CompanyPage() {
+@@ -686,18 +853,32 @@ export default function CompanyPage() {
                  </thead>
                  <tbody className="divide-y">
                    {(showAllExperts ? filteredExperts : filteredExperts.slice(0, ROWS_PREVIEW)).map(ex => (
@@ -483,7 +499,25 @@ index d3a840d6..7d842fd9 100755
                    ))}
                  </tbody>
                </table>
-@@ -777,18 +957,32 @@ export default function CompanyPage() {
+@@ -719,7 +900,7 @@ export default function CompanyPage() {
+         <div className="space-y-6">
+           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
+             <h2 className="font-semibold text-slate-900 mb-4">Add Project</h2>
+-            <form onSubmit={addProject} className="space-y-3">
++            <form ref={projectFormRef} onSubmit={addProject} className="space-y-3">
+               <div className="grid gap-3 md:grid-cols-2">
+                 <input value={projectForm.name} onChange={e=>setProjectForm({...projectForm,name:e.target.value})} placeholder="Project name *" className="rounded-lg border px-3 py-2 text-sm" />
+                 <input value={projectForm.clientName} onChange={e=>setProjectForm({...projectForm,clientName:e.target.value})} placeholder="Client name" className="rounded-lg border px-3 py-2 text-sm" />
+@@ -755,7 +936,7 @@ export default function CompanyPage() {
+                 <h3 className="text-sm font-semibold text-slate-700 mb-1">No projects in your portfolio</h3>
+                 <p className="text-xs text-slate-400 max-w-xs mb-4">Add completed projects as references. They&apos;ll be matched to tender requirements.</p>
+                 <button
+-                  onClick={() => document.querySelector<HTMLFormElement>("form")?.scrollIntoView({ behavior: "smooth" })}
++                  onClick={() => projectFormRef.current?.scrollIntoView({ block: "start" })}
+                   className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
+                 >
+                   Add your first project
+@@ -777,18 +958,32 @@ export default function CompanyPage() {
                  </thead>
                  <tbody className="divide-y">
                    {(showAllProjects ? filteredProjects : filteredProjects.slice(0, ROWS_PREVIEW)).map(p => (
@@ -528,7 +562,7 @@ index d3a840d6..7d842fd9 100755
                    ))}
                  </tbody>
                </table>
-@@ -853,14 +1047,19 @@ export default function CompanyPage() {
+@@ -853,14 +1048,19 @@ export default function CompanyPage() {
                      </thead>
                      <tbody className="divide-y">
                        {(showAllCompliance ? complianceRecords : complianceRecords.slice(0, ROWS_PREVIEW)).map(r => (
@@ -556,7 +590,7 @@ index d3a840d6..7d842fd9 100755
                        ))}
                      </tbody>
                    </table>
-@@ -914,14 +1113,19 @@ export default function CompanyPage() {
+@@ -914,14 +1114,19 @@ export default function CompanyPage() {
                      </thead>
                      <tbody className="divide-y">
                        {(showAllLegal ? legalRecords : legalRecords.slice(0, ROWS_PREVIEW)).map(r => (
@@ -584,7 +618,7 @@ index d3a840d6..7d842fd9 100755
                        ))}
                      </tbody>
                    </table>
-@@ -967,13 +1171,18 @@ export default function CompanyPage() {
+@@ -967,13 +1172,18 @@ export default function CompanyPage() {
                      </thead>
                      <tbody className="divide-y">
                        {(showAllFinancial ? financialRecords : financialRecords.slice(0, ROWS_PREVIEW)).map(r => (
@@ -610,7 +644,7 @@ index d3a840d6..7d842fd9 100755
                        ))}
                      </tbody>
                    </table>
-@@ -995,9 +1204,9 @@ export default function CompanyPage() {
+@@ -995,9 +1205,9 @@ export default function CompanyPage() {
        {/* Edit Expert Modal */}
        {editExpert && (
          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -623,7 +657,7 @@ index d3a840d6..7d842fd9 100755
              <div className="space-y-3">
                <div className="grid gap-3 md:grid-cols-2">
                  <input value={expertEditForm.fullName} onChange={e=>setExpertEditForm({...expertEditForm,fullName:e.target.value})} placeholder="Full name *" className="rounded-lg border px-3 py-2 text-sm" />
-@@ -1010,8 +1219,8 @@ export default function CompanyPage() {
+@@ -1010,8 +1220,8 @@ export default function CompanyPage() {
                <textarea value={expertEditForm.profile} onChange={e=>setExpertEditForm({...expertEditForm,profile:e.target.value})} rows={2} placeholder="Profile summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
              </div>
              <div className="flex gap-2 mt-4">
@@ -634,7 +668,7 @@ index d3a840d6..7d842fd9 100755
              </div>
            </div>
          </div>
-@@ -1020,9 +1229,9 @@ export default function CompanyPage() {
+@@ -1020,9 +1230,9 @@ export default function CompanyPage() {
        {/* Edit Project Modal */}
        {editProject && (
          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -647,7 +681,7 @@ index d3a840d6..7d842fd9 100755
              <div className="space-y-3">
                <div className="grid gap-3 md:grid-cols-2">
                  <input value={projectEditForm.name} onChange={e=>setProjectEditForm({...projectEditForm,name:e.target.value})} placeholder="Project name *" className="rounded-lg border px-3 py-2 text-sm" />
-@@ -1038,8 +1247,8 @@ export default function CompanyPage() {
+@@ -1038,8 +1248,8 @@ export default function CompanyPage() {
                <textarea value={projectEditForm.summary} onChange={e=>setProjectEditForm({...projectEditForm,summary:e.target.value})} rows={2} placeholder="Project summary" className="w-full rounded-lg border px-3 py-2 text-sm" />
              </div>
              <div className="flex gap-2 mt-4">
@@ -659,13 +693,25 @@ index d3a840d6..7d842fd9 100755
            </div>
          </div>
 diff --git a/operator_handoff.md b/operator_handoff.md
-index 1e7d7745..67f2adf7 100755
+index 1e7d7745..53610921 100755
 --- a/operator_handoff.md
 +++ b/operator_handoff.md
-@@ -74,6 +74,119 @@ Never claim a fix is complete unless the stated tests passed.
+@@ -74,6 +74,131 @@ Never claim a fix is complete unless the stated tests passed.
  
  <!-- Add newest entry at the top. -->
  
++### 2026-07-13 UTC — ChatGPT (GPT-5.5)
++
++- **Mode:** Additional Lane C Company Vault truth/reduced-motion cleanup, amended into latest follow-up commit to preserve the three-commit limit.
++- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
++- **Ownership recheck:** Same isolated Lane C frontend UX/accessibility/test/handoff/patch scope. No Lane A/B-owned backend, AI, provider ordering, provenance, classifier, auth/RBAC, queue, database lifecycle, export/document-output gate, or release-audit code changed.
++- **Additional audit findings fixed:** The Document Library header overstated that all uploaded types were fully extracted, upload network failures used terse technical copy, and the project empty-state CTA used a global `document.querySelector("form")` plus smooth scrolling that could target the wrong form and ignore reduced-motion preferences. Replaced with truth-preserving evidence guidance, clearer upload interruption copy, and a scoped project form ref with non-smooth scrolling.
++- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (16/16); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
++- **Known risks / assumptions:** No configured `origin`, no authenticated seed data/screenshots, no real AI-provider calls, and full browser/document-output matrix remains Lane A acceptance work.
++- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
++- **Merge status:** not reviewed.
++
++
 +### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 +
 +- **Mode:** Remaining Company Vault save/mutation cleanup, amended into latest follow-up commit to preserve the three-commit limit.
@@ -784,10 +830,10 @@ index 1e7d7745..67f2adf7 100755
  - **Mode:** audit remediation, re-scoped twice to track fast-moving main: #1058 landed the canonical byte-integrity system (superseding #1050's approach — dropped from this PR), then #1057/#1061 fixed main's tsc break, the stale-gate tests, and the zip-finalization test (dropped from this PR as duplicates). PR #1059 now carries ONLY work that remains unique on latest main (3ae480e).
 diff --git a/tests/company-vault-document-actions-a11y.test.ts b/tests/company-vault-document-actions-a11y.test.ts
 new file mode 100644
-index 00000000..c67495e2
+index 00000000..da985437
 --- /dev/null
 +++ b/tests/company-vault-document-actions-a11y.test.ts
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,173 @@
 +import { describe, it } from "node:test";
 +import assert from "node:assert/strict";
 +import { readFileSync } from "node:fs";
@@ -938,5 +984,26 @@ index 00000000..c67495e2
 +    assert.match(source, /disabled=\{projectEditSaving\|\|!projectEditForm\.name\}/);
 +    assert.match(source, /expertEditSaving\?"Saving…":"Save"/);
 +    assert.match(source, /projectEditSaving\?"Saving…":"Save"/);
++  });
++});
++
++
++describe("Company Vault truthful guidance and reduced-motion navigation", () => {
++  it("does not claim every uploaded document is fully extracted", () => {
++    assert.doesNotMatch(source, /All types extracted fully/);
++    assert.match(source, /Review each file before using it as tender evidence/);
++  });
++
++  it("uses a scoped project form ref instead of a global querySelector smooth scroll", () => {
++    assert.match(source, /projectFormRef = useRef<HTMLFormElement>\(null\)/);
++    assert.match(source, /ref=\{projectFormRef\}/);
++    assert.match(source, /projectFormRef\.current\?\.scrollIntoView\(\{ block: "start" \}\)/);
++    assert.doesNotMatch(source, /document\.querySelector<HTMLFormElement>\("form"\)/);
++    assert.doesNotMatch(source, /behavior: "smooth"/);
++  });
++
++  it("keeps upload network failures non-technical and actionable", () => {
++    assert.match(source, /Network interruption — please retry/);
++    assert.doesNotMatch(source, /error:"Network error"/);
 +  });
 +});
