@@ -25,6 +25,7 @@ import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/eng
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../../lib/ai-provider-policy";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -95,7 +96,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (!isAIEnabled()) {
-    return NextResponse.json({ error: "AI is not configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
+    return NextResponse.json({ error: `AI is not configured. Set one of: ${CANONICAL_AI_PROVIDER_ENV_LIST} to enable section regeneration.` }, { status: 503 });
   }
 
   const [tender, company] = await Promise.all([

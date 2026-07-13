@@ -5,6 +5,7 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-
 import { logAction } from "../../../../../lib/audit";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../../lib/ai-provider-policy";
 
 // Vercel route timeout — knowledge repair runs the configured AI provider chain
 // across uploaded documents. 60 = Hobby max.
@@ -86,7 +87,7 @@ async function buildDiagnostics(companyId: string) {
   const gaps: Gap[] = [];
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company profile, CVs, project references, legal records, and evidence documents." });
   if (docs.length > 0 && extractedDocuments === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text. Re-upload text PDFs or add OCR/document-intelligence support." });
-  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "Configure at least one AI provider: ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY. All 10 providers are automatic. Claude/Anthropic is emergency-only last resort." });
+  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: `Configure at least one AI provider: ${CANONICAL_AI_PROVIDER_ENV_LIST}. All 10 providers are automatic. Claude/Anthropic is emergency-only last resort.` });
 
   if (expertSourceDocuments === 0 && reviewedExperts === 0) {
     gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload or categorize CV/staff documents so expert extraction can run." });

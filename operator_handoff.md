@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** follow-up after review dissatisfaction; continued provider-readiness gap closure instead of claiming perfection.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
+- **Scope:** Fixed additional stale provider readiness surfaces left after the prior commit. Most importantly, `lib/ai.ts` had a proposal no-provider guard that manually checked configured providers and omitted Z.ai/Cerebras, so Z.ai-only or Cerebras-only deployments could still throw NO_PROVIDER_CONFIGURED after fallback attempts; it now delegates to `isAIEnabled()`. Remaining diagnostics/API copy now imports `CANONICAL_AI_PROVIDER_ENV_LIST` instead of hardcoding partial lists: AI fallback diagnostics, company knowledge AI warnings, admin diagnostics, company knowledge repair diagnostics, and regenerate-section 503 copy. Added static/runtime regression tests for these surfaces.
+- **Files changed:** `lib/ai.ts`, `lib/engine/analysis-fallback-diagnostics.ts`, `lib/company-knowledge-ai.ts`, `app/api/admin/diagnostics/route.ts`, `app/api/company/knowledge/repair/route.ts`, `app/api/tenders/[id]/regenerate-section/route.ts`, `tests/ai-provider-chain-policy.test.ts`, `tests/analysis-fallback-diagnostics.test.ts`, `tests/company-knowledge-repair-safety.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/analysis-fallback-diagnostics.test.ts tests/company-knowledge-repair-safety.test.ts tests/ai-provider-chain-policy.test.ts` PASS (26/26); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected missing optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** No `origin` remote is configured in this container, so live GitHub inline comments/open PR/CI state still cannot be fetched. No DB integration suite was run.
+- **Next action:** Push/update the PR where a remote is available; run full CI and DB integration.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** deep non-overlap app investigation; focused fix for uncovered provider-readiness drift after release audits passed.
 - **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending.
 - **Scope:** Fixed stale AI-provider configuration surfaces that omitted Z.ai/Cerebras/Together or listed providers out of canonical order. Added `CANONICAL_AI_PROVIDER_ENV_LIST` from the registry-derived policy, wired it into deep-reasoning estimates, lifecycle blockers, controls suggestions, and the tender-detail diagnostics copy, and added regression coverage proving all 10 canonical provider keys enable the deep-reasoning estimator gate and no-provider warnings advertise the canonical env list.

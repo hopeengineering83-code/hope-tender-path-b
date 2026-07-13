@@ -37,5 +37,6 @@ describe("analysis fallback diagnostics", () => {
     const line = formatFallbackDiagnosticsLine(result);
     assert.match(line, /Analysis fallback diagnostics:/);
     assert.match(line, /NO_PROVIDER_CONFIGURED/);
+    assert.match(result.nextAction, /ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY/);
   });
 });

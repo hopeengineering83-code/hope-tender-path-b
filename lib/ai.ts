@@ -2,6 +2,7 @@ import { logger } from "./observability";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "./ai-provider-policy";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt } from "./ai-trust-boundary";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
@@ -490,7 +491,7 @@ export class NoAiProviderReadyError extends Error {
     const failureDetails = params.failureDetails ?? [];
     const message = params.message ?? (
       params.errorKind === "NO_PROVIDER_CONFIGURED"
-        ? `No AI provider configured — set any of: ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY. All 10 providers are automatic.`
+        ? `No AI provider configured — set any of: ${CANONICAL_AI_PROVIDER_ENV_LIST}. All 10 providers are automatic.`
         : params.errorKind === "ALL_PROVIDERS_COOLING"
           // Preserve the AI_PROVIDERS_RATE_LIMITED prefix so legacy diagnostics
           // (lib/engine/analysis-fallback-diagnostics.ts in PR #775/#778) that
@@ -3995,15 +3996,14 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
 
   lastProposalProvider = null;
-  const configured = [isGeminiEnabled(), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
-  if (!configured.some(Boolean)) {
+  if (!isAIEnabled()) {
     throw new NoAiProviderReadyError({
       useCase: "proposal",
       providerAttempts: [],
       failureDetails: [],
       errorKind: "NO_PROVIDER_CONFIGURED",
       nextAction: "CONFIGURE_AI_KEYS",
-      message: "No AI provider configured — set any of: ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY in environment variables. All 10 providers are automatic.",
+      message: `No AI provider configured — set any of: ${CANONICAL_AI_PROVIDER_ENV_LIST} in environment variables. All 10 providers are automatic.`,
     });
   }
   throw new NoAiProviderReadyError({

@@ -119,3 +119,22 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
     }
   });
 });
+
+
+describe("operator-facing provider key guidance derives from canonical policy", () => {
+  const aiSource = readFileSync("lib/ai.ts", "utf8");
+  const regenerateSectionRoute = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
+  const adminDiagnosticsRoute = readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
+
+  it("proposal no-provider guards use isAIEnabled so Z.ai/Cerebras count as configured", () => {
+    assert.match(aiSource, /if \(!isAIEnabled\(\)\) \{/);
+    assert.ok(!/const configured = \[isGeminiEnabled\(\), isOpenAIEnabled\(\)/.test(aiSource));
+  });
+
+  it("remaining no-provider guidance imports the canonical env list instead of hardcoding a partial list", () => {
+    for (const source of [aiSource, regenerateSectionRoute, adminDiagnosticsRoute]) {
+      assert.match(source, /CANONICAL_AI_PROVIDER_ENV_LIST/);
+      assert.ok(!/OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY/.test(source));
+    }
+  });
+});

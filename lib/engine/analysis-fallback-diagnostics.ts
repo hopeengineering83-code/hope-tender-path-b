@@ -1,3 +1,5 @@
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
+
 export type AnalysisFallbackCategory =
   | "TIMEOUT"
   | "RATE_LIMIT"
@@ -105,7 +107,7 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       category: "NO_PROVIDER_CONFIGURED",
       risk: "HIGH",
       message: message || "No AI provider is configured.",
-      nextAction: "Set any AI provider key (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY) in Vercel, redeploy, then run AI Analyze. All 10 providers are automatic.",
+      nextAction: `Set any AI provider key (${CANONICAL_AI_PROVIDER_ENV_LIST}) in Vercel, redeploy, then run AI Analyze. All 10 providers are automatic.`,
       retryRecommended: false,
     };
   }
