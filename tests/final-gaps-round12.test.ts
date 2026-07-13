@@ -37,35 +37,41 @@ describe("round 12 — R1: generate-elite.ts TOCTOU fix", () => {
   });
 });
 
-describe("round 12 — O2: cleanup-old-records orphans + blob cleanup", () => {
-  const src = read("app/api/cron/cleanup-old-records/route.ts");
+describe("round 12 — O2: cleanup-old-records retryable storage cleanup", () => {
+  const route = read("app/api/cron/cleanup-old-records/route.ts");
+  const helper = read("lib/engine/retention-storage-cleanup.ts");
 
   it("deletes orphaned FallbackApprovalRecord rows", () => {
     assert.ok(
-      src.includes("fallbackApprovalRecord.deleteMany"),
+      route.includes("fallbackApprovalRecord.deleteMany"),
       "must delete FallbackApprovalRecord rows (was orphaned after AiJob delete)",
     );
   });
 
-  it("reads storagePaths BEFORE deleting TenderFile rows", () => {
-    assert.ok(
-      src.includes("filesToDelete"),
-      "must read filesToDelete before the deleteMany (was DB-only — orphans blobs)",
-    );
-    assert.ok(
-      src.includes("tenderFile.findMany"),
-      "must use findMany to read storage paths before deleteMany",
-    );
+  it("loads exact TenderFile candidates before touching storage or rows", () => {
+    assert.match(helper, /prisma\.tenderFile\.findMany\(/);
+    assert.match(helper, /deletedAt: \{ not: null, lt: args\.cutoff \}/);
+    assert.match(helper, /deletionStatus: "DELETED"/);
   });
 
-  it("cleans up blob storage after DB delete", () => {
-    assert.ok(src.includes("storage.deleteFile"), "must call storage.deleteFile for each file");
-    assert.ok(src.includes("blobsCleaned"), "must report blobsCleaned count in the response");
+  it("cleans storage before clearing claims and deleting each exact row", () => {
+    const storagePos = helper.indexOf("deleteStoredBytes(args.storage");
+    const clearPos = helper.indexOf("prisma.tenderFile.updateMany");
+    const deletePos = helper.indexOf("prisma.tenderFile.deleteMany");
+    assert.ok(storagePos >= 0 && clearPos > storagePos && deletePos > clearPos);
+    assert.match(route, /blobsCleaned: tenderFileCleanup\.blobsCleaned/);
+    assert.match(route, /tenderFileBlobFailures: tenderFileCleanup\.failures/);
   });
 
-  it("imports getStorageAdapter + logger", () => {
-    assert.ok(src.includes("getStorageAdapter"), "must import getStorageAdapter");
-    assert.ok(src.includes("import { logger }"), "must import logger for warning logs");
+  it("retains failed rows for retry and logs only the error class", () => {
+    assert.match(helper, /lastDeletionError: "RETENTION_STORAGE_OR_ROW_PURGE_FAILED"/);
+    assert.match(helper, /errorClass: error instanceof Error \? error\.constructor\.name/);
+    assert.match(route, /purgeExpiredTenderFiles\(/);
+  });
+
+  it("imports the storage adapter and logger through the canonical helper boundary", () => {
+    assert.ok(route.includes("getStorageAdapter"), "cron must obtain the storage adapter");
+    assert.ok(helper.includes('import { logger }'), "helper must log retry-safe diagnostics");
   });
 });
 

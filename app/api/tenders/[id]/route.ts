@@ -13,6 +13,7 @@ import { detectMetadataContamination } from "../../../../lib/engine/tender-metad
 import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
 import { Prisma } from "@prisma/client";
 import { executeTenderDeletion } from "../../../../lib/tender/delete-tender";
+import { processTenderStorageCleanupTask } from "../../../../lib/tender/tender-storage-cleanup-task";
 import { buildPublicReadinessEnvelope } from "../../../../lib/engine/public-readiness-envelope";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
@@ -342,49 +343,37 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     //    state should not persist after the tender is gone).
     //  - AiUsageRecord has a SetNull relation. Migration 20260628000000_add_aiusagerecord_tender_fk
     //    added the FK constraint; typed Prisma updateMany now works without raw SQL.
-    // Read storagePaths BEFORE the transaction deletes the TenderFile rows,
-    // so we can clean up blob storage AFTER the transaction commits.
-    // Without this, every tender delete silently orphans all uploaded source
-    // PDFs in Vercel Blob storage (cost leak + PII retention).
-    const filesForCleanup = await prisma.tenderFile.findMany({
-      where: { tenderId },
-      select: { storagePath: true, fileContent: true, originalFileName: true },
-    });
-
-    await prisma.$transaction(
-      async (tx) => {
-        const result = await executeTenderDeletion(tx, tenderId, correlationId);
-        // Stash generated doc paths for post-commit blob cleanup
-        for (const p of result.generatedDocPaths) {
-          (filesForCleanup as Array<{ storagePath: string | null; fileContent: string | null; originalFileName?: string; exactFileName?: string | null }>).push({
-            storagePath: p.storagePath,
-            fileContent: p.fileContent,
-            exactFileName: p.exactFileName,
-          });
-        }
-      },
+    const deletionResult = await prisma.$transaction(
+      async (tx) => executeTenderDeletion(
+        tx,
+        tenderId,
+        correlationId,
+        actor.id,
+      ),
       { timeout: 30000, isolationLevel: "Serializable" },
     );
 
-    // Best-effort blob cleanup AFTER the transaction commits — if a blob
-    // delete fails, log it but don't fail the request (the DB rows are gone).
-    // A reaper cron could retry failed deletes in the future.
-    // Cleans up BOTH source files (TenderFile) and generated docs (GeneratedDocument).
-    if (filesForCleanup.length > 0) {
-      const storage = getStorageAdapter();
-      for (const file of filesForCleanup) {
-        const sp = file.storagePath;
-        const fc = file.fileContent;
-        if (sp || fc) {
-          const fname = (file as { originalFileName?: string }).originalFileName ?? (file as { exactFileName?: string | null }).exactFileName ?? "unknown";
-          storage.deleteFile({
-            storagePath: sp,
-            fileContent: fc,
-            fileName: fname,
-          }).catch((err) => {
-            logger.warn(`[tender-delete] blob cleanup failed for ${fname}`, { tenderId, detail: err instanceof Error ? err.message : String(err) });
-          });
-        }
+    // The cleanup pointer was committed inside the deletion transaction.
+    // Attempt it immediately for responsiveness, but never lose retry state:
+    // failed objects remain in the durable AuditLog manifest for the cron.
+    let storageCleanupPending = false;
+    if (deletionResult.storageCleanupTaskId) {
+      try {
+        const cleanup = await processTenderStorageCleanupTask({
+          prisma,
+          storage: getStorageAdapter(),
+          taskId: deletionResult.storageCleanupTaskId,
+        });
+        storageCleanupPending = !cleanup.completed;
+      } catch (cleanupError) {
+        storageCleanupPending = true;
+        logger.warn("[tender-delete] immediate storage cleanup deferred", {
+          tenderId,
+          correlationId,
+          errorClass: cleanupError instanceof Error
+            ? cleanupError.constructor.name
+            : "UnknownError",
+        });
       }
     }
 
@@ -398,7 +387,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     });
 
     logger.info(`[tender-delete] Deletion complete`, { tenderId, correlationId });
-    return NextResponse.json({ success: true, correlationId });
+    return NextResponse.json({ success: true, correlationId, storageCleanupPending });
   } catch (error) {
     const errorClass =
       error instanceof Prisma.PrismaClientKnownRequestError ? `PrismaError(${error.code})` :

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 
+const INTERNAL_AUDIT_ENTITY_TYPE = "TenderStorageCleanup";
+
 export async function GET(req: Request) {
   let actor;
   try {
@@ -20,6 +22,7 @@ export async function GET(req: Request) {
 
   const where = {
     userId,
+    NOT: { entityType: INTERNAL_AUDIT_ENTITY_TYPE },
     ...(action ? { action } : {}),
     ...(entityType ? { entityType } : {}),
   };

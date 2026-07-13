@@ -11,30 +11,57 @@ export const SUPPORT_ONLY_CATEGORIES = new Set([
 ]);
 
 export async function cleanupSupportDocImportedRecords(companyId: string) {
-  const supportDocs = await prisma.companyDocument.findMany({
-    where: { companyId, category: { in: [...SUPPORT_ONLY_CATEGORIES] } },
-    select: { id: true, originalFileName: true, category: true },
+  return prisma.$transaction(async (tx) => {
+    const supportDocs = await tx.companyDocument.findMany({
+      where: { companyId, category: { in: [...SUPPORT_ONLY_CATEGORIES] } },
+      select: { id: true, originalFileName: true, category: true },
+    });
+    const supportDocIds = supportDocs.map((doc) => doc.id);
+    const supportFileNames = supportDocs
+      .map((doc) => doc.originalFileName)
+      .filter((fileName): fileName is string => Boolean(fileName));
+
+    const directExperts = supportDocIds.length > 0
+      ? await tx.expert.deleteMany({
+          where: { companyId, sourceDocumentId: { in: supportDocIds } },
+        })
+      : { count: 0 };
+    const directProjects = supportDocIds.length > 0
+      ? await tx.project.deleteMany({
+          where: { companyId, sourceDocumentId: { in: supportDocIds } },
+        })
+      : { count: 0 };
+
+    let textExperts = 0;
+    let textProjects = 0;
+    for (const fileName of supportFileNames) {
+      const [expertIds, projectIds] = await Promise.all([
+        tx.expert.findMany({
+          where: { companyId, profile: { contains: fileName, mode: "insensitive" } },
+          select: { id: true },
+        }),
+        tx.project.findMany({
+          where: { companyId, summary: { contains: fileName, mode: "insensitive" } },
+          select: { id: true },
+        }),
+      ]);
+
+      if (expertIds.length > 0) {
+        textExperts += (await tx.expert.deleteMany({
+          where: { companyId, id: { in: expertIds.map((expert) => expert.id) } },
+        })).count;
+      }
+      if (projectIds.length > 0) {
+        textProjects += (await tx.project.deleteMany({
+          where: { companyId, id: { in: projectIds.map((project) => project.id) } },
+        })).count;
+      }
+    }
+
+    return {
+      supportDocuments: supportDocs.length,
+      expertsDeleted: directExperts.count + textExperts,
+      projectsDeleted: directProjects.count + textProjects,
+    };
   });
-  const supportDocIds = supportDocs.map((d) => d.id);
-  const supportFileNames = supportDocs.map((d) => d.originalFileName).filter(Boolean);
-
-  const [directExperts, directProjects] = await Promise.all([
-    supportDocIds.length ? prisma.expert.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
-    supportDocIds.length ? prisma.project.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
-  ]);
-
-  let textExperts = 0;
-  let textProjects = 0;
-  for (const fileName of supportFileNames) {
-    const expertIds = await prisma.expert.findMany({ where: { companyId, profile: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
-    const projectIds = await prisma.project.findMany({ where: { companyId, summary: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
-    if (expertIds.length) textExperts += (await prisma.expert.deleteMany({ where: { id: { in: expertIds.map((e) => e.id) } } })).count;
-    if (projectIds.length) textProjects += (await prisma.project.deleteMany({ where: { id: { in: projectIds.map((p) => p.id) } } })).count;
-  }
-
-  return {
-    supportDocuments: supportDocs.length,
-    expertsDeleted: directExperts.count + textExperts,
-    projectsDeleted: directProjects.count + textProjects,
-  };
 }
