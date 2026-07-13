@@ -173,8 +173,11 @@ export async function POST(req: Request) {
     const company = await getCompany(actor.id);
     if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-    const body = await req.json().catch(() => ({}));
-    const force = body?.force !== false;
+    // The importer signature is importCompanyKnowledgeFromDocuments(companyId).
+    // There is no force parameter — the importer always re-derives from the
+    // current document set. Do not extract or audit a force flag that has no
+    // effect on the runtime; that would mislead operators into thinking they
+    // can control re-import behavior via the request body.
     const result = await importCompanyKnowledgeFromDocuments(company.id);
     const diagnostics = await buildDiagnostics(company.id);
 
@@ -185,7 +188,6 @@ export async function POST(req: Request) {
       entityId: company.id,
       description: `Ran company knowledge repair for ${company.name}: ${result.expertsCreated} experts and ${result.projectsCreated} projects created`,
       metadata: {
-        force,
         expertsCreated: result.expertsCreated,
         projectsCreated: result.projectsCreated,
         aiUsed: result.aiUsed,
@@ -200,7 +202,7 @@ export async function POST(req: Request) {
       });
     });
 
-    return NextResponse.json({ result: { ...result, diagnostics } });
+    return NextResponse.json({ result: { ...result, diagnostics }, requestId });
   } catch (error) {
     logger.error("company knowledge repair failed", {
       requestId,

@@ -48,6 +48,34 @@ describe("company knowledge repair mutation RBAC", () => {
     assert.doesNotMatch(postRegion, /error:\s*(?:error\.message|String\(error\))/);
   });
 
+  it("returns requestId on the success response for request correlation", () => {
+    // The success response must include requestId so operators can correlate
+    // a successful operation with its audit log and request logs.
+    // The success return is the one that contains both 'result' and 'diagnostics'.
+    const lines = postRegion.split("\n");
+    const successLine = lines.find((l) =>
+      l.includes("return NextResponse.json(") &&
+      l.includes("result:") &&
+      l.includes("diagnostics")
+    );
+    assert.ok(successLine, "must have a success response returning result + diagnostics");
+    assert.match(successLine!, /requestId/,
+      "success response must include requestId for request correlation");
+  });
+
+  it("does not extract or audit a force parameter the importer does not accept", () => {
+    // The importer signature is importCompanyKnowledgeFromDocuments(companyId).
+    // There is no force parameter. Extracting force from the request body and
+    // auditing it would mislead operators into thinking they can control
+    // re-import behavior via the request body.
+    assert.doesNotMatch(postRegion, /body\?\.force/,
+      "must not extract force from request body — importer does not accept it");
+    assert.doesNotMatch(postRegion, /force,/m,
+      "must not audit a force flag that has no runtime effect");
+    assert.doesNotMatch(postRegion, /await req\.json/,
+      "must not parse the request body at all — POST takes no body parameters");
+  });
+
   it("keeps Vercel Git deployment enabled (repo policy)", () => {
     assert.equal(vercel.git?.deploymentEnabled, true);
   });
