@@ -50,13 +50,12 @@ export async function handleSecurePasswordReset(req: Request) {
     let changedUserId: string | null = null;
 
     await prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRawUnsafe<ResetRow[]>(
-        `SELECT "id", "userId", "expiresAt", "consumedAt"
-         FROM "PasswordResetToken"
-         WHERE "tokenHash" = $1
-         FOR UPDATE`,
-        tokenHash,
-      );
+      const rows = await tx.$queryRaw<ResetRow[]>`
+        SELECT "id", "userId", "expiresAt", "consumedAt"
+        FROM "PasswordResetToken"
+        WHERE "tokenHash" = ${tokenHash}
+        FOR UPDATE
+      `;
       const row = rows[0];
       if (!row || row.consumedAt || new Date(row.expiresAt).getTime() <= Date.now()) {
         throw new Error("INVALID_RESET_TOKEN");
@@ -64,15 +63,15 @@ export async function handleSecurePasswordReset(req: Request) {
 
       changedUserId = row.userId;
       await tx.user.update({ where: { id: row.userId }, data: { passwordHash: nextHash } });
-      await tx.$executeRawUnsafe(
-        `UPDATE "PasswordResetToken" SET "consumedAt" = NOW() WHERE "id" = $1 AND "consumedAt" IS NULL`,
-        row.id,
-      );
-      await tx.$executeRawUnsafe(
-        `DELETE FROM "PasswordResetToken" WHERE "userId" = $1 AND "id" <> $2`,
-        row.userId,
-        row.id,
-      );
+      await tx.$executeRaw`
+        UPDATE "PasswordResetToken"
+        SET "consumedAt" = NOW()
+        WHERE "id" = ${row.id} AND "consumedAt" IS NULL
+      `;
+      await tx.$executeRaw`
+        DELETE FROM "PasswordResetToken"
+        WHERE "userId" = ${row.userId} AND "id" <> ${row.id}
+      `;
       await tx.session.deleteMany({ where: { userId: row.userId } });
     });
 

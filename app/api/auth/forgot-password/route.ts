@@ -54,18 +54,15 @@ export async function POST(req: Request) {
     const tokenId = randomUUID();
 
     await prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `DELETE FROM "PasswordResetToken" WHERE "userId" = $1 AND "consumedAt" IS NULL`,
-        user.id,
-      );
-      await tx.$executeRawUnsafe(
-        `INSERT INTO "PasswordResetToken" ("id", "userId", "tokenHash", "expiresAt", "createdAt")
-         VALUES ($1, $2, $3, $4, NOW())`,
-        tokenId,
-        user.id,
-        tokenHash,
-        expiresAt,
-      );
+      await tx.$executeRaw`
+        DELETE FROM "PasswordResetToken"
+        WHERE "userId" = ${user.id} AND "consumedAt" IS NULL
+      `;
+      await tx.$executeRaw`
+        INSERT INTO "PasswordResetToken"
+          ("id", "userId", "tokenHash", "expiresAt", "createdAt")
+        VALUES (${tokenId}, ${user.id}, ${tokenHash}, ${expiresAt}, NOW())
+      `;
     });
 
     const resetUrl = `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
@@ -76,7 +73,10 @@ export async function POST(req: Request) {
     });
 
     if (!delivery.delivered) {
-      await prisma.$executeRawUnsafe(`DELETE FROM "PasswordResetToken" WHERE "id" = $1`, tokenId);
+      await prisma.$executeRaw`
+        DELETE FROM "PasswordResetToken"
+        WHERE "id" = ${tokenId}
+      `;
     }
 
     await logAction({

@@ -5,58 +5,77 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { repairLoginSchema } from "../../../../lib/login-schema-repair";
-import { rateLimit, AUTH_RATE_LIMIT } from "../../../../lib/rate-limit";
-import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "../../../../lib/bootstrap-admin-policy";
-
-function safeMessage(error: unknown): string {
-  const msg = error instanceof Error ? error.message : String(error);
-  const isConnectivityError = /can't reach|connection refused|ECONNREFUSED|ETIMEDOUT|connect timeout|unable to connect|network socket/i.test(msg);
-  if (isConnectivityError) {
-    return "Database temporarily unavailable. Please wait a moment and try again.";
-  }
-  return msg
-    .replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, "postgresql://[redacted]")
-    .replace(/\bep-[a-z0-9-]+[\w.-]*/gi, "[db-host]") // Neon endpoint IDs (ep-wild-union-...)
-    .replace(/at [`'"][^`'"]*\.neon\.tech[^`'"]*[`'"]/gi, "at [db-host]")
-    .replace(/server at [`'"][^`'"]+[`'"]/gi, "server at [redacted]")
-    .replace(/Invalid `prisma\.\$\w+\(\)` invocation: */g, "")
-    .slice(0, 200);
-}
-
-/**
- * Conditionally repairs the bootstrap admin user.
- *
- * Production (NODE_ENV=production): refuses to run unless BOTH
- *   BOOTSTRAP_ADMIN_ENABLED=true AND a secure BOOTSTRAP_ADMIN_PASSWORD
- *   (≥16 chars, not in the banned-list) are configured. The literal
- *   "Admin123!" / "changeme" / "password" / "secret" defaults are
- *   rejected so a production deployment can never silently rebind
- *   the bootstrap account to a known-weak credential.
- *
- * Development / test: when the supplied password matches the configured
- *   bootstrap password, the existing row (if password is empty) gets
- *   a hash written so first-time `npm run dev` flows still work.
- */
-/** @deprecated login-time bootstrap repair is permanently disabled in lib/bootstrap-admin-policy.ts */
-async function repairBootstrapAdminIfNeeded(_email: string, _password: string) {
-  return;
-}
-
-// Use the shared getClientIp helper from lib/request-ip.ts — gates on
-// VERCEL/VERCEL_ENV/TRUST_PROXY so non-Vercel deployments don't blindly
-// trust client-supplied X-Forwarded-For headers (was unconditionally
-// trusting XFF — an attacker could rotate the header to bypass per-IP
-// login rate limiting on non-Vercel deployments).
+import {
+  rateLimit,
+  rateLimitPersistent,
+  AUTH_RATE_LIMIT,
+} from "../../../../lib/rate-limit";
 import { getClientIp } from "../../../../lib/request-ip";
+import { extractRequestId } from "../../../../lib/request-id";
+
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
+  "hope-login-dummy-password-not-a-real-credential",
+  12,
+);
+
+const INVALID_CREDENTIALS = {
+  error: "Invalid credentials",
+  code: "INVALID_CREDENTIALS",
+};
+
+function authenticationUnavailable(requestId: string) {
+  return NextResponse.json(
+    {
+      error: "Authentication is temporarily unavailable. Please try again.",
+      code: "AUTH_SERVICE_UNAVAILABLE",
+      requestId,
+    },
+    { status: 503 },
+  );
+}
+
+function tooManyAttempts(resetAt: number) {
+  const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+  return NextResponse.json(
+    {
+      error: "Too many login attempts",
+      code: "LOGIN_RATE_LIMITED",
+    },
+    {
+      status: 429,
+      headers: { "Retry-After": String(retryAfter) },
+    },
+  );
+}
+
+async function recordFailedLogin(userId: string | undefined, email: string) {
+  await logAction({
+    userId,
+    action: "LOGIN_FAILED",
+    entityType: "User",
+    entityId: userId,
+    description: `Failed login attempt for ${email}`,
+  }).catch((error) => {
+    logger.warn("[login] failed-attempt audit was not persisted", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  });
+}
 
 export async function POST(req: Request) {
+  const requestId = extractRequestId(req);
+
   try {
     let body: { email?: string; password?: string };
     try {
       body = await req.json();
     } catch {
       return NextResponse.json(
-        { error: "Invalid login request", detail: "Request body must be valid JSON." },
+        {
+          error: "Invalid login request",
+          code: "INVALID_LOGIN_REQUEST",
+          detail: "Request body must be valid JSON.",
+        },
         { status: 400 },
       );
     }
@@ -66,34 +85,64 @@ export async function POST(req: Request) {
 
     if (!email || !password) {
       return NextResponse.json(
-        { error: "Missing credentials", detail: "Enter both email and password." },
+        {
+          error: "Missing credentials",
+          code: "MISSING_CREDENTIALS",
+          detail: "Enter both email and password.",
+        },
         { status: 400 },
       );
     }
 
-    // ─── Gap 3 — login rate limiting ───────────────────────────────────
-    // Bucket key = IP + normalized email so distributed credential
-    // stuffing (one IP, many emails) gets per-IP throttled while
-    // bruteforce of a single account (one email, many IPs) also gets
-    // hit. AUTH_RATE_LIMIT defaults to 10 attempts/min/key.
-    const rlKey = `login:${getClientIp(req)}:${email}`;
-    const rl = rateLimit(rlKey, AUTH_RATE_LIMIT);
-    if (!rl.allowed) {
-      const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
-      return NextResponse.json(
-        { error: "Too many login attempts", detail: "Please wait before retrying." },
-        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    const clientIp = getClientIp(req);
+
+    // Apply separate local buckets before any database work. A combined
+    // IP+email key can be bypassed by rotating either dimension.
+    const localIpLimit = rateLimit(
+      `login:local:ip:${clientIp}`,
+      AUTH_RATE_LIMIT,
+    );
+    const localAccountLimit = rateLimit(
+      `login:local:account:${email}`,
+      AUTH_RATE_LIMIT,
+    );
+    if (!localIpLimit.allowed || !localAccountLimit.allowed) {
+      return tooManyAttempts(
+        Math.max(localIpLimit.resetAt, localAccountLimit.resetAt),
       );
     }
 
     try {
       await prismaReady;
       await repairLoginSchema(prisma);
-      await repairBootstrapAdminIfNeeded(email, password);
     } catch (error) {
-      return NextResponse.json(
-        { error: "Database is not ready", detail: safeMessage(error) },
-        { status: 503 },
+      logger.error("[login] database readiness failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      return authenticationUnavailable(requestId);
+    }
+
+    // Persistent buckets enforce the same two dimensions across serverless
+    // instances. They run only after database readiness succeeds, while the
+    // local buckets above protect the readiness path itself.
+    let persistentIpLimit;
+    let persistentAccountLimit;
+    try {
+      [persistentIpLimit, persistentAccountLimit] = await Promise.all([
+        rateLimitPersistent(`login:ip:${clientIp}`, AUTH_RATE_LIMIT),
+        rateLimitPersistent(`login:account:${email}`, AUTH_RATE_LIMIT),
+      ]);
+    } catch (error) {
+      logger.error("[login] persistent rate limiter failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      return authenticationUnavailable(requestId);
+    }
+    if (!persistentIpLimit.allowed || !persistentAccountLimit.allowed) {
+      return tooManyAttempts(
+        Math.max(persistentIpLimit.resetAt, persistentAccountLimit.resetAt),
       );
     }
 
@@ -101,51 +150,61 @@ export async function POST(req: Request) {
       where: { email },
     });
 
+    // Always perform a bcrypt comparison. Missing users and users with a
+    // missing hash use a valid dummy hash so response shape and work factor do
+    // not reveal whether the account exists or how it is configured.
+    const comparisonHash = user?.passwordHash || DUMMY_PASSWORD_HASH;
     let passwordOk = false;
-    if (user) {
-      if (!user.passwordHash) {
-        return NextResponse.json(
-          { error: "User password is not initialized", detail: "This database user exists, but has no password hash. Reset or recreate this user password." },
-          { status: 500 },
-        );
-      }
-      try {
-        passwordOk = await bcrypt.compare(password, user.passwordHash);
-      } catch (error) {
-        logger.error("Password verification failed:", { detail: safeMessage(error) });
-        return NextResponse.json(
-          { error: "Password verification failed", detail: "The stored password hash is invalid for this user. Reset or recreate the user password." },
-          { status: 500 },
-        );
-      }
+    try {
+      passwordOk = await bcrypt.compare(password, comparisonHash);
+    } catch (error) {
+      // An invalid stored hash must not expose account state. Perform the dummy
+      // comparison before returning the same generic invalid-credentials result.
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH).catch(() => false);
+      logger.error("[login] stored password hash could not be verified", {
+        requestId,
+        userId: user?.id,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      passwordOk = false;
     }
 
-    if (!user || !passwordOk) {
-      void logAction({ userId: user?.id, action: "LOGIN_FAILED", entityType: "User", entityId: user?.id, description: `Failed login attempt for ${email}` }).catch(() => {});
-      return NextResponse.json(
-        { error: "Invalid credentials", detail: "The email or password is incorrect." },
-        { status: 401 },
-      );
+    if (!user || !user.passwordHash || !passwordOk) {
+      void recordFailedLogin(user?.id, email);
+      return NextResponse.json(INVALID_CREDENTIALS, { status: 401 });
     }
 
     try {
       await createSession(user.id);
     } catch (error) {
-      return NextResponse.json(
-        { error: "Session could not be created", detail: safeMessage(error) },
-        { status: 500 },
-      );
+      logger.error("[login] session creation failed", {
+        requestId,
+        userId: user.id,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      return authenticationUnavailable(requestId);
     }
 
-    await logAction({ userId: user.id, action: "LOGIN", description: `User ${user.email} logged in` });
+    // A post-authentication audit failure must not report login failure after a
+    // valid session cookie has already been created.
+    void logAction({
+      userId: user.id,
+      action: "LOGIN",
+      description: `User ${user.email} logged in`,
+    }).catch((error) => {
+      logger.warn("[login] success audit was not persisted", {
+        requestId,
+        userId: user.id,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    const msg = safeMessage(error);
-    logger.error("Login error:", { detail: msg });
-    return NextResponse.json(
-      { error: "Login failed", detail: msg },
-      { status: 500 },
-    );
+    logger.error("[login] unexpected failure", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return authenticationUnavailable(requestId);
   }
 }
