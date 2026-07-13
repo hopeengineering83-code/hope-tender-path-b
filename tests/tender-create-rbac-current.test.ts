@@ -18,9 +18,7 @@ describe("tender creation mutation RBAC", () => {
   });
 
   it("requires ADMIN or PROPOSAL_MANAGER for POST with no session-only fallback", () => {
-    assert.match(postRegion, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
-    assert.match(postRegion, /forbiddenResponse\(\)/);
-    assert.match(postRegion, /unauthorizedResponse\(\)/);
+    assert.match(postRegion, /requireRoleOrRespond\("ADMIN", "PROPOSAL_MANAGER"\)/);
     assert.doesNotMatch(postRegion, /getSession/);
     assert.doesNotMatch(postRegion, /"REVIEWER"|"VIEWER"/);
   });

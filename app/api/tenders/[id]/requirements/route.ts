@@ -220,6 +220,10 @@ export async function GET(
   const manualAuditByRequirement = new Map<string, ManualAudit>();
   for (const row of auditRows) {
     if (!row.entityId || manualAuditByRequirement.has(row.entityId)) continue;
+    // metadata can be null per the Prisma schema. Skip rows with null metadata
+    // instead of passing null to JSON.parse (which would throw and crash the
+    // GET endpoint).
+    if (!row.metadata) continue;
     const parsed = parseManualAuditMetadata(row.metadata);
     manualAuditByRequirement.set(row.entityId, {
       ...parsed,

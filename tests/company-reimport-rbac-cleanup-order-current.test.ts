@@ -39,9 +39,18 @@ describe("company reimport safety", () => {
 
   it("keeps every cleanup query company-scoped", () => {
     const scopes = cleanup.match(/companyId/g) ?? [];
-    assert.ok(scopes.length >= 7, `expected repeated company scoping, found ${scopes.length}`);
-    assert.match(cleanup, /where: \{ companyId, sourceDocumentId:/);
-    assert.match(cleanup, /where: \{ companyId, id: \{ in:/);
+    assert.ok(scopes.length >= 4, `expected repeated company scoping, found ${scopes.length}`);
+    // Each deleteMany WHERE must include both companyId and sourceDocumentId.
+    const expertDeleteMatches = cleanup.match(/tx\.expert\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of expertDeleteMatches) {
+      assert.match(m, /companyId/, "expert deleteMany must be company-scoped");
+      assert.match(m, /sourceDocumentId:/, "expert deleteMany must use sourceDocumentId");
+    }
+    const projectDeleteMatches = cleanup.match(/tx\.project\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of projectDeleteMatches) {
+      assert.match(m, /companyId/, "project deleteMany must be company-scoped");
+      assert.match(m, /sourceDocumentId:/, "project deleteMany must use sourceDocumentId");
+    }
   });
 
   it("uses persistent throttling and stable correlated runtime errors", () => {

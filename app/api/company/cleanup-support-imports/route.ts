@@ -21,6 +21,13 @@ function isSupportOnly(category: string) {
   return SUPPORT_ONLY_CATEGORIES.has(category);
 }
 
+type AmbiguousRecord = {
+  id: string;
+  type: "EXPERT" | "PROJECT";
+  name: string;
+  reason: string;
+};
+
 type CleanupResult = {
   success: true;
   supportDocuments: Array<{ id: string; fileName: string; category: string }>;
@@ -30,6 +37,7 @@ type CleanupResult = {
   directProjectsDeleted: number;
   textMatchedExpertsDeleted: number;
   textMatchedProjectsDeleted: number;
+  ambiguousPreserved: AmbiguousRecord[];
 };
 
 export async function POST(req: Request) {
@@ -63,10 +71,11 @@ export async function POST(req: Request) {
       });
       const supportOnlyDocs = supportDocs.filter((doc) => isSupportOnly(doc.category));
       const supportDocIds = supportOnlyDocs.map((doc) => doc.id);
-      const supportFileNames = supportOnlyDocs
-        .map((doc) => doc.originalFileName)
-        .filter((fileName): fileName is string => Boolean(fileName));
 
+      // Authority: sourceDocumentId only. Filename-text matching is NOT a safe
+      // deletion authority because a legitimate Expert or Project may mention a
+      // support filename in its profile/summary without being derived from that
+      // document. Text matching would silently destroy real business data.
       const directExpertDelete = supportDocIds.length > 0
         ? await tx.expert.deleteMany({
             where: { companyId: company.id, sourceDocumentId: { in: supportDocIds } },
@@ -78,46 +87,44 @@ export async function POST(req: Request) {
           })
         : { count: 0 };
 
-      let profileExpertDeleted = 0;
-      let profileProjectDeleted = 0;
+      // Ambiguous legacy records: Experts/Projects with no sourceDocumentId
+      // (pre-provenance imports) cannot be safely attributed to support
+      // documents. Preserve them and report for manual review.
+      const ambiguousExperts = supportDocIds.length > 0
+        ? await tx.expert.findMany({
+            where: {
+              companyId: company.id,
+              sourceDocumentId: null,
+              isActive: true,
+            },
+            select: { id: true, fullName: true },
+          })
+        : [];
+      const ambiguousProjects = supportDocIds.length > 0
+        ? await tx.project.findMany({
+            where: {
+              companyId: company.id,
+              sourceDocumentId: null,
+              isActive: true,
+            },
+            select: { id: true, name: true },
+          })
+        : [];
 
-      for (const fileName of supportFileNames) {
-        const [experts, projects] = await Promise.all([
-          tx.expert.findMany({
-            where: {
-              companyId: company.id,
-              profile: { contains: fileName, mode: "insensitive" },
-            },
-            select: { id: true },
-          }),
-          tx.project.findMany({
-            where: {
-              companyId: company.id,
-              summary: { contains: fileName, mode: "insensitive" },
-            },
-            select: { id: true },
-          }),
-        ]);
-
-        if (experts.length > 0) {
-          const deleted = await tx.expert.deleteMany({
-            where: {
-              companyId: company.id,
-              id: { in: experts.map((expert) => expert.id) },
-            },
-          });
-          profileExpertDeleted += deleted.count;
-        }
-        if (projects.length > 0) {
-          const deleted = await tx.project.deleteMany({
-            where: {
-              companyId: company.id,
-              id: { in: projects.map((project) => project.id) },
-            },
-          });
-          profileProjectDeleted += deleted.count;
-        }
-      }
+      const ambiguousPreserved: AmbiguousRecord[] = [
+        ...ambiguousExperts.map((e) => ({
+          id: e.id,
+          type: "EXPERT" as const,
+          name: e.fullName,
+          reason: "No sourceDocumentId — cannot safely attribute to a support import",
+        })),
+        ...ambiguousProjects.map((p) => ({
+          id: p.id,
+          type: "PROJECT" as const,
+          name: p.name,
+          reason: "No sourceDocumentId — cannot safely attribute to a support import",
+        })),
+      ];
 
       return {
         success: true,
@@ -126,12 +133,13 @@ export async function POST(req: Request) {
           fileName: doc.originalFileName,
           category: doc.category,
         })),
-        expertsDeleted: directExpertDelete.count + profileExpertDeleted,
-        projectsDeleted: directProjectDelete.count + profileProjectDeleted,
+        expertsDeleted: directExpertDelete.count,
+        projectsDeleted: directProjectDelete.count,
         directExpertsDeleted: directExpertDelete.count,
         directProjectsDeleted: directProjectDelete.count,
-        textMatchedExpertsDeleted: profileExpertDeleted,
-        textMatchedProjectsDeleted: profileProjectDeleted,
+        textMatchedExpertsDeleted: 0,
+        textMatchedProjectsDeleted: 0,
+        ambiguousPreserved,
       };
     });
 

@@ -61,6 +61,31 @@ export async function POST(req: Request) {
     if (!title) return NextResponse.json({ error: "title is required", code: "MISSING_TITLE" }, { status: 400 });
 
     const company = await ensureCompanyForUser(prisma, actor.id);
+
+    // Validate issueDate and expiryDate before persistence.
+    let issueDate: Date | null = null;
+    let expiryDate: Date | null = null;
+    if (body.issueDate) {
+      const parsed = new Date(String(body.issueDate));
+      if (isNaN(parsed.getTime())) {
+        return NextResponse.json(
+          { error: "issueDate must be a valid date string", code: "INVALID_DATE", field: "issueDate", requestId },
+          { status: 400 },
+        );
+      }
+      issueDate = parsed;
+    }
+    if (body.expiryDate) {
+      const parsed = new Date(String(body.expiryDate));
+      if (isNaN(parsed.getTime())) {
+        return NextResponse.json(
+          { error: "expiryDate must be a valid date string", code: "INVALID_DATE", field: "expiryDate", requestId },
+          { status: 400 },
+        );
+      }
+      expiryDate = parsed;
+    }
+
     const record = await prisma.legalRecord.create({
       data: {
         companyId: company.id,
@@ -69,8 +94,8 @@ export async function POST(req: Request) {
         authority: body.authority ? str(body.authority, 200) : null,
         referenceNumber: body.referenceNumber ? str(body.referenceNumber, 100) : null,
         status: str(body.status, 50) || "ACTIVE",
-        issueDate: body.issueDate ? new Date(String(body.issueDate)) : null,
-        expiryDate: body.expiryDate ? new Date(String(body.expiryDate)) : null,
+        issueDate,
+        expiryDate,
       },
     });
     return NextResponse.json({ ok: true, record }, { status: 201 });

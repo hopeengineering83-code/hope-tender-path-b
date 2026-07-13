@@ -167,6 +167,18 @@ export async function PUT(req: Request) {
   try {
     const body = await req.json().catch(() => null);
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+
+    // Validate setupCompletedAt BEFORE any database write.
+    if (body.setupCompletedAt !== undefined && body.setupCompletedAt !== null) {
+      const validated = new Date(body.setupCompletedAt as string);
+      if (isNaN(validated.getTime())) {
+        return NextResponse.json(
+          { error: "setupCompletedAt must be a valid ISO 8601 date string", code: "INVALID_DATE", field: "setupCompletedAt", requestId },
+          { status: 400 },
+        );
+      }
+    }
+
     const existing = await prisma.company.findUnique({ where: { userId: actor.id } });
 
     const company = await prisma.company.upsert({
@@ -185,7 +197,10 @@ export async function PUT(req: Request) {
         sectors: toJsonArray(body.sectors),
         profileSummary: keepOrNull(body.profileSummary),
         knowledgeMode: clean(body.knowledgeMode) || "PROFILE_FIRST",
-        setupCompletedAt: body.setupCompletedAt ? new Date(body.setupCompletedAt as string) : null,
+        setupCompletedAt: body.setupCompletedAt ? (() => {
+          const d = new Date(body.setupCompletedAt as string);
+          return isNaN(d.getTime()) ? null : d;
+        })() : null,
         gmName: keepOrNull(body.gmName),
         gmTitle: keepOrNull(body.gmTitle),
         gmLicense: keepOrNull(body.gmLicense),
@@ -210,7 +225,10 @@ export async function PUT(req: Request) {
         sectors: toJsonArray(body.sectors, existing?.sectors),
         profileSummary: chooseIncomingOrExisting(body.profileSummary, existing?.profileSummary),
         ...(body.knowledgeMode !== undefined && { knowledgeMode: clean(body.knowledgeMode) || existing?.knowledgeMode || "PROFILE_FIRST" }),
-        ...(body.setupCompletedAt !== undefined && { setupCompletedAt: new Date(body.setupCompletedAt as string) }),
+        ...(body.setupCompletedAt !== undefined && { setupCompletedAt: body.setupCompletedAt === null ? null : (() => {
+          const d = new Date(body.setupCompletedAt as string);
+          return isNaN(d.getTime()) ? null : d;
+        })() }),
         ...(body.gmName !== undefined && { gmName: chooseIncomingOrExisting(body.gmName, existing?.gmName) }),
         ...(body.gmTitle !== undefined && { gmTitle: chooseIncomingOrExisting(body.gmTitle, existing?.gmTitle) }),
         ...(body.gmLicense !== undefined && { gmLicense: chooseIncomingOrExisting(body.gmLicense, existing?.gmLicense) }),
