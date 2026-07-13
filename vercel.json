@@ -3,7 +3,11 @@
   "buildCommand": "npm run vercel-build",
   "installCommand": "npm ci",
   "git": {
-    "deploymentEnabled": true
+    "deploymentEnabled": {
+      "*": false,
+      "main": true,
+      "release-candidate": true
+    }
   },
   "crons": [
     {
@@ -11,8 +15,8 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/cron/cleanup-old-records",
-      "schedule": "0 3 * * 0"
+      "path": "/api/cron/cleanup-tender-storage",
+      "schedule": "0 4 * * *"
     }
   ]
 }
