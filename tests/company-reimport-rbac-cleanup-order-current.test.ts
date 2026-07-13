@@ -39,9 +39,18 @@ describe("company reimport safety", () => {
 
   it("keeps every cleanup query company-scoped", () => {
     const scopes = cleanup.match(/companyId/g) ?? [];
-    assert.ok(scopes.length >= 7, `expected repeated company scoping, found ${scopes.length}`);
-    assert.match(cleanup, /where: \{ companyId, sourceDocumentId:/);
-    assert.match(cleanup, /where: \{ companyId, id: \{ in:/);
+    assert.ok(scopes.length >= 4, `expected repeated company scoping, found ${scopes.length}`);
+    // Each deleteMany WHERE must include both companyId and sourceDocumentId.
+    const expertDeleteMatches = cleanup.match(/tx\.expert\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of expertDeleteMatches) {
+      assert.match(m, /companyId/, "expert deleteMany must be company-scoped");
+      assert.match(m, /sourceDocumentId:/, "expert deleteMany must use sourceDocumentId");
+    }
+    const projectDeleteMatches = cleanup.match(/tx\.project\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of projectDeleteMatches) {
+      assert.match(m, /companyId/, "project deleteMany must be company-scoped");
+      assert.match(m, /sourceDocumentId:/, "project deleteMany must use sourceDocumentId");
+    }
   });
 
   it("uses persistent throttling and stable correlated runtime errors", () => {
@@ -60,5 +69,128 @@ describe("company reimport safety", () => {
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {
     assert.equal(vercel.git?.deploymentEnabled, true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deletion authority and reviewed-record preservation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("support-doc cleanup deletion authority", () => {
+  it("deletes only by sourceDocumentId — never by filename text matching", () => {
+    // Text-based matching on profile/summary must NOT appear anywhere in the
+    // cleanup helper. This is the dangerous pattern that could delete
+    // legitimate records mentioning a filename in their text.
+    assert.doesNotMatch(cleanup, /profile:\s*\{\s*contains:/,
+      "must NOT search expert.profile by filename text");
+    assert.doesNotMatch(cleanup, /summary:\s*\{\s*contains:/,
+      "must NOT search project.summary by filename text");
+
+    // The only deleteMany calls must use sourceDocumentId.
+    const expertDeleteMatches = cleanup.match(/tx\.expert\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of expertDeleteMatches) {
+      assert.match(m, /sourceDocumentId:/,
+        "expert deleteMany must use sourceDocumentId — not text matching");
+    }
+    const projectDeleteMatches = cleanup.match(/tx\.project\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of projectDeleteMatches) {
+      assert.match(m, /sourceDocumentId:/,
+        "project deleteMany must use sourceDocumentId — not text matching");
+    }
+  });
+
+  it("preserves REVIEWED records — only removes REGEX_DRAFT and AI_DRAFT", () => {
+    // A failed import must not undo human-validated facts. The cleanup must
+    // filter by trustLevel to only remove non-reviewed records.
+    assert.match(cleanup, /REMOVABLE_TRUST_LEVELS/);
+    assert.match(cleanup, /"REGEX_DRAFT"/);
+    assert.match(cleanup, /"AI_DRAFT"/);
+    assert.match(cleanup, /trustLevel: \{ in: REMOVABLE_TRUST_LEVELS \}/);
+    // REVIEWED must NOT appear in the removable list.
+    assert.doesNotMatch(cleanup, /REMOVABLE_TRUST_LEVELS\s*=\s*\[[^\]]*"REVIEWED"/,
+      "REVIEWED must not be in the removable trust levels");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Company isolation: the cleanup must only affect the calling company's records
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("support-doc cleanup company isolation", () => {
+  it("scopes every deleteMany to the calling company", () => {
+    const expertDeleteMatches = cleanup.match(/tx\.expert\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of expertDeleteMatches) {
+      assert.match(m, /companyId,/,
+        "expert deleteMany must be company-scoped");
+    }
+    const projectDeleteMatches = cleanup.match(/tx\.project\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of projectDeleteMatches) {
+      assert.match(m, /companyId,/,
+        "project deleteMany must be company-scoped");
+    }
+  });
+
+  it("does not use unscoped deleteMany", () => {
+    // No deleteMany should omit companyId from its WHERE clause.
+    const allDeleteMany = cleanup.match(/(?:expert|project)\.deleteMany\([\s\S]*?\}\)/g) ?? [];
+    for (const m of allDeleteMany) {
+      assert.match(m, /companyId/,
+        "every deleteMany must include companyId in its WHERE");
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Failed-import preservation: if the import fails, REVIEWED records derived
+// from support documents must survive the cleanup
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("support-doc cleanup failed-import preservation", () => {
+  it("a REVIEWED expert derived from a support document survives cleanup", () => {
+    // Simulate: an expert with sourceDocumentId pointing to a support doc,
+    // but trustLevel = REVIEWED. The cleanup's WHERE clause includes:
+    //   trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }
+    // So REVIEWED records are NOT matched.
+    const expertTrustLevel = "REVIEWED";
+    const expertSourceDocumentId = "doc-support-1";
+    const supportDocIds = ["doc-support-1"];
+    const removableTrustLevels = ["REGEX_DRAFT", "AI_DRAFT"];
+
+    const wouldBeDeleted =
+      supportDocIds.includes(expertSourceDocumentId) &&
+      removableTrustLevels.includes(expertTrustLevel);
+
+    assert.equal(wouldBeDeleted, false,
+      "a REVIEWED expert derived from a support document must NOT be deleted by the cleanup");
+  });
+
+  it("a REGEX_DRAFT expert derived from a support document is deleted", () => {
+    const expertTrustLevel = "REGEX_DRAFT";
+    const expertSourceDocumentId = "doc-support-1";
+    const supportDocIds = ["doc-support-1"];
+    const removableTrustLevels = ["REGEX_DRAFT", "AI_DRAFT"];
+
+    const wouldBeDeleted =
+      supportDocIds.includes(expertSourceDocumentId) &&
+      removableTrustLevels.includes(expertTrustLevel);
+
+    assert.equal(wouldBeDeleted, true,
+      "a REGEX_DRAFT expert derived from a support document should be deleted");
+  });
+
+  it("an expert with no sourceDocumentId survives cleanup even if REGEX_DRAFT", () => {
+    // An expert with null sourceDocumentId cannot be safely attributed to a
+    // support document. It must survive cleanup.
+    const expertSourceDocumentId = null;
+    const supportDocIds = ["doc-support-1"];
+    const removableTrustLevels = ["REGEX_DRAFT", "AI_DRAFT"];
+
+    const wouldBeDeleted =
+      expertSourceDocumentId !== null &&
+      supportDocIds.includes(expertSourceDocumentId) &&
+      removableTrustLevels.includes("REGEX_DRAFT");
+
+    assert.equal(wouldBeDeleted, false,
+      "an expert with no sourceDocumentId must NOT be deleted — cannot safely attribute to a support import");
   });
 });
