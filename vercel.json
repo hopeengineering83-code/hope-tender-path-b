@@ -3,7 +3,7 @@
   "buildCommand": "npm run vercel-build",
   "installCommand": "npm ci",
   "git": {
-    "deploymentEnabled": false
+    "deploymentEnabled": true
   },
   "crons": [
     {
