@@ -49,12 +49,23 @@ function tooManyAttempts(resetAt: number) {
 }
 
 async function recordFailedLogin(userId: string | undefined, email: string) {
+  // Do NOT log the plaintext email — it is PII and could expose user accounts
+  // if audit logs are accessed by an attacker enumerating accounts. Use a
+  // non-reversible SHA-256 hash prefix so security investigations can still
+  // correlate repeated attempts against the same account without storing the
+  // account identifier itself.
+  const crypto = require("node:crypto");
+  const emailCorrelationHash = crypto
+    .createHash("sha256")
+    .update(email)
+    .digest("hex")
+    .slice(0, 16);
   await logAction({
     userId,
     action: "LOGIN_FAILED",
     entityType: "User",
     entityId: userId,
-    description: `Failed login attempt for ${email}`,
+    description: `Failed login attempt for [redacted] (correlation: ${emailCorrelationHash})`,
   }).catch((error) => {
     logger.warn("[login] failed-attempt audit was not persisted", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
