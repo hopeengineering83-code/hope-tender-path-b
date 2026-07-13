@@ -3,7 +3,7 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { documentHygieneIssues } from "../../../../../lib/engine/export-readiness";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor; try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
-  const rl = rateLimit(`link-vault:${actor.id}`, MUTATION_RATE_LIMIT);
+  const rl = await rateLimitPersistent(`link-vault:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   await prismaReady; const { id } = await params; const body = await req.json().catch(() => ({}));
   const rowId = String(body.rowId ?? ""); const vaultDocumentId = String(body.vaultDocumentId ?? "");
