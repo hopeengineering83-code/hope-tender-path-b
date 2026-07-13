@@ -481,6 +481,35 @@ describe("operation gate — overrides", () => {
     // NOT_APPLICABLE is not a resolving state for critical fields
     assert.equal(r.ok, false);
   });
+
+  it("FINAL: IGNORED_WITH_REASON override on submissionEmails does NOT resolve the EMAIL endpoint blocker", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({
+        submissionMethod: "Email submission",
+        submissionEmails: null,
+      }),
+      overrides: [
+        { field: "submissionEmails", fieldState: "IGNORED_WITH_REASON", reason: "Tender source never states an email address" },
+      ],
+    }));
+    // An audited absence is not a value — the endpoint requirement must still block.
+    assert.equal(r.ok, false, "IGNORED_WITH_REASON should NOT resolve the missing submission email endpoint");
+    assert.ok(r.blockers.some((b) => b.includes("Email submission method requires")));
+  });
+
+  it("FINAL: IGNORED_WITH_REASON override on submissionAddress does NOT resolve the PHYSICAL endpoint blocker", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({
+        submissionMethod: "Physical delivery",
+        submissionAddress: null,
+      }),
+      overrides: [
+        { field: "submissionAddress", fieldState: "IGNORED_WITH_REASON", reason: "Tender source never states a delivery address" },
+      ],
+    }));
+    assert.equal(r.ok, false, "IGNORED_WITH_REASON should NOT resolve the missing submission address endpoint");
+    assert.ok(r.blockers.some((b) => b.includes("Physical submission method requires")));
+  });
 });
 
 // ─── 8. Placeholder handling ────────────────────────────────────────────────

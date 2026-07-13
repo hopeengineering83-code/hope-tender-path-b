@@ -14,6 +14,7 @@ import {
   extractBidBondAmount,
   extractNumberOfCopies,
   extractMandatorySiteVisit,
+  extractClientContactTitle,
   SUPPORTED_EXTRACTORS,
   runExtractorByField,
 } from "../lib/engine/tender-field-extractors";
@@ -48,6 +49,32 @@ describe("extractDeadline", () => {
   it("matches 'Closing date: 2026-12-31 12:00'", () => {
     const r = extractDeadline({ files: [{ fileName: "f.pdf", extractedText: "Closing date: 2026-12-31 12:00. All proposals received after this time will be rejected as non-responsive." }] });
     assert.equal(r.found, true);
+  });
+});
+
+describe("extractClientContactTitle", () => {
+  it("does NOT mistake 'Tender Title:' for the contact person's job title", () => {
+    const text = `
+      Tender Title: Consultancy Services for Water Supply Rehabilitation Project.
+      This tender invites eligible firms to submit technical and financial proposals.
+
+      Contact Person: Jane Doe
+      Title: Procurement Officer
+      Email: jane.doe@example.org
+    `;
+    const r = extractClientContactTitle({ files: [{ fileName: "rfp.pdf", extractedText: text }] });
+    assert.equal(r.found, true);
+    if (r.found) {
+      assert.match(r.value, /procurement\s+officer/i);
+      assert.doesNotMatch(r.value, /water supply/i);
+    }
+  });
+
+  it("matches explicit 'Designation:' label for the contact person", () => {
+    const text = "Contact Person: John Smith. Designation: Senior Procurement Officer. Reachable during office hours for all bid clarifications.";
+    const r = extractClientContactTitle({ files: [{ fileName: "rfp.pdf", extractedText: text }] });
+    assert.equal(r.found, true);
+    if (r.found) assert.match(r.value, /procurement officer/i);
   });
 });
 

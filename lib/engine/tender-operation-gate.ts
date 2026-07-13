@@ -100,8 +100,21 @@ function isPlaceholder(value: string | null | undefined): boolean {
   return PLACEHOLDER_VALUES.has(lower) || containsMetadataPlaceholder(value);
 }
 
+// A resolving override must actually supply a value via USER_CONFIRMED/USER_EDITED.
+// IGNORED_WITH_REASON and NOT_APPLICABLE are audited absences, not values, and must
+// never satisfy a submission-endpoint requirement (matches canonical-field-state.ts,
+// which keeps critical fields BLOCKED under IGNORED_WITH_REASON/NOT_APPLICABLE).
 function hasOverride(overrides: OperationGateInput["overrides"], field: string): boolean {
-  return !!(overrides && overrides.some((o) => o.field === field && o.fieldState !== "NOT_APPLICABLE"));
+  return !!(
+    overrides &&
+    overrides.some(
+      (o) =>
+        o.field === field &&
+        (o.fieldState === "USER_CONFIRMED" || o.fieldState === "USER_EDITED") &&
+        !!o.overrideValue &&
+        o.overrideValue.trim().length > 0
+    )
+  );
 }
 
 function getOverrideValue(overrides: OperationGateInput["overrides"], field: string): string | null {
