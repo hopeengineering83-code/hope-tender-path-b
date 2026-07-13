@@ -84,7 +84,6 @@ describe("Gap E: fail-closed gates block all non-AI_SUCCEEDED states", () => {
   it("all generation/export/download routes use assertTenderReadyForGenerationAndExport", () => {
     const routes = [
       "app/api/tenders/[id]/generate/route.ts",
-      "app/api/tenders/[id]/ai-proposal/route.ts",
       "app/api/tenders/[id]/download/route.ts",
       "app/api/tenders/[id]/export/route.ts",
     ];
@@ -95,6 +94,19 @@ describe("Gap E: fail-closed gates block all non-AI_SUCCEEDED states", () => {
         `${route} must use assertTenderReadyForGenerationAndExport`,
       );
     }
+  });
+
+  it("legacy ai-proposal route is draft-only and does not persist GeneratedDocument rows", () => {
+    const src = read("app/api/tenders/[id]/ai-proposal/route.ts");
+    assert.ok(
+      src.includes("LEGACY_AI_PROPOSAL_DRAFT_ONLY"),
+      "ai-proposal route must advertise the legacy draft-only blocker",
+    );
+    assert.ok(src.includes("persistBlocked: true"), "ai-proposal responses must be persist-blocked");
+    assert.ok(
+      !src.includes("generatedDocument.create") && !src.includes("withTransactionalGenerationGate"),
+      "ai-proposal must not use the canonical persistence path or create GeneratedDocument rows",
+    );
   });
 
   it("Anthropic remains last in provider chain", () => {
