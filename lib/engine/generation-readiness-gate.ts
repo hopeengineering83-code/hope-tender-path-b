@@ -543,7 +543,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     // B — per-file extraction quality + weak-extraction override lookup.
     const extractionFiles = await Promise.all(
       activeFiles.map(async (f) => {
-        const quality = assessExtractionQuality(f.extractedText, f.originalFileName, f.totalPages);
+        const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
         const score = Math.min(f.extractionScore ?? quality.score, quality.score);
         const corrupted = quality.corrupted;
         const weak = !corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD;

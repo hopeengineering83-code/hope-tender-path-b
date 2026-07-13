@@ -341,7 +341,7 @@ export async function getTenderReleaseSnapshot(
 
   // Pre-compute quality for all files to identify weak ones.
   const fileQualities = activeFiles.map((f) => {
-    const quality = assessExtractionQuality(f.extractedText, f.originalFileName, f.totalPages);
+    const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
     const score = Math.min(f.extractionScore ?? quality.score, quality.score);
     const corrupted = quality.corrupted;
     const weak = !corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD;

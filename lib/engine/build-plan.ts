@@ -358,7 +358,7 @@ export async function assertTenderReadyToDraftBuildPlan(
   const { isExtractionAcceptableForGeneration } = await import("./extraction-quality-gate");
   const { assessExtractionQuality } = await import("../extraction-quality");
   const effectiveExtractionFiles = tender.files.map((f: any) => {
-    const quality = assessExtractionQuality(f.extractedText, f.originalFileName, f.totalPages);
+    const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
     return { ...f, extractionScore: Math.min(f.extractionScore ?? quality.score, quality.score), quality };
   });
   if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles as any)) {

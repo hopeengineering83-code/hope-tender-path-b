@@ -487,7 +487,7 @@ export async function computeTenderLifecycle(
   // freshly recomputed score and keep the more conservative (lower) value so a
   // stale-optimistic stored score cannot unblock a genuinely poor extraction.
   const effectiveFiles = files.map((file) => {
-    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName, file.totalPages);
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
     return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score) };
   });
 
