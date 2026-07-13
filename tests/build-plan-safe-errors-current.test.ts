@@ -1,10 +1,16 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-const canonical = readFileSync("app/api/tenders/[id]/build-plan/route.ts", "utf8");
-const compatibility = readFileSync("app/api/tenders/[id]/submission-plan/build/route.ts", "utf8");
-const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const rootDir = join(__dirname, "..");
+
+const canonical = readFileSync(join(rootDir, "app/api/tenders/[id]/build-plan/route.ts"), "utf8");
+const compatibility = readFileSync(join(rootDir, "app/api/tenders/[id]/submission-plan/build/route.ts"), "utf8");
+const vercel = JSON.parse(readFileSync(join(rootDir, "vercel.json"), "utf8"));
 
 function assertSafeRuntimeContract(source: string) {
   assert.doesNotMatch(source, /sanitizeError/);
@@ -38,7 +44,15 @@ describe("canonical and compatibility Build Plan routes", () => {
       assert.match(source, /authorizesGeneration: false/);
       assert.doesNotMatch(source, /generatedDocument\.(?:create|upsert|createMany)\(/);
     }
-    assert.match(compatibility, /generatedDocumentsCreated: 0/);
+  });
+
+  it("reports the actual measured GeneratedDocument delta, not a hardcoded 0", () => {
+    // The compatibility route measures beforeDocs and afterDocs around the
+    // Build Plan creation. The response must report the actual delta
+    // (afterDocs - beforeDocs), not a hardcoded 0.
+    assert.match(compatibility, /generatedDocumentsCreated: afterDocs - beforeDocs/);
+    assert.doesNotMatch(compatibility, /generatedDocumentsCreated: 0/,
+      "must NOT hardcode generatedDocumentsCreated to 0 — use the measured delta");
   });
 
   it("keep mutation authorization restricted", () => {

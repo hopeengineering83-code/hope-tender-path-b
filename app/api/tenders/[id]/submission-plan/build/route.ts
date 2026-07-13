@@ -79,7 +79,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       status: plan.status,
       items,
       authorizesGeneration: false,
-      generatedDocumentsCreated: 0,
+      generatedDocumentsCreated: afterDocs - beforeDocs,
     });
   } catch (error) {
     logger.error("submission-plan/build POST failed", {
