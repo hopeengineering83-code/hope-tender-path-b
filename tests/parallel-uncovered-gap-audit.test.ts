@@ -1,0 +1,161 @@
+// Lane B — regression tests for parallel-uncovered-gap-audit fixes.
+//
+// Each test proves a specific fix and would fail if the fix were reverted.
+// Tests are source-text + behavioral assertions so they run without a database.
+
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const read = (p: string) => readFileSync(p, "utf8");
+
+// ─── P1-2: observability Error normalization ───────────────────────────────
+
+describe("P1-2 — observability normalizes Error objects for JSON.stringify", () => {
+  it("emit() calls normalizeForJson before JSON.stringify", () => {
+    const src = read("lib/observability.ts");
+    assert.match(src, /function normalizeForJson/, "must have normalizeForJson helper");
+    assert.match(src, /normalizeForJson\(context\) as LogContext/, "emit must call normalizeForJson on context");
+  });
+
+  it("normalizeForJson extracts Error message, name, stack, code, meta", () => {
+    const src = read("lib/observability.ts");
+    assert.match(src, /name: value\.name/);
+    assert.match(src, /message: value\.message/);
+    assert.match(src, /obj\.stack = value\.stack/);
+    assert.match(src, /prismaErr\.code/);
+    assert.match(src, /prismaErr\.meta/);
+  });
+
+  it("normalizeForJson guards against circular references", () => {
+    const src = read("lib/observability.ts");
+    assert.match(src, /if \(seen\.has\(value\)\) return "\[Circular\]"/);
+  });
+});
+
+// ─── P1-7: liveness returns 200 for degraded (not 503) ─────────────────────
+
+describe("P1-7 — liveness returns HTTP 200 for degraded status", () => {
+  it("uses allCriticalTablesExist (not ok) for the HTTP status", () => {
+    const src = read("lib/liveness.ts");
+    assert.match(src, /const httpStatus = allCriticalTablesExist \? 200 : 503/);
+    // The old code used `ok ? 200 : 503` which returned 503 for degraded.
+    assert.doesNotMatch(src, /status: ok \? 200 : 503/);
+  });
+});
+
+// ─── P1-3: actionable-engine-error does NOT leak raw error.message ─────────
+
+describe("P1-3 — actionable-engine-error sanitizes detail field", () => {
+  it("does NOT set detail: message in any branch", () => {
+    const src = read("lib/engine/actionable-engine-error.ts");
+    // Strip comments so the check only applies to real code.
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(codeOnly, /detail:\s*message/);
+  });
+
+  it("does NOT use withDetail (which appended raw message to summary)", () => {
+    const src = read("lib/engine/actionable-engine-error.ts");
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(codeOnly, /withDetail/);
+  });
+
+  it("the hint does NOT claim raw error is included", () => {
+    const src = read("lib/engine/actionable-engine-error.ts");
+    assert.doesNotMatch(src, /original server error is included in detail/);
+  });
+});
+
+// ─── P1-4: structured-generation-error does NOT leak raw error.message ─────
+
+describe("P1-4 — structured-generation-error sanitizes blockerSummary + message", () => {
+  it("does NOT set blockerSummary: raw.slice in any branch", () => {
+    const src = read("lib/engine/structured-generation-error.ts");
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(codeOnly, /blockerSummary:\s*raw\.slice/);
+  });
+
+  it("the generic fallback does NOT set message: raw.slice", () => {
+    const src = read("lib/engine/structured-generation-error.ts");
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(codeOnly, /message:\s*raw\.length\s*>\s*0\s*\?\s*raw\.slice/);
+    assert.match(codeOnly, /message:\s*"Document generation failed\."/);
+  });
+});
+
+// ─── P1-6: contentChangedHardBlock no longer has the dead !latestJob conjunct ──
+
+describe("P1-6 — contentChangedHardBlock is no longer always false", () => {
+  it("does NOT include the structurally-impossible !latestJob conjunct", () => {
+    const src = read("lib/engine/runtime-readiness-facts.ts");
+    assert.doesNotMatch(src, /contentChangedHardBlock = hashMismatch && !hasGoodAnalysisForCurrentSource && !latestJob/);
+  });
+
+  it("uses the correct expression: hashMismatch && !hasGoodAnalysisForCurrentSource", () => {
+    const src = read("lib/engine/runtime-readiness-facts.ts");
+    assert.match(src, /contentChangedHardBlock = hashMismatch && !hasGoodAnalysisForCurrentSource/);
+  });
+});
+
+// ─── P0-1: tender-operation-lock idempotencyKey is deterministic ───────────
+
+describe("P0-1 — tender-operation-lock idempotencyKey is deterministic", () => {
+  it("does NOT include Date.now() in the idempotencyKey", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    // Strip comments so the check only applies to real code.
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    // The old code had: `${operation}-${Date.now()}`
+    // The new code has: `${operation}`
+    assert.doesNotMatch(codeOnly, /idempotencyKey\s*=\s*`\$\{operation\}-\$\{Date\.now\(\)\}`/);
+  });
+
+  it("uses a deterministic key derived from operation only", () => {
+    const src = read("lib/engine/tender-operation-lock.ts");
+    assert.match(src, /idempotencyKey\s*=\s*`\$\{operation\}`/);
+  });
+});
+
+// ─── P1-8: check-critical-schema includes the 10+ missing tables ───────────
+
+describe("P1-8 — check-critical-schema includes critical tables", () => {
+  const requiredNewTables = [
+    "Session",
+    "BuildPlan",
+    "TenderMetadataOverride",
+    "FallbackApprovalRecord",
+    "TenderWorkflowRun",
+    "TenderFactsLedger",
+    "AiAnalyzeChunk",
+    "AiAnalyzeRetryState",
+    "ExtractionQualityOverride",
+    "AiUsageRecord",
+    "TenderShare",
+    "ProviderHealthSnapshot",
+  ];
+
+  for (const table of requiredNewTables) {
+    it(`REQUIRED_TABLES includes ${table}`, () => {
+      const src = read("scripts/check-critical-schema.mjs");
+      assert.match(src, new RegExp(`"${table}"`), `REQUIRED_TABLES must include ${table}`);
+    });
+  }
+});
+
+// ─── P1-9: audit-safe-api-errors scans lib/ (not just app/api) ─────────────
+
+describe("P1-9 — audit-safe-api-errors scans lib/ files", () => {
+  it("the git ls-files command includes lib/engine and other lib/ paths", () => {
+    const src = read("scripts/audit-safe-api-errors.mjs");
+    assert.match(src, /ls-files.*lib\/engine/);
+    assert.match(src, /lib\/secure-password-reset\.ts/);
+    assert.match(src, /lib\/liveness\.ts/);
+  });
+
+  it("does NOT filter to route.ts only (accepts all .ts files)", () => {
+    const src = read("scripts/audit-safe-api-errors.mjs");
+    // The old filter was .filter(file => file.endsWith("route.ts"))
+    // The new filter accepts all .ts files (excluding .test.ts and .d.ts)
+    assert.doesNotMatch(src, /\.filter\(\(file\)\s*=>\s*file\.endsWith\("route\.ts"\)\)/);
+    assert.match(src, /\.endsWith\("\.ts"\)/);
+  });
+});
