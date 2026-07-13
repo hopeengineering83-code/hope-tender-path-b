@@ -225,7 +225,7 @@ const sectionBlock = `  // Mistral — first tier
 ai = replaceBetween(
   ai,
   "  // Provider chain for sections:",
-  "  // Gemini — first tier",
+  "  // Z.ai — first tier",
   "  // Claude — last resort",
   sectionBlock,
 );
