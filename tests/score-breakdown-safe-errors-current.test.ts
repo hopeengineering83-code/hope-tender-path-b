@@ -54,7 +54,7 @@ describe("score-breakdown safe response boundary", () => {
     assert.doesNotMatch(source, /\.(?:create|createMany|update|updateMany|delete|deleteMany|upsert)\(/);
   });
 
-  it("keeps Vercel Git deployment disabled", () => {
-    assert.equal(vercel.git?.deploymentEnabled, false);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });
