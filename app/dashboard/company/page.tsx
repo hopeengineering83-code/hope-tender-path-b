@@ -136,6 +136,9 @@ export default function CompanyPage() {
   const [deletingComplianceId, setDeletingComplianceId] = useState<string|null>(null);
   const [deletingLegalId, setDeletingLegalId] = useState<string|null>(null);
   const [deletingFinancialId, setDeletingFinancialId] = useState<string|null>(null);
+  const [confirmingDeleteComplianceId, setConfirmingDeleteComplianceId] = useState<string|null>(null);
+  const [confirmingDeleteLegalId, setConfirmingDeleteLegalId] = useState<string|null>(null);
+  const [confirmingDeleteFinancialId, setConfirmingDeleteFinancialId] = useState<string|null>(null);
   const [complianceSubTab, setComplianceSubTab] = useState<"compliance"|"legal"|"financial">("compliance");
   const [showAllExperts, setShowAllExperts] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
@@ -191,21 +194,54 @@ export default function CompanyPage() {
   }
 
   async function deleteComplianceRecord(id: string) {
+    if (deletingComplianceId) return;
     setDeletingComplianceId(id);
-    try { await fetch(`/api/company/compliance-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
-    finally { setDeletingComplianceId(null); }
+    setError("");
+    try {
+      const res = await fetch(`/api/company/compliance-records?id=${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that compliance record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setConfirmingDeleteComplianceId(null);
+      await loadComplianceData();
+    } catch {
+      setError("Network interruption while deleting the compliance record. Please retry when your connection is stable.");
+    } finally { setDeletingComplianceId(null); }
   }
 
   async function deleteLegalRecord(id: string) {
+    if (deletingLegalId) return;
     setDeletingLegalId(id);
-    try { await fetch(`/api/company/legal-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
-    finally { setDeletingLegalId(null); }
+    setError("");
+    try {
+      const res = await fetch(`/api/company/legal-records?id=${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that legal record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setConfirmingDeleteLegalId(null);
+      await loadComplianceData();
+    } catch {
+      setError("Network interruption while deleting the legal record. Please retry when your connection is stable.");
+    } finally { setDeletingLegalId(null); }
   }
 
   async function deleteFinancialRecord(id: string) {
+    if (deletingFinancialId) return;
     setDeletingFinancialId(id);
-    try { await fetch(`/api/company/financial-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
-    finally { setDeletingFinancialId(null); }
+    setError("");
+    try {
+      const res = await fetch(`/api/company/financial-records?id=${id}`, { method:"DELETE" });
+      if (!res.ok) {
+        setError("We could not delete that financial record. Please retry, or refresh to check whether it was already removed.");
+        return;
+      }
+      setConfirmingDeleteFinancialId(null);
+      await loadComplianceData();
+    } catch {
+      setError("Network interruption while deleting the financial record. Please retry when your connection is stable.");
+    } finally { setDeletingFinancialId(null); }
   }
 
   async function loadDocs() {
@@ -969,14 +1005,19 @@ export default function CompanyPage() {
                     </thead>
                     <tbody className="divide-y">
                       {(showAllCompliance ? complianceRecords : complianceRecords.slice(0, ROWS_PREVIEW)).map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-2 text-xs text-slate-500">{r.complianceType}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
-                          <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"…":"Delete"}</button></td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-xs text-slate-500">{r.complianceType}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
+                            <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteComplianceId(r.id)} disabled={deletingComplianceId!==null} aria-expanded={confirmingDeleteComplianceId===r.id} aria-controls={`compliance-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Delete"}</button></td>
+                          </tr>
+                          {confirmingDeleteComplianceId===r.id && (
+                            <tr id={`compliance-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={6} className="px-4 py-3"><p className="font-medium">Delete compliance record {r.title}?</p><p className="mt-1 text-red-800">This removes the credential from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Yes, delete compliance record"}</button><button type="button" onClick={()=>setConfirmingDeleteComplianceId(null)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -1030,14 +1071,19 @@ export default function CompanyPage() {
                     </thead>
                     <tbody className="divide-y">
                       {(showAllLegal ? legalRecords : legalRecords.slice(0, ROWS_PREVIEW)).map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
-                          <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"…":"Delete"}</button></td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
+                            <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteLegalId(r.id)} disabled={deletingLegalId!==null} aria-expanded={confirmingDeleteLegalId===r.id} aria-controls={`legal-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Delete"}</button></td>
+                          </tr>
+                          {confirmingDeleteLegalId===r.id && (
+                            <tr id={`legal-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={6} className="px-4 py-3"><p className="font-medium">Delete legal record {r.title}?</p><p className="mt-1 text-red-800">This removes the credential from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Yes, delete legal record"}</button><button type="button" onClick={()=>setConfirmingDeleteLegalId(null)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -1083,13 +1129,18 @@ export default function CompanyPage() {
                     </thead>
                     <tbody className="divide-y">
                       {(showAllFinancial ? financialRecords : financialRecords.slice(0, ROWS_PREVIEW)).map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
-                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
-                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"…":"Delete"}</button></td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
+                            <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteFinancialId(r.id)} disabled={deletingFinancialId!==null} aria-expanded={confirmingDeleteFinancialId===r.id} aria-controls={`financial-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Delete"}</button></td>
+                          </tr>
+                          {confirmingDeleteFinancialId===r.id && (
+                            <tr id={`financial-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={5} className="px-4 py-3"><p className="font-medium">Delete financial record for {r.fiscalYear}?</p><p className="mt-1 text-red-800">This removes the financial evidence from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Yes, delete financial record"}</button><button type="button" onClick={()=>setConfirmingDeleteFinancialId(null)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>

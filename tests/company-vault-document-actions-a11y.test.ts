@@ -86,3 +86,29 @@ describe("Company Vault expert and project delete actions", () => {
     assert.match(source, /if \(deletingProjectId\) return/);
   });
 });
+
+describe("Company Vault compliance/legal/financial delete actions", () => {
+  it("uses in-page confirmations for compliance, legal, and financial record deletes", () => {
+    assert.match(source, /confirmingDeleteComplianceId/);
+    assert.match(source, /compliance-delete-confirm-/);
+    assert.match(source, /Yes, delete compliance record/);
+    assert.match(source, /confirmingDeleteLegalId/);
+    assert.match(source, /legal-delete-confirm-/);
+    assert.match(source, /Yes, delete legal record/);
+    assert.match(source, /confirmingDeleteFinancialId/);
+    assert.match(source, /financial-delete-confirm-/);
+    assert.match(source, /Yes, delete financial record/);
+  });
+
+  it("keeps compliance, legal, and financial delete failures safe and non-optimistic", () => {
+    assert.match(source, /if \(deletingComplianceId\) return/);
+    assert.match(source, /if \(deletingLegalId\) return/);
+    assert.match(source, /if \(deletingFinancialId\) return/);
+    assert.match(source, /We could not delete that compliance record/);
+    assert.match(source, /We could not delete that legal record/);
+    assert.match(source, /We could not delete that financial record/);
+    assert.match(source, /Network interruption while deleting the compliance record/);
+    assert.match(source, /Network interruption while deleting the legal record/);
+    assert.match(source, /Network interruption while deleting the financial record/);
+  });
+});
