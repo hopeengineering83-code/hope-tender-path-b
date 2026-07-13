@@ -36,6 +36,6 @@ describe("approve-analysis safe runtime errors", () => {
   });
 
   it("keeps Vercel Git deployments enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
   });
 });

@@ -66,6 +66,6 @@ describe("background proposal reviewed-evidence authority", () => {
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
   });
 });

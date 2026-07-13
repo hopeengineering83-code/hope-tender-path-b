@@ -58,6 +58,6 @@ describe("Company Vault record route error boundaries", () => {
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
   });
 });

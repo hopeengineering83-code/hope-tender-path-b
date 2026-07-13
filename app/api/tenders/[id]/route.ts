@@ -353,27 +353,12 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       { timeout: 30000, isolationLevel: "Serializable" },
     );
 
-    // Post-commit immediate blob cleanup for generated documents.
-    // Uses the returned generatedDocPaths to delete external storage objects
-    // after the database transaction has committed. If this fails, the
-    // durable manifest (storageCleanupTaskId) retains the pointers for
-    // cron-based retry.
-    const storage = getStorageAdapter();
-    for (const p of result.generatedDocPaths) {
-      if (p.storagePath || p.fileContent) {
-        storage.deleteFile({
-          storagePath: p.storagePath,
-          fileContent: p.fileContent,
-          fileName: p.exactFileName ?? "generated-document",
-        }).catch(() => {
-          // Best-effort — the durable manifest handles retry.
-        });
-      }
-    }
-
     // The cleanup pointer was committed inside the deletion transaction.
-    // Attempt it immediately for responsiveness, but never lose retry state:
-    // failed objects remain in the durable AuditLog manifest for the cron.
+    // All external blob cleanup is handled exclusively through the durable
+    // manifest via processTenderStorageCleanupTask. This prevents orphaned
+    // blobs if the process crashes between the transaction commit and a
+    // direct deleteFile call. Failed objects remain in the durable AuditLog
+    // manifest for cron-based retry.
     let storageCleanupPending = false;
     if (result.storageCleanupTaskId) {
       try {

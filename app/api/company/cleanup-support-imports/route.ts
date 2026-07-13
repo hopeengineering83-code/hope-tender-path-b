@@ -76,14 +76,25 @@ export async function POST(req: Request) {
       // deletion authority because a legitimate Expert or Project may mention a
       // support filename in its profile/summary without being derived from that
       // document. Text matching would silently destroy real business data.
+      // Only REGEX_DRAFT and AI_DRAFT records are removed. REVIEWED records are
+      // preserved because human review makes them authoritative.
+      const REMOVABLE_TRUST_LEVELS = ["REGEX_DRAFT", "AI_DRAFT"];
       const directExpertDelete = supportDocIds.length > 0
         ? await tx.expert.deleteMany({
-            where: { companyId: company.id, sourceDocumentId: { in: supportDocIds } },
+            where: {
+              companyId: company.id,
+              sourceDocumentId: { in: supportDocIds },
+              trustLevel: { in: REMOVABLE_TRUST_LEVELS },
+            },
           })
         : { count: 0 };
       const directProjectDelete = supportDocIds.length > 0
         ? await tx.project.deleteMany({
-            where: { companyId: company.id, sourceDocumentId: { in: supportDocIds } },
+            where: {
+              companyId: company.id,
+              sourceDocumentId: { in: supportDocIds },
+              trustLevel: { in: REMOVABLE_TRUST_LEVELS },
+            },
           })
         : { count: 0 };
 

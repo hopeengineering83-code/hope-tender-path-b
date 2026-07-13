@@ -61,6 +61,6 @@ describe("score-breakdown safe response boundary", () => {
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled, true);
+    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
   });
 });

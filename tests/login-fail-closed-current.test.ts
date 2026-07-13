@@ -45,6 +45,6 @@ describe("login fail-closed authentication boundary", () => {
 
   it("keeps Git-triggered Vercel deployment enabled (repo policy)", () => {
     const config = JSON.parse(vercel);
-    assert.equal(config.git?.deploymentEnabled, true);
+    assert.equal(config.git?.deploymentEnabled?.["main"], true);
   });
 });

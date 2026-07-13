@@ -69,24 +69,45 @@ describe("Cleanup cron — stale artifact cleanup", () => {
 
 // ─── 2. Tender deletion blob cleanup ────────────────────────────────────────
 
-describe("Tender deletion — GeneratedDocument blob cleanup", () => {
-  it("executeTenderDeletion returns generated doc paths for post-commit cleanup", () => {
+describe("Tender deletion — durable storage cleanup", () => {
+  it("executeTenderDeletion captures storage pointers and creates a durable cleanup task", () => {
     const src = read("lib/tender/delete-tender.ts");
-    assert.ok(
-      src.includes("generatedDocPaths"),
-      "must return generated doc paths for blob cleanup",
-    );
+    // Must select storagePath for both TenderFile and GeneratedDocument
+    // so the durable cleanup manifest has the pointers it needs.
     assert.ok(
       src.includes("storagePath: true"),
-      "must select storagePath before deleting GeneratedDocument rows",
+      "must select storagePath before deleting rows",
+    );
+    // Must create a durable cleanup task inside the transaction.
+    assert.ok(
+      src.includes("createTenderStorageCleanupTask"),
+      "must create a durable cleanup task before the Tender row is deleted",
+    );
+    // Must NOT return ephemeral path arrays — cleanup is durable-only.
+    assert.doesNotMatch(
+      src,
+      /generatedDocPaths/,
+      "must not return ephemeral generatedDocPaths — use durable manifest only",
     );
   });
 
-  it("DELETE route uses returned paths for blob cleanup", () => {
+  it("DELETE route processes the durable cleanup task, not direct Blob deletion", () => {
     const src = read("app/api/tenders/[id]/route.ts");
+    // Must use the durable task processor for blob cleanup.
     assert.ok(
-      src.includes("result.generatedDocPaths"),
-      "must use returned generatedDocPaths for blob cleanup",
+      src.includes("processTenderStorageCleanupTask"),
+      "must process the durable cleanup task after commit",
+    );
+    // Must NOT perform direct best-effort Blob deletion.
+    assert.doesNotMatch(
+      src,
+      /storage\.deleteFile\(/,
+      "must not perform direct best-effort Blob deletion — use durable manifest only",
+    );
+    assert.doesNotMatch(
+      src,
+      /generatedDocPaths/,
+      "must not reference generatedDocPaths — use durable manifest only",
     );
   });
 });
