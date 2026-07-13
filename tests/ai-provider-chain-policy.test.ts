@@ -173,4 +173,13 @@ describe("operator-facing provider key guidance derives from canonical policy", 
     assert.ok(!readmeSource.includes("Anthropic Claude when `ANTHROPIC_API_KEY` is set"));
     assert.match(readmeSource, /Canonical fallback order: Z\.ai → Cerebras → Mistral/);
   });
+
+  it("parallel section generation uses the canonical provider chain instead of a legacy Gemini-first order", () => {
+    assert.match(aiSource, /for \(const provider of providerChainForUseCase\("proposal"\)\)/);
+    assert.ok(!aiSource.includes("legacy per-section order"));
+    assert.ok(!aiSource.includes("Gemini → OpenAI → Mistral → Together → DeepSeek"));
+    assert.match(aiSource, /case "zai":/);
+    assert.match(aiSource, /case "cerebras":/);
+    assert.match(aiSource, /case "anthropic":/);
+  });
 });

@@ -113,7 +113,7 @@ export function isGeminiEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | null;
+type AIProvider = "zai" | "cerebras" | "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -4058,7 +4058,7 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | "fallback";
+  source: "zai" | "cerebras" | "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | "fallback";
   error?: string;
   durationMs: number;
 }
@@ -4079,120 +4079,56 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Provider chain for sections: ACTUAL per-section attempt order in the code
-  // below is Gemini → OpenAI → Mistral → Together → DeepSeek → Groq/OpenRouter →
-  // Anthropic → deterministic fallback. NOTE: this legacy per-section order
-  // predates and DIFFERS from the canonical automatic chain (Z.ai → Cerebras →
-  // Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek →
-  // Anthropic) defined in lib/ai-provider-registry.ts; reordering it is a
-  // runtime behavior change and is intentionally not done here. Anthropic stays
-  // last so its rate limits don't block parallel section generation.
+  // Section generation now uses the same canonical provider order as every
+  // other AI path: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini →
+  // OpenAI → Together → DeepSeek → Anthropic. Skipped providers (unconfigured
+  // or cooling down) do not consume time; each actual attempt is bounded by the
+  // per-section timeout.
+  for (const provider of providerChainForUseCase("proposal")) {
+    if (!isProviderEnabled(provider) || isProviderCooledDown(provider)) continue;
 
-    // Gemini — first tier
-  if (apiKey && !isProviderCooledDown("gemini")) {
     try {
-      // Prepend the section's system-prompt persona to the user prompt so
-      // Gemini approximates the per-section role.
-      const geminiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
+      const maxTokens = spec.maxOutputTokens ?? 4096;
       const text = await Promise.race([
-        generateWithBestModel(geminiPrompt),
+        (async () => {
+          switch (provider) {
+            case "zai":
+              return generateWithZai(spec.userPrompt, spec.systemPrompt, maxTokens, "proposal");
+            case "cerebras":
+              return generateWithCerebras(spec.userPrompt, spec.systemPrompt, maxTokens, "proposal");
+            case "mistral":
+              return generateWithMistral(spec.userPrompt, spec.systemPrompt, maxTokens, "proposal");
+            case "groq":
+              return generateWithGroq(spec.userPrompt, spec.systemPrompt, maxTokens);
+            case "openrouter":
+              return generateWithOpenRouter(spec.userPrompt, spec.systemPrompt, maxTokens);
+            case "gemini":
+              // Prepend the section's system-prompt persona to the user prompt
+              // so Gemini approximates the per-section role.
+              return generateWithBestModel(`${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`);
+            case "openai":
+              return generateWithOpenAI(spec.userPrompt, spec.systemPrompt, maxTokens);
+            case "together":
+              return generateWithTogether(spec.userPrompt, spec.systemPrompt, maxTokens, "proposal");
+            case "deepseek":
+              return generateWithDeepSeek(spec.userPrompt, spec.systemPrompt, maxTokens);
+            case "anthropic":
+              return generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens);
+          }
+        })(),
         makeSectionTimeout(),
       ]);
       if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "gemini", durationMs: Date.now() - t0 };
+        return {
+          id: spec.id,
+          title: spec.title,
+          markdown: text,
+          source: provider === "anthropic" ? "claude" : provider,
+          durationMs: Date.now() - t0,
+        };
       }
     } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying OpenAI.`);
-    }
-  }
-
-  // OpenAI — second tier
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    try {
-      const text = await Promise.race([
-        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "openai", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Mistral.`);
-    }
-  }
-
-  // Mistral — third tier
-  if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-    try {
-      const text = await Promise.race([
-        generateWithMistral(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "mistral", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Mistral failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
-    }
-  }
-
-  // Together — fourth tier
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
-    try {
-      const text = await Promise.race([
-        generateWithTogether(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "together", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Together failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
-    }
-  }
-
-  // DeepSeek — fifth tier
-  if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-    try {
-      const text = await Promise.race([
-        generateWithDeepSeek(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "deepseek", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" DeepSeek failed (${err instanceof Error ? err.message : String(err)}) — trying Groq/OpenRouter.`);
-    }
-  }
-
-  // Groq/OpenRouter section tail.
-  if (!isProviderCooledDown("groq") || !isProviderCooledDown("openrouter")) {
-    try {
-      const tail = await Promise.race([
-        tryTailFallbackProviders(spec.userPrompt, spec.systemPrompt, { skipTogether: true }),
-        makeSectionTimeout(),
-      ]);
-      if (tail && tail.text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: tail.text, source: tail.provider, durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
-    }
-  }
-
-    // Claude — last resort (system prompts in proposal-sections.ts are tuned for Claude)
-  if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-    try {
-      const claudeResult = await Promise.race([
-        generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens),
-        makeSectionTimeout(),
-      ]);
-      if (claudeResult && claudeResult.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: claudeResult, source: "claude", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Claude failed (${err instanceof Error ? err.message : String(err)}) — using deterministic fallback.`);
+      logger.warn(`[ai] section "${spec.id}" ${provider} failed (${err instanceof Error ? err.message : String(err)}) — trying next canonical provider.`);
     }
   }
 
@@ -4312,26 +4248,15 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     }
   }
 
-  // Set lastProposalProvider to the dominant successful source. If
-  // ANY section used Claude, label as Claude (Claude is the headline
-  // provider). If all successful sections used Gemini, label as Gemini.
-  // If every section fell back, set null so callers can see total AI
-  // failure.
-  const usedClaude = sections.some((s) => s.source === "claude");
-  const usedGemini = sections.some((s) => s.source === "gemini");
-  const usedOpenAI = sections.some((s) => s.source === "openai");
-  const usedDeepSeek = sections.some((s) => s.source === "deepseek");
+  // Set lastProposalProvider to the first successful section provider in the
+  // same section result order. If every section fell back, set null so callers
+  // can see total AI failure.
   const allFell = sections.every((s) => s.source === "fallback");
   if (allFell) {
     lastProposalProvider = null;
-  } else if (usedClaude) {
-    lastProposalProvider = "claude";
-  } else if (usedGemini && !usedOpenAI && !usedDeepSeek) {
-    lastProposalProvider = "gemini";
-  } else if (usedOpenAI && !usedDeepSeek) {
-    lastProposalProvider = "openai";
-  } else if (usedDeepSeek) {
-    lastProposalProvider = "deepseek";
+  } else {
+    const firstProvider = sections.find((s) => s.source !== "fallback")?.source;
+    lastProposalProvider = firstProvider && firstProvider !== "fallback" ? firstProvider : null;
   }
 
   // Diagnostic summary line — surfaces in Vercel runtime logs so

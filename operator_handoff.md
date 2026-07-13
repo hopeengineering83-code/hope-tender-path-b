@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** continued remaining-gap closure after dissatisfaction; audited actual runtime provider order, not just operator copy.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
+- **Scope:** Fixed the parallel section proposal generator's legacy Gemini/OpenAI/Mistral/Together/DeepSeek/Groq/OpenRouter/Claude order. `generateOneSection` now iterates `providerChainForUseCase("proposal")`, so section generation follows the canonical Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic order and includes Z.ai/Cerebras. Extended provider-chain tests to assert section generation cannot drift back to a Gemini-first path.
+- **Files changed:** `lib/ai.ts`, `tests/ai-provider-chain-policy.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/ai-provider-chain-policy.test.ts` PASS (21/21); `npx tsc --noEmit` PASS; `npx tsx --test tests/proposal-generation-mode.test.ts tests/release-acceptance-provider-fallback-order.test.ts tests/ai-provider-chain-policy.test.ts` PASS (25/25); `npm run lint` PASS; `npm run audit:release-integrity` PASS.
+- **Known risks / assumptions:** No `origin` remote is configured in this container, so live GitHub inline comments/open PR/CI state still cannot be fetched. DB integration suites were not rerun in this follow-up. Runtime behavior intentionally changes only the section-generator provider attempt order to match the already-required canonical order.
+- **Next action:** Push/update PR where a remote is available; run full CI and DB integration with fixtures.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** continued full audit after repeated dissatisfaction; searched for remaining stale AI-provider readiness copy beyond API diagnostics.
 - **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
 - **Scope:** Closed another concrete provider-guidance gap: `run-tender-engine` no longer records `GEMINI_API_KEY is not configured` when all canonical providers are absent; it now records the canonical env list. Updated the README stack summary so it no longer presents Anthropic/Gemini as the primary provider path. Extended provider-chain tests to pin both fixes.
