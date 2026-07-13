@@ -197,13 +197,19 @@ describe("stale partial AI jobs", () => {
     const src = read("lib/engine/runtime-readiness-facts.ts");
     assert.ok(src.includes("contentChangedHardBlock"), "must compute contentChangedHardBlock");
     assert.ok(src.includes("!hasGoodAnalysisForCurrentSource"), "hard block requires no good analysis");
-    assert.ok(src.includes("!latestJob"), "hard block requires no latest job");
+    // The old `!latestJob` conjunct was removed — it was structurally impossible
+    // (hashMismatch requires latestJob to exist, so !latestJob was always false).
+    // The hard block is now: hashMismatch && !hasGoodAnalysisForCurrentSource
+    assert.ok(!src.includes("!hasGoodAnalysisForCurrentSource && !latestJob"), "must NOT have the dead !latestJob conjunct");
   });
 
   it("contentChangedWarningOnly when good analysis exists", () => {
     const src = read("lib/engine/runtime-readiness-facts.ts");
     assert.ok(src.includes("contentChangedWarningOnly"), "must compute contentChangedWarningOnly");
-    assert.ok(src.includes("hasGoodAnalysisForCurrentSource || !!latestJob"), "warning when good analysis or latest job exists");
+    // The old `(hasGoodAnalysisForCurrentSource || !!latestJob)` was simplified to
+    // just `hasGoodAnalysisForCurrentSource` — the logical complement of the hard block.
+    assert.ok(src.includes("hashMismatch && hasGoodAnalysisForCurrentSource"), "warning when good analysis exists (logical complement of hard block)");
+    assert.ok(!src.includes("hasGoodAnalysisForCurrentSource || !!latestJob"), "must NOT have the old || !!latestJob disjunction");
   });
 
   it("stale partial AI jobs are SUPERSEDED (not just detected) when good analysis exists", () => {
