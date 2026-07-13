@@ -231,8 +231,14 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
     }
   } else if (normalized === "HYBRID") {
     // Hybrid tender: require only endpoints explicitly required
-    // Check that at least one endpoint is present
-    if (!submissionEmails && !submissionAddress) {
+    // Check that at least one endpoint is present, honoring a resolving
+    // override on either endpoint (consistent with the EMAIL/PHYSICAL checks above).
+    if (
+      !submissionEmails &&
+      !submissionAddress &&
+      !hasOverride(overrides, "submissionEmails") &&
+      !hasOverride(overrides, "submissionAddress")
+    ) {
       blockers.push("Hybrid submission method requires at least one submission endpoint (email or address).");
     }
   } else {

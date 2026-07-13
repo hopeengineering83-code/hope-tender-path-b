@@ -510,6 +510,35 @@ describe("operation gate — overrides", () => {
     assert.equal(r.ok, false, "IGNORED_WITH_REASON should NOT resolve the missing submission address endpoint");
     assert.ok(r.blockers.some((b) => b.includes("Physical submission method requires")));
   });
+
+  it("FINAL: USER_EDITED override on submissionEmails resolves the HYBRID endpoint blocker (parity with EMAIL/PHYSICAL)", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({
+        submissionMethod: "Email or sealed envelope",
+        submissionEmails: null,
+        submissionAddress: null,
+      }),
+      overrides: [
+        { field: "submissionEmails", fieldState: "USER_EDITED", overrideValue: "manual@example.com" },
+      ],
+    }));
+    assert.equal(r.ok, true, "USER_EDITED override on submissionEmails should resolve the HYBRID endpoint blocker");
+  });
+
+  it("FINAL: IGNORED_WITH_REASON override does NOT resolve the HYBRID endpoint blocker", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({
+        submissionMethod: "Email or sealed envelope",
+        submissionEmails: null,
+        submissionAddress: null,
+      }),
+      overrides: [
+        { field: "submissionEmails", fieldState: "IGNORED_WITH_REASON", reason: "Tender source never states an email address" },
+        { field: "submissionAddress", fieldState: "IGNORED_WITH_REASON", reason: "Tender source never states a delivery address" },
+      ],
+    }));
+    assert.equal(r.ok, false, "IGNORED_WITH_REASON on both endpoints should NOT resolve the HYBRID endpoint blocker");
+  });
 });
 
 // ─── 8. Placeholder handling ────────────────────────────────────────────────
