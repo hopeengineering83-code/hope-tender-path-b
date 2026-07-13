@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** continued full audit after repeated dissatisfaction; searched for remaining stale AI-provider readiness copy beyond API diagnostics.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
+- **Scope:** Closed another concrete provider-guidance gap: `run-tender-engine` no longer records `GEMINI_API_KEY is not configured` when all canonical providers are absent; it now records the canonical env list. Updated the README stack summary so it no longer presents Anthropic/Gemini as the primary provider path. Extended provider-chain tests to pin both fixes.
+- **Files changed:** `lib/engine/run-tender-engine.ts`, `README.md`, `tests/ai-provider-chain-policy.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/ai-provider-chain-policy.test.ts` PASS (20/20); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS.
+- **Known risks / assumptions:** No `origin` remote is configured in this container, so live GitHub inline comments/open PR/CI state still cannot be fetched. DB integration suites were not rerun in this follow-up.
+- **Next action:** Push/update PR where a remote is available; run full CI and DB integration with fixtures.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** full follow-up audit after continued dissatisfaction; focused on remaining provider-readiness drift outside the prior patch.
 - **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
 - **Scope:** Closed additional stale AI-provider guidance in operator diagnostics. `/api/ai-providers/diagnostics?live=1` now uses the canonical provider env list instead of a partial example; `/api/system/deep-reasoning-status` now exposes all canonical providers in registry order via the safe provider-status helper while retaining compatibility fields; `lib/env-check.ts` startup architecture comments now match the Z.ai-first all-provider automatic chain. Added regression coverage so these surfaces cannot drift back to the old Gemini/OpenRouter/OpenAI/Groq/DeepSeek/Anthropic subset.

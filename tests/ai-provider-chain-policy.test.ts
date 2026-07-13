@@ -134,6 +134,8 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
 describe("operator-facing provider key guidance derives from canonical policy", () => {
   const aiSource = readFileSync("lib/ai.ts", "utf8");
   const envCheckSource = readFileSync("lib/env-check.ts", "utf8");
+  const runTenderEngineSource = readFileSync("lib/engine/run-tender-engine.ts", "utf8");
+  const readmeSource = readFileSync("README.md", "utf8");
   const deepReasoningStatusRoute = readFileSync("app/api/system/deep-reasoning-status/route.ts", "utf8");
   const regenerateSectionRoute = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
   const adminDiagnosticsRoute = readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
@@ -163,5 +165,12 @@ describe("operator-facing provider key guidance derives from canonical policy", 
     assert.match(deepReasoningStatusRoute, /getSafeProviderStatus\(\)/);
     assert.match(deepReasoningStatusRoute, /canonical: providerStatus/);
     assert.ok(!/const geminiConfigured = Boolean\(process\.env\.GEMINI_API_KEY\)/.test(deepReasoningStatusRoute));
+  });
+
+  it("engine fallback reasons and README stack copy do not single out Gemini or Anthropic as the provider path", () => {
+    assert.match(runTenderEngineSource, /CANONICAL_AI_PROVIDER_ENV_LIST/);
+    assert.ok(!runTenderEngineSource.includes('analysisFallbackReason = "GEMINI_API_KEY is not configured."'));
+    assert.ok(!readmeSource.includes("Anthropic Claude when `ANTHROPIC_API_KEY` is set"));
+    assert.match(readmeSource, /Canonical fallback order: Z\.ai → Cerebras → Mistral/);
   });
 });

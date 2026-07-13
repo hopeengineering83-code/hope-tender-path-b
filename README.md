@@ -47,8 +47,8 @@ the current list of stale/diverged PRs and active blockers.
 | ORM | Prisma 6.19 |
 | Database | PostgreSQL (Neon, Supabase, Railway) |
 | Auth | bcryptjs + HMAC-signed sessions, Postgres-backed |
-| AI (preferred) | Anthropic Claude when `ANTHROPIC_API_KEY` is set (model chain configurable via `ANTHROPIC_PROPOSAL_MODELS`) |
-| AI (fallback) | Google Gemini (`gemini-2.5-pro` by default) — used when Claude not configured, and for CV/project extraction |
+| AI providers | Canonical fallback order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic |
+| AI models | Provider/model chain configurable with the provider-specific env vars documented below |
 | Document I/O | `docx` (write), `mammoth` + `pdf-parse` + `pdf2json` + `pdfjs-dist` (read), `xlsx`, `jszip` |
 | Validation | `zod` |
 | PWA | manifest + service worker (`public/sw.js`) |

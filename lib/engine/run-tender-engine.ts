@@ -5,6 +5,7 @@ import { computeTenderMutationLockKey } from "./advisory-lock-key";
 import { logAction } from "../audit";
 import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
 import { analyzeWithAI, isAIEnabled } from "../ai";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-env";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
@@ -206,7 +207,7 @@ export async function runTenderEngine(
       }
     } else {
       analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
-      analysisFallbackReason = "GEMINI_API_KEY is not configured.";
+      analysisFallbackReason = `No AI provider is configured. Set one of: ${CANONICAL_AI_PROVIDER_ENV_LIST}.`;
       analysis = analyzeTender(tender);
     }
 
