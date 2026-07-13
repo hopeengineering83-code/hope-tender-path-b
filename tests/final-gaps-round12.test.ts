@@ -55,18 +55,38 @@ describe("round 12 — O2: cleanup-old-records retryable storage cleanup", () =>
   });
 
   it("cleans storage before clearing claims and deleting each exact row", () => {
+    // With the atomic-claim flow the order is:
+    //   1. claim (updateMany with RETENTION_PURGE_CLAIMED)
+    //   2. storage delete (deleteStoredBytes)
+    //   3. clear byte claims (updateMany with storagePath: "")
+    //   4. delete row (deleteMany)
+    const claimPos = helper.indexOf("RETENTION_PURGE_CLAIMED");
     const storagePos = helper.indexOf("deleteStoredBytes(args.storage");
-    const clearPos = helper.indexOf("prisma.tenderFile.updateMany");
+    // The clear-phase updateMany is the one that sets storagePath to "".
+    const clearPos = helper.indexOf('storagePath: ""');
     const deletePos = helper.indexOf("prisma.tenderFile.deleteMany");
-    assert.ok(storagePos >= 0 && clearPos > storagePos && deletePos > clearPos);
+    assert.ok(claimPos >= 0, "claim phase must exist");
+    assert.ok(storagePos > claimPos, "storage delete must come after claim");
+    assert.ok(clearPos > storagePos, "clear claims must come after storage delete");
+    assert.ok(deletePos > clearPos, "row delete must come after clear");
     assert.match(route, /blobsCleaned: tenderFileCleanup\.blobsCleaned/);
     assert.match(route, /tenderFileBlobFailures: tenderFileCleanup\.failures/);
   });
 
   it("retains failed rows for retry and logs only the error class", () => {
-    assert.match(helper, /lastDeletionError: "RETENTION_STORAGE_OR_ROW_PURGE_FAILED"/);
+    // The atomic-claim flow uses distinct failure codes so a retrying worker
+    // knows whether storage or row-purge failed. The codes are defined as
+    // constants near the top of the helper module.
+    assert.match(helper, /STORAGE_DELETE_FAILED_CODE\s*=\s*"RETENTION_STORAGE_DELETE_FAILED"/);
+    assert.match(helper, /ROW_PURGE_FAILED_CODE\s*=\s*"RETENTION_ROW_PURGE_FAILED"/);
     assert.match(helper, /errorClass: error instanceof Error \? error\.constructor\.name/);
     assert.match(route, /purgeExpiredTenderFiles\(/);
+  });
+
+  it("uses an atomic claim marker so two workers cannot double-process a row", () => {
+    assert.match(helper, /PURGE_CLAIM_MARKER\s*=\s*"RETENTION_PURGE_CLAIMED"/);
+    assert.match(helper, /claim\.count === 0/);
+    assert.match(helper, /integrityFailureCode: \{ not: PURGE_CLAIM_MARKER \}/);
   });
 
   it("imports the storage adapter and logger through the canonical helper boundary", () => {
