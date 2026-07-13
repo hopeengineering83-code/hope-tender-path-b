@@ -328,10 +328,43 @@ export default function CompanyPage() {
     try {
       const res = await fetch(`/api/company/documents/${doc.id}`, { method:"DELETE" });
       if (!res.ok) {
+        // Parse the structured error response without exposing technical details.
+        const data = await res.json().catch(() => ({} as Record<string, unknown>));
+        const code = typeof data?.code === "string" ? data.code : "";
+        const retryable = data?.retryable === true;
+
+        if (res.status === 404 || code === "NOT_FOUND") {
+          // Idempotent: document was already deleted (or never existed). Reload
+          // the authoritative list so the UI matches the server state.
+          await loadDocs();
+          setConfirmingDeleteDocId(null);
+          return;
+        }
+
+        if (code === "REVIEWED_PROVENANCE_DEPENDENCY") {
+          // 409: reviewed experts/projects depend on this source document.
+          // Preserve the row so the user can see which document is blocked.
+          setError("Deletion blocked because reviewed experts or projects still depend on this source document. Remove or un-review the dependent records first.");
+          return;
+        }
+
+        if (retryable || code === "STORAGE_DELETE_FAILED" || code === "DELETE_FINALIZATION_FAILED") {
+          // 502: deletion is pending a safe retry. The row is marked
+          // PENDING_DELETE on the server. Reload the authoritative list so
+          // the pending row cannot retain broken Download or Re-extract actions.
+          await loadDocs();
+          setConfirmingDeleteDocId(null);
+          setError("Document deletion is in progress but has not completed yet. The document has been marked for pending deletion and its download/re-extract actions are disabled. It will be removed automatically when storage cleanup completes.");
+          return;
+        }
+
+        // Unknown non-success response — safe generic message, no technical detail.
         setError("We could not delete that Company Vault document. Please retry, or refresh to check whether it was already removed.");
         return;
       }
-      setDocs(d => d.filter(x => x.id!==doc.id));
+      // Success: server confirmed deletion. Reload the authoritative list
+      // (do NOT optimistically remove — the server is the source of truth).
+      await loadDocs();
       setConfirmingDeleteDocId(null);
     } catch {
       setError("Network interruption while deleting the Company Vault document. Please retry when your connection is stable.");
@@ -774,13 +807,13 @@ export default function CompanyPage() {
                   <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                     <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-slate-200" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
                     <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
-                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
+                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} {...(confirmingDeleteDocId===doc.id ? { "aria-controls": `delete-confirm-${doc.id}`, "aria-describedby": `delete-confirm-help-${doc.id}` } : {})} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                   </div>
                 </div>
                 {confirmingDeleteDocId===doc.id && (
                   <div id={`delete-confirm-${doc.id}`} role="region" aria-labelledby={`delete-confirm-title-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} onKeyDown={(event)=>onDeleteConfirmationKeyDown(event, doc.id)} className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
                     <p id={`delete-confirm-title-${doc.id}`} className="font-medium">Delete this Company Vault document?</p>
-                    <p id={`delete-confirm-help-${doc.id}`} className="mt-1 text-red-800">This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit. Press Escape to cancel.</p>
+                    <p id={`delete-confirm-help-${doc.id}`} className="mt-1 text-red-800">This removes the document from future evidence selection. Unreviewed AI-drafted and regex-drafted expert and project records created from this document will also be removed. Reviewed records remain for audit but will block deletion if they still depend on this source. This action cannot be undone. Press Escape to cancel.</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button ref={(node)=>{ if (node) confirmDeleteButtonRefs.current[doc.id]=node; else delete confirmDeleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
                       <button type="button" onClick={()=>cancelDeleteConfirmation(doc.id)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
@@ -861,7 +894,7 @@ export default function CompanyPage() {
                         <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{ex.yearsExperience ? `${ex.yearsExperience}y` : "-"}</td>
                         <td className="px-5 py-3 text-right">
                           <button onClick={()=>startEditExpert(ex)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                          <button type="button" onClick={()=>setConfirmingDeleteExpertId(ex.id)} disabled={deletingExpertId!==null} aria-expanded={confirmingDeleteExpertId===ex.id} aria-controls={`expert-delete-confirm-${ex.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+                          <button type="button" onClick={()=>setConfirmingDeleteExpertId(ex.id)} disabled={deletingExpertId!==null} aria-expanded={confirmingDeleteExpertId===ex.id} {...(confirmingDeleteExpertId===ex.id ? { "aria-controls": `expert-delete-confirm-${ex.id}` } : {})} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
                             {deletingExpertId===ex.id?"Deleting…":"Delete"}
                           </button>
                         </td>
@@ -966,7 +999,7 @@ export default function CompanyPage() {
                         <td className="px-5 py-3 text-slate-500 hidden lg:table-cell">{p.country??"-"}</td>
                         <td className="px-5 py-3 text-right">
                           <button onClick={()=>startEditProject(p)} className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100 mr-1">Edit</button>
-                          <button type="button" onClick={()=>setConfirmingDeleteProjectId(p.id)} disabled={deletingProjectId!==null} aria-expanded={confirmingDeleteProjectId===p.id} aria-controls={`project-delete-confirm-${p.id}`} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
+                          <button type="button" onClick={()=>setConfirmingDeleteProjectId(p.id)} disabled={deletingProjectId!==null} aria-expanded={confirmingDeleteProjectId===p.id} {...(confirmingDeleteProjectId===p.id ? { "aria-controls": `project-delete-confirm-${p.id}` } : {})} className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">
                             {deletingProjectId===p.id?"Deleting…":"Delete"}
                           </button>
                         </td>
@@ -1055,7 +1088,7 @@ export default function CompanyPage() {
                             <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
                             <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
                             <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteComplianceId(r.id)} disabled={deletingComplianceId!==null} aria-expanded={confirmingDeleteComplianceId===r.id} aria-controls={`compliance-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Delete"}</button></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteComplianceId(r.id)} disabled={deletingComplianceId!==null} aria-expanded={confirmingDeleteComplianceId===r.id} {...(confirmingDeleteComplianceId===r.id ? { "aria-controls": `compliance-delete-confirm-${r.id}` } : {})} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Delete"}</button></td>
                           </tr>
                           {confirmingDeleteComplianceId===r.id && (
                             <tr id={`compliance-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={6} className="px-4 py-3"><p className="font-medium">Delete compliance record {r.title}?</p><p className="mt-1 text-red-800">This removes the credential from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingComplianceId===r.id?"Deleting…":"Yes, delete compliance record"}</button><button type="button" onClick={()=>setConfirmingDeleteComplianceId(null)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
@@ -1121,7 +1154,7 @@ export default function CompanyPage() {
                             <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
                             <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
                             <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
-                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteLegalId(r.id)} disabled={deletingLegalId!==null} aria-expanded={confirmingDeleteLegalId===r.id} aria-controls={`legal-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Delete"}</button></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteLegalId(r.id)} disabled={deletingLegalId!==null} aria-expanded={confirmingDeleteLegalId===r.id} {...(confirmingDeleteLegalId===r.id ? { "aria-controls": `legal-delete-confirm-${r.id}` } : {})} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Delete"}</button></td>
                           </tr>
                           {confirmingDeleteLegalId===r.id && (
                             <tr id={`legal-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={6} className="px-4 py-3"><p className="font-medium">Delete legal record {r.title}?</p><p className="mt-1 text-red-800">This removes the credential from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingLegalId===r.id?"Deleting…":"Yes, delete legal record"}</button><button type="button" onClick={()=>setConfirmingDeleteLegalId(null)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>
@@ -1178,7 +1211,7 @@ export default function CompanyPage() {
                             <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
                             <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
                             <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
-                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteFinancialId(r.id)} disabled={deletingFinancialId!==null} aria-expanded={confirmingDeleteFinancialId===r.id} aria-controls={`financial-delete-confirm-${r.id}`} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Delete"}</button></td>
+                            <td className="px-4 py-2 text-right"><button type="button" onClick={()=>setConfirmingDeleteFinancialId(r.id)} disabled={deletingFinancialId!==null} aria-expanded={confirmingDeleteFinancialId===r.id} {...(confirmingDeleteFinancialId===r.id ? { "aria-controls": `financial-delete-confirm-${r.id}` } : {})} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Delete"}</button></td>
                           </tr>
                           {confirmingDeleteFinancialId===r.id && (
                             <tr id={`financial-delete-confirm-${r.id}`} className="bg-red-50 text-xs text-red-900"><td colSpan={5} className="px-4 py-3"><p className="font-medium">Delete financial record for {r.fiscalYear}?</p><p className="mt-1 text-red-800">This removes the financial evidence from future evidence selection. Tender documents already generated are not changed automatically.</p><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={()=>void deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 disabled:opacity-60">{deletingFinancialId===r.id?"Deleting…":"Yes, delete financial record"}</button><button type="button" onClick={()=>setConfirmingDeleteFinancialId(null)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60">Cancel</button></div></td></tr>

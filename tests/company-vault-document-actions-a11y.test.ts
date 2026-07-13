@@ -25,9 +25,12 @@ describe("Company Vault document row actions", () => {
     assert.match(source, /aria-labelledby=\{`delete-confirm-title-\$\{doc\.id\}`\}/);
     assert.match(source, /aria-describedby=\{`delete-confirm-help-\$\{doc\.id\}`\}/);
     assert.match(source, /aria-expanded=\{confirmingDeleteDocId===doc\.id\}/);
-    assert.match(source, /aria-controls=\{`delete-confirm-\$\{doc\.id\}`\}/);
+    // aria-controls is now conditional — only rendered when the confirmation
+    // panel is mounted (confirmingDeleteDocId===doc.id). This prevents dangling
+    // ARIA references when the confirmation region is not in the DOM.
+    assert.match(source, /confirmingDeleteDocId===doc\.id \? \{ "aria-controls": `delete-confirm/);
     assert.match(source, /Yes, delete document/);
-    assert.match(source, /removes it from future evidence selection and cannot be undone/);
+    assert.match(source, /Unreviewed AI-drafted and regex-drafted/i);
   });
 
   it("prevents duplicate delete clicks and reports safe user-facing failures", () => {
