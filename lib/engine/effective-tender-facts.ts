@@ -322,11 +322,33 @@ export async function getEffectiveTenderFacts(
       intakeSummary: true, analysisSummary: true, category: true, metadataContaminated: true,
       analysisExtractionStatus: true, technicalWeight: true, financialWeight: true,
       files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true } },
+      metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
     },
   });
 
   if (!tender) {
     return emptyResult(tenderId, ["Tender not found"]);
+  }
+
+  // Manual overrides — the module doc for this function has always claimed
+  // "manual overrides" as one of the four layers combined here, and
+  // EffectiveTenderFactStatus/Source already define resolved_from_manual_
+  // override / "manual" for exactly this, but no override was ever actually
+  // queried or consulted. A USER_CONFIRMED/USER_EDITED override is a direct
+  // human correction, so it is honored ahead of the parser/scalar fallback —
+  // same as resolveEffectiveTenderFacts above and the older sibling
+  // resolveEffectiveValue helper. NOT_APPLICABLE/IGNORED_WITH_REASON are
+  // audited absences, not values, and are intentionally NOT consulted here
+  // (matches the rest of the authority model).
+  const overrideMap = new Map(
+    (tender.metadataOverrides ?? []).map((o: any) => [o.field, o]),
+  );
+  function manualOverrideValue(field: string): string | null {
+    const ov = overrideMap.get(field) as { fieldState: string; overrideValue: string | null } | undefined;
+    if (ov && (ov.fieldState === "USER_EDITED" || ov.fieldState === "USER_CONFIRMED") && ov.overrideValue) {
+      return ov.overrideValue;
+    }
+    return null;
   }
 
   const sourceText = buildTenderFactSourceText({
@@ -368,25 +390,25 @@ export async function getEffectiveTenderFacts(
   facts.push({ key: "serviceStreams", label: "Service Streams", value: serviceStreams.length > 0 ? serviceStreams : null, status: serviceStreams.length > 0 ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: serviceStreams.length > 0 ? "parser" : "none" });
 
   // Project title (parser → scalar)
-  const projectTitle = resolveSimple({ key: "projectTitle", label: "Project Title", parserValue: intelligence?.projectTitle ?? null, scalarValue: tender.title, ledgerFacts: ledgerSnapshot?.facts, isClean: isCleanScalarValue, requiredFor: "draft_context", facts });
+  const projectTitle = resolveSimple({ key: "projectTitle", label: "Project Title", parserValue: intelligence?.projectTitle ?? null, scalarValue: tender.title, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("title"), isClean: isCleanScalarValue, requiredFor: "draft_context", facts });
 
   // Client
-  const clientOrProcuringEntity = resolveSimple({ key: "clientName", label: "Client / Procuring Entity", parserValue: intelligence?.clientOrProcuringEntity ?? null, scalarValue: tender.clientName || tender.procuringEntityName, ledgerFacts: ledgerSnapshot?.facts, isClean: (v) => isCleanScalarValue(v) && isValidClientName(v), requiredFor: "draft_context", facts });
+  const clientOrProcuringEntity = resolveSimple({ key: "clientName", label: "Client / Procuring Entity", parserValue: intelligence?.clientOrProcuringEntity ?? null, scalarValue: tender.clientName || tender.procuringEntityName, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("clientName"), isClean: (v) => isCleanScalarValue(v) && isValidClientName(v), requiredFor: "draft_context", facts });
 
   // Reference
-  const referenceNumber = resolveSimple({ key: "reference", label: "Reference Number", parserValue: null, scalarValue: tender.reference, ledgerFacts: ledgerSnapshot?.facts, isClean: (v) => isCleanScalarValue(v) && isValidReferenceNumber(v), requiredFor: "optional", facts });
+  const referenceNumber = resolveSimple({ key: "reference", label: "Reference Number", parserValue: null, scalarValue: tender.reference, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("reference"), isClean: (v) => isCleanScalarValue(v) && isValidReferenceNumber(v), requiredFor: "optional", facts });
 
   // Country
-  const country = resolveSimple({ key: "country", label: "Country", parserValue: null, scalarValue: tender.country, ledgerFacts: ledgerSnapshot?.facts, isClean: (v) => isCleanScalarValue(v) && isValidCountry(v), requiredFor: "optional", facts });
+  const country = resolveSimple({ key: "country", label: "Country", parserValue: null, scalarValue: tender.country, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("country"), isClean: (v) => isCleanScalarValue(v) && isValidCountry(v), requiredFor: "optional", facts });
 
   // Deadline
   const parserDeadlineDisplay = intelligence?.submissionInstructions.deadlineDisplay ?? null;
   const parserDeadlineIso = intelligence?.submissionInstructions.deadlineIso ?? null;
-  const deadlineResult = resolveDeadline(parserDeadlineDisplay, parserDeadlineIso, tender.deadline, ledgerSnapshot?.facts, facts);
+  const deadlineResult = resolveDeadline(parserDeadlineDisplay, parserDeadlineIso, tender.deadline, ledgerSnapshot?.facts, manualOverrideValue("deadline"), facts);
 
   // Submission method
   const parserMethod = intelligence?.submissionInstructions.method && intelligence.submissionInstructions.method !== "Unknown" ? intelligence.submissionInstructions.method : null;
-  const submissionMethod = resolveMethod(parserMethod, tender.submissionMethod, ledgerSnapshot?.facts, facts);
+  const submissionMethod = resolveMethod(parserMethod, tender.submissionMethod, ledgerSnapshot?.facts, manualOverrideValue("submissionMethod"), facts);
 
   // Submission format
   const submissionFormat = intelligence?.submissionInstructions.format ?? null;
@@ -395,13 +417,13 @@ export async function getEffectiveTenderFacts(
   // Emails
   const parserEmails = intelligence?.submissionInstructions.emails ?? [];
   const scalarEmails = parserNormalizeEmailList(tender.submissionEmails);
-  const submissionEmails = resolveEmails(parserEmails, scalarEmails, ledgerSnapshot?.facts, facts);
+  const submissionEmails = resolveEmails(parserEmails, scalarEmails, ledgerSnapshot?.facts, manualOverrideValue("submissionEmails"), facts);
 
   // Email subject
-  const submissionEmailSubject = resolveSimple({ key: "submissionEmailSubject", label: "Email Subject", parserValue: intelligence?.submissionInstructions.emailSubject ?? null, scalarValue: tender.submissionEmailSubject, ledgerFacts: ledgerSnapshot?.facts, isClean: isCleanScalarValue, requiredFor: "optional", facts });
+  const submissionEmailSubject = resolveSimple({ key: "submissionEmailSubject", label: "Email Subject", parserValue: intelligence?.submissionInstructions.emailSubject ?? null, scalarValue: tender.submissionEmailSubject, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("submissionEmailSubject"), isClean: isCleanScalarValue, requiredFor: "optional", facts });
 
   // Submission address
-  const submissionAddress = resolveSimple({ key: "submissionAddress", label: "Submission Address", parserValue: intelligence?.submissionInstructions.physicalAddress ?? null, scalarValue: tender.submissionAddress, ledgerFacts: ledgerSnapshot?.facts, isClean: isCleanScalarValue, requiredFor: submissionMethod === "Physical" || submissionMethod === "Hybrid" ? "final_submission" : "optional", facts });
+  const submissionAddress = resolveSimple({ key: "submissionAddress", label: "Submission Address", parserValue: intelligence?.submissionInstructions.physicalAddress ?? null, scalarValue: tender.submissionAddress, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("submissionAddress"), isClean: isCleanScalarValue, requiredFor: submissionMethod === "Physical" || submissionMethod === "Hybrid" ? "final_submission" : "optional", facts });
 
   // Financial proposal
   const financialProposalRequired = intelligence ? intelligence.financialProposalRequired : true;
@@ -409,7 +431,7 @@ export async function getEffectiveTenderFacts(
   facts.push({ key: "financialProposalRequired", label: "Financial Proposal Required", value: financialProposalRequired ? "Yes" : "No", status: intelligence ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: intelligence ? "parser" : "none" });
 
   // Evaluation methodology
-  const evaluationMethodology = resolveSimple({ key: "evaluationMethodology", label: "Evaluation Methodology", parserValue: intelligence?.evaluationMethodology?.methodology ?? null, scalarValue: tender.evaluationMethodology, ledgerFacts: ledgerSnapshot?.facts, isClean: isCleanScalarValue, requiredFor: "optional", facts });
+  const evaluationMethodology = resolveSimple({ key: "evaluationMethodology", label: "Evaluation Methodology", parserValue: intelligence?.evaluationMethodology?.methodology ?? null, scalarValue: tender.evaluationMethodology, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("evaluationMethodology"), isClean: isCleanScalarValue, requiredFor: "optional", facts });
 
   // Required documents
   const requiredDocuments = intelligence?.requiredDocuments.filter((d) => d.required).map((d) => d.name) ?? [];
@@ -439,10 +461,10 @@ export async function getEffectiveTenderFacts(
 
 function resolveSimple(args: {
   key: string; label: string; parserValue: string | null; scalarValue: string | null | undefined;
-  ledgerFacts: ReadonlyArray<any> | undefined; isClean: (v: string | null | undefined) => boolean;
+  ledgerFacts: ReadonlyArray<any> | undefined; overrideValue?: string | null; isClean: (v: string | null | undefined) => boolean;
   requiredFor: EffectiveTenderFactRequiredFor; facts: EffectiveTenderFactEntry[];
 }): string | null {
-  const { key, label, parserValue, scalarValue, ledgerFacts, isClean, requiredFor, facts } = args;
+  const { key, label, parserValue, scalarValue, ledgerFacts, overrideValue, isClean, requiredFor, facts } = args;
   const ledgerFact = ledgerFacts?.find((f) => f.semanticKey === key);
   if (ledgerFact) {
     const ls = String(ledgerFact.authorityState).toUpperCase();
@@ -457,6 +479,10 @@ function resolveSimple(args: {
       facts.push({ key, label, value: null, status: "not_applicable", requiredFor: "optional", source: "ledger" });
       return null;
     }
+  }
+  if (overrideValue && isClean(overrideValue)) {
+    facts.push({ key, label, value: overrideValue, status: "resolved_from_manual_override", requiredFor, source: "manual" });
+    return overrideValue;
   }
   if (parserValue && isClean(parserValue)) {
     facts.push({ key, label, value: parserValue, status: "resolved_from_source_text", requiredFor, source: "parser" });
@@ -478,6 +504,7 @@ function resolveDeadline(
   parserDisplay: string | null, parserIso: string | null,
   scalarDeadline: Date | string | null,
   ledgerFacts: ReadonlyArray<any> | undefined,
+  overrideValue: string | null,
   facts: EffectiveTenderFactEntry[],
 ): { display: string | null; iso: string | null } {
   const key = "deadline"; const label = "Submission Deadline";
@@ -491,6 +518,13 @@ function resolveDeadline(
         return { display: value, iso: value };
       }
     }
+  }
+  if (overrideValue && isCleanDeadline(overrideValue)) {
+    const d = new Date(overrideValue);
+    const display = d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+    const iso = d.toISOString();
+    facts.push({ key, label, value: display, status: "resolved_from_manual_override", requiredFor: "final_submission", source: "manual" });
+    return { display, iso };
   }
   if (parserDisplay) {
     facts.push({ key, label, value: parserDisplay, status: "resolved_from_source_text", requiredFor: "final_submission", source: "parser" });
@@ -510,6 +544,7 @@ function resolveDeadline(
 function resolveMethod(
   parserMethod: string | null, scalarMethod: string | null | undefined,
   ledgerFacts: ReadonlyArray<any> | undefined,
+  overrideValue: string | null,
   facts: EffectiveTenderFactEntry[],
 ): "Email" | "Portal" | "Physical" | "Hybrid" | "Unknown" {
   const key = "submissionMethod"; const label = "Submission Method";
@@ -523,6 +558,10 @@ function resolveMethod(
         return normalizeMethod(value);
       }
     }
+  }
+  if (overrideValue && isCleanScalarValue(overrideValue)) {
+    facts.push({ key, label, value: overrideValue, status: "resolved_from_manual_override", requiredFor: "draft_context", source: "manual" });
+    return normalizeMethod(overrideValue);
   }
   if (parserMethod) {
     facts.push({ key, label, value: parserMethod, status: "resolved_from_source_text", requiredFor: "draft_context", source: "parser" });
@@ -539,6 +578,7 @@ function resolveMethod(
 function resolveEmails(
   parserEmails: string[], scalarEmails: string[],
   ledgerFacts: ReadonlyArray<any> | undefined,
+  overrideValue: string | null,
   facts: EffectiveTenderFactEntry[],
 ): string[] {
   const key = "submissionEmails"; const label = "Submission Emails";
@@ -554,6 +594,13 @@ function resolveEmails(
           return emails;
         }
       }
+    }
+  }
+  if (overrideValue) {
+    const overrideEmails = parserNormalizeEmailList(overrideValue);
+    if (overrideEmails.length > 0) {
+      facts.push({ key, label, value: overrideEmails, status: "resolved_from_manual_override", requiredFor: "optional", source: "manual" });
+      return overrideEmails;
     }
   }
   if (parserEmails.length > 0) {

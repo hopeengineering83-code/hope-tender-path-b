@@ -112,7 +112,7 @@ export function isGeminiEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | null;
+type AIProvider = "zai" | "cerebras" | "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -2909,6 +2909,20 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: 
     return generateWithFallback(prompt, { systemPrompt: CRITIC_SYSTEM_PROMPT, useCase: "reasoning" }).catch(() => null);
   }
   try {
+    // Z.ai/Cerebras are canonical ranks 1-2 but were previously never
+    // attempted in this hand-rolled proposal-useCase chain at all.
+    if (isZaiEnabled() && !isProviderCooledDown("zai")) {
+      const r = await withRefinementTimeout(
+        generateWithZai(prompt, CRITIC_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
+      ).catch(() => null);
+      if (r) return r;
+    }
+    if (isCerebrasEnabled() && !isProviderCooledDown("cerebras")) {
+      const r = await withRefinementTimeout(
+        generateWithCerebras(prompt, CRITIC_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
+      ).catch(() => null);
+      if (r) return r;
+    }
     if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
       const r = await withRefinementTimeout(
         generateWithOpenAI(prompt, CRITIC_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
@@ -2961,6 +2975,20 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCa
     if (r) { lastProposalProvider = "openai"; return r; }
   }
   try {
+    // Z.ai/Cerebras are canonical ranks 1-2 but were previously never
+    // attempted in this hand-rolled proposal-useCase chain at all.
+    if (isZaiEnabled() && !isProviderCooledDown("zai")) {
+      const r = await withRefinementTimeout(
+        generateWithZai(prompt, REWRITER_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
+      ).catch(() => null);
+      if (r) { lastProposalProvider = "zai"; return r; }
+    }
+    if (isCerebrasEnabled() && !isProviderCooledDown("cerebras")) {
+      const r = await withRefinementTimeout(
+        generateWithCerebras(prompt, REWRITER_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
+      ).catch(() => null);
+      if (r) { lastProposalProvider = "cerebras"; return r; }
+    }
     if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
       const r = await withRefinementTimeout(
         generateWithOpenAI(prompt, REWRITER_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
@@ -4058,7 +4086,7 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | "fallback";
+  source: "zai" | "cerebras" | "claude" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter" | "fallback";
   error?: string;
   durationMs: number;
 }
@@ -4079,16 +4107,49 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Provider chain for sections: ACTUAL per-section attempt order in the code
-  // below is Gemini → OpenAI → Mistral → Together → DeepSeek → Groq/OpenRouter →
-  // Anthropic → deterministic fallback. NOTE: this legacy per-section order
-  // predates and DIFFERS from the canonical automatic chain (Z.ai → Cerebras →
-  // Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek →
-  // Anthropic) defined in lib/ai-provider-registry.ts; reordering it is a
-  // runtime behavior change and is intentionally not done here. Anthropic stays
-  // last so its rate limits don't block parallel section generation.
+  // Provider chain for sections: ACTUAL per-section attempt order below is
+  // Z.ai → Cerebras → Gemini → OpenAI → Mistral → Together → DeepSeek →
+  // Groq/OpenRouter → Anthropic → deterministic fallback. Z.ai/Cerebras were
+  // previously never attempted here at all, despite being ranks 1-2 of the
+  // canonical chain (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini →
+  // OpenAI → Together → DeepSeek → Anthropic) in lib/ai-provider-registry.ts
+  // — meaning the "multi-provider resilience" story was untrue for the exact
+  // code path that writes the document a user downloads. The remaining tail
+  // order still differs from canonical and is left as-is: reordering it
+  // further is a larger behavior change than this fix scopes to. Anthropic
+  // stays last so its rate limits don't block parallel section generation.
 
-    // Gemini — first tier
+  // Z.ai — first tier (canonical rank 1)
+  if (isZaiEnabled() && !isProviderCooledDown("zai")) {
+    try {
+      const text = await Promise.race([
+        generateWithZai(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 8000),
+        makeSectionTimeout(),
+      ]);
+      if (text && text.trim().length > 0) {
+        return { id: spec.id, title: spec.title, markdown: text, source: "zai", durationMs: Date.now() - t0 };
+      }
+    } catch (err) {
+      logger.warn(`[ai] section "${spec.id}" Z.ai failed (${err instanceof Error ? err.message : String(err)}) — trying Cerebras.`);
+    }
+  }
+
+  // Cerebras — second tier (canonical rank 2)
+  if (isCerebrasEnabled() && !isProviderCooledDown("cerebras")) {
+    try {
+      const text = await Promise.race([
+        generateWithCerebras(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 8000),
+        makeSectionTimeout(),
+      ]);
+      if (text && text.trim().length > 0) {
+        return { id: spec.id, title: spec.title, markdown: text, source: "cerebras", durationMs: Date.now() - t0 };
+      }
+    } catch (err) {
+      logger.warn(`[ai] section "${spec.id}" Cerebras failed (${err instanceof Error ? err.message : String(err)}) — trying Gemini.`);
+    }
+  }
+
+    // Gemini — third tier
   if (apiKey && !isProviderCooledDown("gemini")) {
     try {
       // Prepend the section's system-prompt persona to the user prompt so

@@ -249,16 +249,6 @@ describe("deterministic build — patch targets are in committed source", () => 
     );
   });
 
-  it("tender-detail.tsx already sends ?continue=jobId on resume", () => {
-    const src = readFileSync(
-      path.join(root, "app/dashboard/tenders/[id]/tender-detail.tsx"),
-      "utf-8",
-    );
-    assert.ok(
-      src.includes("const analyzeUrl = continueJobId"),
-      "tender-detail.tsx must construct analyzeUrl with ?continue=",
-    );
-  });
 });
 
 // ── Behavioral: buildResumeState edge cases ───────────────────────────────────

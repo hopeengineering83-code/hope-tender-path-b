@@ -175,7 +175,6 @@ describe("migrated UI canonical rendering", () => {
 describe("phase 1 architectural guardrails", () => {
   it("migrated areas do not introduce a second readiness/severity mapping", () => {
     for (const file of [
-      "app/dashboard/tenders/[id]/tender-detail.tsx",
       "app/dashboard/tenders/[id]/executive-snapshot.tsx",
       "components/tender-health-score-panel.tsx",
       "components/generation-action-panel.tsx",

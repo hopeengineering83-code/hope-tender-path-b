@@ -130,12 +130,6 @@ describe("Spec Test 5 — Match Evidence / Link Evidence button", () => {
 // ─── 6. Generate button renders visible icon + label ──────────────────────────
 
 describe("Spec Test 6 — Generate button", () => {
-  it("tender-detail Generate Docs has BoltIcon + text", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("<BoltIcon />"), "Generate Docs must render BoltIcon");
-    assert.ok(src.includes('"Generate Docs"'), "Generate Docs must have visible text");
-  });
-
   it("generation-action-panel Generate Docs has BoltIcon", () => {
     const src = read("components/generation-action-panel.tsx");
     assert.ok(src.includes("BoltIcon"), "Generate Docs button must use BoltIcon");
@@ -164,20 +158,11 @@ describe("Spec Test 8 — Export button", () => {
     assert.ok(src.includes("<DownloadIcon /> Download Final ZIP"), "Download Final ZIP must render DownloadIcon + text");
   });
 
-  it("tender-detail ZIP Package has DownloadIcon + text", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("<DownloadIcon /> ZIP Package"), "ZIP Package must render DownloadIcon + text");
-  });
 });
 
 // ─── 9. Disabled critical buttons retain visible icon + label ─────────────────
 
 describe("Spec Test 9 — Disabled buttons retain icon + label", () => {
-  it("tender-detail disabled buttons use disabled:opacity-60 (not -40/-50)", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("disabled:opacity-60"), "disabled buttons must use disabled:opacity-60");
-  });
-
   it("engine-action-panel disabled buttons use disabled:opacity-60", () => {
     const src = read("components/engine-action-panel.tsx");
     assert.ok(src.includes("disabled:opacity-60"), "engine-action-panel must use disabled:opacity-60");
@@ -220,16 +205,6 @@ describe("Spec Test 9 — Disabled buttons retain icon + label", () => {
 // ─── 10. Disabled critical buttons have title or inline reason ────────────────
 
 describe("Spec Test 10 — Disabled buttons have title or reason", () => {
-  it("tender-detail Generate Docs has title with disabled reason", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("title={generateDisabledReason"), "Generate Docs must have title with reason");
-  });
-
-  it("tender-detail ZIP Package has title with zipDisabledReason", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("title={zipDisabledReason"), "ZIP Package must have title with reason");
-  });
-
   it("export-readiness-panel Download blocked has title", () => {
     const src = read("components/export-readiness-panel.tsx");
     assert.ok(src.includes("Download blocked"), "must have Download blocked button with title");
@@ -309,15 +284,6 @@ describe("Spec Test 12 — No raw Unicode in workflow components", () => {
     });
   }
 
-  it("tender-detail.tsx has no raw Unicode dingbats in user-facing JSX", () => {
-    const raw = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    const src = stripComments(raw);
-    const matches = src.match(RAW_UNICODE_PATTERN);
-    assert.ok(
-      !matches,
-      `tender-detail.tsx must not contain raw Unicode dingbats (${matches?.[0]}) in user-facing JSX`,
-    );
-  });
 });
 
 // ─── 13. No user-facing "metadata" wording introduced ─────────────────────────

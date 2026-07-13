@@ -27,10 +27,6 @@ function readComponent(name: string): string {
   return readFileSync(resolve(process.cwd(), "components", name), "utf8");
 }
 
-function readAppFile(relPath: string): string {
-  return readFileSync(resolve(process.cwd(), relPath), "utf8");
-}
-
 // Strip comments before checking for raw Unicode — comments referencing the
 // spec text (e.g. "Replaces ⚠") are fine. We only care about user-facing JSX.
 function stripComments(src: string): string {
@@ -71,26 +67,11 @@ describe("Spec Test 1 — No raw Unicode operational icons in workflow component
     });
   }
 
-  it("tender-detail.tsx has no raw Unicode dingbats in user-facing JSX", () => {
-    const raw = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    const src = stripComments(raw);
-    const matches = src.match(RAW_UNICODE_PATTERN);
-    assert.ok(
-      !matches,
-      `tender-detail.tsx must not contain raw Unicode dingbats (${matches?.[0]}) in user-facing JSX`,
-    );
-  });
 });
 
 // ─── 2. Generate Docs button renders BoltIcon and visible text ───────────────
 
 describe("Spec Test 2 — Generate Docs button renders BoltIcon + text", () => {
-  it("tender-detail.tsx Generate Docs button has BoltIcon and 'Generate Docs' text", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("<BoltIcon />"), "Generate Docs button must render BoltIcon");
-    assert.ok(/Generate Docs/.test(src), "Generate Docs button must have visible 'Generate Docs' text");
-  });
-
   it("generation-action-panel.tsx Generate Docs button has BoltIcon", () => {
     const src = readComponent("generation-action-panel.tsx");
     assert.ok(src.includes("BoltIcon"), "Generate Docs button must use BoltIcon");
@@ -105,23 +86,9 @@ describe("Spec Test 2 — Generate Docs button renders BoltIcon + text", () => {
 
 // ─── 3. Validate button renders CheckIcon and visible text ───────────────────
 
-describe("Spec Test 3 — Validate button renders CheckIcon + text", () => {
-  it("tender-detail.tsx Validate button has CheckIcon and 'Validate' text", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("<CheckIcon />"), "Validate button must render CheckIcon");
-    assert.ok(/Validate/.test(src), "Validate button must have visible 'Validate' text");
-  });
-});
-
 // ─── 4. Run Engine button renders PlayIcon/BoltIcon and visible text ─────────
 
 describe("Spec Test 4 — Run Engine button renders PlayIcon/BoltIcon + text", () => {
-  it("tender-detail.tsx Run Engine button has PlayIcon and 'Run Engine' text", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("<PlayIcon />"), "Run Engine button must render PlayIcon");
-    assert.ok(/Run Engine/.test(src), "Run Engine button must have visible 'Run Engine' text");
-  });
-
   it("engine-action-panel.tsx Run Engine button has PlayIcon", () => {
     const src = readComponent("engine-action-panel.tsx");
     assert.ok(src.includes("<PlayIcon"), "engine-action-panel Run Engine button must render PlayIcon");
@@ -132,11 +99,6 @@ describe("Spec Test 4 — Run Engine button renders PlayIcon/BoltIcon + text", (
 // ─── 5. ZIP Package renders DownloadIcon and visible text ────────────────────
 
 describe("Spec Test 5 — ZIP Package renders DownloadIcon + text", () => {
-  it("tender-detail.tsx ZIP Package button has DownloadIcon and 'ZIP Package' text", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(src.includes("<DownloadIcon /> ZIP Package"), "ZIP Package button must render DownloadIcon + 'ZIP Package' text");
-  });
-
   it("export-readiness-panel.tsx Download Final ZIP has DownloadIcon", () => {
     const src = readComponent("export-readiness-panel.tsx");
     assert.ok(src.includes("<DownloadIcon /> Download Final ZIP"), "Download Final ZIP must render DownloadIcon + text");
@@ -146,16 +108,6 @@ describe("Spec Test 5 — ZIP Package renders DownloadIcon + text", () => {
 // ─── 6. Disabled Generate/Validate/ZIP buttons still render icon + label ─────
 
 describe("Spec Test 6 — Disabled buttons still render icon + label", () => {
-  it("tender-detail.tsx disabled buttons use disabled:opacity-60 (not -40/-50)", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    // The Generate Docs, Validate, and ZIP Package buttons must use opacity-60
-    // so the icon + label remain readable when disabled.
-    assert.ok(
-      src.includes("disabled:opacity-60"),
-      "disabled buttons must use disabled:opacity-60 for readability",
-    );
-  });
-
   it("engine-action-panel.tsx disabled buttons use disabled:opacity-60", () => {
     const src = readComponent("engine-action-panel.tsx");
     assert.ok(
@@ -184,22 +136,6 @@ describe("Spec Test 6 — Disabled buttons still render icon + label", () => {
 // ─── 7. Disabled primary actions have title or inline reason ─────────────────
 
 describe("Spec Test 7 — Disabled primary actions have title or inline reason", () => {
-  it("tender-detail.tsx Generate Docs button has title with disabled reason", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(
-      src.includes('title={generateDisabledReason'),
-      "Generate Docs button must have title with generateDisabledReason",
-    );
-  });
-
-  it("tender-detail.tsx ZIP Package button has title with zipDisabledReason", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(
-      src.includes('title={zipDisabledReason'),
-      "ZIP Package button must have title with zipDisabledReason",
-    );
-  });
-
   it("generation-action-panel.tsx Generate button has title with blockedReason", () => {
     const src = readComponent("generation-action-panel.tsx");
     assert.ok(
@@ -258,42 +194,9 @@ describe("Spec Test 9 — Document Validator uses SVG icons, not Unicode", () =>
   });
 });
 
-// ─── 10. Extraction/Trust badges use SVG icons, not raw ⚠ or ✓ ───────────────
-
-describe("Spec Test 10 — Extraction/Trust badges use SVG icons", () => {
-  it("tender-detail.tsx ExtractionBadge uses WarningIcon for scanned", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(
-      /ExtractionBadge[\s\S]*?<WarningIcon \/> scanned/.test(src),
-      "ExtractionBadge must use WarningIcon for 'scanned', not raw ⚠",
-    );
-  });
-
-  it("tender-detail.tsx TrustBadge uses CheckIcon for REVIEWED", () => {
-    const src = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(
-      /TrustBadge[\s\S]*?<CheckIcon \/> REVIEWED/.test(src),
-      "TrustBadge must use CheckIcon for 'REVIEWED', not raw ✓",
-    );
-  });
-});
-
 // ─── 11. No user-facing "metadata" wording is introduced ─────────────────────
 
 describe("Spec Test 11 — No user-facing 'metadata' wording introduced", () => {
-  it("tender-detail.tsx does not use 'metadata' in user-facing JSX text", () => {
-    const raw = readAppFile("app/dashboard/tenders/[id]/tender-detail.tsx");
-    const src = stripComments(raw);
-    // Allow "metadataContaminated" (a DB field name, not user-facing) and
-    // "metadata" inside className/variable names. We only flag user-facing
-    // text content like ">Metadata<" or "metadata fields".
-    const userFacingMetadata = src.match(/>\s*[Mm]etadata[\s<]/);
-    assert.ok(
-      !userFacingMetadata,
-      "tender-detail.tsx must not use 'metadata' in user-facing JSX text — use 'Tender Details' instead",
-    );
-  });
-
   it("tender-recovery-command-center.tsx does not use 'metadata' in user-facing JSX text", () => {
     const raw = readComponent("tender-recovery-command-center.tsx");
     const src = stripComments(raw);

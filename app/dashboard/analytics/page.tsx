@@ -89,7 +89,7 @@ export default async function AnalyticsPage() {
       orderBy: { readinessScore: "desc" },
     }),
     prisma.auditLog.findMany({
-      where: { userId },
+      where: { userId, NOT: { entityType: "TenderStorageCleanup" } },
       orderBy: { createdAt: "desc" },
       take: 10,
       select: {

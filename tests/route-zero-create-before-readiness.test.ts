@@ -71,10 +71,13 @@ describe("Submission-plan build route — zero GeneratedDocument.create", () => 
   });
 
   it("build route returns virtualOnly: true", () => {
-    // The build route returns generatedDocumentsCreated: 0 instead of virtualOnly.
+    // The build route reports generatedDocumentsCreated as the measured delta
+    // (afterDocs - beforeDocs), which is 0 because Build Plan creation creates
+    // zero GeneratedDocument rows. The route must use the dynamic expression,
+    // not a hardcoded 0, so the response is truthful even if the count changes.
     assert.ok(
-      buildRoute.includes("generatedDocumentsCreated: 0"),
-      "Build route response must include generatedDocumentsCreated: 0",
+      buildRoute.includes("generatedDocumentsCreated: afterDocs - beforeDocs"),
+      "Build route response must report the measured delta (afterDocs - beforeDocs)",
     );
   });
 

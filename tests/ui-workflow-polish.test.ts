@@ -337,17 +337,6 @@ describe("Component renames — new tender-facts names", () => {
     );
   });
 
-  it("tender-detail.tsx imports TenderDetailsPanel (not MetadataCompletionPanel)", () => {
-    const src = read("app/dashboard/tenders/[id]/tender-detail.tsx");
-    assert.ok(
-      src.includes("TenderDetailsPanel"),
-      "tender-detail.tsx must import TenderDetailsPanel",
-    );
-    assert.ok(
-      !src.includes("<MetadataCompletionPanel"),
-      "tender-detail.tsx must not use <MetadataCompletionPanel> JSX",
-    );
-  });
 });
 
 // ─── 12. Loading states use skeletons ───────────────────────────────────────

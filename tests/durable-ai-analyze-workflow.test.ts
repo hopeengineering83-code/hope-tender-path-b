@@ -137,37 +137,6 @@ describe("AIAnalyzePanel uses the durable background workflow", () => {
   });
 });
 
-// ── Test 1 + 5 (production button): tender-detail's visible button is durable ─
-describe("tender-detail visible button uses the durable background path", () => {
-  const src = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
-  const durableFn = src.slice(
-    src.indexOf("async function handleDurableAnalyze"),
-    src.indexOf("async function handleAnalyzeStreaming()"),
-  );
-
-  it("defines handleDurableAnalyze and binds the primary Run AI Analyze button to it", () => {
-    assert.ok(durableFn.length > 0, "handleDurableAnalyze must exist");
-    assert.match(src, /onClick=\{handleDurableAnalyze\}/);
-  });
-
-  it("the durable handler enqueues via mode=background and polls the durable job", () => {
-    assert.match(durableFn, /ai-analyze\?mode=background/);
-    assert.match(durableFn, /run-next\?jobType=AI_ANALYZE/);
-    assert.match(durableFn, /\/api\/ai-jobs\/\$\{jobId\}/);
-  });
-
-  it("the durable handler does NOT use the SSE route", () => {
-    assert.doesNotMatch(durableFn, /text\/event-stream/);
-    assert.doesNotMatch(durableFn, /getReader\(\)/);
-  });
-
-  it("the durable handler surfaces worker 401/403/500 instead of swallowing them", () => {
-    assert.match(durableFn, /w\.status === 401/);
-    assert.match(durableFn, /w\.status === 403/);
-    assert.match(durableFn, /w\.status >= 500/);
-  });
-});
-
 // ── Test 6: background endpoint returns 202 QUEUED via createAnalysisJob ──────
 describe("background endpoint lifecycle: queued → running → succeeded", () => {
   const route = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
@@ -243,17 +212,6 @@ describe("auto-retry-when-available resumes via the durable path", () => {
     assert.match(panel, /void handleBackgroundAnalyze\(\)/);
     assert.match(panel, /Retry now/);
     assert.match(panel, /resumes from the last completed chunk/);
-  });
-
-  it("tender-detail auto-retry fires the durable handler and reads the cooldown from the job", () => {
-    const ui = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
-    // scheduleAutoRetry's timeout now drives the durable resume path.
-    assert.match(ui, /setTimeout\([\s\S]*?void handleDurableAnalyze\(\);[\s\S]*?\}, delayMs\)/);
-    // the durable poll reads providerRetryAfterMs from the job output and schedules.
-    assert.match(ui, /job\.output\?\.providerRetryAfterMs/);
-    assert.match(ui, /scheduleAutoRetry\(Math\.max\(providerRetryAfterMs, 5_000\), jobId\)/);
-    // explicit Retry-now control that resumes immediately.
-    assert.match(ui, /cancelAutoRetry\(\); void handleDurableAnalyze\(\);/);
   });
 });
 

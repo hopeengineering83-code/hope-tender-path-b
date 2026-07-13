@@ -145,6 +145,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Create or resume an AiJob for this proposal session.
+  // Application-level tender ownership validation before job insertion: the
+  // database trigger (migration 20260712193000) is the hard boundary, but we
+  // verify ownership here first so a cross-tenant request gets a clean 404
+  // instead of a 500 from the trigger exception.
+  const tenderOwnership = await prisma.tender.findFirst({
+    where: { id: tenderId, userId: uid },
+    select: { id: true },
+  });
+  if (!tenderOwnership) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const proposalJob = resumeJobId
     ? await prisma.aiJob.findFirst({ where: { id: resumeJobId, tenderId, userId: uid } })
     : null;
