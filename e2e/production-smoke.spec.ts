@@ -1,5 +1,8 @@
 import { test, expect, type APIResponse, type Page } from "@playwright/test";
 
+import { existsSync } from "node:fs";
+if (existsSync(".auth/primary.json")) { test.use({ storageState: ".auth/primary.json" }); }
+
 /**
  * Production Critical Smoke Tests
  *

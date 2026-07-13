@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
 
+import { existsSync } from "node:fs";
+if (existsSync(".auth/primary.json")) { test.use({ storageState: ".auth/primary.json" }); }
+
 const FULL = process.env.E2E_GOLDEN_AUTH === "true";
 const email = process.env.E2E_TEST_EMAIL ?? "e2e-release-integrity@example.test";
 const password = process.env.E2E_TEST_PASSWORD ?? "E2E-release-integrity-password-2026";

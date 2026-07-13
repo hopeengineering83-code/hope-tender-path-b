@@ -1,5 +1,8 @@
 import { test, expect, type APIResponse, type Page } from "@playwright/test";
 
+import { existsSync } from "node:fs";
+if (existsSync(".auth/primary.json")) { test.use({ storageState: ".auth/primary.json" }); }
+
 const FULL = process.env.E2E_FULL_AUTH === "true";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 

@@ -6,7 +6,8 @@ const hasGoldenAuth = process.env.E2E_GOLDEN_AUTH === "true";
 const hasSmokeCreds = Boolean(process.env.SMOKE_TEST_EMAIL && process.env.SMOKE_TEST_PASSWORD);
 
 // Global setup authenticates the seeded CI accounts once and saves storage
-// state. Tests reuse the saved state instead of logging in repeatedly.
+// state. Tests that need auth use test.use({ storageState: ... }) to opt in.
+// Tests that test unauthenticated behavior (auth.spec.ts) do NOT set storageState.
 const needsGlobalSetup = isolatedFullAuth || hasGoldenAuth || hasSmokeCreds;
 
 export default defineConfig({
@@ -30,16 +31,11 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        // Reuse the authenticated storage state when available (CI mode).
-        // In local dev (no globalSetup), this is undefined and tests
-        // handle their own authentication.
-        storageState: needsGlobalSetup ? ".auth/primary.json" : undefined,
+        // No project-level storageState — each test file decides whether
+        // to opt in via test.use({ storageState: ... }). This ensures
+        // unauthenticated tests (auth.spec.ts) run without a session.
       },
     },
-    // Tablet project using Chromium engine (not WebKit) so it works in CI
-    // where only Chromium browsers are installed. We override the viewport
-    // and userAgent to simulate tablet form factors without requiring
-    // separate browser binaries.
     {
       name: "samsung-tablet",
       use: {
@@ -49,8 +45,6 @@ export default defineConfig({
         deviceScaleFactor: 2,
         isMobile: true,
         hasTouch: true,
-        // Same primary storage state — no additional login needed.
-        storageState: needsGlobalSetup ? ".auth/primary.json" : undefined,
       },
     },
   ],
