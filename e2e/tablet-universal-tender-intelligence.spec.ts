@@ -1,8 +1,4 @@
 import { test, expect, type APIResponse, type Page } from "@playwright/test";
-
-import { existsSync } from "node:fs";
-if (existsSync(".auth/primary.json")) { test.use({ storageState: ".auth/primary.json" }); }
-
 /**
  * Tablet (800x1280) E2E Tests — Universal Tender Intelligence Foundation
  *
@@ -55,19 +51,9 @@ async function preserveLoopbackSession(page: Page, response: APIResponse) {
   }]);
 }
 
-async function performLogin(page: Page) {
-  if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-    test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD environment variables are missing.");
-    return;
-  }
-  // The global setup has already authenticated and saved the storage state.
-  // The project config sets storageState to the primary account's saved state.
-  await page.goto("/dashboard");
-  await page.waitForLoadState("networkidle");
-  if (/login/.test(page.url())) {
-    throw new Error("Session not authenticated — storage state may be missing or expired");
-  }
-}
+// performLogin is no longer needed — the project config provides the
+// authenticated storage state via global setup. Tests navigate directly
+// to /dashboard and the session cookie is already present.
 
 /**
  * Helper: assert that the page has no horizontal scroll at the given viewport.
@@ -157,11 +143,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("authenticated dashboard fits at 800px width", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expect(page).not.toHaveURL(/\/login/);
@@ -169,11 +150,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("tender intake page (/dashboard/tenders/new) is usable at 800px", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders/new");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);
@@ -182,11 +158,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("touch targets on the tender intake page are ≥44px", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders/new");
     await page.waitForLoadState("networkidle");
     // Any visible button should be touch-friendly
@@ -199,11 +170,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("no horizontal overflow on the tender list page", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);
@@ -244,11 +210,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("tender list cards (if any) are touch-tappable at 800px", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);

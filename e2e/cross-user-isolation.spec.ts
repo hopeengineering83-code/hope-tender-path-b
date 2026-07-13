@@ -1,8 +1,4 @@
 import { test, expect, type APIResponse, type Page } from "@playwright/test";
-
-import { existsSync } from "node:fs";
-if (existsSync(".auth/primary.json")) { test.use({ storageState: ".auth/primary.json" }); }
-
 const FULL = process.env.E2E_FULL_AUTH === "true";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 const PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
@@ -134,12 +130,13 @@ test.describe("authenticated cross-user isolation", () => {
     );
     expectHiddenOrForbidden(downloadAttempt.status());
 
-    // Switch to the secondary identity using the saved storage state.
-    // The global setup saved the secondary session to .auth/secondary.json.
-    // We load it and inject the cookies into the current context.
+    // Switch to the secondary identity using the saved loopback-safe storage state.
+    // The global setup saved the secondary session to .auth/secondary-loopback.json
+    // with secure: false for loopback HTTP CI.
     await page.context().clearCookies();
     const fs = await import("node:fs");
-    const secondaryState = JSON.parse(fs.readFileSync(".auth/secondary.json", "utf8"));
+    const secondaryStatePath = ".auth/secondary-loopback.json";
+    const secondaryState = JSON.parse(fs.readFileSync(secondaryStatePath, "utf8"));
     const cookies = secondaryState.cookies || [];
     if (cookies.length > 0) {
       await page.context().addCookies(cookies.map((c: any) => ({

@@ -1,8 +1,4 @@
 import { test, expect, type APIResponse, type Page } from "@playwright/test";
-
-import { existsSync } from "node:fs";
-if (existsSync(".auth/primary.json")) { test.use({ storageState: ".auth/primary.json" }); }
-
 /**
  * Production Critical Smoke Tests
  *
@@ -57,21 +53,9 @@ async function preserveLoopbackSession(page: Page, response: APIResponse) {
   }]);
 }
 
-async function performLogin(page: Page) {
-  if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-    test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD environment variables are missing.");
-    return;
-  }
-  // The global setup has already authenticated and saved the storage state.
-  // The project config sets storageState to the primary account's saved state.
-  // Just navigate to the dashboard to activate the session.
-  await page.goto("/dashboard");
-  await page.waitForLoadState("networkidle");
-  // Verify we're actually authenticated (not redirected to login)
-  if (/login/.test(page.url())) {
-    throw new Error("Session not authenticated — storage state may be missing or expired");
-  }
-}
+// performLogin is no longer needed — the project config provides the
+// authenticated storage state via global setup. Tests navigate directly
+// to /dashboard and the session cookie is already present.
 
 test.describe("Production Critical Smoke Tests", () => {
 
@@ -100,15 +84,9 @@ test.describe("Production Critical Smoke Tests", () => {
     }
   });
 
-  test("2. Login Flow and 3. Dashboard Protection", async ({ page }) => {
-    // 3. Dashboard Protection: Check that unauthenticated access redirects to login
-    await page.goto("/dashboard/tenders");
-    await expect(page, "Unauthenticated access should redirect to login page").toHaveURL(/\/login/);
-
-    // 2. Login Flow: Perform login with smoke credentials
-    await performLogin(page);
-
-    // 3. Authenticated Access: Verify dashboard loads
+  test("2. Dashboard Protection (authenticated access)", async ({ page }) => {
+    // The storage state from global setup provides the session cookie.
+    // Navigate to dashboard — should NOT redirect to login.
     await page.goto("/dashboard/tenders");
     await expect(page, "Authenticated user should not be redirected to login").not.toHaveURL(/\/login/);
     // We expect the dashboard to render with the tenders heading or similar
@@ -116,7 +94,6 @@ test.describe("Production Critical Smoke Tests", () => {
   });
 
   test("4. Source tender intake prerequisites", async ({ page }) => {
-    await performLogin(page);
     await page.goto("/dashboard/tenders/new");
 
     // Verify supported file-format guidance is visible (Intake prerequisite)
@@ -124,8 +101,6 @@ test.describe("Production Critical Smoke Tests", () => {
   });
 
   test("5. AI-analysis prerequisites", async ({ page }) => {
-    await performLogin(page);
-
     // Attempting to trigger AI analysis on a non-existent tender
     // This verifies that the route is gated and doesn't crash.
     const fakeId = "00000000-0000-0000-0000-000000000000";
@@ -136,7 +111,7 @@ test.describe("Production Critical Smoke Tests", () => {
   });
 
   test("6. Generation gates", async ({ page }) => {
-    await performLogin(page);
+    
 
     // Use a fake ID to check generation readiness gates
     const fakeId = "00000000-0000-0000-0000-000000000000";
@@ -154,7 +129,7 @@ test.describe("Production Critical Smoke Tests", () => {
   });
 
   test("7. Export gates", async ({ page }) => {
-    await performLogin(page);
+    
 
     // Use a fake ID to check export readiness gates
     const fakeId = "00000000-0000-0000-0000-000000000000";

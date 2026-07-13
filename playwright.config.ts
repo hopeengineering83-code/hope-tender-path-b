@@ -6,8 +6,7 @@ const hasGoldenAuth = process.env.E2E_GOLDEN_AUTH === "true";
 const hasSmokeCreds = Boolean(process.env.SMOKE_TEST_EMAIL && process.env.SMOKE_TEST_PASSWORD);
 
 // Global setup authenticates the seeded CI accounts once and saves storage
-// state. Tests that need auth use test.use({ storageState: ... }) to opt in.
-// Tests that test unauthenticated behavior (auth.spec.ts) do NOT set storageState.
+// state with loopback-safe cookies (secure: false) for CI HTTP.
 const needsGlobalSetup = isolatedFullAuth || hasGoldenAuth || hasSmokeCreds;
 
 export default defineConfig({
@@ -23,21 +22,54 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  // Global setup authenticates once per CI run, saving storage state that
-  // tests reuse. This prevents 429 LOGIN_RATE_LIMITED from repeated logins.
   globalSetup: needsGlobalSetup ? "./e2e/global-setup.ts" : undefined,
   projects: [
+    // ─── Anonymous desktop (no auth) ───────────────────────────────────
+    // Tests that verify unauthenticated behavior (redirects, 401s, etc.)
     {
-      name: "chromium",
+      name: "chromium-anonymous",
+      testDir: "./e2e/anonymous",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // ─── Authenticated desktop (primary account) ───────────────────────
+    {
+      name: "chromium-primary",
+      testMatch: /.*\.spec\.ts/,
+      testIgnore: /e2e\/anonymous\//,
       use: {
         ...devices["Desktop Chrome"],
-        // No project-level storageState — each test file decides whether
-        // to opt in via test.use({ storageState: ... }). This ensures
-        // unauthenticated tests (auth.spec.ts) run without a session.
+        storageState: needsGlobalSetup ? ".auth/primary-loopback.json" : undefined,
       },
     },
+    // ─── Authenticated desktop (secondary account) ─────────────────────
+    // Only runs cross-user-isolation tests that need the secondary identity
     {
-      name: "samsung-tablet",
+      name: "chromium-secondary",
+      testMatch: /cross-user-isolation.*secondary/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: needsGlobalSetup ? ".auth/secondary-loopback.json" : undefined,
+      },
+    },
+    // ─── Tablet authenticated (primary account, 800x1280) ──────────────
+    {
+      name: "samsung-tablet-primary",
+      testMatch: /.*\.spec\.ts/,
+      testIgnore: /e2e\/anonymous\//,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 800, height: 1280 },
+        userAgent: "Mozilla/5.0 (Linux; Android 14; SM-X916B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true,
+        storageState: needsGlobalSetup ? ".auth/primary-loopback.json" : undefined,
+      },
+    },
+    // ─── Tablet anonymous ──────────────────────────────────────────────
+    {
+      name: "samsung-tablet-anonymous",
+      testDir: "./e2e/anonymous",
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 800, height: 1280 },
