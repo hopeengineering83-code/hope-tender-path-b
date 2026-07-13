@@ -59,7 +59,7 @@ describe("admin repair migration-only schema policy", () => {
     assert.match(source, /rateLimit\(`admin-repair:\$\{actor\.id\}`/);
   });
 
-  it("keeps Vercel Git deployment disabled", () => {
-    assert.equal(vercel.git?.deploymentEnabled, false);
+  it("keeps Vercel Git deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });
