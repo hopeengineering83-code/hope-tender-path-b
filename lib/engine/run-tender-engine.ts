@@ -71,7 +71,32 @@ async function writeEngineRunAudit(args: {
   action: "TENDER_ENGINE_RUN_STARTED" | "TENDER_ENGINE_RUN_COMPLETED" | "TENDER_ENGINE_RUN_FAILED" | "TENDER_ENGINE_DOCUMENTS_SUPERSEDED";
   description: string;
   metadata: Record<string, unknown>;
+  // Optional transaction client — when provided, the audit write runs INSIDE
+  // the transaction so it commits/rolls back atomically with the state change
+  // it records. Previously the TENDER_ENGINE_DOCUMENTS_SUPERSEDED audit was
+  // written BEFORE the transaction, so a rolled-back supersede left a false
+  // audit record claiming documents were superseded when they were still active.
+  tx?: { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } } | Parameters<Parameters<typeof prisma["$transaction"]>[0]>[0];
 }) {
+  // When a transaction client is provided, write the audit row inside the
+  // transaction so it commits/rolls back atomically.
+  if (args.tx) {
+    try {
+      await args.tx.auditLog.create({
+        data: {
+          userId: args.userId ?? null,
+          action: args.action,
+          entityType: "Tender",
+          entityId: args.tenderId,
+          description: args.description,
+          metadata: JSON.stringify(args.metadata),
+        },
+      });
+    } catch {
+      // Never let audit logging crash the main flow
+    }
+    return;
+  }
   await logAction({ userId: args.userId, action: args.action, entityType: "Tender", entityId: args.tenderId, description: args.description, metadata: args.metadata });
 }
 
@@ -503,38 +528,11 @@ export async function runTenderEngine(
       prisma.generatedDocument.count({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } } }),
     ]);
 
-    if (activeGeneratedDocuments.length > 0) {
-      await writeEngineRunAudit({
-        userId,
-        tenderId,
-        action: "TENDER_ENGINE_DOCUMENTS_SUPERSEDED",
-        description: `Superseded ${activeGeneratedDocuments.length} generated document(s) before engine rerun for "${tender.title}"`,
-        metadata: {
-          engineRunId,
-          supersededAt: new Date().toISOString(),
-          preservedGeneratedDocuments: activeGeneratedDocuments.map((doc) => ({
-            id: doc.id,
-            name: doc.name,
-            documentType: doc.documentType,
-            exactFileName: doc.exactFileName,
-            exactOrder: doc.exactOrder,
-            generationStatus: doc.generationStatus,
-            validationStatus: doc.validationStatus,
-            reviewStatus: doc.reviewStatus,
-            reviewedBy: doc.reviewedBy,
-            reviewedAt: doc.reviewedAt?.toISOString() ?? null,
-            reviewCount: doc._count.reviews,
-            commentCount: doc._count.comments,
-            createdAt: doc.createdAt.toISOString(),
-            updatedAt: doc.updatedAt.toISOString(),
-          })),
-        },
-      });
-      // NOTE: supersede is now done INSIDE the transaction below (atomic with create).
-      // Previously this was a standalone updateMany outside the tx — if the tx
-      // failed, the prior active documents were already SUPERSEDED with no
-      // replacement, leaving the tender with zero active documents.
-    }
+    // NOTE: The TENDER_ENGINE_DOCUMENTS_SUPERSEDED audit is now written INSIDE
+    // the transaction below (passing tx) so it commits/rolls back atomically
+    // with the actual supersede. Previously it was written here (before the
+    // transaction), so a rolled-back supersede left a false audit record
+    // claiming documents were superseded when they were still active.
 
     progress("engine.persist", `Persisting ${requirementRows.length} requirement(s), ${matching.expertMatches.length} expert match(es), ${matching.projectMatches.length} project match(es) to DB`);
 
@@ -603,6 +601,36 @@ export async function runTenderEngine(
             reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`,
             updatedAt: new Date(),
           },
+        });
+        // Write the supersede audit INSIDE the transaction so it commits/rolls
+        // back atomically with the supersede. Previously this was written before
+        // the transaction — a rolled-back supersede left a false audit record.
+        await writeEngineRunAudit({
+          userId,
+          tenderId,
+          action: "TENDER_ENGINE_DOCUMENTS_SUPERSEDED",
+          description: `Superseded ${activeGeneratedDocuments.length} generated document(s) before engine rerun for "${tender.title}"`,
+          metadata: {
+            engineRunId,
+            supersededAt: new Date().toISOString(),
+            preservedGeneratedDocuments: activeGeneratedDocuments.map((doc) => ({
+              id: doc.id,
+              name: doc.name,
+              documentType: doc.documentType,
+              exactFileName: doc.exactFileName,
+              exactOrder: doc.exactOrder,
+              generationStatus: doc.generationStatus,
+              validationStatus: doc.validationStatus,
+              reviewStatus: doc.reviewStatus,
+              reviewedBy: doc.reviewedBy,
+              reviewedAt: doc.reviewedAt?.toISOString() ?? null,
+              reviewCount: doc._count.reviews,
+              commentCount: doc._count.comments,
+              createdAt: doc.createdAt.toISOString(),
+              updatedAt: doc.updatedAt.toISOString(),
+            })),
+          },
+          tx,
         });
       }
 

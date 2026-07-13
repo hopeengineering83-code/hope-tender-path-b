@@ -159,3 +159,59 @@ describe("P1-9 — audit-safe-api-errors scans lib/ files", () => {
     assert.match(src, /\.endsWith\("\.ts"\)/);
   });
 });
+
+// ─── P1-10: TENDER_ENGINE_DOCUMENTS_SUPERSEDED audit inside transaction ────
+
+describe("P1-10 — supersede audit is inside the transaction", () => {
+  it("writeEngineRunAudit accepts an optional tx parameter", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    assert.match(src, /tx\?\s*:\s*\{\s*auditLog/, "writeEngineRunAudit must accept tx");
+    assert.match(src, /if \(args\.tx\)/, "must branch on tx presence");
+  });
+
+  it("the TENDER_ENGINE_DOCUMENTS_SUPERSEDED audit is NOT called before the transaction", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    // The old code called writeEngineRunAudit with action TENDER_ENGINE_DOCUMENTS_SUPERSEDED
+    // before the transaction. The new code calls it inside the transaction (after updateMany).
+    // Find the transaction start and the audit call — the audit must be AFTER the tx starts.
+    const txStart = src.indexOf("await prisma.$transaction(async (tx) => {");
+    assert.ok(txStart > -1, "transaction must exist");
+    const supersedeAudit = src.indexOf('"TENDER_ENGINE_DOCUMENTS_SUPERSEDED"', txStart);
+    assert.ok(supersedeAudit > -1, "supersede audit must be inside the transaction");
+    // The audit must come after the updateMany supersede call inside the tx.
+    const updateManyIdx = src.indexOf("tx.generatedDocument.updateMany", txStart);
+    assert.ok(updateManyIdx > -1 && supersedeAudit > updateManyIdx, "audit must be after the supersede updateMany inside the tx");
+  });
+
+  it("the audit call passes tx as the transaction client", () => {
+    const src = read("lib/engine/run-tender-engine.ts");
+    // Slice the region around the supersede audit inside the transaction.
+    const txStart = src.indexOf("await prisma.$transaction(async (tx) => {");
+    const txEnd = src.indexOf("}, { timeout:", txStart);
+    assert.ok(txStart > -1 && txEnd > -1, "transaction block must exist");
+    const txBlock = src.slice(txStart, txEnd);
+    // The audit call inside the tx must pass `tx` as the transaction client.
+    const auditIdx = txBlock.indexOf("TENDER_ENGINE_DOCUMENTS_SUPERSEDED");
+    assert.ok(auditIdx > -1, "supersede audit must be inside the tx block");
+    const afterAudit = txBlock.slice(auditIdx);
+    assert.match(afterAudit, /tx,?\s*\n\s*\}/, "audit call must pass tx");
+  });
+});
+
+// ─── P1-11: chunk-recovery validates resultJson before promoting ───────────
+
+describe("P1-11 — chunk-recovery validates resultJson before promoting to SUCCEEDED", () => {
+  it("does NOT promote chunks with just resultJson: { not: null }", () => {
+    const src = read("lib/ai-jobs/chunk-recovery.ts");
+    // The old code selected only id and promoted all non-null resultJson chunks.
+    // The new code selects resultJson too and filters by content validity.
+    assert.match(src, /select:\s*\{\s*id:\s*true,\s*resultJson:\s*true\s*\}/, "must select resultJson for validation");
+  });
+
+  it("filters by JSON.parse + non-empty object check", () => {
+    const src = read("lib/ai-jobs/chunk-recovery.ts");
+    assert.match(src, /JSON\.parse\(c\.resultJson\)/, "must JSON.parse the resultJson");
+    assert.match(src, /Object\.keys\(parsed\)\.length\s*>\s*0/, "must check non-empty object");
+    assert.match(src, /validCompleted/, "must use a validCompleted filter array");
+  });
+});

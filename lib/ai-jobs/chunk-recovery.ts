@@ -222,18 +222,37 @@ export async function finalizeCompletedChunks(jobId: string, userId: string): Pr
   await prismaReady;
   let affected = 0;
 
-  // Force-terminal RUNNING chunks that have a resultJson (partial success)
+  // Force-terminal RUNNING chunks that have a VALID resultJson (partial success).
+  // Previously, ANY non-null resultJson (including "{}", "null", or partial
+  // JSON) was promoted to SUCCEEDED. Now we validate that the resultJson
+  // parses as JSON AND contains at least one expected key, so a chunk that
+  // crashed mid-write leaving a skeleton "{}" is NOT promoted as complete.
   const runningWithResult = await prisma.aiAnalyzeChunk.findMany({
     where: { jobId, status: "RUNNING", resultJson: { not: null } },
-    select: { id: true },
+    select: { id: true, resultJson: true },
   });
-  if (runningWithResult.length > 0) {
+  const validCompleted = runningWithResult.filter((c: any) => {
+    if (!c.resultJson) return false;
+    try {
+      const parsed = JSON.parse(c.resultJson);
+      // Must be a non-null object with at least one key. The expected shape
+      // is { requirements: [...], summary: "..." } — but we accept any
+      // non-empty object to avoid over-coupling to the schema.
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length > 0;
+    } catch {
+      return false;
+    }
+  });
+  if (validCompleted.length > 0) {
     const r = await prisma.aiAnalyzeChunk.updateMany({
-      where: { id: { in: runningWithResult.map((c: any) => c.id) } },
+      where: { id: { in: validCompleted.map((c: any) => c.id) } },
       data: { status: "SUCCEEDED", finishedAt: new Date() },
     });
     affected += r.count;
   }
+  // Chunks with invalid/empty resultJson are NOT promoted — they fall through
+  // to the stale-chunk reset below, which marks them as FAILED so the user
+  // sees the failure and can retry.
 
   // Force-terminal stale RUNNING chunks without a result (mark as FAILED)
   const staleThreshold = new Date(Date.now() - STALE_CHUNK_THRESHOLD_MS);
