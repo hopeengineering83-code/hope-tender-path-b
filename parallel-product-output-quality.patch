@@ -1,13 +1,14 @@
 diff --git a/app/dashboard/company/page.tsx b/app/dashboard/company/page.tsx
-index d3a840d6..8b07747e 100755
+index d3a840d6..58b92f19 100755
 --- a/app/dashboard/company/page.tsx
 +++ b/app/dashboard/company/page.tsx
-@@ -93,8 +93,12 @@ export default function CompanyPage() {
+@@ -93,8 +93,13 @@ export default function CompanyPage() {
    const [dragOver, setDragOver] = useState(false);
    const [searchDoc, setSearchDoc] = useState("");
    const [filterCat, setFilterCat] = useState("ALL");
 +  const [deletingDocId, setDeletingDocId] = useState<string|null>(null);
 +  const [confirmingDeleteDocId, setConfirmingDeleteDocId] = useState<string|null>(null);
++  const [reextractingDocId, setReextractingDocId] = useState<string|null>(null);
    const dropRef = useRef<HTMLDivElement>(null);
    const fileInputRef = useRef<HTMLInputElement>(null);
 +  const deleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -15,7 +16,7 @@ index d3a840d6..8b07747e 100755
  
    // Expert state
    const [expertForm, setExpertForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
-@@ -249,9 +253,40 @@ export default function CompanyPage() {
+@@ -249,14 +254,58 @@ export default function CompanyPage() {
      }
    }, [docCategory]);
  
@@ -25,8 +26,11 @@ index d3a840d6..8b07747e 100755
 +  function openDeleteConfirmation(docId: string) {
 +    setConfirmingDeleteDocId(docId);
 +    setError("");
-+  }
-+
+   }
+ 
+-  async function reextractDoc(id: string) {
+-    await fetch(`/api/company/documents/${id}`, { method:"POST" });
+-    await loadDocs();
 +  function cancelDeleteConfirmation(docId: string) {
 +    setConfirmingDeleteDocId(null);
 +    requestAnimationFrame(() => deleteButtonRefs.current[docId]?.focus());
@@ -56,10 +60,28 @@ index d3a840d6..8b07747e 100755
 +    } finally {
 +      setDeletingDocId(null);
 +    }
++  }
++
++  async function reextractDoc(doc: CompanyDoc) {
++    if (reextractingDocId) return;
++    setReextractingDocId(doc.id);
++    setError("");
++    try {
++      const res = await fetch(`/api/company/documents/${doc.id}`, { method:"POST" });
++      if (!res.ok) {
++        setError("We could not re-extract text from that Company Vault document. Please retry, or upload a clearer source file if the problem continues.");
++        return;
++      }
++      await loadDocs();
++    } catch {
++      setError("Network interruption while re-extracting the Company Vault document. Please retry when your connection is stable.");
++    } finally {
++      setReextractingDocId(null);
++    }
    }
  
-   async function reextractDoc(id: string) {
-@@ -374,6 +409,11 @@ export default function CompanyPage() {
+   async function reimportAll() {
+@@ -374,6 +423,11 @@ export default function CompanyPage() {
      setDeletingProjectId(null);
    }
  
@@ -71,7 +93,7 @@ index d3a840d6..8b07747e 100755
    const filteredDocs = docs.filter(d => {
      const ms = !searchDoc || d.originalFileName.toLowerCase().includes(searchDoc.toLowerCase());
      const mc = filterCat==="ALL" || d.category===filterCat;
-@@ -495,7 +535,7 @@ export default function CompanyPage() {
+@@ -495,7 +549,7 @@ export default function CompanyPage() {
          ))}
        </div>
  
@@ -80,7 +102,7 @@ index d3a840d6..8b07747e 100755
        {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
  
        {/* Profile Tab */}
-@@ -614,12 +654,22 @@ export default function CompanyPage() {
+@@ -614,12 +668,22 @@ export default function CompanyPage() {
                        {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                      </div>
                    </div>
@@ -89,9 +111,9 @@ index d3a840d6..8b07747e 100755
 -                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
 -                    <button onClick={()=>deleteDoc(doc.id)} aria-label={`Delete ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
 +                  <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-+                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">Re-extract</button>
++                    <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-slate-200" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
 +                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
-+                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
++                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                    </div>
                  </div>
 +                {confirmingDeleteDocId===doc.id && (
@@ -108,13 +130,25 @@ index d3a840d6..8b07747e 100755
              ))}
            </div>
 diff --git a/operator_handoff.md b/operator_handoff.md
-index 1e7d7745..ac79e84b 100755
+index 1e7d7745..f8d0dfb7 100755
 --- a/operator_handoff.md
 +++ b/operator_handoff.md
-@@ -74,6 +74,59 @@ Never claim a fix is complete unless the stated tests passed.
+@@ -74,6 +74,71 @@ Never claim a fix is complete unless the stated tests passed.
  
  <!-- Add newest entry at the top. -->
  
++### 2026-07-13 UTC — ChatGPT (GPT-5.5)
++
++- **Mode:** Expanded Lane C frontend audit for Company Vault document-row actions, amended into latest follow-up commit to preserve the three-commit limit.
++- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
++- **Ownership recheck:** Same isolated Lane C scope: `app/dashboard/company/page.tsx`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`, and regenerated patch artifact. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
++- **Additional audit finding fixed:** The adjacent Company Vault document re-extract action was still an expensive row mutation with no duplicate-click guard, no busy state, and no safe failure message. Added `reextractingDocId`, `aria-busy`, disabling during re-extract/delete, safe backend/network error copy, and tests.
++- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (6/6); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
++- **Known risks / assumptions:** Same as prior entries: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
++- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
++- **Merge status:** not reviewed.
++
++
 +### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 +
 +- **Mode:** Third cleanup pass on latest Company Vault document-action review, amended into the existing follow-up commit to preserve the three-commit Lane C limit.
@@ -173,10 +207,10 @@ index 1e7d7745..ac79e84b 100755
  - **Mode:** audit remediation, re-scoped twice to track fast-moving main: #1058 landed the canonical byte-integrity system (superseding #1050's approach — dropped from this PR), then #1057/#1061 fixed main's tsc break, the stale-gate tests, and the zip-finalization test (dropped from this PR as duplicates). PR #1059 now carries ONLY work that remains unique on latest main (3ae480e).
 diff --git a/tests/company-vault-document-actions-a11y.test.ts b/tests/company-vault-document-actions-a11y.test.ts
 new file mode 100644
-index 00000000..4e3c4849
+index 00000000..31449204
 --- /dev/null
 +++ b/tests/company-vault-document-actions-a11y.test.ts
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,67 @@
 +import { describe, it } from "node:test";
 +import assert from "node:assert/strict";
 +import { readFileSync } from "node:fs";
@@ -192,7 +226,7 @@ index 00000000..4e3c4849
 +  it("uses mobile/tablet friendly touch targets and visible text labels for document row actions", () => {
 +    assert.match(source, /min-h-8 rounded border/);
 +    assert.match(source, /min-h-8 rounded-md/);
-+    assert.match(source, />Re-extract<|>Re-extract<\/button>/);
++    assert.match(source, /Re-extracting…" : "Re-extract"/);
 +    assert.match(source, />Download<\/a>/);
 +    assert.match(source, /Deleting…" : "Delete"/);
 +  });
@@ -212,7 +246,7 @@ index 00000000..4e3c4849
 +  it("prevents duplicate delete clicks and reports safe user-facing failures", () => {
 +    assert.match(source, /deletingDocId/);
 +    assert.match(source, /if \(deletingDocId\) return/);
-+    assert.match(source, /disabled=\{deletingDocId!==null\}/);
++    assert.match(source, /disabled=\{deletingDocId!==null \|\| reextractingDocId!==null\}/);
 +    assert.match(source, /deleteButtonRefs/);
 +    assert.match(source, /confirmDeleteButtonRefs/);
 +    assert.match(source, /else delete deleteButtonRefs\.current\[doc\.id\]/);
@@ -224,6 +258,23 @@ index 00000000..4e3c4849
 +    assert.match(source, /Press Escape to cancel/);
 +    assert.match(source, /We could not delete that Company Vault document/);
 +    assert.match(source, /role="alert" aria-live="assertive"/);
++    assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
++  });
++});
++
++
++describe("Company Vault document re-extraction action", () => {
++  it("prevents duplicate expensive re-extraction and exposes progress accessibly", () => {
++    assert.match(source, /reextractingDocId/);
++    assert.match(source, /if \(reextractingDocId\) return/);
++    assert.match(source, /aria-busy=\{reextractingDocId===doc\.id\}/);
++    assert.match(source, /disabled=\{reextractingDocId!==null \|\| deletingDocId!==null\}/);
++    assert.match(source, /Re-extracting…/);
++  });
++
++  it("keeps re-extraction failures safe and actionable for non-technical users", () => {
++    assert.match(source, /We could not re-extract text from that Company Vault document/);
++    assert.match(source, /Network interruption while re-extracting the Company Vault document/);
 +    assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
 +  });
 +});

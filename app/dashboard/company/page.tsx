@@ -95,6 +95,7 @@ export default function CompanyPage() {
   const [filterCat, setFilterCat] = useState("ALL");
   const [deletingDocId, setDeletingDocId] = useState<string|null>(null);
   const [confirmingDeleteDocId, setConfirmingDeleteDocId] = useState<string|null>(null);
+  const [reextractingDocId, setReextractingDocId] = useState<string|null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const deleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -289,9 +290,22 @@ export default function CompanyPage() {
     }
   }
 
-  async function reextractDoc(id: string) {
-    await fetch(`/api/company/documents/${id}`, { method:"POST" });
-    await loadDocs();
+  async function reextractDoc(doc: CompanyDoc) {
+    if (reextractingDocId) return;
+    setReextractingDocId(doc.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/documents/${doc.id}`, { method:"POST" });
+      if (!res.ok) {
+        setError("We could not re-extract text from that Company Vault document. Please retry, or upload a clearer source file if the problem continues.");
+        return;
+      }
+      await loadDocs();
+    } catch {
+      setError("Network interruption while re-extracting the Company Vault document. Please retry when your connection is stable.");
+    } finally {
+      setReextractingDocId(null);
+    }
   }
 
   async function reimportAll() {
@@ -655,9 +669,9 @@ export default function CompanyPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">Re-extract</button>
+                    <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-slate-200" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
                     <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
-                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
+                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                   </div>
                 </div>
                 {confirmingDeleteDocId===doc.id && (

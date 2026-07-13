@@ -13,7 +13,7 @@ describe("Company Vault document row actions", () => {
   it("uses mobile/tablet friendly touch targets and visible text labels for document row actions", () => {
     assert.match(source, /min-h-8 rounded border/);
     assert.match(source, /min-h-8 rounded-md/);
-    assert.match(source, />Re-extract<|>Re-extract<\/button>/);
+    assert.match(source, /Re-extracting…" : "Re-extract"/);
     assert.match(source, />Download<\/a>/);
     assert.match(source, /Deleting…" : "Delete"/);
   });
@@ -33,7 +33,7 @@ describe("Company Vault document row actions", () => {
   it("prevents duplicate delete clicks and reports safe user-facing failures", () => {
     assert.match(source, /deletingDocId/);
     assert.match(source, /if \(deletingDocId\) return/);
-    assert.match(source, /disabled=\{deletingDocId!==null\}/);
+    assert.match(source, /disabled=\{deletingDocId!==null \|\| reextractingDocId!==null\}/);
     assert.match(source, /deleteButtonRefs/);
     assert.match(source, /confirmDeleteButtonRefs/);
     assert.match(source, /else delete deleteButtonRefs\.current\[doc\.id\]/);
@@ -45,6 +45,23 @@ describe("Company Vault document row actions", () => {
     assert.match(source, /Press Escape to cancel/);
     assert.match(source, /We could not delete that Company Vault document/);
     assert.match(source, /role="alert" aria-live="assertive"/);
+    assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
+  });
+});
+
+
+describe("Company Vault document re-extraction action", () => {
+  it("prevents duplicate expensive re-extraction and exposes progress accessibly", () => {
+    assert.match(source, /reextractingDocId/);
+    assert.match(source, /if \(reextractingDocId\) return/);
+    assert.match(source, /aria-busy=\{reextractingDocId===doc\.id\}/);
+    assert.match(source, /disabled=\{reextractingDocId!==null \|\| deletingDocId!==null\}/);
+    assert.match(source, /Re-extracting…/);
+  });
+
+  it("keeps re-extraction failures safe and actionable for non-technical users", () => {
+    assert.match(source, /We could not re-extract text from that Company Vault document/);
+    assert.match(source, /Network interruption while re-extracting the Company Vault document/);
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
   });
 });

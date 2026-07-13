@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** Expanded Lane C frontend audit for Company Vault document-row actions, amended into latest follow-up commit to preserve the three-commit limit.
+- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
+- **Ownership recheck:** Same isolated Lane C scope: `app/dashboard/company/page.tsx`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`, and regenerated patch artifact. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
+- **Additional audit finding fixed:** The adjacent Company Vault document re-extract action was still an expensive row mutation with no duplicate-click guard, no busy state, and no safe failure message. Added `reextractingDocId`, `aria-busy`, disabling during re-extract/delete, safe backend/network error copy, and tests.
+- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (6/6); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** Same as prior entries: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
+- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** Third cleanup pass on latest Company Vault document-action review, amended into the existing follow-up commit to preserve the three-commit Lane C limit.
 - **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
 - **Ownership recheck:** Still isolated to Company Vault frontend UX/a11y, its source-level regression test, handoff, and patch artifact. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
