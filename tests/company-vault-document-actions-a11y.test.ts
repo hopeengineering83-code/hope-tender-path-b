@@ -21,7 +21,9 @@ describe("Company Vault document row actions", () => {
   it("uses an accessible in-page confirmation instead of native window.confirm", () => {
     assert.doesNotMatch(source, /window\.confirm\(/);
     assert.match(source, /confirmingDeleteDocId/);
-    assert.match(source, /role="group"/);
+    assert.match(source, /role="region"/);
+    assert.match(source, /aria-labelledby=\{`delete-confirm-title-\$\{doc\.id\}`\}/);
+    assert.match(source, /aria-describedby=\{`delete-confirm-help-\$\{doc\.id\}`\}/);
     assert.match(source, /aria-expanded=\{confirmingDeleteDocId===doc\.id\}/);
     assert.match(source, /aria-controls=\{`delete-confirm-\$\{doc\.id\}`\}/);
     assert.match(source, /Yes, delete document/);
@@ -34,8 +36,13 @@ describe("Company Vault document row actions", () => {
     assert.match(source, /disabled=\{deletingDocId!==null\}/);
     assert.match(source, /deleteButtonRefs/);
     assert.match(source, /confirmDeleteButtonRefs/);
+    assert.match(source, /else delete deleteButtonRefs\.current\[doc\.id\]/);
+    assert.match(source, /else delete confirmDeleteButtonRefs\.current\[doc\.id\]/);
     assert.match(source, /requestAnimationFrame\(\(\) => confirmDeleteButtonRefs/);
     assert.match(source, /requestAnimationFrame\(\(\) => deleteButtonRefs/);
+    assert.match(source, /onDeleteConfirmationKeyDown/);
+    assert.match(source, /event\.key !== "Escape"/);
+    assert.match(source, /Press Escape to cancel/);
     assert.match(source, /We could not delete that Company Vault document/);
     assert.match(source, /role="alert" aria-live="assertive"/);
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);

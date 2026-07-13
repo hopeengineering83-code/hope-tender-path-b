@@ -1,5 +1,5 @@
 diff --git a/app/dashboard/company/page.tsx b/app/dashboard/company/page.tsx
-index d3a840d6..ab76d71f 100755
+index d3a840d6..8b07747e 100755
 --- a/app/dashboard/company/page.tsx
 +++ b/app/dashboard/company/page.tsx
 @@ -93,8 +93,12 @@ export default function CompanyPage() {
@@ -15,7 +15,7 @@ index d3a840d6..ab76d71f 100755
  
    // Expert state
    const [expertForm, setExpertForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
-@@ -249,9 +253,34 @@ export default function CompanyPage() {
+@@ -249,9 +253,40 @@ export default function CompanyPage() {
      }
    }, [docCategory]);
  
@@ -30,6 +30,12 @@ index d3a840d6..ab76d71f 100755
 +  function cancelDeleteConfirmation(docId: string) {
 +    setConfirmingDeleteDocId(null);
 +    requestAnimationFrame(() => deleteButtonRefs.current[docId]?.focus());
++  }
++
++  function onDeleteConfirmationKeyDown(event: React.KeyboardEvent<HTMLDivElement>, docId: string) {
++    if (event.key !== "Escape" || deletingDocId === docId) return;
++    event.preventDefault();
++    cancelDeleteConfirmation(docId);
 +  }
 +
 +  async function deleteDoc(doc: CompanyDoc) {
@@ -53,7 +59,7 @@ index d3a840d6..ab76d71f 100755
    }
  
    async function reextractDoc(id: string) {
-@@ -374,6 +403,11 @@ export default function CompanyPage() {
+@@ -374,6 +409,11 @@ export default function CompanyPage() {
      setDeletingProjectId(null);
    }
  
@@ -65,7 +71,7 @@ index d3a840d6..ab76d71f 100755
    const filteredDocs = docs.filter(d => {
      const ms = !searchDoc || d.originalFileName.toLowerCase().includes(searchDoc.toLowerCase());
      const mc = filterCat==="ALL" || d.category===filterCat;
-@@ -495,7 +529,7 @@ export default function CompanyPage() {
+@@ -495,7 +535,7 @@ export default function CompanyPage() {
          ))}
        </div>
  
@@ -74,7 +80,7 @@ index d3a840d6..ab76d71f 100755
        {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
  
        {/* Profile Tab */}
-@@ -614,12 +648,22 @@ export default function CompanyPage() {
+@@ -614,12 +654,22 @@ export default function CompanyPage() {
                        {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                      </div>
                    </div>
@@ -85,15 +91,15 @@ index d3a840d6..ab76d71f 100755
 +                  <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
 +                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">Re-extract</button>
 +                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
-+                    <button ref={(node)=>{ deleteButtonRefs.current[doc.id]=node; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
++                    <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                    </div>
                  </div>
 +                {confirmingDeleteDocId===doc.id && (
-+                  <div id={`delete-confirm-${doc.id}`} role="group" aria-label={`Confirm deletion of ${doc.originalFileName}`} className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
-+                    <p className="font-medium">Delete this Company Vault document?</p>
-+                    <p className="mt-1 text-red-800">This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit.</p>
++                  <div id={`delete-confirm-${doc.id}`} role="region" aria-labelledby={`delete-confirm-title-${doc.id}`} aria-describedby={`delete-confirm-help-${doc.id}`} onKeyDown={(event)=>onDeleteConfirmationKeyDown(event, doc.id)} className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
++                    <p id={`delete-confirm-title-${doc.id}`} className="font-medium">Delete this Company Vault document?</p>
++                    <p id={`delete-confirm-help-${doc.id}`} className="mt-1 text-red-800">This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit. Press Escape to cancel.</p>
 +                    <div className="mt-3 flex flex-wrap gap-2">
-+                      <button ref={(node)=>{ confirmDeleteButtonRefs.current[doc.id]=node; }} type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
++                      <button ref={(node)=>{ if (node) confirmDeleteButtonRefs.current[doc.id]=node; else delete confirmDeleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
 +                      <button type="button" onClick={()=>cancelDeleteConfirmation(doc.id)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
 +                    </div>
 +                  </div>
@@ -102,13 +108,25 @@ index d3a840d6..ab76d71f 100755
              ))}
            </div>
 diff --git a/operator_handoff.md b/operator_handoff.md
-index 1e7d7745..34091f64 100755
+index 1e7d7745..ac79e84b 100755
 --- a/operator_handoff.md
 +++ b/operator_handoff.md
-@@ -74,6 +74,47 @@ Never claim a fix is complete unless the stated tests passed.
+@@ -74,6 +74,59 @@ Never claim a fix is complete unless the stated tests passed.
  
  <!-- Add newest entry at the top. -->
  
++### 2026-07-13 UTC — ChatGPT (GPT-5.5)
++
++- **Mode:** Third cleanup pass on latest Company Vault document-action review, amended into the existing follow-up commit to preserve the three-commit Lane C limit.
++- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
++- **Ownership recheck:** Still isolated to Company Vault frontend UX/a11y, its source-level regression test, handoff, and patch artifact. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
++- **Follow-up fix:** Strengthened confirmation semantics with `role=region`, `aria-labelledby`, `aria-describedby`, button `aria-describedby`, Escape-to-cancel behavior, and ref cleanup on unmount while preserving focus transfer to Confirm and restoration to Delete on Cancel.
++- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (4/4); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
++- **Known risks / assumptions:** Same as prior entries: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
++- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
++- **Merge status:** not reviewed.
++
++
 +### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 +
 +- **Mode:** Second follow-up cleanup/strengthening pass for Lane C Company Vault document actions.
@@ -155,10 +173,10 @@ index 1e7d7745..34091f64 100755
  - **Mode:** audit remediation, re-scoped twice to track fast-moving main: #1058 landed the canonical byte-integrity system (superseding #1050's approach — dropped from this PR), then #1057/#1061 fixed main's tsc break, the stale-gate tests, and the zip-finalization test (dropped from this PR as duplicates). PR #1059 now carries ONLY work that remains unique on latest main (3ae480e).
 diff --git a/tests/company-vault-document-actions-a11y.test.ts b/tests/company-vault-document-actions-a11y.test.ts
 new file mode 100644
-index 00000000..3e1dab7b
+index 00000000..4e3c4849
 --- /dev/null
 +++ b/tests/company-vault-document-actions-a11y.test.ts
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,50 @@
 +import { describe, it } from "node:test";
 +import assert from "node:assert/strict";
 +import { readFileSync } from "node:fs";
@@ -182,7 +200,9 @@ index 00000000..3e1dab7b
 +  it("uses an accessible in-page confirmation instead of native window.confirm", () => {
 +    assert.doesNotMatch(source, /window\.confirm\(/);
 +    assert.match(source, /confirmingDeleteDocId/);
-+    assert.match(source, /role="group"/);
++    assert.match(source, /role="region"/);
++    assert.match(source, /aria-labelledby=\{`delete-confirm-title-\$\{doc\.id\}`\}/);
++    assert.match(source, /aria-describedby=\{`delete-confirm-help-\$\{doc\.id\}`\}/);
 +    assert.match(source, /aria-expanded=\{confirmingDeleteDocId===doc\.id\}/);
 +    assert.match(source, /aria-controls=\{`delete-confirm-\$\{doc\.id\}`\}/);
 +    assert.match(source, /Yes, delete document/);
@@ -195,8 +215,13 @@ index 00000000..3e1dab7b
 +    assert.match(source, /disabled=\{deletingDocId!==null\}/);
 +    assert.match(source, /deleteButtonRefs/);
 +    assert.match(source, /confirmDeleteButtonRefs/);
++    assert.match(source, /else delete deleteButtonRefs\.current\[doc\.id\]/);
++    assert.match(source, /else delete confirmDeleteButtonRefs\.current\[doc\.id\]/);
 +    assert.match(source, /requestAnimationFrame\(\(\) => confirmDeleteButtonRefs/);
 +    assert.match(source, /requestAnimationFrame\(\(\) => deleteButtonRefs/);
++    assert.match(source, /onDeleteConfirmationKeyDown/);
++    assert.match(source, /event\.key !== "Escape"/);
++    assert.match(source, /Press Escape to cancel/);
 +    assert.match(source, /We could not delete that Company Vault document/);
 +    assert.match(source, /role="alert" aria-live="assertive"/);
 +    assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
