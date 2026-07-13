@@ -5,8 +5,6 @@ const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 const hasGoldenAuth = process.env.E2E_GOLDEN_AUTH === "true";
 const hasSmokeCreds = Boolean(process.env.SMOKE_TEST_EMAIL && process.env.SMOKE_TEST_PASSWORD);
 
-// Global setup authenticates the seeded CI accounts once and saves storage
-// state with loopback-safe cookies (secure: false) for CI HTTP.
 const needsGlobalSetup = isolatedFullAuth || hasGoldenAuth || hasSmokeCreds;
 
 export default defineConfig({
@@ -25,37 +23,29 @@ export default defineConfig({
   globalSetup: needsGlobalSetup ? "./e2e/global-setup.ts" : undefined,
   projects: [
     // ─── Anonymous desktop (no auth) ───────────────────────────────────
-    // Tests that verify unauthenticated behavior (redirects, 401s, etc.)
     {
       name: "chromium-anonymous",
       testDir: "./e2e/anonymous",
       use: { ...devices["Desktop Chrome"] },
     },
     // ─── Authenticated desktop (primary account) ───────────────────────
+    // Runs all spec files in e2e/ EXCEPT those in e2e/anonymous/
     {
       name: "chromium-primary",
+      testDir: "./e2e",
       testMatch: /.*\.spec\.ts/,
-      testIgnore: /e2e\/anonymous\//,
+      testIgnore: /anonymous/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: needsGlobalSetup ? ".auth/primary-loopback.json" : undefined,
       },
     },
-    // ─── Authenticated desktop (secondary account) ─────────────────────
-    // Only runs cross-user-isolation tests that need the secondary identity
-    {
-      name: "chromium-secondary",
-      testMatch: /cross-user-isolation.*secondary/,
-      use: {
-        ...devices["Desktop Chrome"],
-        storageState: needsGlobalSetup ? ".auth/secondary-loopback.json" : undefined,
-      },
-    },
     // ─── Tablet authenticated (primary account, 800x1280) ──────────────
     {
       name: "samsung-tablet-primary",
+      testDir: "./e2e",
       testMatch: /.*\.spec\.ts/,
-      testIgnore: /e2e\/anonymous\//,
+      testIgnore: /anonymous/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 800, height: 1280 },

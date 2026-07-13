@@ -154,7 +154,7 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);
     // File format guidance must be visible at 800px width
-    await expect(page.getByText(/supported format|PDF, DOCX, XLSX, TXT, or CSV/i)).toBeVisible();
+    await expect(page.getByText(/PDF, DOCX, XLSX, TXT, and CSV/i)).toBeVisible();
   });
 
   test("touch targets on the tender intake page are ≥44px", async ({ page }) => {
