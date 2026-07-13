@@ -15,6 +15,8 @@ import {
   extractNumberOfCopies,
   extractMandatorySiteVisit,
   extractClientContactTitle,
+  extractDonorAgency,
+  extractClientCity,
   SUPPORTED_EXTRACTORS,
   runExtractorByField,
 } from "../lib/engine/tender-field-extractors";
@@ -49,6 +51,26 @@ describe("extractDeadline", () => {
   it("matches 'Closing date: 2026-12-31 12:00'", () => {
     const r = extractDeadline({ files: [{ fileName: "f.pdf", extractedText: "Closing date: 2026-12-31 12:00. All proposals received after this time will be rejected as non-responsive." }] });
     assert.equal(r.found, true);
+  });
+});
+
+describe("free-text extractor confidence reflects capture plausibility, not a hardcoded HIGH", () => {
+  it("downgrades a very short capture to MEDIUM", () => {
+    const r = extractDonorAgency({ files: [{ fileName: "f.pdf", extractedText: "Donor Agency: NA\nThis tender is for consultancy services in the health sector, requiring a technical and financial proposal." }] });
+    assert.equal(r.found, true);
+    if (r.found) assert.equal(r.confidence, "MEDIUM", "a 2-character capture should not be reported as HIGH confidence");
+  });
+
+  it("downgrades a mostly-non-letter (garbled) capture to MEDIUM", () => {
+    const r = extractClientCity({ files: [{ fileName: "f.pdf", extractedText: "City location: 4/// 2::1\nThis tender is for consultancy services requiring a technical and financial proposal from bidders." }] });
+    assert.equal(r.found, true);
+    if (r.found) assert.equal(r.confidence, "MEDIUM", "a garbled, mostly-punctuation capture should not be reported as HIGH confidence");
+  });
+
+  it("keeps a clean, plausible capture at HIGH confidence", () => {
+    const r = extractDonorAgency({ files: [{ fileName: "f.pdf", extractedText: "Donor Agency: World Bank Group. This project is co-financed under the International Development Association window." }] });
+    assert.equal(r.found, true);
+    if (r.found) assert.equal(r.confidence, "HIGH");
   });
 });
 

@@ -1,4 +1,4 @@
-import { nonClientEntityLabelPattern, canonicalizeCountry } from "./metadata-validators";
+import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder } from "./metadata-validators";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 export type ExtractedField<T> = {
@@ -23,6 +23,22 @@ function pickBest<T>(candidates: ExtractedField<T>[]): ExtractedFieldOrMissing<T
   const order = { HIGH: 3, MEDIUM: 2, LOW: 1 } as const;
   candidates.sort((a, b) => order[b.confidence] - order[a.confidence]);
   return candidates[0];
+}
+
+// Several free-text extractors previously hardcoded confidence: "HIGH" for
+// any match at all, regardless of how plausible the captured text actually
+// was -- a garbled OCR capture ("g0v.et /// 2 3") reported the same "HIGH"
+// confidence as a clean one, making pickBest's confidence-based ranking
+// meaningless for these fields. This gives a real (if coarse) corroboration
+// signal: a short or placeholder-like capture is downgraded to MEDIUM.
+function confidenceForCapturedText(value: string): "HIGH" | "MEDIUM" {
+  const trimmed = value.trim();
+  if (trimmed.length < 4) return "MEDIUM";
+  if (containsMetadataPlaceholder(trimmed)) return "MEDIUM";
+  // Mostly non-letter noise (stray punctuation/digits with little real text).
+  const letters = (trimmed.match(/[A-Za-z]/g) ?? []).length;
+  if (letters < trimmed.length * 0.4) return "MEDIUM";
+  return "HIGH";
 }
 
 function trimQuote(value: string): string {
@@ -176,7 +192,7 @@ export function extractSubmissionAddress(input: ExtractorInput): ExtractedFieldO
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /submission\s+address\s*[:\-]\s*([^\n\r]{5,200})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -301,7 +317,7 @@ export function extractDonorAgency(input: ExtractorInput): ExtractedFieldOrMissi
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /donor\s+agency\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -311,7 +327,7 @@ export function extractImplementingAgency(input: ExtractorInput): ExtractedField
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /implementing\s+agency\s*[:\-]\s*([^\n\r]{3,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -321,7 +337,7 @@ export function extractLegalClientName(input: ExtractorInput): ExtractedFieldOrM
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /\b(?:full\s+legal\s+name|legal\s+entity\s+name)\s*(?:of\s+client|of\s+the\s+client)?\s*[:\-]\s*([^\n\r]{3,150})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -379,7 +395,7 @@ export function extractClientAddress(input: ExtractorInput): ExtractedFieldOrMis
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /client\s+address\s*[:\-]\s*([^\n\r]{5,200})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -402,7 +418,7 @@ export function extractClientCity(input: ExtractorInput): ExtractedFieldOrMissin
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /city\s+location\s*[:\-]\s*([^\n\r]{2,100})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -422,7 +438,7 @@ export function extractProjectTitle(input: ExtractorInput): ExtractedFieldOrMiss
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /project\s+title\s*[:\-]?\s*([^\n\r]{8,180})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -432,7 +448,7 @@ export function extractSubmissionEmailSubject(input: ExtractorInput): ExtractedF
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /email\s+subject\s*[:\-]\s*([^\n\r]{3,160})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -442,7 +458,7 @@ export function extractContactChannel(input: ExtractorInput): ExtractedFieldOrMi
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /clarification\s+channel\s*[:\-]\s*([^\n\r]{5,150})/i.exec(text) || /pre-bid\s+channel\s*[:\-]\s*([^\n\r]{5,150})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
@@ -452,7 +468,7 @@ export function extractAuthorizedOfficer(input: ExtractorInput): ExtractedFieldO
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     const m = /authorized\s+(?:representative|officer)\s*[:\-]\s*([A-Z][A-Za-z.\- ']{4,80})/i.exec(text);
-    if (m) cands.push({ found: true, value: m[1].trim(), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+    if (m) { const value = m[1].trim(); cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: confidenceForCapturedText(value) }); }
   }
   return pickBest(cands);
 }
