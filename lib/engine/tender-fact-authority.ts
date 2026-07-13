@@ -66,6 +66,7 @@ import {
   isPhysicalSubmissionMethod,
   isPortalSubmissionMethod,
 } from "./submission-method-policy";
+import { OPERATIONAL_WARNING_FIELDS as CANONICAL_OPERATIONAL_WARNING_FIELDS } from "./draft-final-gate-separation";
 
 // ─── Authority classes ─────────────────────────────────────────────────────
 
@@ -128,43 +129,13 @@ export const MIN_CRITICAL_REASON_LENGTH = 10;
 // ─── Field classification ──────────────────────────────────────────────────
 
 /**
- * The operational-warning fields from draft-final-gate-separation.ts.
- * These NEVER block any workflow — draft or final.
+ * The operational-warning fields. These NEVER block any workflow — draft
+ * or final.
  *
- * (Re-declared here so the authority model is self-contained. The
- * canonical source is draft-final-gate-separation.ts; this is a
- * read-only mirror for convenience.)
+ * Re-exported (not re-declared) from draft-final-gate-separation.ts, the
+ * canonical source, so the two modules cannot silently drift apart again.
  */
-export const OPERATIONAL_WARNING_FIELDS = new Set([
-  "reference",
-  "country",
-  "currency",
-  "clientContactName",
-  "clientContactEmail",
-  "clientContactPhone",
-  "clientContactTitle",
-  "clientCity",
-  "clientAddress",
-  "clientWebsite",
-  "clientRepresentative",
-  "donorAgency",
-  "implementingAgency",
-  "legalClientName",
-  "preBidChannel",
-  "preBidMeetingDate",
-  "preBidMeetingLocation",
-  "submissionEmailSubject",
-  "evaluationCriteria",
-  "evaluationMethodology",
-  "pageLimit",
-  "validityDays",
-  "bidBondAmount",
-  "bidBondCurrency",
-  "numberOfCopiesRequired",
-  "mandatorySiteVisit",
-  "budget",
-  "category",
-]);
+export const OPERATIONAL_WARNING_FIELDS = CANONICAL_OPERATIONAL_WARNING_FIELDS;
 
 /**
  * The submission-critical fields. These are the ONLY fields that can
