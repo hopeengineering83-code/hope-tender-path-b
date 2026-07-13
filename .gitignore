@@ -37,3 +37,4 @@ upload/
 
 # Tool-generated persisted outputs (Read tool large outputs)
 tool-results/
+.auth/

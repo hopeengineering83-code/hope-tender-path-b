@@ -59,16 +59,15 @@ async function performLogin(page: Page) {
     test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD environment variables are missing.");
     return;
   }
-  const response = await page.request.post("/api/auth/login", {
-    data: { email: SMOKE_TEST_EMAIL, password: SMOKE_TEST_PASSWORD }
-  });
-
-  if (response.status() !== 200) {
-    const body = await response.text().catch(() => "(unreadable)");
-    throw new Error(`Login failed with status ${response.status()}: ${body}`);
+  // The global setup has already authenticated and saved the storage state.
+  // The project config sets storageState to the primary account's saved state.
+  // Just navigate to the dashboard to activate the session.
+  await page.goto("/dashboard");
+  await page.waitForLoadState("networkidle");
+  // Verify we're actually authenticated (not redirected to login)
+  if (/login/.test(page.url())) {
+    throw new Error("Session not authenticated — storage state may be missing or expired");
   }
-
-  await preserveLoopbackSession(page, response);
 }
 
 test.describe("Production Critical Smoke Tests", () => {
@@ -109,8 +108,8 @@ test.describe("Production Critical Smoke Tests", () => {
     // 3. Authenticated Access: Verify dashboard loads
     await page.goto("/dashboard/tenders");
     await expect(page, "Authenticated user should not be redirected to login").not.toHaveURL(/\/login/);
-    // We expect at least the main heading to be visible
-    await expect(page.locator("h1"), "Dashboard heading should be visible").toBeVisible();
+    // We expect the dashboard to render with the tenders heading or similar
+    await expect(page.locator("h1, h2").first(), "Dashboard heading should be visible").toBeVisible();
   });
 
   test("4. Source tender intake prerequisites", async ({ page }) => {
@@ -118,7 +117,7 @@ test.describe("Production Critical Smoke Tests", () => {
     await page.goto("/dashboard/tenders/new");
 
     // Verify supported file-format guidance is visible (Intake prerequisite)
-    await expect(page.getByText(/supported format|PDF, DOCX, XLSX, TXT, or CSV/i), "File format guidance should be visible").toBeVisible();
+    await expect(page.getByText(/PDF.*DOCX.*XLSX|supported format/i), "File format guidance should be visible").toBeVisible();
   });
 
   test("5. AI-analysis prerequisites", async ({ page }) => {

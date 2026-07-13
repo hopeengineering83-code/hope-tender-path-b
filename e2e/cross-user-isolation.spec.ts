@@ -64,10 +64,10 @@ test.describe("authenticated cross-user isolation", () => {
     const anonymous = await request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
     expect(anonymous.status()).toBe(401);
 
-    // Reuse one authenticated primary session for every attack. Repeated logins
-    // would test the login throttle instead of tenant isolation and can exceed
-    // the real production rate limit when Playwright projects/retries overlap.
-    await login(page, primaryEmail, primaryPassword);
+    // The primary storage state is already set via the project config.
+    // Navigate to dashboard to activate the session cookie in the browser context.
+    await page.goto("/dashboard");
+    await page.waitForLoadState("networkidle");
 
     const own = await page.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
     expect(own.status()).toBe(200);
@@ -131,10 +131,26 @@ test.describe("authenticated cross-user isolation", () => {
     );
     expectHiddenOrForbidden(downloadAttempt.status());
 
-    // Switch identities only after all attack requests have completed, then
-    // prove the real secondary rows still have their original values/states.
+    // Switch to the secondary identity using the saved storage state.
+    // The global setup saved the secondary session to .auth/secondary.json.
+    // We load it and inject the cookies into the current context.
     await page.context().clearCookies();
-    await login(page, secondaryEmail, secondaryPassword);
+    const fs = await import("node:fs");
+    const secondaryState = JSON.parse(fs.readFileSync(".auth/secondary.json", "utf8"));
+    const cookies = secondaryState.cookies || [];
+    if (cookies.length > 0) {
+      await page.context().addCookies(cookies.map((c: any) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || "/",
+        httpOnly: c.httpOnly ?? true,
+        secure: false, // loopback HTTP
+        sameSite: "Lax" as const,
+      })));
+    }
+    await page.goto("/dashboard");
+    await page.waitForLoadState("networkidle");
 
     const secondaryOwn = await page.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
     expect(secondaryOwn.status()).toBe(200);

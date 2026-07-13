@@ -82,7 +82,9 @@ test.describe("authenticated intake and precondition gates", () => {
   test.skip(!FULL, "Set E2E_FULL_AUTH=true with an isolated seeded database");
 
   test("validated source intake persists and generation remains gated before analysis", async ({ page }) => {
-    await login(page);
+    // The storage state is set by the global setup / project config.
+    await page.goto("/dashboard");
+    await page.waitForLoadState("networkidle");
 
     const sourceText = [
       "REQUEST FOR PROPOSAL — ENGINEERING CONSULTANCY SERVICES",

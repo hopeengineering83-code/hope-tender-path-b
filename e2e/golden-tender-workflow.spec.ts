@@ -34,20 +34,10 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
   test.setTimeout(120_000);
 
   test("upload-first → add source file → AI Analyze fallback → readiness gate", async ({ page }) => {
-    await page.goto("/login");
+    // The storage state is set by the global setup / project config.
+    // Navigate directly to the dashboard — no login needed.
+    await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    await page.fill("input[type=email], input[name=email]", email);
-    await page.fill("input[type=password], input[name=password]", password);
-
-    // Capture login API response for CI diagnostics
-    const [loginResp] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/auth/login"), { timeout: 15_000 }),
-      page.click("button[type=submit]"),
-    ]);
-    const loginStatus = loginResp.status();
-    const loginBody = await loginResp.text().catch(() => "(unreadable)");
-    console.log(`[E2E] login status=${loginStatus} body=${loginBody}`);
-
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
 
     const intake = await page.request.post("/api/tenders/upload-first", {

@@ -57,14 +57,13 @@ async function performLogin(page: Page) {
     test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD environment variables are missing.");
     return;
   }
-  const response = await page.request.post("/api/auth/login", {
-    data: { email: SMOKE_TEST_EMAIL, password: SMOKE_TEST_PASSWORD },
-  });
-  if (response.status() !== 200) {
-    const body = await response.text().catch(() => "(unreadable)");
-    throw new Error(`Login failed with status ${response.status()}: ${body}`);
+  // The global setup has already authenticated and saved the storage state.
+  // The project config sets storageState to the primary account's saved state.
+  await page.goto("/dashboard");
+  await page.waitForLoadState("networkidle");
+  if (/login/.test(page.url())) {
+    throw new Error("Session not authenticated — storage state may be missing or expired");
   }
-  await preserveLoopbackSession(page, response);
 }
 
 /**
