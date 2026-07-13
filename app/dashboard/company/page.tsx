@@ -94,6 +94,7 @@ export default function CompanyPage() {
   const [searchDoc, setSearchDoc] = useState("");
   const [filterCat, setFilterCat] = useState("ALL");
   const [deletingDocId, setDeletingDocId] = useState<string|null>(null);
+  const [confirmingDeleteDocId, setConfirmingDeleteDocId] = useState<string|null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -252,14 +253,9 @@ export default function CompanyPage() {
 
   async function deleteDoc(doc: CompanyDoc) {
     if (deletingDocId) return;
-    const confirmed = window.confirm(
-      `Delete "${doc.originalFileName}" from the Company Vault?
-
-This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit.`
-    );
-    if (!confirmed) return;
 
     setDeletingDocId(doc.id);
+    setConfirmingDeleteDocId(null);
     setError("");
     try {
       const res = await fetch(`/api/company/documents/${doc.id}`, { method:"DELETE" });
@@ -268,6 +264,7 @@ This removes it from future evidence selection and cannot be undone. Reviewed ex
         return;
       }
       setDocs(d => d.filter(x => x.id!==doc.id));
+      setConfirmingDeleteDocId(null);
     } catch {
       setError("Network interruption while deleting the Company Vault document. Please retry when your connection is stable.");
     } finally {
@@ -516,7 +513,7 @@ This removes it from future evidence selection and cannot be undone. Reviewed ex
         ))}
       </div>
 
-      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {error && <div role="alert" aria-live="assertive" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
 
       {/* Profile Tab */}
@@ -638,9 +635,19 @@ This removes it from future evidence selection and cannot be undone. Reviewed ex
                   <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                     <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">↺</button>
                     <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 min-w-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">↓</a>
-                    <button onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "…" : "✕"}</button>
+                    <button onClick={()=>setConfirmingDeleteDocId(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "…" : "✕"}</button>
                   </div>
                 </div>
+                {confirmingDeleteDocId===doc.id && (
+                  <div id={`delete-confirm-${doc.id}`} role="group" aria-label={`Confirm deletion of ${doc.originalFileName}`} className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+                    <p className="font-medium">Delete this Company Vault document?</p>
+                    <p className="mt-1 text-red-800">This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
+                      <button type="button" onClick={()=>setConfirmingDeleteDocId(null)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

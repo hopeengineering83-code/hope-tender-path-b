@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** Follow-up on Lane C Company Vault action review comments. Re-read current working tree and kept scope isolated to Company Vault frontend/a11y, regression test, patch artifact, and handoff.
+- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
+- **Ownership recheck:** `app/dashboard/company/page.tsx` remains Lane C-owned for user-facing destructive-action UX/accessibility; no Lane A/B locked backend, AI, export, classifier, auth, queue, DB lifecycle, or release-audit file touched. `tests/company-vault-document-actions-a11y.test.ts` remains Lane C regression coverage. `parallel-product-output-quality.patch` regenerated for Lane A integration.
+- **Follow-up fix:** Replaced the previous native `window.confirm` prompt with an accessible in-page confirmation group tied to the delete button via `aria-expanded`/`aria-controls`, explicit Confirm/Cancel buttons, duplicate-delete disabling, and assertive safe-error announcement.
+- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (4/4); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** Same as prior entry: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
+- **Next action:** Lane A should apply the regenerated patch artifact and run authenticated browser/a11y/document-output validation on the RC branch.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** Parallel Lane C product/output-quality micro-fix after scoped audit; remote `origin` was not configured, so latest main/open PR diffs could not be fetched from this checkout. Active Workboard was reviewed and this change avoids Lane A/B locked backend, AI, provenance, classifier, queue, auth, DB lifecycle, export-gate, and release-audit files.
 - **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
 - **Ownership matrix:** `app/dashboard/company/page.tsx` Company Vault document row actions — production workflow Company Vault upload/evidence selection; open PR ownership not visible from this checkout; Lane A none expected; Lane B none expected; Lane C owns user-facing destructive-action clarity, keyboard discoverability, and touch targets; conflict risk low; allowed action: isolated frontend-only fix. `tests/company-vault-document-actions-a11y.test.ts` — Lane C behavioral/a11y regression coverage; conflict risk low; allowed action: new test. `operator_handoff.md` — required session log; shared coordination file; allowed action: append-only newest entry.
