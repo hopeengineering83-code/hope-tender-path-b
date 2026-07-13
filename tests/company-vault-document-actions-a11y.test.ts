@@ -10,15 +10,19 @@ describe("Company Vault document row actions", () => {
     assert.match(source, /focus-visible:outline/);
   });
 
-  it("uses mobile/tablet friendly touch targets for document row actions", () => {
-    assert.match(source, /min-h-8 min-w-8/);
+  it("uses mobile/tablet friendly touch targets and visible text labels for document row actions", () => {
+    assert.match(source, /min-h-8 rounded border/);
     assert.match(source, /min-h-8 rounded-md/);
+    assert.match(source, />Re-extract<|>Re-extract<\/button>/);
+    assert.match(source, />Download<\/a>/);
+    assert.match(source, /Deleting…" : "Delete"/);
   });
 
   it("uses an accessible in-page confirmation instead of native window.confirm", () => {
     assert.doesNotMatch(source, /window\.confirm\(/);
     assert.match(source, /confirmingDeleteDocId/);
     assert.match(source, /role="group"/);
+    assert.match(source, /aria-expanded=\{confirmingDeleteDocId===doc\.id\}/);
     assert.match(source, /aria-controls=\{`delete-confirm-\$\{doc\.id\}`\}/);
     assert.match(source, /Yes, delete document/);
     assert.match(source, /removes it from future evidence selection and cannot be undone/);
@@ -28,6 +32,10 @@ describe("Company Vault document row actions", () => {
     assert.match(source, /deletingDocId/);
     assert.match(source, /if \(deletingDocId\) return/);
     assert.match(source, /disabled=\{deletingDocId!==null\}/);
+    assert.match(source, /deleteButtonRefs/);
+    assert.match(source, /confirmDeleteButtonRefs/);
+    assert.match(source, /requestAnimationFrame\(\(\) => confirmDeleteButtonRefs/);
+    assert.match(source, /requestAnimationFrame\(\(\) => deleteButtonRefs/);
     assert.match(source, /We could not delete that Company Vault document/);
     assert.match(source, /role="alert" aria-live="assertive"/);
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);

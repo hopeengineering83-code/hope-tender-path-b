@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** Second follow-up cleanup/strengthening pass for Lane C Company Vault document actions.
+- **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
+- **Ownership recheck:** Scope remains isolated to `app/dashboard/company/page.tsx`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`, and regenerated `parallel-product-output-quality.patch`. No Lane A/B-owned backend, AI, provider, provenance, classifier, auth/RBAC, queue, database lifecycle, export-gate, document-output, or release-audit code changed.
+- **Follow-up fix:** Made the in-page delete confirmation stronger and cleaner: visible text labels replace glyph-only row actions; confirmation receives focus when opened; Cancel restores focus to the originating Delete button; failed deletes keep the confirmation available for retry; patch artifact is regenerated as a true bundle from base `e8c71487` while excluding the artifact from its own diff.
+- **Tests actually run:** `node --test tests/company-vault-document-actions-a11y.test.ts` PASS (4/4); `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://user:pass@localhost:5432/db SESSION_SECRET=12345678901234567890123456789012 ZAI_API_KEY=dummy-not-real-key-for-build npm run build` PASS with expected optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** Same as prior entries: no configured `origin`, no authenticated seed data/screenshots, and full browser/document-output matrix remains Lane A acceptance work.
+- **Next action:** Lane A should apply `parallel-product-output-quality.patch` to the RC branch and run authenticated browser/a11y/document-output validation.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** Follow-up on Lane C Company Vault action review comments. Re-read current working tree and kept scope isolated to Company Vault frontend/a11y, regression test, patch artifact, and handoff.
 - **Branch / PR:** `parallel-product-output-quality` / local PR record only (no push/deployment).
 - **Ownership recheck:** `app/dashboard/company/page.tsx` remains Lane C-owned for user-facing destructive-action UX/accessibility; no Lane A/B locked backend, AI, export, classifier, auth, queue, DB lifecycle, or release-audit file touched. `tests/company-vault-document-actions-a11y.test.ts` remains Lane C regression coverage. `parallel-product-output-quality.patch` regenerated for Lane A integration.

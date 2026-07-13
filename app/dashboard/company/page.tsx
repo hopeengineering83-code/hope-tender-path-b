@@ -97,6 +97,8 @@ export default function CompanyPage() {
   const [confirmingDeleteDocId, setConfirmingDeleteDocId] = useState<string|null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const deleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const confirmDeleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   // Expert state
   const [expertForm, setExpertForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
@@ -251,11 +253,20 @@ export default function CompanyPage() {
     }
   }, [docCategory]);
 
+  function openDeleteConfirmation(docId: string) {
+    setConfirmingDeleteDocId(docId);
+    setError("");
+  }
+
+  function cancelDeleteConfirmation(docId: string) {
+    setConfirmingDeleteDocId(null);
+    requestAnimationFrame(() => deleteButtonRefs.current[docId]?.focus());
+  }
+
   async function deleteDoc(doc: CompanyDoc) {
     if (deletingDocId) return;
 
     setDeletingDocId(doc.id);
-    setConfirmingDeleteDocId(null);
     setError("");
     try {
       const res = await fetch(`/api/company/documents/${doc.id}`, { method:"DELETE" });
@@ -391,6 +402,11 @@ export default function CompanyPage() {
     if (res.ok) setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
     setDeletingProjectId(null);
   }
+
+  useEffect(() => {
+    if (!confirmingDeleteDocId) return;
+    requestAnimationFrame(() => confirmDeleteButtonRefs.current[confirmingDeleteDocId]?.focus());
+  }, [confirmingDeleteDocId]);
 
   const filteredDocs = docs.filter(d => {
     const ms = !searchDoc || d.originalFileName.toLowerCase().includes(searchDoc.toLowerCase());
@@ -633,9 +649,9 @@ export default function CompanyPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">↺</button>
-                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 min-w-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">↓</a>
-                    <button onClick={()=>setConfirmingDeleteDocId(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 min-w-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "…" : "✕"}</button>
+                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-slate-200" title="Re-extract text">Re-extract</button>
+                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
+                    <button ref={(node)=>{ deleteButtonRefs.current[doc.id]=node; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} aria-controls={`delete-confirm-${doc.id}`} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                   </div>
                 </div>
                 {confirmingDeleteDocId===doc.id && (
@@ -643,8 +659,8 @@ export default function CompanyPage() {
                     <p className="font-medium">Delete this Company Vault document?</p>
                     <p className="mt-1 text-red-800">This removes it from future evidence selection and cannot be undone. Reviewed expert or project records already created from this document remain visible for audit.</p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <button type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
-                      <button type="button" onClick={()=>setConfirmingDeleteDocId(null)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                      <button ref={(node)=>{ confirmDeleteButtonRefs.current[doc.id]=node; }} type="button" onClick={()=>void deleteDoc(doc)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md bg-red-700 px-3 py-1.5 font-semibold text-white hover:bg-red-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">{deletingDocId===doc.id ? "Deleting…" : "Yes, delete document"}</button>
+                      <button type="button" onClick={()=>cancelDeleteConfirmation(doc.id)} disabled={deletingDocId===doc.id} className="min-h-8 rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
                     </div>
                   </div>
                 )}
