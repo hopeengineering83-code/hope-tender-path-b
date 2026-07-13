@@ -171,3 +171,12 @@ describe("Company Vault truthful guidance and reduced-motion navigation", () => 
     assert.doesNotMatch(source, /error:"Network error"/);
   });
 });
+
+
+describe("Company Vault loading and upload announcements", () => {
+  it("announces page, upload, and compliance loading states to assistive technology", () => {
+    assert.match(source, /role="status" aria-live="polite" className="text-sm text-slate-400 py-16 text-center">Loading Company Vault…/);
+    assert.match(source, /role="status" aria-live="polite" aria-label="Upload progress"/);
+    assert.match(source, /role="status" aria-live="polite" className="text-sm text-slate-400">Loading compliance records…/);
+  });
+});

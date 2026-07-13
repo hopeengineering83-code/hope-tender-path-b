@@ -551,7 +551,7 @@ export default function CompanyPage() {
     (p.sector ?? "").toLowerCase().includes(searchProject.toLowerCase())
   );
 
-  if (loading) return <div className="text-sm text-slate-400 py-16 text-center">Loading…</div>;
+  if (loading) return <div role="status" aria-live="polite" className="text-sm text-slate-400 py-16 text-center">Loading Company Vault…</div>;
 
   const TABS: { id: Tab; label: string; count?: number }[] = [
     { id:"profile", label:"Company Profile" },
@@ -737,7 +737,7 @@ export default function CompanyPage() {
             <p className="mt-1 text-xs text-slate-400">PDF · DOCX · XLSX · Images · and more · Up to 10 MB</p>
           </div>
           {uploadQueue.length>0 && (
-            <div className="space-y-1.5">
+            <div role="status" aria-live="polite" aria-label="Upload progress" className="space-y-1.5">
               {uploadQueue.slice(0,6).map((item,i) => (
                 <div key={i} className={`rounded-lg border px-3 py-2 text-xs flex items-center justify-between gap-2 ${item.status==="done"?"border-green-200 bg-green-50":item.status==="error"?"border-red-200 bg-red-50":item.status==="uploading"?"border-blue-200 bg-blue-50":"border-slate-200"}`}>
                   <span className="truncate font-medium">{item.file.name}</span>
@@ -1013,7 +1013,7 @@ export default function CompanyPage() {
             ))}
           </div>
 
-          {complianceLoading && <p className="text-sm text-slate-400">Loading…</p>}
+          {complianceLoading && <p role="status" aria-live="polite" className="text-sm text-slate-400">Loading compliance records…</p>}
 
           {/* Compliance Records */}
           {complianceSubTab==="compliance" && (
