@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { logger } from "../../../../../lib/observability";
 
 export async function POST(
   req: Request,
@@ -58,7 +59,11 @@ export async function POST(
     },
   });
 
-  await logAction({
+  // Canonical audit consistency policy: non-fatal. The duplication has
+  // already succeeded; a failed audit log must not roll it back or surface
+  // a 500 to the user. The audit is persisted best-effort with request
+  // correlation so operators can investigate gaps.
+  void logAction({
     userId: actor.id,
     action: "TENDER_DUPLICATE",
     entityType: "Tender",
@@ -66,6 +71,11 @@ export async function POST(
     description: `Duplicated tender "${tender.title}" → "${copy.title}"`,
     metadata: { sourceTenderId: tender.id, duplicateTenderId: copy.id },
     requestId,
+  }).catch((error) => {
+    logger.warn("tender duplicate audit persistence failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
   });
 
   return NextResponse.json(copy, { status: 201 });
