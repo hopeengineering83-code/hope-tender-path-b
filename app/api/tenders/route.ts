@@ -1,7 +1,7 @@
 import { logger } from "../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
-import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../lib/auth";
+import { getSession, requireRoleOrRespond } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
 import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit, rateLimitPersistent } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
@@ -62,14 +62,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  let actor;
-  try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-  } catch (error) {
-    return error instanceof Error && error.message === "Forbidden"
-      ? forbiddenResponse()
-      : unauthorizedResponse();
-  }
+  const authResult = await requireRoleOrRespond("ADMIN", "PROPOSAL_MANAGER");
+  if (authResult instanceof Response) return authResult;
+  const actor = authResult;
 
   const requestId = extractRequestId(req);
   const rl = await rateLimitPersistent(`tender-create:${actor.id}`, MUTATION_RATE_LIMIT);
