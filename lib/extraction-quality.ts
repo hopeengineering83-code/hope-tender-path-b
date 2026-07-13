@@ -117,12 +117,21 @@ export function isExtractionCorrupted(text: string | null | undefined): Extracti
   };
 }
 
-export function assessExtractionQuality(text: string | null | undefined, fileName?: string | null): ExtractionQualityReport {
+export function assessExtractionQuality(text: string | null | undefined, fileName?: string | null, totalPages?: number | null): ExtractionQualityReport {
   const raw = text ?? "";
   const normalized = raw.replace(/\s+/g, " ").trim();
   const characterCount = normalized.length;
   const pageMarkers = countMatches(raw, /\[Page\s+\d+\]/gi);
-  const averageCharsPerPage = pageMarkers > 0 ? Math.round(characterCount / pageMarkers) : null;
+  // DOCX (and some PDF/OCR paths) never emit "[Page N]" markers, so
+  // pageMarkers is 0 for the common case of a real multi-page document.
+  // Without a page-count fallback, the density check below silently never
+  // fires for exactly the file type most likely to need it — a
+  // near-empty DOCX could otherwise reach GOOD severity. When the caller
+  // supplies the file's real totalPages (from TenderFile), use that as
+  // the page denominator instead of leaving density unmeasured.
+  const averageCharsPerPage = pageMarkers > 0
+    ? Math.round(characterCount / pageMarkers)
+    : (typeof totalPages === "number" && totalPages > 0 ? Math.round(characterCount / totalPages) : null);
   const hasExtractionFailure = /\[Extraction failed for/i.test(raw);
   const hasOcrPlaceholder = /scanned pdf|needs OCR|OCR skipped|\[Image:/i.test(raw);
   const scannedPdfLikely = characterCount < 250 || hasOcrPlaceholder;
