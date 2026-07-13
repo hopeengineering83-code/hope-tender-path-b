@@ -79,7 +79,9 @@ export function mapGenerationError(error: unknown, opts?: {
         nextAction: "RETRY_AFTER_BACKOFF",
         diagnosticId,
         failedStage,
-        blockerSummary: raw.slice(0, 240),
+        // SECURITY: blockerSummary is a safe static string, NOT raw error.message.
+        // The raw error is logged server-side via the route's catch block.
+        blockerSummary: "Provider rate limit reached.",
       },
     };
   }
@@ -95,7 +97,7 @@ export function mapGenerationError(error: unknown, opts?: {
         nextAction: "RETRY_OR_REDUCE_INPUT",
         diagnosticId,
         failedStage,
-        blockerSummary: raw.slice(0, 240),
+        blockerSummary: "Claude (Anthropic) provider error.",
       },
     };
   }
@@ -109,7 +111,7 @@ export function mapGenerationError(error: unknown, opts?: {
         nextAction: "RETRY_OR_REDUCE_INPUT",
         diagnosticId,
         failedStage,
-        blockerSummary: raw.slice(0, 240),
+        blockerSummary: "Gemini (Google) provider error.",
       },
     };
   }
@@ -123,7 +125,7 @@ export function mapGenerationError(error: unknown, opts?: {
         nextAction: "RETRY_OR_REDUCE_INPUT",
         diagnosticId,
         failedStage,
-        blockerSummary: raw.slice(0, 240),
+        blockerSummary: "OpenAI provider error.",
       },
     };
   }
@@ -142,7 +144,7 @@ export function mapGenerationError(error: unknown, opts?: {
         nextAction: "RETRY_AFTER_DATABASE_CHECK",
         diagnosticId,
         failedStage,
-        blockerSummary: raw.slice(0, 240),
+        blockerSummary: "Database error during generation.",
       },
     };
   }
@@ -174,7 +176,7 @@ export function mapGenerationError(error: unknown, opts?: {
         nextAction: "LOGIN_AGAIN_OR_CHECK_ROLE",
         diagnosticId,
         failedStage,
-        blockerSummary: raw.slice(0, 240),
+        blockerSummary: "Permission denied for this operation.",
       },
     };
   }
@@ -185,7 +187,9 @@ export function mapGenerationError(error: unknown, opts?: {
     body: {
       success: false,
       code: "GENERATION_FAILED",
-      message: raw.length > 0 ? raw.slice(0, 240) : "Document generation failed.",
+      // SECURITY: do NOT include raw error.message in the public response.
+      // The raw error is logged server-side via the route's catch block.
+      message: "Document generation failed.",
       nextAction: "RETRY_OR_CONTACT_SUPPORT",
       diagnosticId,
       failedStage,

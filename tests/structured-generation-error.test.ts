@@ -54,11 +54,15 @@ describe("mapGenerationError — recognised error categories", () => {
     assert.equal(m.body.code, "AUTHZ_FAILED");
   });
 
-  it("unknown error → 500 with GENERATION_FAILED + clean message", () => {
+  it("unknown error → 500 with GENERATION_FAILED + safe message (no raw leak)", () => {
     const m = mapGenerationError(new Error("Some unknown thing exploded"));
     assert.equal(m.status, 500);
     assert.equal(m.body.code, "GENERATION_FAILED");
-    assert.match(m.body.message, /unknown thing exploded/);
+    // SECURITY: the raw error message MUST NOT appear in the public response.
+    assert.ok(!m.body.message.includes("unknown thing exploded"));
+    assert.equal(m.body.message, "Document generation failed.");
+    // blockerSummary from opts is allowed but raw error.message is not.
+    assert.ok(!JSON.stringify(m.body).includes("unknown thing exploded"));
   });
 
   it("non-Error caught value still maps cleanly", () => {
