@@ -70,10 +70,13 @@ export async function readGeneratedDocumentContent(
 
   const verifyWhenRequired = (buffer: Buffer) => {
     if (!options.requireVerifiedIntegrity) return;
+    // Verify against the MIME recorded when the bytes were pinned (the hash
+    // comparison anchors it) — the extension-inferred guess cannot resolve
+    // extensionless or legacy-named tender-required files.
     requireVerifiedPersistedFileBytes({
       bytes: buffer,
       filename,
-      claimedMimeType: mimeType,
+      claimedMimeType: doc.contentMimeType ?? mimeType,
       persisted: {
         contentSha256: doc.contentSha256 ?? null,
         contentByteLength: doc.contentByteLength ?? null,
@@ -194,6 +197,10 @@ export async function persistGeneratedDocumentContent(args: {
         integrityStatus: integrity.integrityStatus,
         integrityVerifiedAt: integrity.integrityVerifiedAt,
         integrityFailureCode: integrity.integrityFailureCode,
+        // Legacy final-ZIP digest columns — the download route's verifier
+        // reads these; leaving them null blocks export with FILE_DIGEST_MISSING.
+        sha256: integrity.contentSha256,
+        byteSize: integrity.contentByteLength,
       },
     });
   } catch (error) {

@@ -120,6 +120,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           fileContent: stored.fileContent ?? null,
           storagePath: stored.storagePath || null,
           ...attachedIntegrity,
+          // Legacy final-ZIP digest columns must describe the same bytes.
+          sha256: attachedIntegrity.contentSha256,
+          byteSize: attachedIntegrity.contentByteLength,
           generationStatus: "GENERATED",
           validationStatus: "VALIDATED",
           reviewStatus: "READY_FOR_EXPORT",

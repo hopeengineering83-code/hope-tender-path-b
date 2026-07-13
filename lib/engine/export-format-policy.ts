@@ -96,7 +96,7 @@ export function validateFileSignature(
   base64Content: string,
 ): { ok: true; detected: RequiredExportFormat } | { ok: false; reason: string } {
   const expected = formatFromExtension(filename);
-  if (!expected) {
+  if (!expected && /\.[a-z0-9]{2,8}$/i.test(filename.trim())) {
     return { ok: false, reason: `Unsupported extension on "${filename}"; expected .docx, .pdf, or .xlsx.` };
   }
   let buffer: Buffer;
@@ -109,6 +109,14 @@ export function validateFileSignature(
   const isPk = buffer[0] === 0x50 && buffer[1] === 0x4b;
   const isPdf = buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46;
   const isOle = buffer[0] === 0xd0 && buffer[1] === 0xcf && buffer[2] === 0x11 && buffer[3] === 0xe0;
+  if (!expected) {
+    // Tender-required filenames may legitimately carry no extension. There is
+    // no extension label for the bytes to contradict, so the bytes must stand
+    // on their own signature; unrecognizable bytes still fail closed.
+    if (isPdf) return { ok: true, detected: "pdf" };
+    if (isPk || isOle) return { ok: true, detected: "docx" };
+    return { ok: false, reason: `"${filename}" has no extension and its bytes match no supported signature (PDF/Office).` };
+  }
   if (expected === "docx" && !isPk && !isOle) return { ok: false, reason: `"${filename}" has Word extension but is not a valid DOC/DOCX signature.` };
   if (expected === "pdf" && !isPdf) return { ok: false, reason: `"${filename}" has .pdf extension but is not a valid PDF (%PDF signature missing). Likely a DOCX renamed to .pdf.` };
   if (expected === "xlsx" && !isPk && !isOle) return { ok: false, reason: `"${filename}" has Excel extension but is not a valid XLS/XLSX signature.` };
