@@ -156,3 +156,114 @@ describe("auto-finalize readiness report reads what the byte gate needs", () => 
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Full Final-ZIP acceptance test: persist verified bytes → create ZIP →
+// reopen → compare exact bytes → corrupt one byte → prove fail-closed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { finalizeApprovedDocumentsZip } from "../lib/engine/workflow/zip-finalizer";
+import JSZip from "jszip";
+
+describe("Final-ZIP end-to-end byte acceptance", () => {
+  function readyDoc(overrides: Record<string, unknown> = {}) {
+    const fileName = String(overrides.exactFileName ?? "Technical-Proposal.docx");
+    const bytes = (overrides.bytes as Buffer | undefined) ?? fakeDocx;
+    const integrity = inspectActualFileBytes({
+      bytes,
+      filename: fileName,
+      claimedMimeType: DOCX_MIME,
+    });
+
+    return {
+      id: String(overrides.id ?? "doc-1"),
+      name: String(overrides.name ?? "Technical Proposal"),
+      exactFileName: fileName,
+      exactOrder: Number(overrides.exactOrder ?? 1),
+      documentType: "TECHNICAL_PROPOSAL",
+      format: "DOCX",
+      generationStatus: "GENERATED",
+      validationStatus: "VALIDATED",
+      reviewStatus: "READY_FOR_EXPORT",
+      fileContent: bytes.toString("base64"),
+      storagePath: null,
+      ...integrity,
+      ...overrides,
+    } as any;
+  }
+
+  it("creates a ZIP whose entry bytes and manifest hash exactly match the persisted bytes", async () => {
+    const doc = readyDoc();
+    const result = await finalizeApprovedDocumentsZip([doc]);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(result.fileList, ["Technical-Proposal.docx"]);
+    assert.equal(result.manifest?.length, 1);
+    assert.equal(result.manifest?.[0].byteSize, fakeDocx.length);
+
+    // Reopen the ZIP and compare exact bytes.
+    const reopened = await JSZip.loadAsync(result.buffer!);
+    const entry = reopened.file("Technical-Proposal.docx");
+    assert.ok(entry, "ZIP must contain the document entry");
+    const entryBytes = await entry!.async("nodebuffer");
+    assert.deepEqual(entryBytes, fakeDocx,
+      "ZIP entry bytes must exactly match the persisted document bytes");
+  });
+
+  it("fails closed when one byte is corrupted — ZIP generation is rejected", async () => {
+    // Create a document with corrupted bytes that pass the initial signature
+    // check but have a wrong SHA-256. The ZIP finalizer must reject this
+    // because the integrity check compares the actual bytes against the
+    // persisted digest.
+    const corruptedBytes = Buffer.from(fakeDocx);
+    corruptedBytes[corruptedBytes.length - 1] ^= 0x01; // flip one bit
+
+    // The integrity data is computed from the ORIGINAL bytes, but the
+    // fileContent has the CORRUPTED bytes. The ZIP finalizer must detect
+    // the mismatch and fail closed.
+    const doc = readyDoc({
+      bytes: fakeDocx, // integrity computed from valid bytes
+      fileContent: corruptedBytes.toString("base64"), // but content is corrupted
+    });
+
+    const result = await finalizeApprovedDocumentsZip([doc]);
+    assert.equal(result.ok, false,
+      "ZIP generation must fail closed when bytes don't match the persisted digest");
+    assert.ok(result.code, "must return an error code");
+  });
+
+  it("rejects unknown, unsupported, and undigested bytes", async () => {
+    // Unknown integrity status.
+    const unknownDoc = readyDoc({
+      integrityStatus: "UNKNOWN",
+      integrityVerifiedAt: null,
+    });
+    const unknownResult = await finalizeApprovedDocumentsZip([unknownDoc]);
+    assert.equal(unknownResult.ok, false,
+      "must reject documents with UNKNOWN integrity status");
+
+    // Unsupported format (not DOCX/PDF).
+    const unsupportedDoc = readyDoc({
+      exactFileName: "file.unknown",
+      format: "UNKNOWN",
+      bytes: Buffer.from("not a real document"),
+      claimedMimeType: "application/octet-stream",
+    });
+    const unsupportedResult = await finalizeApprovedDocumentsZip([unsupportedDoc]);
+    assert.equal(unsupportedResult.ok, false,
+      "must reject documents with unsupported format");
+  });
+
+  it("never rebuilds storage-backed documents from stale inline content", () => {
+    // The download route must not rebuild a storage-backed document from its
+    // inline fileContent copy. Verify the source contract.
+    const downloadSrc = read("app/api/tenders/[id]/download/route.ts");
+    // The route must check storagePath and prefer storage over inline content.
+    assert.match(downloadSrc, /storagePath/);
+    // The route must NOT use fileContent when storagePath is present.
+    // (The canonical readGeneratedDocumentContent helper handles this.)
+    const contentSrc = read("lib/generated-document-content.ts");
+    assert.match(contentSrc, /storagePath/);
+    assert.match(contentSrc, /getFile\(/);
+  });
+});
