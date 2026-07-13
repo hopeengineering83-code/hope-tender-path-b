@@ -1,25 +1,10 @@
 import { logger } from "../../../../../lib/observability";
 // Persistent donor advisory resolution endpoint.
 //
-// Why this exists:
-//   Donor safeguard advisories (DONOR_ESMP_MISSING, DONOR_LOGFRAME_MISSING,
-//   DONOR_ME_PLAN_MISSING, etc.) are non-blocking by default. A user can
-//   mark them as resolved (e.g. "not required by ToR", "post-award
-//   deliverable", "donor template provided", "added to technical proposal")
-//   and that decision MUST persist across re-checks — otherwise the
-//   advisory section keeps re-surfacing items the user already triaged.
+// Donor safeguard advisories are non-blocking by default. A user can mark
+// them as resolved and that decision persists across readiness checks.
 //
-// Storage strategy:
-//   Re-use the existing ComplianceGap table — same shape (tenderId,
-//   severity, title, description, isResolved, resolvedNote, etc.). We
-//   namespace donor advisory rows by:
-//     - title = "ADVISORY:<code>"
-//     - severity = "ADVISORY"
-//   This avoids a brand-new Prisma model + migration on Vercel.
-//
-// The canonical readiness helper (lib/engine/final-submission-readiness.ts)
-// reads these rows and skips resolved advisories so the user's prior
-// decision is honoured.
+// Storage strategy: ComplianceGap rows namespaced as ADVISORY:<code>.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -27,7 +12,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { ADVISORY_GAP_PREFIX, buildAdvisoryGapTitle, parseAdvisoryGapTitle } from "../../../../../lib/engine/final-submission-readiness";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -45,7 +30,8 @@ function jsonError(message: string, status = 500, extra: Record<string, unknown>
   return NextResponse.json({ ok: false, success: false, code, error: message, message, ...extra }, { status });
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
@@ -53,8 +39,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     await prismaReady;
     const { id } = await params;
 
-    // User scoping — make sure this user owns this tender before exposing
-    // any persisted resolutions.
     const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
     if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
@@ -75,12 +59,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     });
   } catch (error) {
-    logger.error("advisory-resolutions GET failed", { detail: error });
-    return jsonError("Advisory resolution lookup failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: sanitizeError(error) });
+    logger.error("advisory-resolutions GET failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return jsonError("Advisory resolution lookup failed.", 500, {
+      code: "ADVISORY_RESOLUTION_RUNTIME_ERROR",
+      requestId,
+    });
   }
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
@@ -107,17 +98,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const title = buildAdvisoryGapTitle(code);
     const resolvedNote = note ? `${resolution} | ${note}` : resolution;
-
     const existing = await prisma.complianceGap.findFirst({
       where: { tenderId: id, severity: "ADVISORY", title },
       select: { id: true },
     });
 
-    // REOPEN deletes the persisted resolution so the advisory re-surfaces
-    // on the next readiness check. All other resolutions persist with
-    // isResolved=true so downstream consumers (tender-generation-readiness,
-    // bid-control) never see ADVISORY rows in their `where: isResolved=false`
-    // blocker queries.
     if (resolution === "REOPEN") {
       if (existing) await prisma.complianceGap.delete({ where: { id: existing.id } });
     } else if (existing) {
@@ -153,7 +138,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       resolved: resolution !== "REOPEN",
     });
   } catch (error) {
-    logger.error("advisory-resolutions POST failed", { detail: error });
-    return jsonError("Advisory resolution failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: sanitizeError(error) });
+    logger.error("advisory-resolutions POST failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return jsonError("Advisory resolution failed.", 500, {
+      code: "ADVISORY_RESOLUTION_RUNTIME_ERROR",
+      requestId,
+    });
   }
 }

@@ -8,293 +8,394 @@ import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/propos
 import { getStorageAdapter } from "../../../../lib/storage";
 import { logAction } from "../../../../lib/audit";
 import { rateLimit } from "../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../lib/request-id";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+type AdminRepairStep =
+  | "all"
+  | "extract"
+  | "import"
+  | "labels"
+  | "requirements"
+  | "appsettings"
+  | "prune-superseded";
+
+const ADMIN_REPAIR_STEPS = new Set<AdminRepairStep>([
+  "all",
+  "extract",
+  "import",
+  "labels",
+  "requirements",
+  "appsettings",
+  "prune-superseded",
+]);
+
 /**
  * POST /api/admin/repair
- * Full repair workflow:
- *  1. Re-extract text from ALL stored documents (not just failed ones)
- *  2. Run AI extraction + knowledge import
- *  3. Return diagnostic summary
  *
- * Query params:
- *   ?step=extract      — only re-extract text (skip import)
- *   ?step=import       — only run import (skip re-extraction)
- *   ?step=labels       — clean tender titles and client names for all tenders
- *   ?step=requirements — clear false-positive expert/project quantities (e.g. "Section 29 Expert")
- *   ?step=appsettings  — ensure AppSettings row exists for every Company (safe after new DB)
- *   ?step=prune-superseded — delete GeneratedDocument rows with generationStatus=SUPERSEDED older than
- *                            ?cutoffDays (default 7). Frees DB transfer. Never deletes active docs.
- *   ?step=schema-drift     — idempotent ALTER TABLE SQL that adds correct column names to DocumentReview
- *                            and DocumentComment tables created by the old bootstrap (which used
- *                            generatedDocumentId/reviewNotes/reviewStatus instead of documentId/notes/action).
- *                            Safe to run multiple times. Copies data from old columns to new ones.
- *   ?step=all (default) — extract + import + appsettings (labels/requirements/prune must be run separately)
+ * Administrative data-repair operations only. Database schema changes are
+ * deliberately excluded: production schema is owned by Prisma migrations and
+ * must never be altered from a request-handling route.
  */
 export async function POST(req: Request) {
+  const requestId = extractRequestId(req);
   let actor;
   try {
     actor = await requireRole("ADMIN");
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
   }
 
-  // Rate limit admin repair operations: max 10 per minute per admin
-  const rl = rateLimit(`admin-repair:${actor.id}`, { limit: 10, windowMs: 60_000 });
-  if (!rl.allowed) {
+  const limit = rateLimit(`admin-repair:${actor.id}`, { limit: 10, windowMs: 60_000 });
+  if (!limit.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1_000));
     return NextResponse.json(
-      { error: "Rate limited. Too many repair requests. Please wait before retrying.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
-      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+      {
+        error: "Rate limited. Too many repair requests. Please wait before retrying.",
+        code: "RATE_LIMITED",
+        retryAfter,
+      },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
 
   const { searchParams } = new URL(req.url);
-  const step = searchParams.get("step") ?? "all";
+  const requestedStep = searchParams.get("step") ?? "all";
+
+  if (requestedStep === "schema-drift") {
+    return NextResponse.json(
+      {
+        error: "Runtime schema repair is disabled. Apply the reviewed Prisma migration through the deployment pipeline.",
+        code: "RUNTIME_SCHEMA_REPAIR_DISABLED",
+        requestId,
+      },
+      { status: 410 },
+    );
+  }
+
+  if (!ADMIN_REPAIR_STEPS.has(requestedStep as AdminRepairStep)) {
+    return NextResponse.json(
+      {
+        error: "Unsupported repair step.",
+        code: "INVALID_REPAIR_STEP",
+        supportedSteps: Array.from(ADMIN_REPAIR_STEPS),
+      },
+      { status: 400 },
+    );
+  }
+
+  const step = requestedStep as AdminRepairStep;
 
   try {
-  await prismaReady;
+    await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
-  if (!company) return NextResponse.json({ error: "Company not found. Create your company profile first." }, { status: 404 });
-
-  const results = {
-    step,
-    reextraction: null as null | { total: number; success: number; failed: number; skipped: number; details: Array<{ name: string; chars: number; status: string; error?: string }> },
-    import: null as null | { docsProcessed: number; expertsCreated: number; projectsCreated: number; aiUsed: boolean; aiFailures: number },
-    labels: null as null | { total: number; updated: number; details: Array<{ id: string; before: string; after: string }> },
-    requirements: null as null | { scanned: number; cleared: number },
-    appsettings: null as null | { ensured: number },
-    pruneSuperseded: null as null | { deleted: number; cutoffDays: number },
-    schemaDrift: null as null | { repairs: string[] },
-    timestamp: new Date().toISOString(),
-  };
-
-  // ── Step 1: Re-extract text from all documents ────────────────────────────
-  if (step === "extract" || step === "all") {
-    const docs = await prisma.companyDocument.findMany({
-      where: { companyId: company.id, OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }] },
-      select: { id: true, originalFileName: true, mimeType: true, fileContent: true, storagePath: true, metadata: true },
-    });
-
-    let success = 0, failed = 0, skipped = 0;
-    const details: Array<{ name: string; chars: number; status: string; error?: string }> = [];
-    const deadline = Date.now() + 45_000; // leave headroom before 60s maxDuration
-
-    for (const doc of docs) {
-      if (Date.now() > deadline) {
-        details.push({ name: "…aborted", chars: 0, status: "timeout", error: "Deadline reached — run again to process remaining documents" });
-        break;
-      }
-      if (!doc.fileContent && !doc.storagePath) { skipped++; continue; }
-      try {
-        let buffer: Buffer;
-        if (doc.fileContent) {
-          buffer = Buffer.from(doc.fileContent, "base64");
-        } else {
-          buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
-        }
-        const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
-        const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
-        const meaningful = isMeaningfulExtraction(extractedText);
-        let metadata: Record<string, unknown> = {};
-        try { metadata = JSON.parse(doc.metadata || "{}"); } catch { metadata = {}; }
-
-        await prisma.companyDocument.update({
-          where: { id: doc.id },
-          data: {
-            extractedText: extractedText || null,
-            // Reset AI extraction status so it gets re-processed
-            aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
-            aiExtractionError: meaningful ? null : "No text extracted from document",
-            metadata: JSON.stringify({ ...metadata, fileType, reExtractedAt: new Date().toISOString(), extracted: meaningful, extractedChars: meaningful ? extractedText.length : 0 }),
-            updatedAt: new Date(),
-          },
-        });
-
-        details.push({ name: doc.originalFileName, chars: meaningful ? extractedText.length : 0, status: meaningful ? "extracted" : "no-text" });
-        if (meaningful) success++; else skipped++;
-      } catch (err) {
-        failed++;
-        logger.error("[admin/repair] document failed", { docId: doc.id, errorClass: err instanceof Error ? err.constructor.name : "UnknownError" });
-        details.push({ name: doc.originalFileName, chars: 0, status: "error", error: "Processing failed" });
-        await prisma.companyDocument.update({
-          where: { id: doc.id },
-          data: { aiExtractionStatus: "FAILED", aiExtractionError: "Processing failed", updatedAt: new Date() },
-        });
-      }
+    const company = await prisma.company.findUnique({ where: { userId: actor.id } });
+    if (!company) {
+      return NextResponse.json(
+        { error: "Company not found. Create your company profile first.", code: "COMPANY_NOT_FOUND" },
+        { status: 404 },
+      );
     }
 
-    results.reextraction = { total: docs.length, success, failed, skipped, details };
-  }
-
-  // ── Step 2: AI extraction + knowledge import ──────────────────────────────
-  if (step === "import" || step === "all") {
-    const importResult = await importCompanyKnowledgeFromDocuments(company.id);
-    results.import = importResult;
-  }
-
-  // ── Step 3: Clean tender titles and client names ───────────────────────────
-  if (step === "labels") {
-    const tenders = await prisma.tender.findMany({
-      where: { userId: actor.id },
-      select: { id: true, title: true, clientName: true, description: true },
-    });
-
-    let updated = 0;
-    const details: Array<{ id: string; before: string; after: string }> = [];
-
-    for (const t of tenders) {
-      const cleanedClient = cleanClientName(t.clientName, t.description);
-      const cleanedTitle = cleanTenderTitle(t.title, { clientName: cleanedClient, description: t.description ?? undefined });
-
-      const titleChanged = cleanedTitle !== (t.title ?? "");
-      const clientChanged = cleanedClient !== (t.clientName ?? "");
-
-      if (titleChanged || clientChanged) {
-        await prisma.tender.update({
-          where: { id: t.id },
-          data: {
-            ...(titleChanged ? { title: cleanedTitle } : {}),
-            ...(clientChanged ? { clientName: cleanedClient } : {}),
-            updatedAt: new Date(),
-          },
-        });
-        updated++;
-        details.push({ id: t.id, before: `"${t.title}" / "${t.clientName}"`, after: `"${cleanedTitle}" / "${cleanedClient}"` });
-      }
-    }
-
-    results.labels = { total: tenders.length, updated, details };
-  }
-
-  // ── Step 4: Clear false-positive requirement quantities ───────────────────
-  // Fixes over-extraction of section/page numbers into requiredQuantity (e.g. "Section 29 Expert
-  // Requirements" → requiredQuantity=29). Caps EXPERT at 20, PROJECT_EXPERIENCE at 15.
-  if (step === "requirements") {
-    const tenderIds = (await prisma.tender.findMany({ where: { userId: actor.id }, select: { id: true } })).map((t) => t.id);
-    const oversized = await prisma.tenderRequirement.findMany({
-      where: {
-        tenderId: { in: tenderIds },
-        OR: [
-          { requirementType: "EXPERT", requiredQuantity: { gt: 20 } },
-          { requirementType: "PROJECT_EXPERIENCE", requiredQuantity: { gt: 15 } },
-        ],
+    const results = {
+      step,
+      reextraction: null as null | {
+        total: number;
+        success: number;
+        failed: number;
+        skipped: number;
+        details: Array<{ name: string; chars: number; status: string; error?: string }>;
       },
-      select: { id: true },
-    });
-    if (oversized.length > 0) {
-      await prisma.tenderRequirement.updateMany({ where: { id: { in: oversized.map((r: { id: string }) => r.id) } }, data: { requiredQuantity: null } });
-    }
-    const allReqs = await prisma.tenderRequirement.count({ where: { tenderId: { in: tenderIds } } });
-    results.requirements = { scanned: allReqs, cleared: oversized.length };
-  }
+      import: null as null | {
+        docsProcessed: number;
+        expertsCreated: number;
+        projectsCreated: number;
+        aiUsed: boolean;
+        aiFailures: number;
+      },
+      labels: null as null | {
+        total: number;
+        updated: number;
+        details: Array<{ id: string; before: string; after: string }>;
+      },
+      requirements: null as null | { scanned: number; cleared: number },
+      appsettings: null as null | { ensured: number },
+      pruneSuperseded: null as null | { deleted: number; cutoffDays: number },
+      timestamp: new Date().toISOString(),
+    };
 
-  // ── Step 5: Ensure AppSettings row exists for every Company ──────────────
-  // After switching to a new Neon DB, existing companies may have no AppSettings
-  // row. This creates one with safe defaults so branding/export settings work.
-  if (step === "appsettings" || step === "all") {
-    const companies = await prisma.company.findMany({ select: { id: true } });
-    let ensured = 0;
-    for (const co of companies) {
-      await prisma.appSettings.upsert({
-        where: { companyId: co.id },
-        update: {},
-        create: {
-          companyId: co.id,
-          defaultCurrency: "USD",
-          aiStrictMode: true,
-          allowBrandingDefault: true,
-          allowSignatureDefault: true,
-          allowStampDefault: true,
-          exportFormat: "DOCX",
-          pageNumbering: true,
-          includeTableOfContents: false,
-          language: "en",
+    if (step === "extract" || step === "all") {
+      const documents = await prisma.companyDocument.findMany({
+        where: {
+          companyId: company.id,
+          OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }],
+        },
+        select: {
+          id: true,
+          originalFileName: true,
+          mimeType: true,
+          fileContent: true,
+          storagePath: true,
+          metadata: true,
         },
       });
-      ensured++;
-    }
-    results.appsettings = { ensured };
-  }
 
-  // ── Step 6: Schema-drift repair ──────────────────────────────────────────
-  if (step === "schema-drift") {
-    const repairs: string[] = [];
-    const sqlSteps = [
-      // DocumentReview: add correct columns if missing (old bootstrap used wrong names)
-      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "documentId" TEXT`,
-      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "reviewerId" TEXT`,
-      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "action" TEXT`,
-      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "notes" TEXT`,
-      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "priorStatus" TEXT`,
-      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "newStatus" TEXT`,
-      // Copy data from old column names to new ones (idempotent)
-      `UPDATE "DocumentReview" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='generatedDocumentId')`,
-      `UPDATE "DocumentReview" SET "notes" = "reviewNotes" WHERE "notes" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='reviewNotes')`,
-      `UPDATE "DocumentReview" SET "action" = "reviewStatus" WHERE "action" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='reviewStatus')`,
-      // DocumentComment: same fix
-      `ALTER TABLE "DocumentComment" ADD COLUMN IF NOT EXISTS "documentId" TEXT`,
-      `ALTER TABLE "DocumentComment" ADD COLUMN IF NOT EXISTS "authorId" TEXT`,
-      `UPDATE "DocumentComment" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentComment' AND column_name='generatedDocumentId')`,
-      // Correct indexes
-      `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
-      `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
-      `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
-    ];
-    for (const sql of sqlSteps) {
-      try {
-        await prisma.$executeRawUnsafe(sql);
-        repairs.push(`OK: ${sql.slice(0, 80)}`);
-      } catch (err) {
-        repairs.push(`SKIP: ${sql.slice(0, 80)} — ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
+      let success = 0;
+      let failed = 0;
+      let skipped = 0;
+      const details: Array<{ name: string; chars: number; status: string; error?: string }> = [];
+      const deadline = Date.now() + 45_000;
+
+      for (const document of documents) {
+        if (Date.now() > deadline) {
+          details.push({
+            name: "…aborted",
+            chars: 0,
+            status: "timeout",
+            error: "Deadline reached — run again to process remaining documents",
+          });
+          break;
+        }
+        if (!document.fileContent && !document.storagePath) {
+          skipped += 1;
+          continue;
+        }
+
+        try {
+          const buffer = document.fileContent
+            ? Buffer.from(document.fileContent, "base64")
+            : await getStorageAdapter().getFile({
+                storagePath: document.storagePath,
+                fileContent: null,
+                fileName: document.originalFileName,
+              });
+          const extractedText = await extractTextFromBuffer(
+            buffer,
+            document.mimeType,
+            document.originalFileName,
+          );
+          const fileType = getFileTypeLabel(document.mimeType, document.originalFileName);
+          const meaningful = isMeaningfulExtraction(extractedText);
+          let metadata: Record<string, unknown> = {};
+          try {
+            metadata = JSON.parse(document.metadata || "{}") as Record<string, unknown>;
+          } catch {
+            metadata = {};
+          }
+
+          await prisma.companyDocument.update({
+            where: { id: document.id },
+            data: {
+              extractedText: extractedText || null,
+              aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
+              aiExtractionError: meaningful ? null : "No text extracted from document",
+              metadata: JSON.stringify({
+                ...metadata,
+                fileType,
+                reExtractedAt: new Date().toISOString(),
+                extracted: meaningful,
+                extractedChars: meaningful ? extractedText.length : 0,
+              }),
+              updatedAt: new Date(),
+            },
+          });
+
+          details.push({
+            name: document.originalFileName,
+            chars: meaningful ? extractedText.length : 0,
+            status: meaningful ? "extracted" : "no-text",
+          });
+          if (meaningful) success += 1;
+          else skipped += 1;
+        } catch (error) {
+          failed += 1;
+          logger.error("[admin/repair] document failed", {
+            requestId,
+            documentId: document.id,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
+          details.push({
+            name: document.originalFileName,
+            chars: 0,
+            status: "error",
+            error: "Processing failed",
+          });
+          await prisma.companyDocument.update({
+            where: { id: document.id },
+            data: {
+              aiExtractionStatus: "FAILED",
+              aiExtractionError: "Processing failed",
+              updatedAt: new Date(),
+            },
+          });
+        }
       }
+
+      results.reextraction = {
+        total: documents.length,
+        success,
+        failed,
+        skipped,
+        details,
+      };
     }
-    results.schemaDrift = { repairs };
-  }
 
-  // ── Step 7: Prune SUPERSEDED generated documents ─────────────────────────
-  if (step === "prune-superseded") {
-    const cutoffDays = Math.max(1, parseInt(searchParams.get("cutoffDays") ?? "7", 10) || 7);
-    const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1000);
-    const tenderIds = (await prisma.tender.findMany({ where: { userId: actor.id }, select: { id: true } })).map((t) => t.id);
-    const { count } = await prisma.generatedDocument.deleteMany({
-      where: {
-        tenderId: { in: tenderIds },
-        generationStatus: "SUPERSEDED",
-        updatedAt: { lt: cutoffDate },
+    if (step === "import" || step === "all") {
+      results.import = await importCompanyKnowledgeFromDocuments(company.id);
+    }
+
+    if (step === "labels") {
+      const tenders = await prisma.tender.findMany({
+        where: { userId: actor.id },
+        select: { id: true, title: true, clientName: true, description: true },
+      });
+      let updated = 0;
+      const details: Array<{ id: string; before: string; after: string }> = [];
+
+      for (const tender of tenders) {
+        const cleanedClient = cleanClientName(tender.clientName, tender.description);
+        const cleanedTitle = cleanTenderTitle(tender.title, {
+          clientName: cleanedClient,
+          description: tender.description ?? undefined,
+        });
+        const titleChanged = cleanedTitle !== (tender.title ?? "");
+        const clientChanged = cleanedClient !== (tender.clientName ?? "");
+
+        if (titleChanged || clientChanged) {
+          await prisma.tender.update({
+            where: { id: tender.id },
+            data: {
+              ...(titleChanged ? { title: cleanedTitle } : {}),
+              ...(clientChanged ? { clientName: cleanedClient } : {}),
+              updatedAt: new Date(),
+            },
+          });
+          updated += 1;
+          details.push({
+            id: tender.id,
+            before: `"${tender.title}" / "${tender.clientName}"`,
+            after: `"${cleanedTitle}" / "${cleanedClient}"`,
+          });
+        }
+      }
+      results.labels = { total: tenders.length, updated, details };
+    }
+
+    if (step === "requirements") {
+      const tenderIds = (
+        await prisma.tender.findMany({
+          where: { userId: actor.id },
+          select: { id: true },
+        })
+      ).map((tender) => tender.id);
+      const oversized = await prisma.tenderRequirement.findMany({
+        where: {
+          tenderId: { in: tenderIds },
+          OR: [
+            { requirementType: "EXPERT", requiredQuantity: { gt: 20 } },
+            { requirementType: "PROJECT_EXPERIENCE", requiredQuantity: { gt: 15 } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (oversized.length > 0) {
+        await prisma.tenderRequirement.updateMany({
+          where: { id: { in: oversized.map((requirement) => requirement.id) } },
+          data: { requiredQuantity: null },
+        });
+      }
+      const scanned = await prisma.tenderRequirement.count({
+        where: { tenderId: { in: tenderIds } },
+      });
+      results.requirements = { scanned, cleared: oversized.length };
+    }
+
+    if (step === "appsettings" || step === "all") {
+      const companies = await prisma.company.findMany({ select: { id: true } });
+      let ensured = 0;
+      for (const currentCompany of companies) {
+        await prisma.appSettings.upsert({
+          where: { companyId: currentCompany.id },
+          update: {},
+          create: {
+            companyId: currentCompany.id,
+            defaultCurrency: "USD",
+            aiStrictMode: true,
+            allowBrandingDefault: true,
+            allowSignatureDefault: true,
+            allowStampDefault: true,
+            exportFormat: "DOCX",
+            pageNumbering: true,
+            includeTableOfContents: false,
+            language: "en",
+          },
+        });
+        ensured += 1;
+      }
+      results.appsettings = { ensured };
+    }
+
+    if (step === "prune-superseded") {
+      const cutoffDays = Math.max(
+        1,
+        Number.parseInt(searchParams.get("cutoffDays") ?? "7", 10) || 7,
+      );
+      const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1_000);
+      const tenderIds = (
+        await prisma.tender.findMany({
+          where: { userId: actor.id },
+          select: { id: true },
+        })
+      ).map((tender) => tender.id);
+      const { count } = await prisma.generatedDocument.deleteMany({
+        where: {
+          tenderId: { in: tenderIds },
+          generationStatus: "SUPERSEDED",
+          updatedAt: { lt: cutoffDate },
+        },
+      });
+      results.pruneSuperseded = { deleted: count, cutoffDays };
+    }
+
+    await logAction({
+      userId: actor.id,
+      action: "ADMIN_REPAIR_EXECUTED",
+      description: `Admin repair executed (step: ${step})`,
+      metadata: {
+        step,
+        reextractionCount: results.reextraction?.total ?? 0,
+        reextractionSuccess: results.reextraction?.success ?? 0,
+        labelsUpdated: results.labels?.updated ?? 0,
+        requirementsCleaned: results.requirements?.cleared ?? 0,
+        documentsDeleted: results.pruneSuperseded?.deleted ?? 0,
       },
+      requestId,
+    }).catch((error) => {
+      logger.warn("[admin/repair] audit persistence failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
     });
-    results.pruneSuperseded = { deleted: count, cutoffDays };
-  }
 
-  // Audit log the repair operation for compliance tracking
-  await logAction({
-    userId: actor.id,
-    action: "ADMIN_REPAIR_EXECUTED",
-    description: `Admin repair executed (step: ${step})`,
-    metadata: {
-      step,
-      reextractionCount: results.reextraction?.total ?? 0,
-      reextractionSuccess: results.reextraction?.success ?? 0,
-      labelsUpdated: results.labels?.updated ?? 0,
-      requirementsCleaned: results.requirements?.cleared ?? 0,
-      documentsDeleted: results.pruneSuperseded?.deleted ?? 0,
-    },
-  }).catch((err) => logger.warn("Failed to log repair action:", { detail: err }));
-
-  return NextResponse.json(results);
+    return NextResponse.json(results);
   } catch (error) {
-    logger.error("Admin repair route error:", { detail: error });
-    const raw = error instanceof Error ? error.message : "Repair failed";
-    const safe = raw
-      .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
-      .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
-      .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
-      .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, "[DB_URL_REDACTED]")
-      .slice(0, 300);
-    return NextResponse.json({ error: safe, step }, { status: 500 });
+    logger.error("Admin repair route failed", {
+      requestId,
+      step,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      {
+        error: "Admin repair failed. Retry or contact support with the request ID.",
+        code: "ADMIN_REPAIR_RUNTIME_ERROR",
+        step,
+        requestId,
+      },
+      { status: 500 },
+    );
   }
 }

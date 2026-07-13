@@ -13,12 +13,13 @@ import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { buildDraftBuildPlan } from "../../../../../../lib/engine/build-plan";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
-import { sanitizeError } from "../../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
@@ -26,27 +27,29 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const rl = rateLimit(`submission-plan-build:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
     return NextResponse.json(
-      { ok: false, error: "Rate limit exceeded. Please wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { ok: false, error: "Rate limit exceeded. Please wait and retry.", code: "RATE_LIMITED", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
       { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
     );
   }
 
-  await prismaReady;
-  const { id } = await params;
-
   try {
+    await prismaReady;
+    const { id } = await params;
+
     // Call the SAME canonical typed draft service as /build-plan.
-    // Failed preflight returns { ok: false, code, message, status } — NOT 404.
-    // Only a genuinely missing/foreign tender returns 404.
+    // Failed preflight returns { ok: false, code, message, status }; only an
+    // unexpected runtime failure uses the stable 500 response below.
     const beforeDocs = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const draftResult = await buildDraftBuildPlan(prisma, id, actor.id);
     if (!draftResult.ok) {
-      return NextResponse.json({ ok: false, error: draftResult.message, code: draftResult.code }, { status: draftResult.status });
+      return NextResponse.json(
+        { ok: false, error: draftResult.message, code: draftResult.code },
+        { status: draftResult.status },
+      );
     }
+
     const afterDocs = await prisma.generatedDocument.count({ where: { tenderId: id } });
     const { plan, items } = draftResult;
-
-    // No legacy field writes — canonical authority is itemsJson, revision, status, contentHash.
 
     await logAction({
       userId: actor.id,
@@ -54,7 +57,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       entityType: "Tender",
       entityId: id,
       description: `Submission plan built via compatibility endpoint — DRAFT revision ${plan.revision}; ${items.length} planned files; ${afterDocs - beforeDocs} GeneratedDocument rows created.`,
-      metadata: { tenderId: id, created: 0, skipped: 0, total: items.length, isDerivedDraft: false, contentHash: plan.contentHash, revision: plan.revision },
+      metadata: {
+        tenderId: id,
+        created: 0,
+        skipped: 0,
+        total: items.length,
+        isDerivedDraft: false,
+        contentHash: plan.contentHash,
+        revision: plan.revision,
+      },
+      requestId,
     });
 
     return NextResponse.json({
@@ -70,7 +82,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       generatedDocumentsCreated: 0,
     });
   } catch (error) {
-    logger.error("[submission-plan/build] error:", { detail: error });
-    return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
+    logger.error("submission-plan/build POST failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "BUILD_PLAN_RUNTIME_ERROR",
+        error: "Build Plan could not be created. Retry or contact support with the request ID.",
+        requestId,
+      },
+      { status: 500 },
+    );
   }
 }

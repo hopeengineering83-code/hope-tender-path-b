@@ -1,19 +1,9 @@
 import { logger } from "../../../../../lib/observability";
-// GET /api/tenders/[id]/score-breakdown
-//
-// Returns the 12-perspective match dimension scores for every expert and
-// project that has been scored against this tender. Joins entity names
-// from the Expert and Project tables so the UI can display them without
-// a second round-trip.
-//
-// Auth: ADMIN, PROPOSAL_MANAGER, REVIEWER
-// Rate: API_RATE_LIMIT (read-only)
-
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -34,7 +24,6 @@ const DIMENSION_ORDER = [
 ] as const;
 
 type DimensionCode = (typeof DIMENSION_ORDER)[number];
-
 type DimensionRow = {
   code: DimensionCode;
   score: number;
@@ -42,14 +31,12 @@ type DimensionRow = {
   rationale: string | null;
   source: string;
 };
-
 type CorrectiveAction = {
   severity: "HIGH" | "MEDIUM" | "LOW";
   title: string;
   action: string;
   dimension: DimensionCode;
 };
-
 type EntityBreakdown = {
   entityId: string;
   name: string;
@@ -63,10 +50,9 @@ type EntityBreakdown = {
 
 function computeWeightedScore(dims: DimensionRow[]): number {
   if (dims.length === 0) return 0;
-  const totalWeight = dims.reduce((s, d) => s + d.weight, 0);
+  const totalWeight = dims.reduce((sum, dim) => sum + dim.weight, 0);
   if (totalWeight === 0) return 0;
-  const weighted = dims.reduce((s, d) => s + d.score * d.weight, 0);
-  return Math.round(weighted / totalWeight);
+  return Math.round(dims.reduce((sum, dim) => sum + dim.score * dim.weight, 0) / totalWeight);
 }
 
 function severityForScore(score: number): CorrectiveAction["severity"] {
@@ -80,165 +66,96 @@ function actionForWeakDimension(entityType: "EXPERT" | "PROJECT", dim: Dimension
   const projectOrExpert = entityType === "EXPERT" ? "expert" : "project";
   switch (dim.code) {
     case "DISCIPLINE_FIT":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Weak discipline fit",
-        action: "Select a reviewed expert whose discipline directly matches the tender requirement, or add a JV/subcontractor mitigation for the missing discipline.",
-      };
+      return { severity, dimension: dim.code, title: "Weak discipline fit", action: "Select a reviewed expert whose discipline directly matches the tender requirement, or add a JV/subcontractor mitigation for the missing discipline." };
     case "SCOPE_COVERAGE":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Weak scope coverage",
-        action: `Link a reviewed ${projectOrExpert} evidence record that covers the tender scope, or mark the scope gap as a bid risk with mitigation.`,
-      };
+      return { severity, dimension: dim.code, title: "Weak scope coverage", action: `Link a reviewed ${projectOrExpert} evidence record that covers the tender scope, or mark the scope gap as a bid risk with mitigation.` };
     case "SENIORITY_OR_SCALE":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Seniority/scale gap",
-        action: entityType === "EXPERT"
-          ? "Select a more senior reviewed expert or attach credentials proving years of experience."
-          : "Select a larger comparable reviewed project or add project-value evidence.",
-      };
+      return { severity, dimension: dim.code, title: "Seniority/scale gap", action: entityType === "EXPERT" ? "Select a more senior reviewed expert or attach credentials proving years of experience." : "Select a larger comparable reviewed project or add project-value evidence." };
     case "SECTOR_FIT":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Sector-fit gap",
-        action: entityType === "PROJECT"
-          ? "Select the closest reviewed sector-specific project, especially hospital/healthcare/building references where relevant, or add JV mitigation."
-          : "Select an expert with sector-aligned discipline/sector evidence or add a specialist partner.",
-      };
+      return { severity, dimension: dim.code, title: "Sector-fit gap", action: entityType === "PROJECT" ? "Select the closest reviewed sector-specific project, especially hospital/healthcare/building references where relevant, or add JV mitigation." : "Select an expert with sector-aligned discipline/sector evidence or add a specialist partner." };
     case "ROLE_RECENCY":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Recency gap",
-        action: `Use a more recent reviewed ${projectOrExpert} record or attach recency evidence before relying on this match.`,
-      };
+      return { severity, dimension: dim.code, title: "Recency gap", action: `Use a more recent reviewed ${projectOrExpert} record or attach recency evidence before relying on this match.` };
     case "EVIDENCE_QUALITY":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Evidence quality gap",
-        action: "Attach reviewed source evidence, certificate, CV credential, project completion letter, contract page, or client reference before final generation.",
-      };
+      return { severity, dimension: dim.code, title: "Evidence quality gap", action: "Attach reviewed source evidence, certificate, CV credential, project completion letter, contract page, or client reference before final generation." };
     case "COMPLIANCE_CRITICALITY":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Compliance-critical gap",
-        action: "Link this weak dimension to the mandatory requirement coverage panel and resolve it with reviewed vault evidence or a documented mitigation.",
-      };
+      return { severity, dimension: dim.code, title: "Compliance-critical gap", action: "Link this weak dimension to the mandatory requirement coverage panel and resolve it with reviewed vault evidence or a documented mitigation." };
     case "PORTFOLIO_CONTRIBUTION":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Portfolio contribution gap",
-        action: "Select stronger reviewed project references that directly improve the proposal's past-performance evidence.",
-      };
+      return { severity, dimension: dim.code, title: "Portfolio contribution gap", action: "Select stronger reviewed project references that directly improve the proposal's past-performance evidence." };
     case "MANDATORY_ELIGIBILITY":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Mandatory eligibility gap",
-        action: "Attach or review the required license, registration, certificate, financial record, or eligibility evidence before final export.",
-      };
+      return { severity, dimension: dim.code, title: "Mandatory eligibility gap", action: "Attach or review the required license, registration, certificate, financial record, or eligibility evidence before final export." };
     case "DELIVERY_RISK":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Delivery-risk gap",
-        action: "Add a mitigation plan, stronger team role assignment, or lower-risk reviewed project evidence.",
-      };
+      return { severity, dimension: dim.code, title: "Delivery-risk gap", action: "Add a mitigation plan, stronger team role assignment, or lower-risk reviewed project evidence." };
     case "DIFFERENTIATION":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Differentiation gap",
-        action: "Add a unique value proposition, comparable innovation, or stronger methodology evidence supported by reviewed company records.",
-      };
+      return { severity, dimension: dim.code, title: "Differentiation gap", action: "Add a unique value proposition, comparable innovation, or stronger methodology evidence supported by reviewed company records." };
     case "COMMERCIAL_VALUE":
-      return {
-        severity,
-        dimension: dim.code,
-        title: "Commercial-value gap",
-        action: "Use comparable value/scale evidence and avoid pricing claims in technical documents; keep financial details in the financial envelope.",
-      };
+      return { severity, dimension: dim.code, title: "Commercial-value gap", action: "Use comparable value/scale evidence and avoid pricing claims in technical documents; keep financial details in the financial envelope." };
   }
 }
 
 function deriveCorrectiveActions(entityType: "EXPERT" | "PROJECT", dims: DimensionRow[]): CorrectiveAction[] {
   return dims
-    .filter((d) => d.score < 40)
-    .sort((a, b) => a.score - b.score)
+    .filter((dim) => dim.score < 40)
+    .sort((left, right) => left.score - right.score)
     .slice(0, 4)
     .map((dim) => actionForWeakDimension(entityType, dim));
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
-    catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+    catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`score-breakdown:${actor.id}`, API_RATE_LIMIT);
     if (!rl.allowed) {
+      const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
       return NextResponse.json(
-        { error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
-        { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+        { error: "Too many requests", code: "RATE_LIMITED", retryAfter },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
       );
     }
 
     await prismaReady;
     const { id } = await params;
-
     const tender = await prisma.tender.findFirst({
       where: { id, userId: actor.id },
       select: { id: true },
     });
-    if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
-
-    // Load all dimension rows for this tender
-    const breakdownRows = await prisma.matchScoreBreakdown.findMany({
-      where: { tenderId: id },
-      orderBy: [{ entityType: "asc" }, { entityId: "asc" }, { dimensionCode: "asc" }],
-    });
-
-    // Load expert matches with names
-    const expertMatches = await prisma.tenderExpertMatch.findMany({
-      where: { tenderId: id },
-      select: { expertId: true, score: true, isSelected: true, expert: { select: { fullName: true } } },
-    });
-
-    // Load project matches with names
-    const projectMatches = await prisma.tenderProjectMatch.findMany({
-      where: { tenderId: id },
-      select: { projectId: true, score: true, isSelected: true, project: { select: { name: true } } },
-    });
-
-    // Build lookup: entityId → dimension rows
-    const dimsByEntity = new Map<string, DimensionRow[]>();
-    for (const row of breakdownRows) {
-      const key = row.entityId;
-      if (!dimsByEntity.has(key)) dimsByEntity.set(key, []);
-      const ordered = DIMENSION_ORDER.indexOf(row.dimensionCode as DimensionCode);
-      if (ordered !== -1) {
-        dimsByEntity.get(key)!.push({
-          code: row.dimensionCode as DimensionCode,
-          score: Math.round(row.score),
-          weight: row.weight,
-          rationale: row.rationale,
-          source: row.source,
-        });
-      }
+    if (!tender) {
+      return NextResponse.json({ ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
     }
 
-    // Sort each entity's dimensions in canonical order
+    const [breakdownRows, expertMatches, projectMatches] = await Promise.all([
+      prisma.matchScoreBreakdown.findMany({
+        where: { tenderId: id },
+        orderBy: [{ entityType: "asc" }, { entityId: "asc" }, { dimensionCode: "asc" }],
+      }),
+      prisma.tenderExpertMatch.findMany({
+        where: { tenderId: id },
+        select: { expertId: true, score: true, isSelected: true, expert: { select: { fullName: true } } },
+      }),
+      prisma.tenderProjectMatch.findMany({
+        where: { tenderId: id },
+        select: { projectId: true, score: true, isSelected: true, project: { select: { name: true } } },
+      }),
+    ]);
+
+    const dimsByEntity = new Map<string, DimensionRow[]>();
+    for (const row of breakdownRows) {
+      if (!DIMENSION_ORDER.includes(row.dimensionCode as DimensionCode)) continue;
+      const dims = dimsByEntity.get(row.entityId) ?? [];
+      dims.push({
+        code: row.dimensionCode as DimensionCode,
+        score: Math.round(row.score),
+        weight: row.weight,
+        rationale: row.rationale,
+        source: row.source,
+      });
+      dimsByEntity.set(row.entityId, dims);
+    }
     for (const dims of dimsByEntity.values()) {
-      dims.sort((a, b) => DIMENSION_ORDER.indexOf(a.code) - DIMENSION_ORDER.indexOf(b.code));
+      dims.sort((left, right) => DIMENSION_ORDER.indexOf(left.code) - DIMENSION_ORDER.indexOf(right.code));
     }
 
     function buildBreakdown(
@@ -248,28 +165,37 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       matchScore: number,
       isSelected: boolean,
     ): EntityBreakdown {
-      const dims = dimsByEntity.get(entityId) ?? [];
-      const overallScore = dims.length > 0 ? computeWeightedScore(dims) : Math.round(matchScore * 100);
-      const weakDimensions = dims.filter((d) => d.score < 40).map((d) => d.code);
-      const correctiveActions = deriveCorrectiveActions(entityType, dims);
-      return { entityId, name, overallScore, matchScore: Math.round(matchScore * 100), isSelected, dimensions: dims, weakDimensions, correctiveActions };
+      const dimensions = dimsByEntity.get(entityId) ?? [];
+      const overallScore = dimensions.length > 0 ? computeWeightedScore(dimensions) : Math.round(matchScore * 100);
+      return {
+        entityId,
+        name,
+        overallScore,
+        matchScore: Math.round(matchScore * 100),
+        isSelected,
+        dimensions,
+        weakDimensions: dimensions.filter((dim) => dim.score < 40).map((dim) => dim.code),
+        correctiveActions: deriveCorrectiveActions(entityType, dimensions),
+      };
     }
 
-    const experts: EntityBreakdown[] = expertMatches
-      .map((m) => buildBreakdown("EXPERT", m.expertId, m.expert.fullName, m.score, m.isSelected))
-      .sort((a, b) => b.overallScore - a.overallScore);
+    const experts = expertMatches
+      .map((match) => buildBreakdown("EXPERT", match.expertId, match.expert.fullName, match.score, match.isSelected))
+      .sort((left, right) => right.overallScore - left.overallScore);
+    const projects = projectMatches
+      .map((match) => buildBreakdown("PROJECT", match.projectId, match.project.name, match.score, match.isSelected))
+      .sort((left, right) => right.overallScore - left.overallScore);
 
-    const projects: EntityBreakdown[] = projectMatches
-      .map((m) => buildBreakdown("PROJECT", m.projectId, m.project.name, m.score, m.isSelected))
-      .sort((a, b) => b.overallScore - a.overallScore);
-
-    const hasDimensionData =
-      experts.some((e) => e.dimensions.length > 0) ||
-      projects.some((p) => p.dimensions.length > 0);
-
+    const hasDimensionData = experts.some((entity) => entity.dimensions.length > 0)
+      || projects.some((entity) => entity.dimensions.length > 0);
     const correctiveActionSummary = [...experts, ...projects]
       .flatMap((entity) => entity.correctiveActions.map((action) => ({ entity: entity.name, selected: entity.isSelected, ...action })))
-      .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "HIGH" ? -1 : b.severity === "HIGH" ? 1 : a.severity === "MEDIUM" ? -1 : 1))
+      .sort((left, right) => (
+        left.severity === right.severity ? 0
+          : left.severity === "HIGH" ? -1
+            : right.severity === "HIGH" ? 1
+              : left.severity === "MEDIUM" ? -1 : 1
+      ))
       .slice(0, 8);
 
     return NextResponse.json({
@@ -281,7 +207,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       correctiveActionSummary,
     });
   } catch (error) {
-    logger.error("score-breakdown GET failed", { detail: error });
-    return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
+    logger.error("score-breakdown GET failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Score breakdown could not be loaded.",
+        code: "SCORE_BREAKDOWN_RUNTIME_ERROR",
+        requestId,
+      },
+      { status: 500 },
+    );
   }
 }
