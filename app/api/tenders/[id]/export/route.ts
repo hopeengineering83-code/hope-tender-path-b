@@ -14,6 +14,7 @@ import { reportError, logger } from "../../../../../lib/observability";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -55,7 +56,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
     if (!company) return NextResponse.json({ error: "Company profile required before export." }, { status: 422 });
-    const ingestion = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: tender.requirements.some((r) => r.requirementType === "EXPERT"), requireReviewedProjects: tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE") });
+    // Safety net alongside the AI-assigned requirementType: the AI classifier
+    // can plausibly miscategorize an expert-CV or project-reference requirement
+    // for an unusually-phrased tender, which would silently disable the
+    // reviewed-evidence gate below. inferType() is the same deterministic
+    // keyword classifier already used by the regex-fallback extraction path
+    // (lib/engine/analysis.ts) -- reusing it as an OR-signal never weakens
+    // the gate, only strengthens it.
+    const looksLikeExpertOrProject = (req: { requirementType: string | null; title: string | null; description: string | null }) => {
+      const inferred = inferRequirementType(`${req.title ?? ""} ${req.description ?? ""}`);
+      return req.requirementType === "EXPERT" || req.requirementType === "PROJECT_EXPERIENCE"
+        ? req.requirementType
+        : inferred === "EXPERT" || inferred === "PROJECT_EXPERIENCE" ? inferred : null;
+    };
+    const ingestion = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: tender.requirements.some((r) => looksLikeExpertOrProject(r) === "EXPERT"), requireReviewedProjects: tender.requirements.some((r) => looksLikeExpertOrProject(r) === "PROJECT_EXPERIENCE") });
     if (!ingestion.ingestionReady) return NextResponse.json({ error: "Export blocked: company knowledge ingestion is not ready.", code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals }, { status: 422 });
 
     // Block export when page extraction is too poor to trust the submitted documents.
