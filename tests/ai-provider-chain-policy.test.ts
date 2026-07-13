@@ -7,6 +7,7 @@ import {
 } from "../lib/ai-provider-registry";
 import { CANONICAL_PROVIDER_CHAIN } from "../lib/ai";
 import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST, CANONICAL_AI_PROVIDER_ENV_NAMES } from "../lib/ai-provider-env";
 
 // The required canonical automatic provider order — the single source of truth
 // is lib/ai-provider-registry.ts. This array is duplicated here ONLY so the
@@ -61,6 +62,15 @@ describe("AI provider chain policy — canonical order", () => {
   it("display-name chain matches the required display order", () => {
     const display = getCanonicalProviderEntries().map((e) => e.displayName).join(" → ");
     assert.equal(display, REQUIRED_DISPLAY);
+  });
+
+  it("browser-safe provider env list derives from the catalog order", () => {
+    const expected = [
+      "ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
+      "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+    ];
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ENV_NAMES], expected);
+    assert.equal(CANONICAL_AI_PROVIDER_ENV_LIST, expected.join(", "));
   });
 });
 
@@ -125,6 +135,7 @@ describe("operator-facing provider key guidance derives from canonical policy", 
   const aiSource = readFileSync("lib/ai.ts", "utf8");
   const regenerateSectionRoute = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
   const adminDiagnosticsRoute = readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
+  const tenderDetail = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
 
   it("proposal no-provider guards use isAIEnabled so Z.ai/Cerebras count as configured", () => {
     assert.match(aiSource, /if \(!isAIEnabled\(\)\) \{/);
@@ -132,9 +143,14 @@ describe("operator-facing provider key guidance derives from canonical policy", 
   });
 
   it("remaining no-provider guidance imports the canonical env list instead of hardcoding a partial list", () => {
-    for (const source of [aiSource, regenerateSectionRoute, adminDiagnosticsRoute]) {
+    for (const source of [aiSource, regenerateSectionRoute, adminDiagnosticsRoute, tenderDetail]) {
       assert.match(source, /CANONICAL_AI_PROVIDER_ENV_LIST/);
       assert.ok(!/OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY/.test(source));
     }
+  });
+
+  it("client tender detail imports the browser-safe env helper, not provider policy", () => {
+    assert.match(tenderDetail, /from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/ai-provider-env"/);
+    assert.ok(!/from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/ai-provider-policy"/.test(tenderDetail));
   });
 });

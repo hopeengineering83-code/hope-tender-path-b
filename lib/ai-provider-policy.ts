@@ -14,6 +14,7 @@ import {
   CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
   type AiProviderName,
 } from "./ai-provider-registry";
+export { CANONICAL_AI_PROVIDER_ENV_LIST, CANONICAL_AI_PROVIDER_ENV_NAMES } from "./ai-provider-env";
 
 export const CANONICAL_AI_PROVIDER_CHAIN = CANONICAL_AI_PROVIDER_ORDER;
 
@@ -27,10 +28,6 @@ export const CANONICAL_AI_PROVIDER_LABEL_BY_NAME: Readonly<Record<CanonicalAiPro
 export const CANONICAL_AI_PROVIDER_LABELS = CANONICAL_AI_PROVIDER_DISPLAY_NAMES;
 
 export const CANONICAL_AI_PROVIDER_DISPLAY = CANONICAL_AI_PROVIDER_CHAIN_DISPLAY;
-
-export const CANONICAL_AI_PROVIDER_ENV_LIST = CANONICAL_AI_PROVIDER_CHAIN
-  .map((provider) => getProviderRegistry()[provider].env.apiKey)
-  .join(", ");
 
 export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<CanonicalAiProvider, string>> =
   Object.fromEntries(

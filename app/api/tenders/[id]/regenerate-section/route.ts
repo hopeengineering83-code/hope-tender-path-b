@@ -25,7 +25,7 @@ import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/eng
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
-import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../../lib/ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../../lib/ai-provider-env";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";

@@ -21,7 +21,8 @@
  */
 
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldAutoTriggerDeepReasoning } from "./feature-flags";
-import { CANONICAL_AI_PROVIDER_ENV, CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV } from "../ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-env";
 
 export type DeepReasoningEstimate = {
   /** Whether deep reasoning will actually run given the current config. */

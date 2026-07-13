@@ -76,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 ### 2026-07-13 UTC — ChatGPT (GPT-5.5)
 
+- **Mode:** follow-up after continued dissatisfaction; hardened the previous provider guidance patch for client/server import boundaries and stronger regression coverage.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
+- **Scope:** Added `lib/ai-provider-env.ts`, a browser-safe canonical provider env helper derived directly from `lib/ai-provider-catalog.cjs`, and moved operator-facing env-list consumers (including the tender detail client component) from the broader provider policy module to this helper. `lib/ai-provider-policy.ts` now re-exports the helper for compatibility while keeping provider runtime helpers separate. Added tests proving the env list matches catalog order and the client imports the browser-safe helper, not provider policy. Checked `audit:workflow-state-consistency`; remaining `lib/tender-next-action.ts` warning is heuristic-only for a pure next-action label resolver and was not changed.
+- **Files changed:** `lib/ai-provider-env.ts`, `lib/ai-provider-policy.ts`, provider-env-list imports in AI/provider guidance consumers, `tests/ai-provider-chain-policy.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/ai-provider-chain-policy.test.ts tests/deep-reasoning-estimate.test.ts tests/tender-control-suggestions.test.ts tests/analysis-fallback-diagnostics.test.ts tests/company-knowledge-repair-safety.test.ts` PASS (67/67); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `npm run audit:workflow-state-consistency` PASS with one warning-only heuristic note for `lib/tender-next-action.ts`; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected missing optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** No `origin` remote is configured in this container, so live GitHub inline comments/open PR/CI state still cannot be fetched. No DB integration suite was run.
+- **Next action:** Push/update PR where a remote is available; run full CI and DB integration.
+- **Merge status:** not reviewed.
+
+
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
 - **Mode:** follow-up after review dissatisfaction; continued provider-readiness gap closure instead of claiming perfection.
 - **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending update.
 - **Scope:** Fixed additional stale provider readiness surfaces left after the prior commit. Most importantly, `lib/ai.ts` had a proposal no-provider guard that manually checked configured providers and omitted Z.ai/Cerebras, so Z.ai-only or Cerebras-only deployments could still throw NO_PROVIDER_CONFIGURED after fallback attempts; it now delegates to `isAIEnabled()`. Remaining diagnostics/API copy now imports `CANONICAL_AI_PROVIDER_ENV_LIST` instead of hardcoding partial lists: AI fallback diagnostics, company knowledge AI warnings, admin diagnostics, company knowledge repair diagnostics, and regenerate-section 503 copy. Added static/runtime regression tests for these surfaces.

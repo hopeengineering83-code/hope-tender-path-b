@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled, isAIConfigured } from "../../../../lib/env-check";
-import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../lib/ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../lib/ai-provider-env";
 
 function sanitizeDiagnosticMessage(value: string | null | undefined): string | null {
   if (!value) return null;

@@ -5,7 +5,7 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-
 import { logAction } from "../../../../../lib/audit";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../../lib/ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../../lib/ai-provider-env";
 
 // Vercel route timeout — knowledge repair runs the configured AI provider chain
 // across uploaded documents. 60 = Hobby max.

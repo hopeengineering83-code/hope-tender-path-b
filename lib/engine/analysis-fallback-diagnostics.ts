@@ -1,4 +1,4 @@
-import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-env";
 
 export type AnalysisFallbackCategory =
   | "TIMEOUT"

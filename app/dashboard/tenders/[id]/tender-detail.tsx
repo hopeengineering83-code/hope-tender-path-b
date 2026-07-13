@@ -24,7 +24,7 @@ import type { CanonicalTenderReadiness } from "../../../../lib/canonical-tender-
 import { GenerationGatesPanel } from "../../../../components/GenerationGatesPanel";
 import { ExtractionQualityPanel } from "../../../../components/ExtractionQualityPanel";
 import { checkGenerationGates } from "../../../../lib/generation-gates";
-import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../lib/ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../lib/ai-provider-env";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);

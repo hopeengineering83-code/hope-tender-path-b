@@ -30,7 +30,7 @@
 // Each suggestion has a STABLE `code` so an Accept/Reject decision can be
 // recorded against it in the audit log and the panel can dedupe.
 
-import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-env";
 
 export type ControlSuggestionCode =
   | "TENDER_FACTS_INCOMPLETE"
