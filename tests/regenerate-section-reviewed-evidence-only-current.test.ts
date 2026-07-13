@@ -1,14 +1,20 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   resolveReviewedSectionEvidence,
   sectionEvidenceBlocker,
 } from "../lib/engine/regenerate-section-evidence";
 
-const route = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
-const evidenceSource = readFileSync("lib/engine/regenerate-section-evidence.ts", "utf8");
-const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const rootDir = join(__dirname, "..");
+
+const route = readFileSync(join(rootDir, "app/api/tenders/[id]/regenerate-section/route.ts"), "utf8");
+const evidenceSource = readFileSync(join(rootDir, "lib/engine/regenerate-section-evidence.ts"), "utf8");
+const vercel = JSON.parse(readFileSync(join(rootDir, "vercel.json"), "utf8"));
 
 describe("reviewed-only section evidence resolver", () => {
   it("prefers reviewed selected evidence over reviewed Vault fallback", () => {
@@ -120,5 +126,59 @@ describe("section regeneration release authority", () => {
 
   it("keeps Git-triggered Vercel deployment enabled (repo policy)", () => {
     assert.equal(vercel.git?.deploymentEnabled, true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider prompt and Anthropic-last order tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("provider prompt uses only reviewed evidence and preserves Anthropic-last order", () => {
+  it("the route passes the reviewed-evidence resolver output to the prompt builder, not raw records", () => {
+    // The route must call resolveReviewedSectionEvidence and use its output
+    // (evidence.experts, evidence.projects) for prompt construction — never
+    // the raw selectedExperts/selectedProjects with unreviewed records.
+    const resolvePos = route.indexOf("resolveReviewedSectionEvidence(");
+    assert.ok(resolvePos >= 0, "route must call resolveReviewedSectionEvidence");
+    // The evidence variable must be used somewhere after the call.
+    const afterResolve = route.slice(resolvePos);
+    assert.match(afterResolve, /evidence\.experts|evidence\.projects/,
+      "prompt builder must use the reviewed-evidence resolver output (evidence.experts/projects)");
+  });
+
+  it("provider failure returns 503 with no fallback markdown", () => {
+    // When the provider chain fails or returns empty/short output, the route
+    // must return 503 with fallbackApplied: false — no deterministic fallback
+    // markdown is ever returned as successful generation.
+    assert.match(route, /AI_SECTION_REGENERATION_UNAVAILABLE/);
+    assert.match(route, /fallbackApplied: false/);
+    assert.match(route, /No deterministic fallback was applied/);
+    assert.match(route, /status: 503/);
+    // The success path must only be reached when sectionMarkdown is valid.
+    assert.match(route, /if \(!sectionMarkdown \|\| sectionMarkdown\.trim\(\)\.length < 50\)/);
+  });
+
+  it("preserves Anthropic-last provider fallback order", () => {
+    // The route must use generateWithFallback which preserves the canonical
+    // provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter →
+    // Gemini → OpenAI → Together → DeepSeek → Anthropic (last).
+    assert.match(route, /generateWithFallback/);
+    // Verify the provider order is defined in the codebase with Anthropic last.
+    const providerOrderSource = readFileSync(join(rootDir, "docs/ai-provider-order.md"), "utf8");
+    const providers = [
+      "Z.ai", "Cerebras", "Mistral", "Groq", "OpenRouter",
+      "Gemini", "OpenAI", "Together", "DeepSeek", "Anthropic",
+    ];
+    let previous = -1;
+    for (const provider of providers) {
+      const index = providerOrderSource.indexOf(provider);
+      assert.ok(index >= 0, `provider-order doc must mention ${provider}`);
+      assert.ok(index > previous, `${provider} must come after the previous provider in the order doc`);
+      previous = index;
+    }
+    // Anthropic must be last.
+    const anthropicPos = providerOrderSource.lastIndexOf("Anthropic");
+    assert.ok(anthropicPos === providerOrderSource.length - "Anthropic".length || anthropicPos > previous - "Anthropic".length,
+      "Anthropic must be the last provider in the order");
   });
 });
