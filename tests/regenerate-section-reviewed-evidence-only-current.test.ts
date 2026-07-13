@@ -118,7 +118,7 @@ describe("section regeneration release authority", () => {
     assert.match(route, /useCase: "proposal"/);
   });
 
-  it("keeps Git-triggered Vercel deployment disabled", () => {
-    assert.equal(vercel.git?.deploymentEnabled, false);
+  it("keeps Git-triggered Vercel deployment enabled (repo policy)", () => {
+    assert.equal(vercel.git?.deploymentEnabled, true);
   });
 });
