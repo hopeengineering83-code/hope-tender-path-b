@@ -2,6 +2,7 @@ import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
+import { PGlite } from "@electric-sql/pglite";
 
 const RUN_DB_INTEGRATION = process.env.RUN_DB_INTEGRATION === "true";
 const prisma = new PrismaClient();
@@ -25,6 +26,88 @@ describe("AiJob tender ownership migration", () => {
     assert.match(sql, /BEFORE INSERT OR UPDATE OF "tenderId", "userId"/);
     assert.match(sql, /AI_JOB_TENDER_OWNER_MISMATCH/);
     assert.doesNotMatch(sql, /EXECUTE\s+format|EXECUTE\s+NEW|\|\|/i);
+  });
+
+  it("applies idempotently on disposable PostgreSQL (PGlite)", async () => {
+    // The migration uses CREATE OR REPLACE FUNCTION and DROP TRIGGER IF EXISTS
+    // before CREATE TRIGGER, so re-applying should not error. Verify this on
+    // a disposable PostgreSQL instance.
+    const db = new PGlite();
+    try {
+      // Create the AiJob and Tender tables (minimal shape for the trigger).
+      await db.exec(`
+        CREATE TABLE "Tender" (
+          "id" TEXT PRIMARY KEY,
+          "userId" TEXT NOT NULL
+        );
+        CREATE TABLE "AiJob" (
+          "id" TEXT PRIMARY KEY,
+          "tenderId" TEXT,
+          "userId" TEXT NOT NULL,
+          "jobType" TEXT NOT NULL,
+          "status" TEXT NOT NULL
+        );
+      `);
+
+      const sql = readFileSync(
+        "prisma/migrations/20260712193000_ai_job_tender_owner_guard/migration.sql",
+        "utf8",
+      );
+
+      // First apply — should succeed.
+      await db.exec(sql);
+
+      // Second apply — should also succeed (idempotent).
+      await db.exec(sql);
+
+      // Verify the trigger exists.
+      const triggers = await db.query(`
+        SELECT tgname FROM pg_trigger
+        WHERE tgname = 'AiJob_tender_owner_guard'
+      `);
+      assert.equal(triggers.rows.length, 1, "trigger must exist after double-apply");
+
+      // Verify the function exists.
+      const funcs = await db.query(`
+        SELECT proname FROM pg_proc WHERE proname = 'enforce_ai_job_tender_owner'
+      `);
+      assert.equal(funcs.rows.length, 1, "function must exist after double-apply");
+
+      // Verify the trigger actually fires: insert a mismatched row.
+      await db.query(`INSERT INTO "Tender" ("id", "userId") VALUES ('t-1', 'owner-1')`);
+      let rejected = false;
+      try {
+        await db.query(`INSERT INTO "AiJob" ("id", "tenderId", "userId", "jobType", "status") VALUES ('j-1', 't-1', 'other-user', 'PROPOSAL_GENERATION', 'RUNNING')`);
+      } catch {
+        rejected = true;
+      }
+      assert.equal(rejected, true, "trigger must reject mismatched ownership");
+
+      // Verify a valid insert succeeds.
+      await db.query(`INSERT INTO "AiJob" ("id", "tenderId", "userId", "jobType", "status") VALUES ('j-2', 't-1', 'owner-1', 'PROPOSAL_GENERATION', 'RUNNING')`);
+
+      // Verify a tenderless insert succeeds.
+      await db.query(`INSERT INTO "AiJob" ("id", "tenderId", "userId", "jobType", "status") VALUES ('j-3', NULL, 'owner-1', 'PROFILE_FACT_EXTRACTION', 'QUEUED')`);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("application-level ownership validation runs before AiJob creation in ai-proposal route", () => {
+    // The route must verify tender ownership BEFORE calling prisma.aiJob.create
+    // so a cross-tenant request gets a clean 404 instead of a 500 from the
+    // database trigger.
+    const source = readFileSync("app/api/tenders/[id]/ai-proposal/route.ts", "utf8");
+    const ownershipCheckPos = source.indexOf("tenderOwnership");
+    const jobCreatePos = source.indexOf("prisma.aiJob.create");
+    assert.ok(ownershipCheckPos >= 0,
+      "route must have a tenderOwnership ownership check");
+    assert.ok(ownershipCheckPos < jobCreatePos,
+      "ownership check must run BEFORE prisma.aiJob.create");
+    assert.match(source, /where: \{ id: tenderId, userId: uid \}/,
+      "ownership check must scope by both tenderId and userId");
+    assert.match(source, /return NextResponse\.json\(\{ error: "Not found" \}, \{ status: 404 \}\)/,
+      "route must return 404 when ownership check fails");
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {
