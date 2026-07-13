@@ -28,6 +28,10 @@ export const CANONICAL_AI_PROVIDER_LABELS = CANONICAL_AI_PROVIDER_DISPLAY_NAMES;
 
 export const CANONICAL_AI_PROVIDER_DISPLAY = CANONICAL_AI_PROVIDER_CHAIN_DISPLAY;
 
+export const CANONICAL_AI_PROVIDER_ENV_LIST = CANONICAL_AI_PROVIDER_CHAIN
+  .map((provider) => getProviderRegistry()[provider].env.apiKey)
+  .join(", ");
+
 export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<CanonicalAiProvider, string>> =
   Object.fromEntries(
     CANONICAL_AI_PROVIDER_ORDER.map((p) => [p, getProviderRegistry()[p].env.apiKey]),

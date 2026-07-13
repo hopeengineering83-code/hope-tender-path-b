@@ -74,6 +74,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-13 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** deep non-overlap app investigation; focused fix for uncovered provider-readiness drift after release audits passed.
+- **Branch / PR:** `chatgpt/deep-app-gap-investigation` / PR pending.
+- **Scope:** Fixed stale AI-provider configuration surfaces that omitted Z.ai/Cerebras/Together or listed providers out of canonical order. Added `CANONICAL_AI_PROVIDER_ENV_LIST` from the registry-derived policy, wired it into deep-reasoning estimates, lifecycle blockers, controls suggestions, and the tender-detail diagnostics copy, and added regression coverage proving all 10 canonical provider keys enable the deep-reasoning estimator gate and no-provider warnings advertise the canonical env list.
+- **Files changed:** `lib/ai-provider-policy.ts`, `lib/engine/deep-reasoning-estimate.ts`, `lib/engine/tender-control-suggestions.ts`, `lib/engine/tender-lifecycle-orchestrator.ts`, `app/dashboard/tenders/[id]/tender-detail.tsx`, `tests/deep-reasoning-estimate.test.ts`, `tests/tender-control-suggestions.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/deep-reasoning-estimate.test.ts tests/tender-control-suggestions.test.ts` PASS (39/39); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected missing optional-provider/Sentry/Cron warnings.
+- **Known risks / assumptions:** The repository has no configured `origin` remote in this container, so live GitHub PR/CI state could not be fetched; active scopes were checked from the handoff file and the current local branch history. No database integration suite was run.
+- **Next action:** Push/open PR where a remote is available and run full CI/DB integration.
+- **Merge status:** not reviewed.
+
+
 ### 2026-07-11 UTC — Claude Code (Fable 5)
 
 - **Mode:** audit remediation, re-scoped twice to track fast-moving main: #1058 landed the canonical byte-integrity system (superseding #1050's approach — dropped from this PR), then #1057/#1061 fixed main's tsc break, the stale-gate tests, and the zip-finalization test (dropped from this PR as duplicates). PR #1059 now carries ONLY work that remains unique on latest main (3ae480e).

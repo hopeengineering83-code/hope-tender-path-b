@@ -30,7 +30,9 @@ describe("deriveControlSuggestions — every blocker category from the audit tas
 
   it("AI_PROVIDERS_NOT_CONFIGURED when hasAnyProvider is false", () => {
     const out = deriveControlSuggestions(baseInput({ providerStatus: { hasAnyProvider: false, hasCooledDownProvider: false } }));
-    assert.ok(out.some((s) => s.code === "AI_PROVIDERS_NOT_CONFIGURED" && s.severity === "HIGH"));
+    const suggestion = out.find((s) => s.code === "AI_PROVIDERS_NOT_CONFIGURED" && s.severity === "HIGH");
+    assert.ok(suggestion);
+    assert.match(suggestion.description, /ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY/);
   });
 
   it("AI_PROVIDERS_COOLING when hasCooledDownProvider is true and providers ARE configured", () => {

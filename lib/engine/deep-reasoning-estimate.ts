@@ -21,6 +21,7 @@
  */
 
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldAutoTriggerDeepReasoning } from "./feature-flags";
+import { CANONICAL_AI_PROVIDER_ENV, CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
 
 export type DeepReasoningEstimate = {
   /** Whether deep reasoning will actually run given the current config. */
@@ -92,16 +93,7 @@ export function defaultRefinementThreshold(): number {
 }
 
 function isAnyProviderKeyPresent(): boolean {
-  return Boolean(
-    process.env.GEMINI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    process.env.GROQ_API_KEY ||
-    process.env.TOGETHER_API_KEY ||
-    process.env.DEEPSEEK_API_KEY ||
-    process.env.MISTRAL_API_KEY
-  );
+  return Object.values(CANONICAL_AI_PROVIDER_ENV).some((envName) => Boolean(process.env[envName]));
 }
 
 function isClaudeKeyPresent(): boolean {
@@ -148,7 +140,7 @@ export function estimateDeepReasoningCost(input: EstimateInput): DeepReasoningEs
   if (!aiOn) {
     return {
       willRun: false,
-      blocker: "No AI provider configured (OPENAI_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY)",
+      blocker: `No AI provider configured (${CANONICAL_AI_PROVIDER_ENV_LIST})`,
       worstCaseCalls: 0,
       typicalCalls: 0,
       steps: [],

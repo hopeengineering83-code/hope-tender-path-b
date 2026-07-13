@@ -24,6 +24,7 @@ import type { CanonicalTenderReadiness } from "../../../../lib/canonical-tender-
 import { GenerationGatesPanel } from "../../../../components/GenerationGatesPanel";
 import { ExtractionQualityPanel } from "../../../../components/ExtractionQualityPanel";
 import { checkGenerationGates } from "../../../../lib/generation-gates";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../../../../lib/ai-provider-policy";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -2142,7 +2143,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                     <p className="text-xs text-amber-700">
                       AI providers unavailable — regex fallback used.
                       {analyzeResult.providerRetryAfterMs === null
-                        ? " Configure an AI provider (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) to enable AI Analyze."
+                        ? ` Configure an AI provider (${CANONICAL_AI_PROVIDER_ENV_LIST}) to enable AI Analyze.`
                         : " Approve the fallback to unblock document generation, or re-extract and re-run AI Analyze when providers recover."}
                     </p>
                   )}
@@ -2151,7 +2152,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                     const notConfigured = analyzeResult.providerDiagnostics.perProvider.filter((p) => !p.configured);
                     const cooling = configured.filter((p) => p.coolingDown);
                     if (configured.length === 0 && notConfigured.length > 0) {
-                      return <p className="text-xs text-red-700 font-medium">No AI providers configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in Vercel environment variables.</p>;
+                      return <p className="text-xs text-red-700 font-medium">No AI providers configured. Set one of: {CANONICAL_AI_PROVIDER_ENV_LIST} in Vercel environment variables.</p>;
                     }
                     return (
                       <details className="text-xs">

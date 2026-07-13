@@ -23,6 +23,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { getCurrentConfirmedBuildPlan } from "./build-plan";
 import { assessExtractionQuality } from "../extraction-quality";
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
 import {
   isExtractionAcceptableForGeneration,
   isExtractionAcceptableForExport,
@@ -671,7 +672,7 @@ export async function computeTenderLifecycle(
   else if (!hasAnalysis && !providers.hasAnyProvider) {
     lifecycleState = "AI_ANALYSIS_REQUIRED";
     primaryNextAction = "CONFIGURE_AI_PROVIDER";
-    blockers.push({ code: "NO_AI_PROVIDER", message: "No AI provider is configured. Analysis cannot run.", action: "Add ANTHROPIC_API_KEY, GEMINI_API_KEY, or another provider key in environment settings." });
+    blockers.push({ code: "NO_AI_PROVIDER", message: "No AI provider is configured. Analysis cannot run.", action: `Add one AI provider key (${CANONICAL_AI_PROVIDER_ENV_LIST}) in environment settings.` });
   }
   // 4. Has text but no analysis yet
   else if (!hasAnalysis) {

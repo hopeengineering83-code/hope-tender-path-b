@@ -30,6 +30,8 @@
 // Each suggestion has a STABLE `code` so an Accept/Reject decision can be
 // recorded against it in the audit log and the panel can dedupe.
 
+import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-policy";
+
 export type ControlSuggestionCode =
   | "TENDER_FACTS_INCOMPLETE"
   | "ANALYSIS_NOT_RUN"
@@ -130,7 +132,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "AI_PROVIDERS_NOT_CONFIGURED",
       type: "RISK",
       title: "No AI provider configured",
-      description: "AI Analyze cannot run because no API key is configured. Add ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY in Vercel environment variables.",
+      description: `AI Analyze cannot run because no API key is configured. Add one of: ${CANONICAL_AI_PROVIDER_ENV_LIST} in Vercel environment variables.`,
       severity: "HIGH",
       nextAction: "Set a provider key in Vercel and redeploy.",
     }));

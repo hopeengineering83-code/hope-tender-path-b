@@ -41,12 +41,36 @@ describe("estimateDeepReasoningCost — preconditions", () => {
     assert.equal(result.typicalCalls, 0);
   });
 
-  // NOTE: a "no AI provider configured" case is intentionally not
-  // tested here. `lib/ai.ts` captures API keys at module load via
-  // `const apiKey = process.env.GEMINI_API_KEY` so changing the env
-  // at runtime cannot exercise that branch. The branch is reachable
-  // in production (deployed without keys) and covered by inspection
-  // of `isAIEnabled()`.
+  it("recognizes every canonical provider key, including Z.ai and Cerebras", () => {
+    for (const providerKey of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
+      const allKeys = {
+        ZAI_API_KEY: undefined, CEREBRAS_API_KEY: undefined, MISTRAL_API_KEY: undefined,
+        GROQ_API_KEY: undefined, OPENROUTER_API_KEY: undefined, GEMINI_API_KEY: undefined,
+        OPENAI_API_KEY: undefined, TOGETHER_API_KEY: undefined, DEEPSEEK_API_KEY: undefined,
+        ANTHROPIC_API_KEY: undefined, TENDER_DEEP_REASONING: "true",
+      } as Record<string, string | undefined>;
+      allKeys[providerKey] = "test-key";
+      const result = withEnv(allKeys, () => estimateDeepReasoningCost({
+        tenderTextLength: 500,
+        expertCount: 0,
+        projectCount: 0,
+        maxRefinementAttempts: 0,
+      }));
+      assert.equal(result.willRun, true, `${providerKey} should enable the estimator gate`);
+    }
+  });
+
+  it("uses the canonical provider environment list in the no-provider blocker", () => {
+    const result = withEnv({
+      TENDER_DEEP_REASONING: "true",
+      ZAI_API_KEY: undefined, CEREBRAS_API_KEY: undefined, MISTRAL_API_KEY: undefined,
+      GROQ_API_KEY: undefined, OPENROUTER_API_KEY: undefined, GEMINI_API_KEY: undefined,
+      OPENAI_API_KEY: undefined, TOGETHER_API_KEY: undefined, DEEPSEEK_API_KEY: undefined,
+      ANTHROPIC_API_KEY: undefined,
+    }, () => estimateDeepReasoningCost({ tenderTextLength: 500, expertCount: 0, projectCount: 0 }));
+    assert.equal(result.willRun, false);
+    assert.match(result.blocker ?? "", /ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY/);
+  });
 });
 
 describe("estimateDeepReasoningCost — step composition", () => {
