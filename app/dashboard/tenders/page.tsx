@@ -425,7 +425,7 @@ export default async function TendersPage({
                       <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <Link href={`/dashboard/tenders/${tender.id}`} className="text-blue-600 hover:underline">
+                          <Link href={`/dashboard/tenders/${tender.id}`} className="inline-flex min-h-11 items-center text-blue-600 hover:underline">
                             Open workspace
                           </Link>
                           <DuplicateButton tenderId={tender.id} />
