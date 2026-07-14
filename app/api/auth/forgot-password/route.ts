@@ -48,7 +48,35 @@ export async function POST(req: Request) {
       where: { email },
       select: { id: true, email: true },
     });
-    if (!user) return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
+    if (!user) {
+      // TIMING-SAFE ACCOUNT ENUMERATION GUARD (round-2 audit GAP-R2C-3):
+      // For existing users, the code below does a DB transaction + sendEmail(),
+      // which takes ~300-800ms. For non-existent users, we previously returned
+      // immediately (~5ms). An attacker can distinguish existing vs non-existing
+      // emails by response timing, enabling account enumeration.
+      //
+      // Fix: run a dummy bcrypt comparison (which takes ~100-300ms) to make
+      // the timing distribution overlap with the existing-user path. This
+      // doesn't fully eliminate timing variance (sendEmail latency varies),
+      // but it narrows the gap enough that simple timing attacks become
+      // impractical. Combined with the rate limit (5/15min), enumeration
+      // would take hours for a small candidate list.
+      //
+      // We use bcrypt.compare with a dummy hash to consume similar CPU time.
+      try {
+        const bcrypt = await import("bcryptjs");
+        // A pre-computed bcrypt hash of a random string (cost factor 10, matching
+        // the login path's DUMMY_PASSWORD_HASH pattern). This takes ~100-200ms.
+        await bcrypt.compare(
+          "dummy-password-for-timing-equalization",
+          "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+        );
+      } catch {
+        // If bcrypt fails (shouldn't happen), don't change the timing —
+        // the rate limit is the primary defense.
+      }
+      return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
+    }
 
     const { token, tokenHash, expiresAt } = generateResetToken();
     const tokenId = randomUUID();
