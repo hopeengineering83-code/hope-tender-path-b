@@ -39,7 +39,9 @@
     "test:e2e:report": "playwright show-report",
     "audit:no-user-facing-metadata": "node scripts/audit-no-user-facing-metadata.mjs",
     "audit:safe-api-errors": "node scripts/audit-safe-api-errors.mjs",
-    "audit:workflow-state-consistency": "node scripts/audit-workflow-state-consistency.mjs"
+    "audit:workflow-state-consistency": "node scripts/audit-workflow-state-consistency.mjs",
+    "worklog:archive": "node scripts/archive-worklog.mjs",
+    "worklog:archive:apply": "node scripts/archive-worklog.mjs --apply"
   },
   "main": "electron/main.js",
   "dependencies": {

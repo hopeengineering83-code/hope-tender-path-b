@@ -1,6 +1,7 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
+import { logger } from "../observability";
 import type { Prisma } from "@prisma/client";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
 import {
@@ -602,7 +603,7 @@ export async function finalizeJob(jobId: string, userId: string) {
         });
     } catch (prepErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
-        console.error(`[finalizeJob] AI_ANALYSIS_PREPARATION_FAILED correlation=${correlationId} job=${jobId}: ${prepErr instanceof Error ? prepErr.message : String(prepErr)}`);
+        logger.error(`[finalizeJob] AI_ANALYSIS_PREPARATION_FAILED correlation=${correlationId} job=${jobId}: ${prepErr instanceof Error ? prepErr.message : String(prepErr)}`);
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
@@ -611,7 +612,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 errorMessage: `AI_ANALYSIS_PREPARATION_FAILED (ref: ${correlationId})`,
             },
         }).catch((cleanupErr) => {
-            console.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+            logger.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
         return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED" };
     }
@@ -706,16 +707,16 @@ export async function finalizeJob(jobId: string, userId: string) {
             }
         }
     } catch (refErr) {
-        console.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
+        logger.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
     }
 
-    console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
+    logger.info(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
     } catch (persistErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
         const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
 
         if (errMsg.includes("STALE_JOB_SUPERSeded")) {
-            console.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
+            logger.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
             await prisma.aiJob.update({
                 where: { id: jobId },
                 data: {
@@ -725,12 +726,12 @@ export async function finalizeJob(jobId: string, userId: string) {
                     output: outputJson,
                 },
             }).catch((cleanupErr) => {
-                console.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+                logger.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
             });
             return { status: "SUPERSEDED", code: "STALE_JOB_SUPERSeded" };
         }
 
-        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);
+        logger.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
@@ -739,7 +740,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 errorMessage: `AI_ANALYSIS_PERSISTENCE_FAILED (ref: ${correlationId})`,
             },
         }).catch((updateErr) => {
-            console.error(
+            logger.error(
                 `[finalizeJob] Failed to mark job ${jobId} as FAILED after persistence error: ${
                     updateErr instanceof Error ? updateErr.message : String(updateErr)
                 }`
