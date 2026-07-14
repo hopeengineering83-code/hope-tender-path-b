@@ -1,17 +1,20 @@
 /**
  * Playwright global setup — authenticates the CI-seeded primary and secondary
- * accounts ONCE via the real /api/auth/login endpoint and saves storage
- * state files with loopback-safe cookies (secure: false) for CI HTTP.
+ * accounts ONCE EACH (total: at most 2 logins per CI run, regardless of how
+ * many spec files, projects, or retries follow) via the real
+ * /api/auth/login endpoint, and saves the session cookie to a loopback-safe
+ * JSON file for e2e/auth-helper.ts's fixtures to load.
  *
  * This uses the API request context (not a browser) to perform the login,
- * then manually constructs the storage state JSON with the session cookie
- * set to secure: false and domain matching the CI baseURL. This avoids
- * the issue where a browser-launched context captures cookies with
- * domain "localhost" or "127.0.0.1" that don't match when loaded by
- * the test browser context.
+ * then writes only the cookie fields auth-helper.ts needs. CI serves the
+ * app over loopback HTTP (127.0.0.1), so the saved test copy of the cookie
+ * is downgraded to secure:false purely so the browser will send it back;
+ * production cookie configuration in lib/auth.ts is never touched.
  *
- * Production cookie configuration in lib/auth.ts is NEVER changed.
- * The original login response is verified to contain the Secure attribute.
+ * The original login response's Set-Cookie header IS verified to contain
+ * Secure; HttpOnly; SameSite=Lax. If Secure is missing, setup fails hard —
+ * it does not silently continue, because that would mask a real regression
+ * in production cookie policy.
  */
 
 import { type FullConfig, request as playwrightRequest } from "@playwright/test";
@@ -27,23 +30,22 @@ const secondaryEmail = process.env.E2E_SECOND_EMAIL ?? "e2e-secondary@example.te
 const secondaryPassword = process.env.E2E_SECOND_PASSWORD ?? "";
 
 export default async function globalSetup(_config: FullConfig) {
-  if (!primaryPassword || !secondaryPassword) {
-    return;
-  }
-
   mkdirSync(STORAGE_DIR, { recursive: true });
 
-  // Authenticate primary user
-  const primaryCookie = await loginAndGetCookie(primaryEmail, primaryPassword);
-  const primaryState = createStorageState(primaryCookie);
-  writeFileSync(join(STORAGE_DIR, "primary-loopback.json"), JSON.stringify(primaryState));
-  writeFileSync(join(STORAGE_DIR, "primary.json"), JSON.stringify(primaryState));
+  // Each account is independent: an environment that only configures the
+  // primary account can still run primary-only suites. secondaryTest /
+  // cross-user-isolation specs will fail loudly (via auth-helper.ts's
+  // missing-file error) if the secondary account was never set up — that
+  // is the correct behavior, not a silent skip.
+  if (primaryPassword) {
+    const cookie = await loginAndGetCookie(primaryEmail, primaryPassword);
+    writeFileSync(join(STORAGE_DIR, "primary-loopback.json"), JSON.stringify(createStorageState(cookie)));
+  }
 
-  // Authenticate secondary user
-  const secondaryCookie = await loginAndGetCookie(secondaryEmail, secondaryPassword);
-  const secondaryState = createStorageState(secondaryCookie);
-  writeFileSync(join(STORAGE_DIR, "secondary-loopback.json"), JSON.stringify(secondaryState));
-  writeFileSync(join(STORAGE_DIR, "secondary.json"), JSON.stringify(secondaryState));
+  if (secondaryPassword) {
+    const cookie = await loginAndGetCookie(secondaryEmail, secondaryPassword);
+    writeFileSync(join(STORAGE_DIR, "secondary-loopback.json"), JSON.stringify(createStorageState(cookie)));
+  }
 }
 
 /**
@@ -59,30 +61,43 @@ async function loginAndGetCookie(email: string, password: string): Promise<strin
 
   if (response.status() !== 200) {
     const body = await response.text().catch(() => "(unreadable)");
+    await requestContext.dispose();
     throw new Error(`Login failed for ${email}: status=${response.status()} body=${body}`);
   }
 
-  // Extract the session cookie from the Set-Cookie header.
-  // The production cookie has Secure; HttpOnly; SameSite=Lax.
-  // We verify the Secure attribute is present to confirm production config is intact.
   const setCookieHeaders = response.headersArray().filter(
     (h) => h.name.toLowerCase() === "set-cookie",
   );
 
   for (const header of setCookieHeaders) {
     if (header.value.startsWith("hope_session=")) {
-      // Verify the production cookie has Secure attribute
       const hasSecure = /;\s*Secure(?:;|$)/i.test(header.value);
       if (!hasSecure) {
-        // In some environments the cookie may not be Secure (e.g. dev mode).
-        // Don't fail — just log.
-      }
-      // Extract just the cookie value (everything between "hope_session=" and the first ";")
-      const cookieValue = header.value.split(";")[0].split("=").slice(1).join("=");
-      if (cookieValue) {
         await requestContext.dispose();
-        return cookieValue;
+        throw new Error(
+          `Login response for ${email} is missing the Secure attribute on hope_session. ` +
+            `Production auth (lib/auth.ts) must always set Secure on this cookie — global setup ` +
+            `fails hard here rather than silently continuing, because that would mask a real ` +
+            `regression in production cookie policy.`,
+        );
       }
+      const hasHttpOnly = /;\s*HttpOnly(?:;|$)/i.test(header.value);
+      if (!hasHttpOnly) {
+        await requestContext.dispose();
+        throw new Error(`Login response for ${email} is missing the HttpOnly attribute on hope_session.`);
+      }
+      if (!/;\s*SameSite=Lax(?:;|$)/i.test(header.value)) {
+        await requestContext.dispose();
+        throw new Error(`Login response for ${email} does not set SameSite=Lax on hope_session.`);
+      }
+
+      const cookieValue = header.value.split(";")[0].split("=").slice(1).join("=");
+      if (!cookieValue) {
+        await requestContext.dispose();
+        throw new Error(`Login succeeded for ${email} but hope_session cookie value is empty`);
+      }
+      await requestContext.dispose();
+      return cookieValue;
     }
   }
 
@@ -91,26 +106,22 @@ async function loginAndGetCookie(email: string, password: string): Promise<strin
 }
 
 /**
- * Create a Playwright storage state JSON with the session cookie configured
- * for loopback HTTP (secure: false, domain matching the baseURL).
+ * Minimal JSON shape consumed by e2e/auth-helper.ts. Not a full Playwright
+ * storageState — auth-helper.ts injects this cookie into each fresh context
+ * itself via page.context().addCookies(), rather than loading storageState
+ * directly, since storageState's domain-matching is unreliable for
+ * loopback HTTP.
  */
-function createStorageState(cookieValue: string): any {
-  const url = new URL(baseURL);
-  const hostname = url.hostname; // "127.0.0.1" or "localhost"
-
+function createStorageState(cookieValue: string): { cookies: Array<Record<string, unknown>> } {
   return {
     cookies: [
       {
         name: "hope_session",
         value: cookieValue,
-        domain: hostname,
-        path: "/",
         httpOnly: true,
-        secure: false, // loopback HTTP — production keeps Secure
+        secure: false, // loopback HTTP test copy only — production keeps Secure
         sameSite: "Lax",
-        expires: -1, // session cookie
       },
     ],
-    origins: [],
   };
 }

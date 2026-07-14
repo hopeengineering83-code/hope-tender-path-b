@@ -3,6 +3,26 @@ import { defineConfig, devices } from "@playwright/test";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 
+// Desktop-only authenticated specs — these exercise the full app at desktop
+// viewport and must run exactly once per CI run. They are deliberately NOT
+// matched by samsung-tablet-primary below, so login sessions and full-suite
+// runs (golden workflow, tender pipeline, cross-user isolation, production
+// smoke) are never duplicated across projects.
+const DESKTOP_AUTHENTICATED_SPECS = [
+  "golden-tender-workflow.spec.ts",
+  "production-smoke.spec.ts",
+  "tender-pipeline.spec.ts",
+  "cross-user-isolation.spec.ts",
+  "health.spec.ts",
+  "manual-tender-facts-flexibility.spec.ts",
+  "share-link.spec.ts",
+  "tender-list.spec.ts",
+];
+
+// Tablet-only authenticated specs — validate tablet-specific UX (touch
+// targets, overflow, viewport). These run only under samsung-tablet-primary.
+const TABLET_AUTHENTICATED_SPECS = ["tablet-universal-tender-intelligence.spec.ts"];
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -10,6 +30,10 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
+  // Logs in the primary and secondary accounts exactly once each via the
+  // real /api/auth/login endpoint and saves the session cookie for
+  // e2e/auth-helper.ts's fixtures. See e2e/global-setup.ts.
+  globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL,
     trace: "on-first-retry",
@@ -23,20 +47,18 @@ export default defineConfig({
       testDir: "./e2e/anonymous",
       use: { ...devices["Desktop Chrome"] },
     },
-    // ─── Authenticated desktop (primary account) ───────────────────────
+    // ─── Authenticated desktop (primary + secondary accounts) ──────────
     {
       name: "chromium-primary",
       testDir: "./e2e",
-      testMatch: /.*\.spec\.ts/,
-      testIgnore: /anonymous/,
+      testMatch: DESKTOP_AUTHENTICATED_SPECS,
       use: { ...devices["Desktop Chrome"] },
     },
     // ─── Tablet authenticated (primary account, 800x1280) ──────────────
     {
       name: "samsung-tablet-primary",
       testDir: "./e2e",
-      testMatch: /.*\.spec\.ts/,
-      testIgnore: /anonymous/,
+      testMatch: TABLET_AUTHENTICATED_SPECS,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 800, height: 1280 },

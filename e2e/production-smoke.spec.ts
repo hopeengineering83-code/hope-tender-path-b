@@ -1,4 +1,4 @@
-import { authenticatedTest as test, expect } from "./auth-helper";
+import { primaryTest as test, expect } from "./auth-helper";
 import type { Page, APIResponse } from "@playwright/test";
 /**
  * Production Critical Smoke Tests
@@ -90,8 +90,11 @@ test.describe("Production Critical Smoke Tests", () => {
     // Navigate to dashboard — should NOT redirect to login.
     await page.goto("/dashboard/tenders");
     await expect(page, "Authenticated user should not be redirected to login").not.toHaveURL(/\/login/);
-    // We expect the dashboard to render with the tenders heading or similar
-    await expect(page.locator("h1, h2").first(), "Dashboard heading should be visible").toBeVisible();
+    // Target the tenders page's own <h1>Tenders</h1> (app/dashboard/tenders/page.tsx)
+    // by name, not a generic "h1, h2".first() locator — the dashboard layout's nav
+    // brand ("Hope Tender") is also an <h1> and can precede the page heading in DOM
+    // order, or be hidden on narrower viewports, making a positional locator flaky.
+    await expect(page.getByRole("heading", { name: "Tenders", exact: true }), "Dashboard 'Tenders' heading should be visible").toBeVisible();
   });
 
   test("4. Source tender intake prerequisites", async ({ page }) => {

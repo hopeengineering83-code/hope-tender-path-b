@@ -1,4 +1,4 @@
-import { authenticatedTest as test, expect } from "./auth-helper";
+import { tabletPrimaryTest as test, expect } from "./auth-helper";
 import type { Page, APIResponse } from "@playwright/test";
 /**
  * Tablet (800x1280) E2E Tests — Universal Tender Intelligence Foundation
@@ -123,14 +123,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
     if (box) {
       expect(box.height, `submit button must be ≥44px tall for touch (got ${box.height}px)`).toBeGreaterThanOrEqual(44);
     }
-  });
-
-  test("dashboard redirects to login when unauthenticated (no horizontal overflow)", async ({ page }) => {
-    await page.goto("/dashboard/tenders");
-    await page.waitForLoadState("networkidle");
-    // Should redirect to login
-    await expect(page).toHaveURL(/\/login/);
-    await expectNoHorizontalScroll(page);
   });
 
   test("share-link page renders within 800px width", async ({ page }) => {

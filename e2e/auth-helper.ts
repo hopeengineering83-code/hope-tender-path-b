@@ -1,83 +1,129 @@
 /**
- * Shared authentication helper for Playwright tests.
+ * Shared authentication fixtures for Playwright tests.
  *
- * Instead of relying on storageState (which doesn't reliably propagate
- * cookies for loopback HTTP), this helper performs a single login per
- * test file via test.beforeAll and injects the session cookie directly
- * into each test's browser context.
+ * This file performs NO live login. All authentication happens exactly
+ * once per account, in e2e/global-setup.ts, via the real /api/auth/login
+ * endpoint. global-setup.ts writes the resulting session cookie to
+ * .auth/primary-loopback.json and .auth/secondary-loopback.json.
  *
- * Usage in a test file:
- *   import { authenticatedTest as test, expect } from "./auth-helper";
+ * Fixtures here only READ those files and inject the saved cookie into a
+ * fresh browser context. This is what keeps total login calls per CI run
+ * at exactly two (one primary, one secondary), regardless of how many
+ * spec files or projects consume these fixtures, and regardless of
+ * Playwright retries (retries reuse the same on-disk saved state; they
+ * never trigger a new login).
  *
- * The `authenticatedTest` fixture wraps `test` and automatically:
- *   1. Logs in once per test file (not per test)
- *   2. Injects the session cookie with secure:false for loopback HTTP
- *   3. Verifies the original login response has the Secure attribute
+ * Exported fixtures:
+ *   - anonymousTest      no session cookie at all
+ *   - primaryTest        primary account, desktop viewport (via project config)
+ *   - secondaryTest      secondary account, desktop viewport (via project config)
+ *   - tabletPrimaryTest  primary account, tablet viewport (via project config)
+ *   - tabletAnonymousTest no session cookie, tablet viewport (via project config)
  *
- * This prevents 429 LOGIN_RATE_LIMITED because each file logs in exactly once.
+ * The tablet variants are the same cookie-loading logic as their desktop
+ * counterparts — viewport comes entirely from the Playwright project
+ * (samsung-tablet-primary / samsung-tablet-anonymous), not from this file.
+ * They're kept as distinct exports so spec files can declare intent
+ * explicitly and so misrouted specs (wrong project) are easy to spot.
  */
 
-import { test as base, expect, type Page, type APIResponse } from "@playwright/test";
+import { test as base, expect, type Page, type BrowserContext } from "@playwright/test";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
+const STORAGE_DIR = join(process.cwd(), ".auth");
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
-const primaryEmail = process.env.E2E_TEST_EMAIL ?? "";
-const primaryPassword = process.env.E2E_TEST_PASSWORD ?? "";
 
-let sessionCookie: { name: string; value: string } | null = null;
+interface SavedCookie {
+  name: string;
+  value: string;
+  httpOnly: boolean;
+  sameSite: "Lax" | "Strict" | "None";
+}
 
-async function loginOnce(): Promise<{ name: string; value: string }> {
-  if (sessionCookie) return sessionCookie;
+interface SavedStorageState {
+  cookies: SavedCookie[];
+}
 
-  const response = await fetch(`${baseURL}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: primaryEmail, password: primaryPassword }),
-  });
-
-  if (response.status !== 200) {
-    const body = await response.text().catch(() => "(unreadable)");
-    throw new Error(`Login failed: status=${response.status} body=${body}`);
+export function loadSavedSessionCookie(filename: string): SavedCookie {
+  const filePath = join(STORAGE_DIR, filename);
+  if (!existsSync(filePath)) {
+    throw new Error(
+      `${filePath} was not found. Playwright global setup (e2e/global-setup.ts) must run ` +
+        `and log in exactly once before authenticated tests execute. Confirm globalSetup is wired ` +
+        `into playwright.config.ts and that the relevant E2E_TEST_EMAIL/E2E_TEST_PASSWORD or ` +
+        `E2E_SECOND_EMAIL/E2E_SECOND_PASSWORD env vars are set for this CI run.`,
+    );
   }
-
-  // Extract the session cookie from Set-Cookie header
-  const setCookie = response.headers.get("set-cookie") || "";
-  if (!setCookie.startsWith("hope_session=")) {
-    throw new Error("Login response did not set hope_session cookie");
+  const state = JSON.parse(readFileSync(filePath, "utf-8")) as SavedStorageState;
+  const cookie = state.cookies.find((c) => c.name === "hope_session");
+  if (!cookie) {
+    throw new Error(`${filePath} does not contain a hope_session cookie.`);
   }
-
-  const cookieValue = setCookie.split(";")[0].split("=").slice(1).join("=");
-  if (!cookieValue) {
-    throw new Error("hope_session cookie value is empty");
-  }
-
-  sessionCookie = { name: "hope_session", value: cookieValue };
-  return sessionCookie;
+  return cookie;
 }
 
 /**
- * Test fixture that automatically authenticates before each test.
- * Uses a shared login (once per process) to prevent 429 rate limiting.
+ * Injects a saved session cookie into an arbitrary browser context. Exported
+ * so specs that need two genuinely isolated, simultaneous identities (e.g.
+ * cross-user-isolation.spec.ts) can load the primary session into one
+ * context and the secondary session into a second, independent context —
+ * never mutating one context's identity into the other's.
  */
-export const authenticatedTest = base.extend({
-  page: async ({ page }, use) => {
-    // Login once and inject the cookie
-    const cookie = await loginOnce();
-    const origin = new URL(baseURL);
-
-    // Clear any existing cookies and inject the session cookie
-    await page.context().clearCookies();
-    await page.context().addCookies([{
-      name: cookie.name,
-      value: cookie.value,
+export async function injectSavedSessionIntoContext(context: BrowserContext, filename: string) {
+  const saved = loadSavedSessionCookie(filename);
+  const origin = new URL(baseURL);
+  await context.addCookies([
+    {
+      name: saved.name,
+      value: saved.value,
       url: origin.origin,
-      httpOnly: true,
-      secure: false, // loopback HTTP
-      sameSite: "Lax" as const,
-    }]);
+      httpOnly: saved.httpOnly,
+      // Loopback HTTP CI serves the app over http://127.0.0.1 — only this
+      // saved test copy of the cookie is downgraded to secure:false so the
+      // browser will actually send it. The production cookie written by
+      // lib/auth.ts always keeps Secure; global setup verifies this at
+      // login time and fails hard if it's ever missing.
+      secure: false,
+      sameSite: saved.sameSite,
+    },
+  ]);
+}
 
+async function injectSavedSession(page: Page, filename: string) {
+  await page.context().clearCookies();
+  await injectSavedSessionIntoContext(page.context(), filename);
+}
+
+async function clearSession(page: Page) {
+  await page.context().clearCookies();
+}
+
+export const primaryTest = base.extend({
+  page: async ({ page }, use) => {
+    await injectSavedSession(page, "primary-loopback.json");
     // eslint-disable-next-line react-hooks/rules-of-hooks
     await use(page);
   },
 });
+
+export const secondaryTest = base.extend({
+  page: async ({ page }, use) => {
+    await injectSavedSession(page, "secondary-loopback.json");
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    await use(page);
+  },
+});
+
+export const anonymousTest = base.extend({
+  page: async ({ page }, use) => {
+    await clearSession(page);
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    await use(page);
+  },
+});
+
+export const tabletPrimaryTest = primaryTest;
+export const tabletAnonymousTest = anonymousTest;
 
 export { expect };

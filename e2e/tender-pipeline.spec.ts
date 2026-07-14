@@ -1,4 +1,4 @@
-import { authenticatedTest as test, expect } from "./auth-helper";
+import { primaryTest as test, expect } from "./auth-helper";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
 
@@ -33,14 +33,19 @@ test.describe("authenticated intake and precondition gates", () => {
     });
 
     expect(upload.status(), await upload.text()).toBe(201);
-    const tender = await upload.json();
-    const tenderId = tender.id;
+    const intakeJson = await upload.json() as { success: boolean; tenderId: string };
+    expect(intakeJson.success).toBe(true);
+    const tenderId = intakeJson.tenderId;
 
-    // Verify extraction persists
+    // Verify extraction persists — GET /api/tenders/{id}/source-files returns
+    // { ok, tenderId, files: [{ fileId, fileName, extractedTextLength, ... }] },
+    // not { items: [...] }.
     const filesResponse = await page.request.get(`/api/tenders/${tenderId}/source-files`);
     expect(filesResponse.status()).toBe(200);
-    const files = await filesResponse.json();
-    expect(files.items?.length ?? 0).toBeGreaterThan(0);
+    const filesJson = await filesResponse.json() as { ok: boolean; files: Array<{ fileId: string; extractedTextLength: number }> };
+    expect(filesJson.ok).toBe(true);
+    expect(filesJson.files.length).toBeGreaterThan(0);
+    expect(filesJson.files.every((file) => file.fileId && file.extractedTextLength > 0)).toBe(true);
 
     // Generation must be gated before analysis
     const generateResponse = await page.request.post(`/api/tenders/${tenderId}/generate`);
