@@ -12,6 +12,7 @@ import { logger } from "./observability";
 
 import { prisma } from "./prisma";
 import { isCompanyKnowledgeAIEnabled, extractCompanyKnowledgeWithAI } from "./company-knowledge-ai";
+import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "./company-document-durable-deletion";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -251,7 +252,13 @@ export type ImportResult = {
 
 export async function importCompanyKnowledgeFromDocuments(companyId: string): Promise<ImportResult> {
   const docs = await prisma.companyDocument.findMany({
-    where: { companyId, extractedText: { not: null } },
+    where: {
+      companyId,
+      extractedText: { not: null },
+      // SECURITY (GAP-R2C-4): Exclude PENDING_DELETE documents so reimport
+      // doesn't resurrect deleted documents' experts/projects.
+      NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } },
+    },
     select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
   });
 
@@ -498,7 +505,11 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
 export async function analyzeCompanyKnowledgeGaps(companyId: string) {
   const [docs, experts, projects] = await Promise.all([
     prisma.companyDocument.findMany({
-      where: { companyId },
+      where: {
+        companyId,
+        // SECURITY (GAP-R2C-4): Exclude PENDING_DELETE documents.
+        NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } },
+      },
       select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
     }),
     prisma.expert.findMany({ where: { companyId }, select: { trustLevel: true } }),

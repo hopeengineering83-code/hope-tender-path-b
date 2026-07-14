@@ -11,6 +11,7 @@ import { getStorageAdapter } from "../../../../lib/storage";
 import { cleanupSupportDocImportedRecords } from "../../../../lib/company-support-doc-cleanup";
 import { extractRequestId } from "../../../../lib/request-id";
 import { logAction } from "../../../../lib/audit";
+import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "../../../../lib/company-document-durable-deletion";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -42,6 +43,17 @@ export async function POST(req: Request) {
     const docs = await prisma.companyDocument.findMany({
       where: {
         companyId: company.id,
+        // SECURITY (round-2 audit GAP-R2C-4): EXCLUDE PENDING_DELETE documents.
+        // A document marked PENDING_DELETE has been logically deleted by the
+        // user but the storage file deletion may not have completed yet (502
+        // retryable, tombstoned row with fileContent still set). If we
+        // re-extract and re-import such a document, we RE-CREATE the draft
+        // experts/projects that the deletion had already destroyed — silently
+        // undoing the user's deletion.
+        //
+        // The documents list route (app/api/company/documents/route.ts:36)
+        // already filters this marker. The reimport route was missing it.
+        NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } },
         OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }],
       },
       select: {
