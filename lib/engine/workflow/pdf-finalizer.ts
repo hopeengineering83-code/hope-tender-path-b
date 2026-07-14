@@ -25,7 +25,7 @@
  */
 import { logger } from "../../observability";
 import { generateProposalPdf } from "../proposal-pdf";
-import { extractDocxVisibleText, documentHygieneIssues } from "../export-readiness";
+import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues } from "../export-readiness";
 import { validateDocumentQuality } from "../document-quality-validator";
 import {
   isFinalExportCandidateDocument,
@@ -215,10 +215,23 @@ export function internalArtifactIssues(text: string): string[] {
  */
 export async function finalizeRequiredPdf(input: {
   requiredFileName: string;
-  tender: { title?: string | null; clientName?: string | null; reference?: string | null };
+  tender: {
+    title?: string | null;
+    clientName?: string | null;
+    reference?: string | null;
+    submissionEmailSubject?: string | null;
+  };
+  /** Optional company branding context — emitted on cover page + page header. */
+  company?: {
+    name?: string | null;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
+  } | null;
   sourceDocument: PdfFinalizerSourceDocument;
 }): Promise<PdfFinalizationResult> {
-  const { requiredFileName, tender, sourceDocument: doc } = input;
+  const { requiredFileName, tender, company, sourceDocument: doc } = input;
 
   const nameProblem = validateRequiredFileName(requiredFileName);
   if (nameProblem) return blocker("PDF_INVALID_REQUIRED_FILENAME", nameProblem);
@@ -273,6 +286,20 @@ export async function finalizeRequiredPdf(input: {
     );
   }
 
+  // Structured markdown extraction for PDF rendering — preserves tables and
+  // inline bold/italic so the PDF body matches the DOCX body (content parity).
+  // Falls back to the flat visible text if structured extraction fails, so we
+  // never block PDF generation when the DOCX XML is malformed but the visible
+  // text is intact.
+  let renderMarkdown: string | null = null;
+  try {
+    renderMarkdown = await extractDocxMarkdownText(doc.fileContent, doc.exactFileName ?? doc.name ?? "source.docx");
+  } catch (error) {
+    logger.error("pdf-finalizer: structured markdown extraction threw", { documentId: doc.id, detail: error });
+    renderMarkdown = null;
+  }
+  const renderText = (renderMarkdown ?? text).trim();
+
   // Quality gate on the extracted visible text — the same validator the
   // validation pipeline uses (placeholders, AI traces, envelope mismatch),
   // plus export hygiene (AI/meta traces, pricing leakage) and the
@@ -316,11 +343,21 @@ export async function finalizeRequiredPdf(input: {
   // Render — raw failures are logged server-side only.
   let pdfBytes: Uint8Array;
   try {
+    // Compose optional branding context so the PDF cover page and running
+    // header match the DOCX's branded cover block (content parity).
+    const contactParts: string[] = [];
+    if (company?.phone) contactParts.push(company.phone);
+    if (company?.email) contactParts.push(company.email);
+    if (company?.website) contactParts.push(company.website);
     pdfBytes = await generateProposalPdf({
       title: tender.title?.trim() || "Technical Proposal",
       clientName: tender.clientName ?? null,
       reference: tender.reference ?? null,
-      markdown: text,
+      submissionEmailSubject: tender.submissionEmailSubject ?? null,
+      markdown: renderText,
+      companyName: company?.name ?? null,
+      companyAddress: company?.address ?? null,
+      companyContact: contactParts.length ? contactParts.join("  |  ") : null,
     });
   } catch (error) {
     logger.error("pdf-finalizer: PDF rendering failed", { documentId: doc.id, detail: error });

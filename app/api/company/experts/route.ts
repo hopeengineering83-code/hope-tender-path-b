@@ -82,6 +82,24 @@ export async function POST(req: Request) {
     if (yearsExp !== null && (yearsExp < 0 || yearsExp > 70)) {
       return NextResponse.json({ error: "yearsExperience must be between 0 and 70" }, { status: 400 });
     }
+    // Optional sourceDocumentId — when the user supplies it, the new Expert
+    // row is audit-traceable to the uploaded CompanyDocument it was derived
+    // from. Earlier the field was never set on manual creation, so manually
+    // entered experts had no provenance link back to their source CV.
+    let sourceDocumentId: string | null = null;
+    if (typeof body.sourceDocumentId === "string" && body.sourceDocumentId.trim()) {
+      const docId = body.sourceDocumentId.trim();
+      // Validate that the document exists AND belongs to the same company —
+      // prevents cross-tenant provenance injection.
+      const doc = await prisma.companyDocument.findFirst({
+        where: { id: docId, companyId: company.id },
+        select: { id: true },
+      });
+      if (!doc) {
+        return NextResponse.json({ error: "sourceDocumentId does not reference a document in your Company Vault." }, { status: 400 });
+      }
+      sourceDocumentId = doc.id;
+    }
     const expert = await prisma.expert.create({
       data: {
         companyId: company.id,
@@ -98,6 +116,7 @@ export async function POST(req: Request) {
         reviewedBy: actor.id,
         reviewedAt: new Date(),
         reviewNotes: "Manual expert record created by authenticated user.",
+        sourceDocumentId,
       },
     });
 

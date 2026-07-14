@@ -53,7 +53,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const tender = await prisma.tender.findFirst({
       where: { id, userId: actor.id },
-      include: { requirements: true, generatedDocuments: true },
+      include: {
+        requirements: true,
+        generatedDocuments: true,
+        // Tender has no direct `company` relation — company is reached via
+        // tender.user.company. Including a nonexistent relation throws a
+        // PrismaClientValidationError at runtime (HTTP 500) which broke the
+        // cross-user-isolation E2E test (foreign docId → expected 404, got 500).
+        user: {
+          select: {
+            company: {
+              select: { name: true, legalName: true, address: true, phone: true, email: true, website: true },
+            },
+          },
+        },
+      },
     });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
@@ -219,7 +233,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           title: tender.title ?? null,
           clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,
           reference: tender.reference ?? null,
+          submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
         },
+        company: (tender as any)?.user?.company
+          ? {
+              name: (tender as any).user.company.name ?? null,
+              address: (tender as any).user.company.address ?? null,
+              phone: (tender as any).user.company.phone ?? null,
+              email: (tender as any).user.company.email ?? null,
+              website: (tender as any).user.company.website ?? null,
+            }
+          : null,
         sourceDocument: {
           id: String(source.id),
           name: source.name ?? null,

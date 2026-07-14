@@ -33,7 +33,8 @@ repo-pr866/
 skills/
 
 # User uploads (transient — screenshots, etc.)
-upload/
+# Anchored to repo root so app/api/upload/route.ts is NOT ignored.
+/upload/
 
 # Tool-generated persisted outputs (Read tool large outputs)
 tool-results/

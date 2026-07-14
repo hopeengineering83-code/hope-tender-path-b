@@ -101,31 +101,34 @@ export async function validateTenderBeforeGeneration(
 }
 
 /**
- * Check if a tender is ready for export. Stricter than generation —
- * blocks on all generation blockers PLUS deadline-in-past.
+ * DEPRECATED — kept only to avoid breaking imports in older branches.
+ *
+ * The historic implementation hard-blocked export when the deadline had passed.
+ * This contradicts the application's content-first authority model: a passed
+ * deadline is an HIGH advisory in `lib/engine/export-readiness.ts` (a deadline
+ * extension may have been granted), never a hard block on export, generation,
+ * or any other workflow step.
+ *
+ * The canonical export gate is `assertTenderReadyForGenerationAndExport` in
+ * `lib/engine/generation-readiness-gate.ts` (called with `purpose: "final-zip"`),
+ * which delegates metadata eligibility to `lib/engine/tender-operation-gate.ts`.
+ * That gate already emits `DEADLINE_PASSED` as an advisory warning, never a block.
+ *
+ * This function is preserved as an advisory-only mirror of the draft validator
+ * so that any code still importing it receives consistent, non-blocking behavior.
+ * It will be removed in a follow-up once the dead import is cleaned up everywhere.
  */
-export function validateTenderBeforeExport(tender: Tender): PreGenerationValidationResult {
-  const blockers: string[] = [];
-  const warnings: string[] = [];
-
-  if (tender.clientName && isPlaceholderClientName(tender.clientName)) {
-    blockers.push(`clientName is a placeholder. Cannot export with unverified metadata.`);
-  }
-
-  if (tender.clientName && isClientNameContaminated(tender.clientName)) {
-    blockers.push(`clientName is contaminated. Cannot export with mixed/corrupted metadata.`);
-  }
-
-  // Deadline-in-past IS a hard block for export
-  if (tender.deadline && new Date(tender.deadline) < new Date()) {
-    blockers.push(
-      `Submission deadline has passed (${tender.deadline.toISOString().split("T")[0]}). Late submissions are typically rejected by evaluators. Export is blocked.`
-    );
-  }
-
-  return {
-    valid: blockers.length === 0,
-    blockers,
-    warnings,
-  };
+export async function validateTenderBeforeExport(
+  tender: Tender,
+): Promise<PreGenerationValidationResult> {
+  // Reuse the draft validator — final-export blocking is the responsibility of
+  // the central generation-readiness gate, not this helper.
+  return validateTenderBeforeGeneration({
+    ...tender,
+    requirements: [],
+  } as Tender & {
+    requirements: Array<{ id: string; sourcePageNumber?: number | null; sourceQuote?: string | null }>;
+    clientNameSourcePage?: number | null;
+    clientNameSourceQuote?: string | null;
+  });
 }
