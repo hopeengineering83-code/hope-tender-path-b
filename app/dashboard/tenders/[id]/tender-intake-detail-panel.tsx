@@ -74,6 +74,25 @@ function fmtNumber(value: number | null | undefined, currency?: string | null): 
 
 const MISSING_NOTE = NOT_EXTRACTED;
 
+// Minimum audit-reason length for submission-critical fields.
+// Must match MIN_CRITICAL_REASON_LENGTH in lib/engine/tender-fact-authority.ts.
+const MIN_CRITICAL_REASON_LENGTH = 10;
+
+// The confirmation bases the user can select for a critical-field manual entry.
+// Must match CONFIRMATION_BASES in lib/engine/tender-fact-authority.ts.
+const CONFIRMATION_BASIS_OPTIONS = [
+  { value: "PROCUREMENT_NOTICE", label: "Procurement notice" },
+  { value: "EMAIL_INVITATION", label: "Email invitation" },
+  { value: "PORTAL_LISTING", label: "Portal listing" },
+  { value: "PHONE_CALL_WITH_CLIENT", label: "Phone call with client" },
+  { value: "CLIENT_INSTRUCTION", label: "Client instruction" },
+  { value: "PRE_BID_MEETING", label: "Pre-bid meeting" },
+  { value: "CLARIFICATION_DOCUMENT", label: "Clarification document" },
+  { value: "PRIOR_KNOWLEDGE_OF_CLIENT", label: "Prior knowledge of client" },
+  { value: "PUBLIC_REGISTRY", label: "Public registry" },
+  { value: "OTHER_DOCUMENTED_SOURCE", label: "Other documented source" },
+];
+
 // Sanitize a value for display: returns "Not extracted" for invalid values
 function sanitize(fieldKey: MetadataFieldKey, value: unknown): string {
   if (isDisplayValidMetadataValue(fieldKey, value)) {
@@ -100,12 +119,13 @@ async function postOverride(
   fieldState: "NOT_APPLICABLE" | "USER_EDITED",
   overrideValue?: string,
   reason?: string,
+  confirmationBasis?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await fetch(`/api/tenders/${tenderId}/metadata-override`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ field, fieldState, overrideValue, reason }),
+      body: JSON.stringify({ field, fieldState, overrideValue, reason, confirmationBasis }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -128,10 +148,20 @@ function FactActions({
 }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
+  const [auditReason, setAuditReason] = useState("");
+  const [auditBasis, setAuditBasis] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Only show actions for missing or rejected-invalid facts
   if (fact.status !== "missing" && fact.status !== "rejected_invalid") return null;
+
+  // Submission-critical fields (final_submission) require a meaningful audit
+  // reason + confirmation basis on manual entry — see the "Authority model"
+  // block in app/api/tenders/[id]/metadata-override/route.ts. Without these,
+  // the backend rejects the override with MEANINGFUL_REASON_REQUIRED /
+  // CONFIRMATION_BASIS_REQUIRED, so the fields must be collected here.
+  const isCritical = fact.requiredFor === "final_submission";
+  const auditValid = !isCritical || (auditReason.trim().length >= MIN_CRITICAL_REASON_LENGTH && auditBasis !== "");
 
   async function handleIgnore() {
     setBusy(true);
@@ -141,13 +171,22 @@ function FactActions({
   }
 
   async function handleSaveEdit() {
-    if (!editValue.trim()) return;
+    if (!editValue.trim() || !auditValid) return;
     setBusy(true);
-    const result = await postOverride(tenderId, fact.key, "USER_EDITED", editValue.trim());
+    const result = await postOverride(
+      tenderId,
+      fact.key,
+      "USER_EDITED",
+      editValue.trim(),
+      isCritical ? auditReason.trim() : undefined,
+      isCritical ? auditBasis : undefined,
+    );
     setBusy(false);
     if (result.ok) {
       setEditing(false);
       setEditValue("");
+      setAuditReason("");
+      setAuditBasis("");
     }
     onAction("edit", result);
   }
@@ -159,31 +198,61 @@ function FactActions({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-2 mt-1">
-        <input
-          type="text"
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          placeholder={`Enter ${fact.label.toLowerCase()}`}
-          className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs"
-          disabled={busy}
-        />
+      <div className="mt-1 space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            placeholder={`Enter ${fact.label.toLowerCase()}`}
+            className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs"
+            disabled={busy}
+          />
+        </div>
+        {isCritical && (
+          <div className="rounded border border-amber-200 bg-amber-50 p-2 space-y-2">
+            <p className="text-[11px] text-amber-800">
+              {fact.label} is required before final submission. Provide an audit reason and where you learned this value.
+            </p>
+            <textarea
+              value={auditReason}
+              onChange={(e) => setAuditReason(e.target.value)}
+              placeholder={`Why is this correct? (at least ${MIN_CRITICAL_REASON_LENGTH} characters)`}
+              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+              rows={2}
+              disabled={busy}
+            />
+            <select
+              value={auditBasis}
+              onChange={(e) => setAuditBasis(e.target.value)}
+              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+              disabled={busy}
+            >
+              <option value="">Select a source…</option>
+              {CONFIRMATION_BASIS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={handleSaveEdit}
-          disabled={busy || !editValue.trim()}
+          disabled={busy || !editValue.trim() || !auditValid}
           className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
         >
           {busy ? "Saving…" : "Save"}
         </button>
         <button
           type="button"
-          onClick={() => { setEditing(false); setEditValue(""); }}
+          onClick={() => { setEditing(false); setEditValue(""); setAuditReason(""); setAuditBasis(""); }}
           disabled={busy}
           className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
         >
           Cancel
         </button>
+        </div>
       </div>
     );
   }
