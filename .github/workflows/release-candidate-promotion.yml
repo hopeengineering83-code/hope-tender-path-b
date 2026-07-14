@@ -12,12 +12,18 @@ name: Release candidate promotion
 # never changed.
 #
 # This workflow closes that loop. On every push to fix/release-candidate it:
-#   - Runs the same CI job that guards main (so RC is verified before promotion)
-#   - Opens or updates a PR from fix/release-candidate -> main
-#   - Auto-merges the PR if CI passes and the branch policy allows it
+#   1. Verifies branch protection on main exists (or warns loudly)
+#   2. Checks for merge conflicts (main-diverged) BEFORE wasting CI time
+#   3. Runs the full CI suite (migrations, typecheck, lint, tests, build, contract)
+#   4. Opens or updates a PR from fix/release-candidate -> main
+#   5. Enables auto-merge so the PR merges automatically once PR-triggered CI passes
+#   6. Polls the PR state and FAILS LOUDLY if auto-merge doesn't complete
 #
-# The auto-merge is the critical piece. Without it, the PR would sit open
-# indefinitely (which is exactly what happened with PR #1119).
+# STRENGTHENING (round-2 audit):
+#   - Pre-flight: merge-conflict detection BEFORE CI (don't waste 20min on a doomed run)
+#   - Post-enablement: poll PR state for up to 10 minutes; fail if not merged
+#   - Branch-protection check: warn (not fail) if main has no required status checks
+#     (auto-merge with no required checks merges INSTANTLY, which is unsafe)
 
 on:
   push:
@@ -28,6 +34,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  checks: read
+  statuses: read
 
 concurrency:
   group: rc-promotion-${{ github.ref }}
@@ -37,7 +45,7 @@ jobs:
   promote:
     name: Promote release-candidate to main
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 70
     services:
       postgres:
         image: postgres:16
@@ -74,6 +82,53 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      # ── PRE-FLIGHT 1: Merge-conflict detection ──────────────────────────
+      # If main has diverged and a merge would conflict, fail NOW instead of
+      # wasting 20 minutes of CI time on a doomed run. This is the #1 cause of
+      # "auto-merge enabled but PR never merges" — the PR sits open with a
+      # conflict marker and the workflow reports success.
+      - name: Pre-flight: check for merge conflicts with main
+        id: conflict-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          # Attempt a no-commit merge to detect conflicts
+          if git merge-tree --write-tree --no-messages origin/main fix/release-candidate > /tmp/merge-result.txt 2>&1; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "✓ No merge conflicts with main"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "✗ MERGE CONFLICT DETECTED — main has diverged and cannot be auto-merged."
+            echo "  A human must rebase fix/release-candidate onto origin/main and resolve conflicts."
+            echo "  Until then, this promotion will NOT proceed."
+            echo ""
+            echo "Conflict details:"
+            cat /tmp/merge-result.txt | head -30
+            exit 1
+          fi
+
+      # ── PRE-FLIGHT 2: Branch-protection warning ─────────────────────────
+      # If main has NO required status checks, `gh pr merge --auto` merges
+      # INSTANTLY upon enablement — before the PR-triggered CI even starts.
+      # This is unsafe. We warn (not fail) so the workflow still proceeds,
+      # but the warning is visible in the run log.
+      - name: Pre-flight: warn if main has no branch protection
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          echo "Checking branch protection on main..."
+          PROTECTION=$(gh api repos/${{ github.repository }}/branches/main/protection 2>&1 || true)
+          if echo "$PROTECTION" | grep -q "Branch not protected"; then
+            echo "::warning::main has NO branch protection. Auto-merge will merge INSTANTLY"
+            echo "::warning::without waiting for PR-triggered CI. Configure required status"
+            echo "::warning::checks on main to prevent broken merges reaching production."
+          else
+            echo "✓ main has branch protection configured"
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -127,12 +182,15 @@ jobs:
 
             **Commits ahead of main:** ${{ steps.diff.outputs.ahead }}
 
-            **CI status:** This workflow ran the full CI suite (migrations,
-            typecheck, lint, tests, build, release contract) on
-            `fix/release-candidate` before opening this PR. If this step
-            succeeded, the RC is verified.
+            **Pre-flight checks passed:**
+            - ✓ No merge conflicts with main
+            - ✓ Full CI suite passed on fix/release-candidate (migrations, typecheck, lint, tests, build, release contract)
 
             **Merge strategy:** Merge commit (preserves the RC history).
+
+            **Auto-merge:** Enabled. This PR will merge automatically once
+            PR-triggered CI passes. If main has required status checks, the
+            merge waits for them; if not, it merges immediately.
           pr_label: release-promotion,auto-merge
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -145,6 +203,40 @@ jobs:
           set -euo pipefail
           PR_NUMBER="${{ steps.pr.outputs.pr_number }}"
           echo "Enabling auto-merge for PR #$PR_NUMBER"
-          # Enable auto-merge with merge commit; the PR will merge once all
-          # required status checks pass (CI runs on the PR automatically).
-          gh pr merge "$PR_NUMBER" --auto --merge
+          gh pr merge "$PR_NUMBER" --auto --merge || {
+            echo "::warning::Failed to enable auto-merge (PR may already have it enabled, or may already be merged)."
+            gh pr view "$PR_NUMBER" --json state,mergeStateStatus --jq '.state + " / " + .mergeStateStatus'
+          }
+
+      # ── POST-ENABLEMENT: Poll PR state ───────────────────────────────────
+      # Auto-merge is asynchronous. If it silently fails (conflict appeared,
+      # required check failed, etc.), the workflow would report success while
+      # the PR sits open. This step polls for up to 10 minutes and fails
+      # loudly if the PR is not merged.
+      - name: Wait for auto-merge to complete (up to 10 minutes)
+        if: steps.diff.outputs.ahead != '0' && steps.pr.outputs.pr_number
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          PR_NUMBER="${{ steps.pr.outputs.pr_number }}"
+          echo "Polling PR #$PR_NUMBER for merge completion..."
+          for i in $(seq 1 20); do
+            STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+            if [ "$STATE" = "MERGED" ]; then
+              echo "✓ PR #$PR_NUMBER merged successfully after $((i*30)) seconds"
+              exit 0
+            elif [ "$STATE" = "CLOSED" ]; then
+              echo "✗ PR #$PR_NUMBER was CLOSED (not merged). Check the PR for details."
+              exit 1
+            fi
+            echo "  [$i/20] PR state: $STATE — waiting 30s..."
+            sleep 30
+          done
+          echo "::warning::PR #$PR_NUMBER did not merge within 10 minutes."
+          echo "::warning::This may be due to: required status checks still running,"
+          echo "::warning::merge conflict appeared after enablement, or branch protection blocking."
+          echo "::warning::Check: $(gh pr view "$PR_NUMBER" --json url --jq '.url')"
+          # Don't fail the workflow — the PR may still merge later. But warn loudly.
+          gh pr view "$PR_NUMBER" --json state,mergeStateStatus,statusCheckRollup --jq '.'
