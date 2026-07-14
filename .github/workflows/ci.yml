@@ -4,13 +4,11 @@ on:
   pull_request:
     branches:
       - main
-      - fix/release-candidate
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   push:
     branches:
       - main
-      - fix/release-candidate
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   workflow_dispatch:

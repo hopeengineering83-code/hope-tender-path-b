@@ -1,3 +1,46 @@
+
+---
+Task ID: RELEASE-MANAGER-CLEANUP
+Agent: release-manager (Super Z / GLM)
+Task: PR cleanup — merge #1124, close #1123/#1121, rebase+merge #1122
+
+Work Log:
+- PR #1124: Verified head unchanged (5934095a), all CI green, CodeQL findings
+  #11/#12 confirmed fixed in second commit. Updated description. Marked ready.
+  MERGED via squash. Merge SHA: aa87e9f0.
+- PR #1123: Confirmed primarily stale audit/documentation (17 docs + 3 config +
+  1 test file) based on obsolete 35-PR state. 3 runtime changes (console.log→
+  logger.info, badge text fix, archive-worklog.mjs) are minor and non-critical.
+  CLOSED as stale/superseded without merging.
+- PR #1121: Verified lib/ai-provider-env.ts and CANONICAL_AI_PROVIDER_ENV_LIST
+  do NOT exist on main. Narrow provider-list changes (3 files, +21 lines)
+  extracted into new PR #1125. 32-file AI rewrite NOT merged. CLOSED as
+  stale/conflicted.
+- PR #1122: Rebased onto current main (aa87e9f0, post-#1124 merge). Removed:
+  - .github/workflows/release-candidate-promotion.yml (DELETED)
+  - tests/rc-promotion-structural.test.ts (DELETED, tested deleted workflow)
+  - fix/release-candidate trigger additions reverted from:
+    .github/workflows/ci.yml
+    .github/workflows/generate-ai-policy-repair.yml
+    .github/workflows/release-hardening-contract.yml
+  Kept 7 security fixes:
+  1. Atomic session revocation (lib/auth.ts, app/api/users/[id]/route.ts)
+  2. Tender PUT RBAC (app/api/tenders/[id]/route.ts)
+  3. Empty-AI-response guard (lib/ai.ts)
+  4. Requirement-specific evidence guard (lib/engine/generate-elite.ts)
+  5. Logout failure logging (lib/auth.ts)
+  6. Forgot-password timing equalization (lib/auth.ts)
+  7. Pending-delete reimport exclusion (app/api/company/reimport/route.ts,
+     lib/company-knowledge-import-safe.ts)
+  All 5 new test files pass. Typecheck PASS, lint PASS.
+
+Stage Summary:
+- PR #1124 MERGED (SHA aa87e9f0)
+- PR #1123 CLOSED (stale/superseded)
+- PR #1121 CLOSED (stale/conflicted, narrow changes → PR #1125)
+- PR #1122 rebased + cleaned, CI pending, merge pending green CI
+- PR #1125 created (narrow provider-env-list, 3 files)
+- No auto-merge enabled. No provider order change. Anthropic remains last.
 # Worklog — PR #931 (hotfix/release-safety-consolidation)
 
 ---

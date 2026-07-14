@@ -4,10 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - fix/release-candidate
-  push:
-    branches:
-      - fix/release-candidate
   workflow_dispatch:
 
 permissions:
