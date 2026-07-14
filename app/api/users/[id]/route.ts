@@ -105,12 +105,29 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     });
   }
 
+  // SECURITY: When a password is changed (by the user or by an admin), every
+  // existing Session row for that user must be destroyed. Otherwise a stolen
+  // session cookie survives the password reset and remains valid for up to
+  // SESSION_TTL_DAYS — defeating the purpose of the reset. The token-based
+  // password-reset flow already does this via tx.session.deleteMany inside
+  // its transaction; this admin/user PUT path was missing it.
+  if (password) {
+    try {
+      await destroyAllSessions(id);
+    } catch (e) {
+      // Log but do not fail the request — the password has already been
+      // changed, and failing here would leave the user unable to log in
+      // with the new password. The stale sessions will expire naturally.
+      logger.warn(`[PUT /api/users/[id]] Failed to destroy sessions after password change for user ${id}:`, { detail: e });
+    }
+  }
+
   await logAction({
     userId: actor.id,
     action: "UPDATE",
     entityType: "User",
     entityId: id,
-    description: `User ${updated.email} updated${role ? ` (role → ${role})` : ""}`,
+    description: `User ${updated.email} updated${role ? ` (role → ${role})` : ""}${password ? " (password changed — all sessions revoked)" : ""}`,
   });
 
   return NextResponse.json({ user: updated });
