@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse, destroyAllSessions } from "../../../../lib/auth";
+import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { validatePassword } from "../../../../lib/password-policy";
 import { canPerform } from "../../../../lib/security/rbac";
@@ -82,27 +82,42 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   // SECURITY (ATOMIC): When a password is changed, the user.update AND the
-  // session revocation MUST happen in the same transaction. Without this,
-  // a transient DB failure between the update and session deletion would
-  // leave old sessions active for up to SESSION_TTL_DAYS (14 days).
+  // session revocation MUST happen in the same transaction. The previous
+  // implementation called destroyAllSessions() AFTER the update, OUTSIDE any
+  // transaction — if the DB had a transient failure between the two, the
+  // password was changed but all sessions survived for up to SESSION_TTL_DAYS
+  // (14 days), defeating the purpose of the reset.
+  //
+  // This mirrors the token-based password-reset flow in lib/secure-password-reset.ts
+  // which wraps both operations in prisma.$transaction.
+  //
+  // Note: if the admin is changing their OWN password, their current session
+  // is also revoked. This is correct — they will need to log in again with
+  // the new password. The client-side auth context will detect the invalid
+  // session and redirect to /login.
   let updated: { id: string; name: string | null; email: string; role: string; updatedAt: Date };
-  if (data.passwordHash) {
+  try {
     updated = await prisma.$transaction(async (tx) => {
       const result = await tx.user.update({
         where: { id },
         data,
         select: { id: true, name: true, email: true, role: true, updatedAt: true },
       });
-      // Revoke all sessions inside the same transaction.
-      await tx.session.deleteMany({ where: { userId: id } });
+      if (password) {
+        // Delete ALL sessions for this user (including the caller's own
+        // session if isSelf). This forces re-authentication with the new
+        // password on every device.
+        const deleted = await tx.session.deleteMany({ where: { userId: id } });
+        logger.info(`[PUT /api/users/[id]] Password changed for user ${id} — revoked ${deleted.count} session(s)`);
+      }
       return result;
     });
-  } else {
-    updated = await prisma.user.update({
-      where: { id },
-      data,
-      select: { id: true, name: true, email: true, role: true, updatedAt: true },
-    });
+  } catch (e) {
+    logger.error(`[PUT /api/users/[id]] Atomic password-change + session-revocation FAILED for user ${id}:`, { detail: e });
+    return NextResponse.json(
+      { error: "Failed to update user — the password was NOT changed and sessions were NOT revoked. Try again." },
+      { status: 500 }
+    );
   }
 
   await logAction({
@@ -110,7 +125,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     action: "UPDATE",
     entityType: "User",
     entityId: id,
-    description: `User ${updated.email} updated${role ? ` (role → ${role})` : ""}`,
+    description: `User ${updated.email} updated${role ? ` (role → ${role})` : ""}${password ? " (password changed — all sessions revoked atomically)" : ""}`,
   });
 
   return NextResponse.json({ user: updated });

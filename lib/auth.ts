@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { prisma, prismaReady } from "./prisma";
+import { logger } from "./observability";
 
 const SESSION_COOKIE = "hope_session";
 const SESSION_TTL_DAYS = 14;
@@ -54,8 +55,26 @@ async function deleteCookieSession(store: Awaited<ReturnType<typeof cookies>>): 
   if (!existing) return;
   try {
     await prisma.session.deleteMany({ where: { token: hashToken(existing) } });
-  } catch {
-    // Cookie removal must still proceed if the database is temporarily unavailable.
+  } catch (e) {
+    // SECURITY: If the DB delete fails, the Session row survives in the
+    // database. The cookie is still cleared on the client (so the current
+    // browser loses access), but a stolen copy of the cookie remains valid
+    // for up to SESSION_TTL_DAYS (14 days) until the row expires.
+    //
+    // We cannot fail-closed here (returning 500 from logout would trap
+    // users in a logged-in state), but we MUST log at error level so
+    // operators can detect session-replay attempts. The previous code
+    // silently swallowed the error with a bare `catch {}`, making this
+    // gap invisible.
+    //
+    // Operator action: if you see this log, investigate the DB outage and
+    // consider manually expiring the affected session rows.
+    logger.error(
+      `[auth] deleteCookieSession FAILED — session row survives in DB. ` +
+      `A stolen copy of this cookie remains valid for up to SESSION_TTL_DAYS. ` +
+      `Token hash (first 16 chars): ${hashToken(existing).slice(0, 16)}...`,
+      { detail: e }
+    );
   }
 }
 

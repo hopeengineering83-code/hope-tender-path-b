@@ -202,8 +202,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // RBAC: Only ADMIN and PROPOSAL_MANAGER may mutate tenders. VIEWER is
+  // read-only by policy, and REVIEWER has no TENDER_UPDATE permission.
+  // Previously this handler called getSession() (userId only) and accepted
+  // any authenticated role — a vertical privilege escalation allowing
+  // VIEWER/REVIEWER to edit tender metadata. Mirrors the DELETE handler's
+  // requireRole gate on line 322.
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   const rl = rateLimit(`tender-update:${userId}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });

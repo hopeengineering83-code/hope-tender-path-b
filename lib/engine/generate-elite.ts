@@ -1015,12 +1015,60 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
   }
 
-  // Zero-evidence guard: when both the selected records AND the vault are empty,
-  // log a production warning so it surfaces in Vercel logs. The AI will still
-  // run but its output will be generic — the user should add and review experts
-  // and projects before generating a submission-ready proposal.
-  if (experts.length === 0 && projects.length === 0) {
-    logger.warn(`[generate-elite] ZERO-EVIDENCE: No reviewed experts or projects available for tender "${tender.title ?? tender.id}". Proposal will lack specific evidence citations — add and review experts/projects before generating.`);
+  // Zero-evidence HARD BLOCK (defense-in-depth, round-2 strengthened):
+  //
+  // The /generate route has an EMPTY_VAULT gate that blocks when the vault
+  // has ZERO reviewed experts AND ZERO reviewed projects. But that gate has
+  // a HOLE: if the tender requires ONLY experts (no project requirements),
+  // and the vault has projects but ZERO reviewed experts, the route gate
+  // passes (vaultReviewedProjectCount > 0) — but generation proceeds with
+  // zero experts, producing a proposal with no expert citations despite the
+  // tender explicitly requiring them.
+  //
+  // This lib-level guard closes that hole by checking the REQUIREMENT-SPECIFIC
+  // evidence availability:
+  //   - If the tender requires experts (expertRequired > 0 or any requirement
+  //     is type EXPERT) and we have ZERO reviewed experts → BLOCK.
+  //   - If the tender requires projects and we have ZERO reviewed projects → BLOCK.
+  //   - If the tender requires neither, fall back to the both-empty check.
+  //
+  // This makes the guard STRICTER than the route gate — it catches the case
+  // where the vault has SOME evidence but not the TYPE the tender requires.
+  // This mirrors the NO_REVIEWED_EXPERT_EVIDENCE / NO_REVIEWED_PROJECT_EVIDENCE
+  // pattern in lib/ai-job-handlers.ts for the background PROPOSAL_GENERATION path.
+  const expertRequired = exactSelectionLimit(tender.requirements, "EXPERT");
+  const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
+  const tenderNeedsExperts = expertRequired > 0 || tender.requirements.some((r) => {
+    const type = (r as { requirementType?: string }).requirementType;
+    return type === "EXPERT" || type === "EXPERT_CV";
+  });
+  const tenderNeedsProjects = projectRequired > 0 || tender.requirements.some((r) => {
+    const type = (r as { requirementType?: string }).requirementType;
+    return type === "PROJECT_EXPERIENCE" || type === "PROJECT";
+  });
+
+  if (tenderNeedsExperts && experts.length === 0) {
+    throw new Error(
+      "ZERO_REVIEWED_EXPERT_EVIDENCE: This tender requires expert personnel, but zero reviewed experts are available. " +
+      "Add and review at least one expert CV in the Company Vault before generating documents. " +
+      `Tender: "${tender.title ?? tender.id}", required experts: ${expertRequired > 0 ? expertRequired : "1+"}.`
+    );
+  }
+  if (tenderNeedsProjects && projects.length === 0) {
+    throw new Error(
+      "ZERO_REVIEWED_PROJECT_EVIDENCE: This tender requires project experience references, but zero reviewed projects are available. " +
+      "Add and review at least one comparable project reference in the Company Vault before generating documents. " +
+      `Tender: "${tender.title ?? tender.id}", required projects: ${projectRequired > 0 ? projectRequired : "1+"}.`
+    );
+  }
+  // Fallback: if the tender requires neither (edge case), still block when
+  // both are empty — a proposal with zero evidence of any kind is generic.
+  if (!tenderNeedsExperts && !tenderNeedsProjects && experts.length === 0 && projects.length === 0) {
+    throw new Error(
+      "ZERO_REVIEWED_EVIDENCE: No reviewed experts or projects are available for generation. " +
+      "Add and review at least one expert CV or one comparable project reference in the Company Vault before generating documents. " +
+      `Tender: "${tender.title ?? tender.id}".`
+    );
   }
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
@@ -1035,8 +1083,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
   const companyEvidenceLines = buildCompanyEvidenceLines(company);
   const projectEvidenceLines = buildProjectEvidenceLines(projects);
-  const expertRequired = exactSelectionLimit(tender.requirements, "EXPERT");
-  const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
+  // expertRequired and projectRequired are computed above (line 1039-1040)
+  // as part of the zero-evidence hard-block guard. Reusing them here.
 
   const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
   // Cleaned tender title (sanitized via cleanTenderTitle inside
