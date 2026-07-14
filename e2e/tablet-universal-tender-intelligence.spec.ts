@@ -166,8 +166,13 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);
-    // The page should have an h1 (main heading)
-    await expect(page.locator("h1").first()).toBeVisible();
+    // Target the tenders page's own "Tenders" heading by name, not a
+    // positional h1 locator — the dashboard layout's desktop sidebar brand
+    // heading ("Hope Tender") is also an h1 and precedes the page heading in
+    // DOM order, but it's hidden below the "lg" breakpoint (800px tablet
+    // viewport), so a positional .first() locator resolves to a hidden
+    // element here.
+    await expect(page.getByRole("heading", { name: "Tenders", exact: true })).toBeVisible();
   });
 
   test("portrait orientation: 800w x 1280h is the active viewport", async ({ page }) => {

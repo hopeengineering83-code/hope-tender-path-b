@@ -492,7 +492,7 @@ export default async function TendersPage({
                     <div className="flex items-center gap-2 pt-1">
                       <Link
                         href={`/dashboard/tenders/${tender.id}`}
-                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                        className="flex min-h-11 items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
                       >
                         Open
                       </Link>
