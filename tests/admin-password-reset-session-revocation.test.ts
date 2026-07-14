@@ -8,39 +8,34 @@ import * as path from "node:path";
  *
  * Before the fix, when an admin changed a user's password via
  * PUT /api/users/[id], the user's existing Session rows were NOT destroyed.
- * This meant a stolen session cookie remained valid for up to
- * SESSION_TTL_DAYS (14 days) after the password was reset — defeating
- * the purpose of the reset.
+ * A stolen session cookie remained valid for up to SESSION_TTL_DAYS (14 days)
+ * after the password was reset — defeating the purpose of the reset.
  *
- * The token-based password-reset flow (forgot-password → reset) already
- * called tx.session.deleteMany inside its transaction. The admin/user PUT
- * path was missing this step.
+ * ROUND-2 STRENGTHENING: The initial fix called destroyAllSessions() AFTER
+ * prisma.user.update, OUTSIDE any transaction. If the DB had a transient
+ * failure between the two, the password was changed but sessions survived.
+ * The atomic fix wraps BOTH operations in prisma.$transaction so they
+ * succeed or fail together.
  *
  * Exploit scenario (pre-fix):
- *   1. Attacker steals a user's session cookie (e.g., via XSS on a
- *      subdomain, or by accessing a shared computer).
+ *   1. Attacker steals a user's session cookie (XSS, shared computer).
  *   2. Victim notices, asks admin to reset their password.
  *   3. Admin resets password via PUT /api/users/[id].
  *   4. Victim's password is changed — but the stolen cookie still works.
  *   5. Attacker continues to access the account for up to 14 days.
  *
- * The fix calls destroyAllSessions(id) after the password update.
+ * Exploit scenario (non-atomic fix, before round-2 strengthening):
+ *   1-4 as above.
+ *   5. DB has a transient blip between user.update and destroyAllSessions.
+ *   6. Password is changed, but sessions survive. Attacker still has access.
  */
 
-test("PUT /api/users/[id] destroys all sessions when password is changed", () => {
+test("PUT /api/users/[id] destroys all sessions ATOMICALLY when password is changed", () => {
   const routePath = path.join(
     process.cwd(),
     "app/api/users/[id]/route.ts"
   );
   const src = fs.readFileSync(routePath, "utf8");
-
-  // Must import destroyAllSessions from lib/auth.
-  assert.ok(
-    src.includes("destroyAllSessions"),
-    "PUT /api/users/[id] must import and use destroyAllSessions — " +
-    "previously a stolen session cookie survived an admin password reset " +
-    "for up to SESSION_TTL_DAYS."
-  );
 
   // Find the PUT handler body.
   const putIdx = src.indexOf("export async function PUT(");
@@ -48,19 +43,47 @@ test("PUT /api/users/[id] destroys all sessions when password is changed", () =>
   const deleteIdx = src.indexOf("export async function DELETE(");
   const putBody = src.slice(putIdx, deleteIdx > -1 ? deleteIdx : undefined);
 
-  // The destroyAllSessions call must be conditional on `password` being set
+  // MUST use prisma.$transaction — NOT a bare destroyAllSessions() call.
+  // The non-transactional approach has a race: if the DB fails between
+  // user.update and session.deleteMany, the password is changed but
+  // sessions survive.
+  assert.ok(
+    putBody.includes("prisma.$transaction"),
+    "PUT /api/users/[id] must wrap user.update + session.deleteMany in prisma.$transaction " +
+    "so the password change and session revocation are atomic. " +
+    "The non-transactional approach (destroyAllSessions after update) has a " +
+    "race condition where a DB failure leaves sessions alive."
+  );
+
+  // MUST call tx.session.deleteMany inside the transaction.
+  assert.ok(
+    putBody.includes("tx.session.deleteMany"),
+    "PUT /api/users/[id] must call tx.session.deleteMany INSIDE the transaction " +
+    "(not destroyAllSessions outside it)."
+  );
+
+  // The session deletion must be conditional on `password` being set
   // (we don't want to nuke all sessions on a name-only update).
   assert.ok(
     putBody.includes("if (password)"),
-    "destroyAllSessions must be called only when a password is actually changed"
+    "session.deleteMany must be called only when a password is actually changed"
   );
 
-  // The destroyAllSessions call must be AFTER the prisma.user.update.
-  const updateIdx = putBody.indexOf("prisma.user.update(");
-  const destroyIdx = putBody.indexOf("destroyAllSessions(");
+  // MUST NOT use the non-atomic destroyAllSessions pattern (the old fix).
+  // If destroyAllSessions appears in the PUT body, it means the non-atomic
+  // pattern is still present.
+  const hasNonAtomicDestroy = putBody.includes("await destroyAllSessions(");
   assert.ok(
-    updateIdx > -1 && destroyIdx > -1 && updateIdx < destroyIdx,
-    "destroyAllSessions must be called AFTER prisma.user.update " +
-    "(the password must be changed before sessions are revoked)"
+    !hasNonAtomicDestroy,
+    "PUT /api/users/[id] must NOT call destroyAllSessions() directly (non-atomic). " +
+    "Use tx.session.deleteMany inside prisma.$transaction instead."
+  );
+
+  // MUST have error handling that returns 500 on transaction failure
+  // (so the client knows the password was NOT changed).
+  assert.ok(
+    putBody.includes("catch") && putBody.includes("500"),
+    "PUT /api/users/[id] must catch transaction failures and return 500 " +
+    "so the client knows the password was NOT changed."
   );
 });
