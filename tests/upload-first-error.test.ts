@@ -1,91 +1,41 @@
-// Tests for the production error-response shape of upload-first (Gap 4).
-//
-// The route catches every thrown error in its outer try/catch and returns
-// a JSON body. In production:
-//   - body MUST NOT include a `stack` field
-//   - body MUST include `error`, `detail`, `hint`, and `requestId`
-//   - DATABASE_URL connection strings inside the message MUST be redacted
-//
-// We exercise these guarantees via two paths:
-//   1. Source inspection: pin the structure of the catch block.
-//   2. Behavioural test: call the inlined sanitiser logic on representative
-//      error messages and assert no DSNs survive.
-
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-// Recreate the sanitiser exactly the way the route uses it. If the route
-// implementation drifts, the source-inspection test below catches it.
-function sanitizeErrorDetail(input: string): string {
-  return input
-    .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
-    .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const rootDir = join(__dirname, "..");
 
-describe("Gap 4 — DATABASE_URL redaction inside error responses", () => {
-  it("redacts a postgres:// DSN in a Prisma-style message", () => {
-    const msg = 'connection error to postgresql://user:s3cr3t@db.example.com:5432/app failed';
-    const cleaned = sanitizeErrorDetail(msg);
-    assert.equal(cleaned.includes("s3cr3t"), false);
-    assert.equal(cleaned.includes("user"), false);
-    assert.match(cleaned, /postgresql:\/\/\[redacted\]/);
+const source = readFileSync(join(rootDir, "app/api/tenders/upload-first/route.ts"), "utf8");
+
+describe("upload-first route wrapper fail-closed errors", () => {
+  it("returns one stable correlated error contract", () => {
+    assert.match(source, /code: "TENDER_INTAKE_FAILED"/);
+    assert.match(source, /Tender intake could not be completed/);
+    assert.match(source, /requestId/);
+    assert.match(source, /status: 500/);
   });
 
-  it("redacts a postgresql:// DSN", () => {
-    const msg = 'cannot reach postgresql://app:hunter2@10.0.0.1/db';
-    const cleaned = sanitizeErrorDetail(msg);
-    assert.equal(cleaned.includes("hunter2"), false);
+  it("does not return exception-derived diagnostic fields", () => {
+    assert.doesNotMatch(source, /sanitizeError/);
+    assert.doesNotMatch(source, /\bdetail\s*:/);
+    assert.doesNotMatch(source, /\bhint\s*:/);
+    assert.doesNotMatch(source, /\bstack\s*:/);
+    assert.doesNotMatch(source, /body\.stack/);
+    assert.doesNotMatch(source, /error\.message/);
+    assert.doesNotMatch(source, /String\(error\)/);
   });
 
-  it("redacts mongodb / mysql / redis DSNs as a defence-in-depth", () => {
-    assert.equal(sanitizeErrorDetail("mongodb://user:pass@host/db").includes("pass"), false);
-    assert.equal(sanitizeErrorDetail("mongodb+srv://user:pass@host/db").includes("pass"), false);
-    assert.equal(sanitizeErrorDetail("mysql://user:pass@host/db").includes("pass"), false);
-    assert.equal(sanitizeErrorDetail("redis://user:pass@host:6379").includes("pass"), false);
+  it("keeps diagnostics server-side and correlated", () => {
+    assert.match(source, /extractRequestId\(req\)/);
+    assert.match(source, /logger\.error\("\[upload-first route\] wrapper failure"/);
+    assert.match(source, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
   });
 
-  it("leaves normal text untouched", () => {
-    assert.equal(sanitizeErrorDetail("nothing sensitive here"), "nothing sensitive here");
-  });
-});
-
-describe("Gap 4 — upload-first route source enforces production stack hiding", () => {
-  it("route catch block branches on NODE_ENV before attaching stack", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const src = await readFile(new URL("../app/api/tenders/upload-first/route.ts", import.meta.url), "utf8");
-
-    // Must check NODE_ENV in the catch handler.
-    assert.match(src, /NODE_ENV.*production/);
-
-    // requestId must be threaded through the response body.
-    assert.match(src, /requestId/);
-
-    // The body must include error, detail, hint, requestId. Accept either
-    // explicit object fields (`detail: detail`) or equivalent shorthand
-    // (`detail,`) so the guard validates behaviour rather than formatting.
-    assert.match(src, /error:/);
-    assert.match(src, /\bdetail\s*(?::|,)/);
-    assert.match(src, /\bhint\s*(?::|,)/);
-    assert.match(src, /\brequestId\s*(?::|,)/);
-
-    // Stack must only be attached when !isProduction.
-    assert.match(src, /!isProduction/);
-
-    // The literal `stack` field must NOT be unconditionally present.
-    // We confirm by searching for the assignment guard.
-    const stackAssignmentIdx = src.indexOf("body.stack");
-    assert.ok(stackAssignmentIdx > 0, "expected guarded body.stack assignment");
-
-    // Ensure sanitize call is applied to message + stack.
-    assert.match(src, /sanitizeError/);
-  });
-
-  it("does not return a top-level `stack` key in the literal object", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const src = await readFile(new URL("../app/api/tenders/upload-first/route.ts", import.meta.url), "utf8");
-    // Old behaviour:  return NextResponse.json({ error, detail, stack, ... })
-    // New behaviour:  return NextResponse.json(body)  // body is built conditionally
-    // We assert the old literal-object shape is gone.
-    assert.equal(/return NextResponse\.json\(\{[^}]*\bstack:/m.test(src), false, "stack must not appear inside a literal NextResponse.json object");
+  it("preserves delegation to the canonical upload-first handler", () => {
+    assert.match(source, /import\("\.\.\/\.\.\/\.\.\/\.\.\/lib\/tender-upload-first"\)/);
+    assert.match(source, /return await handleUploadFirstTender\(req\)/);
   });
 });

@@ -41,7 +41,7 @@ function inferPriority(text: string): string {
       : "INFORMATIONAL";
 }
 
-function inferType(text: string): string {
+export function inferType(text: string): string {
   if (/\bexpert\b|key personnel|team leader|specialist|curriculum vitae|\bcv\b|key staff|lead expert|senior expert/i.test(text)) return "EXPERT";
   if (/\bstaff\b|\bpersonnel\b/i.test(text) && !/technical\s+staff|support\s+staff|office\s+staff/i.test(text)) return "EXPERT";
   if (/project reference|similar\s+(?:project|assignment|work|experience)|completed\s+project|comparable\s+(?:project|assignment)|portfolio|past\s+performance|assignment\s+reference|reference\s+(?:project|sheet|letter)|prior\s+(?:project|assignment)|track\s+record/i.test(text)) return "PROJECT_EXPERIENCE";

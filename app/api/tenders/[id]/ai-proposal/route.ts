@@ -18,6 +18,7 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -82,6 +83,7 @@ function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
@@ -145,6 +147,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Create or resume an AiJob for this proposal session.
+  // Application-level tender ownership validation before job insertion: the
+  // database trigger (migration 20260712193000) is the hard boundary, but we
+  // verify ownership here first so a cross-tenant request gets a clean 404
+  // instead of a 500 from the trigger exception.
+  const tenderOwnership = await prisma.tender.findFirst({
+    where: { id: tenderId, userId: uid },
+    select: { id: true },
+  });
+  if (!tenderOwnership) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const proposalJob = resumeJobId
     ? await prisma.aiJob.findFirst({ where: { id: resumeJobId, tenderId, userId: uid } })
     : null;
@@ -261,13 +275,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "GENERATION_BLOCKED_REGEX_FALLBACK",
       entityType: "Tender",
       entityId: id,
-      description: "AI proposal generation blocked: analysis source is regex fallback and has not been human-approved.",
+      description: "AI proposal generation blocked: analysis source is regex fallback. Human approval is audit-only and does NOT authorize generation.",
     });
     return NextResponse.json({
       error: analysisGate.message,
       code: analysisGate.code,
       nextAction: analysisGate.nextAction,
-      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+      details: "Re-run AI Analyze with healthy providers to obtain a genuine AI analysis. Approving the regex fallback records an audit-only review — it does NOT unblock generation.",
     }, { status: 409 });
   }
 
@@ -501,10 +515,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       };
       // Chunked mode always uses parallel section generation (with a section
       // filter) so the correct per-chunk budgets in proposal-sections.ts apply.
-      const generateFn = (useParallel || sectionFilter)
-        ? generateProposalSectionsParallel(aiInputBase, sectionFilter)
-        : generateBenchmarkProposalWithAI(aiInputBase);
-      proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
+      // Preserve the full SectionProvenance to check for fallback sections.
+      let sectionProvenance: import("../../../../../lib/ai").SectionProvenance | null = null;
+      if (useParallel || sectionFilter) {
+        const result = await withProposalTimeout(
+          generateProposalSectionsParallel(aiInputBase, sectionFilter),
+          AI_PROPOSAL_TIMEOUT_MS,
+        );
+        sectionProvenance = result;
+        proposal = result.markdown;
+        // Block persistence if ANY section used deterministic fallback.
+        // The interactive route is draft-only (no GeneratedDocument rows),
+        // but we still mark the response so the client knows fallback was used.
+        if (result.anyFallback) {
+          return NextResponse.json({
+            success: true,
+            proposal,
+            fallback: true,
+            fallbackApplied: false,
+            anyFallback: true,
+            sectionProvenance: result.sections,
+            code: "AI_SECTION_PARTIAL_FALLBACK",
+            error: "One or more sections used deterministic fallback. The output is not fully AI-generated and cannot be persisted as a final proposal.",
+            persistBlocked: true,
+            persistBlockerCode: "LEGACY_AI_PROPOSAL_DRAFT_ONLY",
+            nextAction: "Retry after all AI providers are healthy.",
+            requestId,
+          }, { status: 200 });
+        }
+      } else {
+        proposal = await withProposalTimeout(
+          generateBenchmarkProposalWithAI(aiInputBase),
+          AI_PROPOSAL_TIMEOUT_MS,
+        );
+      }
     } catch (aiError) {
       const msg = sanitizeError(aiError);
       logger.error("Benchmark AI proposal failed in /ai-proposal route:", { detail: msg });

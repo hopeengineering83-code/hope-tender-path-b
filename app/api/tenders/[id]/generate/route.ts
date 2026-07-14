@@ -9,6 +9,7 @@ import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../l
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
@@ -275,8 +276,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     nextAction: "OPEN_COMPANY_READINESS",
     diagnosticId: `no-company-${id}`,
   }, { status: 422 });
-  const requiresExperts = tender.requirements.some((req) => req.requirementType === "EXPERT");
-  const requiresProjects = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  // Safety net alongside the AI-assigned requirementType: the AI classifier
+  // can plausibly miscategorize an expert-CV or project-reference requirement
+  // (e.g. as TECHNICAL) for an unusually-phrased tender, which would silently
+  // disable the reviewed-evidence gate below. inferType() is the same
+  // deterministic keyword classifier already used by the regex-fallback
+  // extraction path (lib/engine/analysis.ts) -- reusing it here as an
+  // OR-signal never weakens the gate, only strengthens it.
+  const looksLikeExpertOrProject = (req: { requirementType: string | null; title: string | null; description: string | null }) => {
+    const inferred = inferRequirementType(`${req.title ?? ""} ${req.description ?? ""}`);
+    return req.requirementType === "EXPERT" || req.requirementType === "PROJECT_EXPERIENCE"
+      ? req.requirementType
+      : inferred === "EXPERT" || inferred === "PROJECT_EXPERIENCE" ? inferred : null;
+  };
+  const requiresExperts = tender.requirements.some((req) => looksLikeExpertOrProject(req) === "EXPERT");
+  const requiresProjects = tender.requirements.some((req) => looksLikeExpertOrProject(req) === "PROJECT_EXPERIENCE");
   const readiness = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: requiresExperts, requireReviewedProjects: requiresProjects });
   if (!readiness.ingestionReady) return NextResponse.json({
     errorCode: "INGESTION_NOT_READY",
@@ -812,7 +826,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "GENERATION_BLOCKED_REGEX_FALLBACK",
       entityType: "Tender",
       entityId: id,
-      description: "Final generation blocked: analysis source is regex fallback and has not been human-approved.",
+      description: "Final generation blocked: analysis source is regex fallback. Human approval is audit-only and does NOT authorize generation.",
       requestId,
     });
     return NextResponse.json({
@@ -822,7 +836,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       blockers: [analysisGate.message],
       nextAction: analysisGate.nextAction,
       diagnosticId: `analysis-source-${id}`,
-      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+      details: "Re-run AI Analyze with healthy providers to obtain a genuine AI analysis. Approving the regex fallback records an audit-only review — it does NOT unblock generation.",
     }, { status: 409 });
   }
   // ── Source traceability gate ──────────────────────────────────────────────
@@ -972,22 +986,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const draftProjects = selectedProjectMatches.filter((m) => m.project.trustLevel !== "REVIEWED");
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
-  const expertRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "EXPERT" } });
-  const projectRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" } });
-  if (expertRequirementExists > 0 && selectedExpertMatches.length === 0) {
+  // Reuses requiresExperts/requiresProjects computed above (already
+  // safety-net-aware against AI requirementType miscategorization) instead
+  // of a second, independent requirementType-only count query -- keeps both
+  // checkpoints in this route consistent and avoids a redundant DB round trip.
+  if (requiresExperts && selectedExpertMatches.length === 0) {
     if (totalExpertMatches > 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
     return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first to create tender expert match rows, then review/select expert matches.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
-  if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
+  if (requiresProjects && selectedProjectMatches.length === 0) {
     if (totalProjectMatches > 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
     return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first to create tender project match rows, then review/select project matches.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
-  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
-  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
+  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && requiresExperts) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
+  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && requiresProjects) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 
   // ── Empty vault hard gate ─────────────────────────────────────────────────
   // A proposal built from zero evidence is entirely generic and unsuitable for

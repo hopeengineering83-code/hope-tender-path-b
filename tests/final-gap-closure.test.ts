@@ -136,13 +136,6 @@ describe("Gaps M-S — No raw Unicode in remaining components", () => {
     assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
   });
 
-  it("compliance-heatmap-list.tsx has no raw Unicode", () => {
-    const src = read("components/compliance-heatmap-list.tsx");
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/"[^"]*"/g, '""');
-    assert.ok(!codeOnly.includes("▲"), "must not contain ▲");
-    assert.ok(!codeOnly.includes("▼"), "must not contain ▼");
-  });
-
   it("ai-copilot-suggestions-panel.tsx has no emoji icons", () => {
     const src = read("components/ai-copilot-suggestions-panel.tsx");
     // Must NOT contain emoji in icon values

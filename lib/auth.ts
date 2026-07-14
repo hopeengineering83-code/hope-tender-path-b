@@ -150,3 +150,28 @@ export function forbiddenResponse() {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+/**
+ * Canonical role-authorization helper. Wraps requireRole in a try/catch and
+ * returns the appropriate HTTP response (403 Forbidden for role mismatches,
+ * 401 Unauthorized for missing/invalid sessions). Returns the authenticated
+ * actor on success, or null if the caller should return the response.
+ *
+ * This eliminates the need for every route to repeat the same
+ * `error.message === "Forbidden"` string matching pattern.
+ */
+export async function requireRoleOrRespond(
+  ...roles: Role[]
+): Promise<Awaited<ReturnType<typeof requireRole>> | Response> {
+  try {
+    return await requireRole(...roles);
+  } catch (error) {
+    // requireRole throws `new Error("Forbidden")` for role mismatches and
+    // `new Error("Unauthorized")` for missing sessions. Any other error is
+    // treated as unauthorized (fail-closed).
+    if (error instanceof Error && error.message === "Forbidden") {
+      return forbiddenResponse();
+    }
+    return unauthorizedResponse();
+  }
+}

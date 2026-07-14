@@ -128,7 +128,7 @@ jobs:
       - name: Seed isolated two-user browser fixtures
         run: node scripts/seed-e2e-user.mjs
 
-      - name: Browser smoke, authenticated intake, and cross-user isolation
+      - name: Browser smoke, authenticated intake, golden workflow, and cross-user isolation
         env:
           CSRF_MODE: "off"
           MISTRAL_API_KEY: ""
@@ -138,6 +138,14 @@ jobs:
           TOGETHER_API_KEY: ""
           DEEPSEEK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
+          # Map the CI-seeded credentials to the env vars the Playwright tests check.
+          # E2E_FULL_AUTH is already set in the job-level env; E2E_GOLDEN_AUTH enables
+          # the golden tender workflow. SMOKE_TEST_EMAIL/PASSWORD enable the production
+          # smoke and tablet tests. The credentials are generated per-run and seeded
+          # by scripts/seed-e2e-user.mjs — they are not real production accounts.
+          E2E_GOLDEN_AUTH: "true"
+          SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
         run: npm run test:e2e
 
       - name: Reject test-time source mutation

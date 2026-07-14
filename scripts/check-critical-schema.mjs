@@ -18,6 +18,24 @@ const REQUIRED_TABLES = [
   "SubmissionPlanState",
   "ExportPackage",
   "AuditLog",
+  // ─── Lane B addition: tables the generation-readiness gate, AI jobs,
+  // final-submission path, and operation-lock depend on. If any of these
+  // are missing (e.g. a rolled-back migration), the post-deploy gate
+  // must fail BEFORE the app serves traffic. Previously, check-critical-schema
+  // passed even if these tables were absent, leading to P2021 runtime errors
+  // on first request. ───
+  "Session", // auth-critical (session-based auth)
+  "BuildPlan", // generation-readiness-gate.ts (confirmedPlan check)
+  "TenderMetadataOverride", // canonical-field-state.ts (override resolver)
+  "FallbackApprovalRecord", // readiness-overrides.ts (fallback authorization)
+  "TenderWorkflowRun", // tender-operation-lock.ts (operation-level lock)
+  "TenderFactsLedger", // tender-facts-ledger-service.ts (effective facts)
+  "AiAnalyzeChunk", // chunk-recovery.ts + runtime-readiness-facts.ts
+  "AiAnalyzeRetryState", // retry-service.ts (AI analyze retry scheduler)
+  "ExtractionQualityOverride", // tender-release-snapshot.ts (override resolver)
+  "AiUsageRecord", // AI usage tracking
+  "TenderShare", // share-link security
+  "ProviderHealthSnapshot", // provider health persistence
 ];
 
 const REQUIRED_COLUMNS = {

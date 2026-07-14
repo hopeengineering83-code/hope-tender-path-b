@@ -49,6 +49,18 @@ export const OPERATIONAL_WARNING_FIELDS = new Set([
   "submissionEmailSubject",
   "evaluationCriteria",
   "evaluationMethodology",
+  // The fields below were already treated as operational-warning by
+  // tender-fact-authority.ts's copy of this set (and "uncertain budget"/
+  // "unknown category" are listed in this file's own module doc above)
+  // but were missing here, causing the two sets to silently disagree.
+  "pageLimit",
+  "validityDays",
+  "bidBondAmount",
+  "bidBondCurrency",
+  "numberOfCopiesRequired",
+  "mandatorySiteVisit",
+  "budget",
+  "category",
 ]);
 
 /**

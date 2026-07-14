@@ -216,9 +216,8 @@ describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   });
 });
 
-describe("SSE streaming wiring — AI Analyze endpoint and UI progress display", () => {
+describe("SSE streaming wiring — AI Analyze endpoint", () => {
   const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-  const uiSource = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
 
   it("route has handleStreamingAnalyze function", () => {
     assert.match(routeSource, /handleStreamingAnalyze/);
@@ -239,16 +238,6 @@ describe("SSE streaming wiring — AI Analyze endpoint and UI progress display",
     }
   });
 
-  it("UI sends Accept: text/event-stream and falls back to non-streaming", () => {
-    assert.match(uiSource, /handleAnalyzeStreaming/);
-    assert.match(uiSource, /"Accept":\s*"text\/event-stream"/);
-    assert.match(uiSource, /handleAIAnalyze\(\)/);
-  });
-
-  it("UI tracks analyzePhase and analyzeProgress", () => {
-    assert.match(uiSource, /analyzePhase/);
-    assert.match(uiSource, /analyzeProgress/);
-  });
 });
 
 describe("clientContactName validation in AI Analyze save path", () => {

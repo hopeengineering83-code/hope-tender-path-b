@@ -77,7 +77,13 @@ export async function acquireTenderOperationLock(
   userId: string,
 ): Promise<LockResult> {
   const logger = childLogger({ module: "[tender-operation-lock]" });
-  const idempotencyKey = `${operation}-${Date.now()}`;
+  // Derive idempotencyKey deterministically from (tenderId, operation) so
+  // two concurrent requests for the same tender+operation collide on the
+  // unique index. The previous `${operation}-${Date.now()}` made every
+  // request unique, so the unique index could NEVER fire — concurrent
+  // engine/generate/export runs were not prevented. The timestamp is
+  // still included as a separate column (createdAt) for staleness checks.
+  const idempotencyKey = `${operation}`;
   const now = new Date();
   const staleThreshold = new Date(now.getTime() - LOCK_TTL_MS);
 

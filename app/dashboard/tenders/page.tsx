@@ -226,7 +226,7 @@ export default async function TendersPage({
           <h1 className="text-2xl font-bold text-slate-900">Tenders</h1>
           <p className="mt-1 text-slate-500">{kpi.total} total · {tenders.length} shown</p>
         </div>
-        <Link href="/dashboard/tenders/new" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
+        <Link href="/dashboard/tenders/new" className="flex min-h-11 items-center rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
           + New Tender
         </Link>
       </div>
@@ -356,7 +356,7 @@ export default async function TendersPage({
               </p>
               <Link
                 href="/dashboard/tenders/new"
-                className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+                className="flex min-h-11 items-center rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
               >
                 Upload First Tender
               </Link>
@@ -425,7 +425,7 @@ export default async function TendersPage({
                       <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <Link href={`/dashboard/tenders/${tender.id}`} className="text-blue-600 hover:underline">
+                          <Link href={`/dashboard/tenders/${tender.id}`} className="inline-flex min-h-11 items-center text-blue-600 hover:underline">
                             Open workspace
                           </Link>
                           <DuplicateButton tenderId={tender.id} />
@@ -492,7 +492,7 @@ export default async function TendersPage({
                     <div className="flex items-center gap-2 pt-1">
                       <Link
                         href={`/dashboard/tenders/${tender.id}`}
-                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                        className="flex min-h-11 items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
                       >
                         Open
                       </Link>

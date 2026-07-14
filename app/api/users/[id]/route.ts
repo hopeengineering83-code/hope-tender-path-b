@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
+import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse, destroyAllSessions } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { validatePassword } from "../../../../lib/password-policy";
 import { canPerform } from "../../../../lib/security/rbac";
+import { logger } from "../../../../lib/observability";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -80,11 +81,29 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     data.passwordHash = await bcrypt.hash(password, 10);
   }
 
-  const updated = await prisma.user.update({
-    where: { id },
-    data,
-    select: { id: true, name: true, email: true, role: true, updatedAt: true },
-  });
+  // SECURITY (ATOMIC): When a password is changed, the user.update AND the
+  // session revocation MUST happen in the same transaction. Without this,
+  // a transient DB failure between the update and session deletion would
+  // leave old sessions active for up to SESSION_TTL_DAYS (14 days).
+  let updated: { id: string; name: string | null; email: string; role: string; updatedAt: Date };
+  if (data.passwordHash) {
+    updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.user.update({
+        where: { id },
+        data,
+        select: { id: true, name: true, email: true, role: true, updatedAt: true },
+      });
+      // Revoke all sessions inside the same transaction.
+      await tx.session.deleteMany({ where: { userId: id } });
+      return result;
+    });
+  } else {
+    updated = await prisma.user.update({
+      where: { id },
+      data,
+      select: { id: true, name: true, email: true, role: true, updatedAt: true },
+    });
+  }
 
   await logAction({
     userId: actor.id,

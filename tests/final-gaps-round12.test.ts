@@ -37,35 +37,61 @@ describe("round 12 — R1: generate-elite.ts TOCTOU fix", () => {
   });
 });
 
-describe("round 12 — O2: cleanup-old-records orphans + blob cleanup", () => {
-  const src = read("app/api/cron/cleanup-old-records/route.ts");
+describe("round 12 — O2: cleanup-old-records retryable storage cleanup", () => {
+  const route = read("app/api/cron/cleanup-old-records/route.ts");
+  const helper = read("lib/engine/retention-storage-cleanup.ts");
 
   it("deletes orphaned FallbackApprovalRecord rows", () => {
     assert.ok(
-      src.includes("fallbackApprovalRecord.deleteMany"),
+      route.includes("fallbackApprovalRecord.deleteMany"),
       "must delete FallbackApprovalRecord rows (was orphaned after AiJob delete)",
     );
   });
 
-  it("reads storagePaths BEFORE deleting TenderFile rows", () => {
-    assert.ok(
-      src.includes("filesToDelete"),
-      "must read filesToDelete before the deleteMany (was DB-only — orphans blobs)",
-    );
-    assert.ok(
-      src.includes("tenderFile.findMany"),
-      "must use findMany to read storage paths before deleteMany",
-    );
+  it("loads exact TenderFile candidates before touching storage or rows", () => {
+    assert.match(helper, /prisma\.tenderFile\.findMany\(/);
+    assert.match(helper, /deletedAt: \{ not: null, lt: args\.cutoff \}/);
+    assert.match(helper, /deletionStatus: "DELETED"/);
   });
 
-  it("cleans up blob storage after DB delete", () => {
-    assert.ok(src.includes("storage.deleteFile"), "must call storage.deleteFile for each file");
-    assert.ok(src.includes("blobsCleaned"), "must report blobsCleaned count in the response");
+  it("cleans storage before clearing claims and deleting each exact row", () => {
+    // With the atomic-claim flow the order is:
+    //   1. claim (updateMany with RETENTION_PURGE_CLAIMED)
+    //   2. storage delete (deleteStoredBytes)
+    //   3. clear byte claims (updateMany with storagePath: "")
+    //   4. delete row (deleteMany)
+    const claimPos = helper.indexOf("RETENTION_PURGE_CLAIMED");
+    const storagePos = helper.indexOf("deleteStoredBytes(args.storage");
+    // The clear-phase updateMany is the one that sets storagePath to "".
+    const clearPos = helper.indexOf('storagePath: ""');
+    const deletePos = helper.indexOf("prisma.tenderFile.deleteMany");
+    assert.ok(claimPos >= 0, "claim phase must exist");
+    assert.ok(storagePos > claimPos, "storage delete must come after claim");
+    assert.ok(clearPos > storagePos, "clear claims must come after storage delete");
+    assert.ok(deletePos > clearPos, "row delete must come after clear");
+    assert.match(route, /blobsCleaned: tenderFileCleanup\.blobsCleaned/);
+    assert.match(route, /tenderFileBlobFailures: tenderFileCleanup\.failures/);
   });
 
-  it("imports getStorageAdapter + logger", () => {
-    assert.ok(src.includes("getStorageAdapter"), "must import getStorageAdapter");
-    assert.ok(src.includes("import { logger }"), "must import logger for warning logs");
+  it("retains failed rows for retry and logs only the error class", () => {
+    // The atomic-claim flow uses distinct failure codes so a retrying worker
+    // knows whether storage or row-purge failed. The codes are defined as
+    // constants near the top of the helper module.
+    assert.match(helper, /STORAGE_DELETE_FAILED_CODE\s*=\s*"RETENTION_STORAGE_DELETE_FAILED"/);
+    assert.match(helper, /ROW_PURGE_FAILED_CODE\s*=\s*"RETENTION_ROW_PURGE_FAILED"/);
+    assert.match(helper, /errorClass: error instanceof Error \? error\.constructor\.name/);
+    assert.match(route, /purgeExpiredTenderFiles\(/);
+  });
+
+  it("uses an atomic claim marker so two workers cannot double-process a row", () => {
+    assert.match(helper, /PURGE_CLAIM_MARKER\s*=\s*"RETENTION_PURGE_CLAIMED"/);
+    assert.match(helper, /claim\.count === 0/);
+    assert.match(helper, /integrityFailureCode: \{ not: PURGE_CLAIM_MARKER \}/);
+  });
+
+  it("imports the storage adapter and logger through the canonical helper boundary", () => {
+    assert.ok(route.includes("getStorageAdapter"), "cron must obtain the storage adapter");
+    assert.ok(helper.includes('import { logger }'), "helper must log retry-safe diagnostics");
   });
 });
 

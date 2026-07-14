@@ -13,10 +13,13 @@
  * - Direct deletion outside this function remains blocked by the trigger
  * - tenderId is passed as a BOUND PARAMETER (no string interpolation, no
  *   unsafe raw query) and is also validated as a UUID as defense in depth
+ * - Every external storage pointer is persisted in a durable cleanup task
+ *   inside the same transaction before the tender and its rows disappear
  */
 
 import { Prisma } from "@prisma/client";
 import { logger } from "../observability";
+import { createTenderStorageCleanupTask } from "./tender-storage-cleanup-task";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,7 +27,8 @@ export async function executeTenderDeletion(
   tx: Prisma.TransactionClient,
   tenderId: string,
   correlationId: string,
-): Promise<{ generatedDocPaths: Array<{ storagePath: string | null; fileContent: string | null; exactFileName: string | null }> }> {
+  actorId: string,
+): Promise<{ storageCleanupTaskId: string | null }> {
   const logPhase = (phase: string, model: string) => {
     const msg = `[tender-delete] Phase: ${phase} | Model: ${model}`;
     console.log(`${msg} | tenderId: ${tenderId} | correlationId: ${correlationId}`);
@@ -65,12 +69,26 @@ export async function executeTenderDeletion(
   }
   await tx.$executeRaw`SELECT set_config('app.tender_deletion_context', ${tenderId}, true)`;
 
+  // Read every external pointer while the rows are still transactionally
+  // available. Database-base64 content is deleted with the row and does not
+  // require an external cleanup task.
+  const tenderFiles = await tx.tenderFile.findMany({
+    where: { tenderId },
+    select: {
+      storagePath: true,
+      originalFileName: true,
+    },
+  });
+
   // Layer 1: GeneratedDocument + nested children
-  // Read storagePath BEFORE deleting so we can clean up blob storage after
-  // the transaction commits (mirrors the TenderFile pattern in the DELETE
-  // route). Without this, generated DOCX/PDF blobs are orphaned in Vercel
-  // Blob storage — a cost leak and PII retention issue.
-  const generatedDocs = await tx.generatedDocument.findMany({ where: { tenderId }, select: { id: true, storagePath: true, fileContent: true, exactFileName: true } });
+  const generatedDocs = await tx.generatedDocument.findMany({
+    where: { tenderId },
+    select: {
+      id: true,
+      storagePath: true,
+      exactFileName: true,
+    },
+  });
   if (generatedDocs.length > 0) {
     const docIds = generatedDocs.map((d) => d.id);
     await wrapDelete("DocumentReview", tx.documentReview.deleteMany({ where: { documentId: { in: docIds } } }));
@@ -140,15 +158,31 @@ export async function executeTenderDeletion(
     throw e; // Roll back the entire transaction — fail closed.
   }
 
+  // Commit a durable retry manifest BEFORE the final Tender row disappears.
+  // The AuditLog row is independent of the Tender FK and survives the cascade.
+  const storageCleanupTaskId = await createTenderStorageCleanupTask({
+    tx,
+    userId: actorId,
+    tenderId,
+    correlationId,
+    files: [
+      ...tenderFiles.map((file) => ({
+        storagePath: file.storagePath,
+        fileName: file.originalFileName,
+      })),
+      ...generatedDocs.map((doc) => ({
+        storagePath: doc.storagePath,
+        fileName: doc.exactFileName ?? "generated-document",
+      })),
+    ],
+  });
+
   // Layer 10: Final Tender deletion
   await wrapDelete("Tender", tx.tender.delete({ where: { id: tenderId } }));
 
-  // Return generated doc paths for post-transaction blob cleanup.
-  return {
-    generatedDocPaths: generatedDocs.map((d) => ({
-      storagePath: d.storagePath,
-      fileContent: d.fileContent,
-      exactFileName: d.exactFileName,
-    })),
-  };
+  // Return only the durable cleanup task ID. External blob cleanup is handled
+  // exclusively through the durable manifest via processTenderStorageCleanupTask.
+  // This prevents orphaned blobs if the process crashes between the transaction
+  // commit and a direct deleteFile call.
+  return { storageCleanupTaskId };
 }

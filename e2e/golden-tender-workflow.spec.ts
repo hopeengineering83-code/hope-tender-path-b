@@ -1,5 +1,4 @@
-import { test, expect } from "@playwright/test";
-
+import { primaryTest as test, expect } from "./auth-helper";
 const FULL = process.env.E2E_GOLDEN_AUTH === "true";
 const email = process.env.E2E_TEST_EMAIL ?? "e2e-release-integrity@example.test";
 const password = process.env.E2E_TEST_PASSWORD ?? "E2E-release-integrity-password-2026";
@@ -34,33 +33,38 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
   test.setTimeout(120_000);
 
   test("upload-first → add source file → AI Analyze fallback → readiness gate", async ({ page }) => {
-    await page.goto("/login");
+    // The storage state is set by the global setup / project config.
+    // Navigate directly to the dashboard — no login needed.
+    await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    await page.fill("input[type=email], input[name=email]", email);
-    await page.fill("input[type=password], input[name=password]", password);
-
-    // Capture login API response for CI diagnostics
-    const [loginResp] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/auth/login"), { timeout: 15_000 }),
-      page.click("button[type=submit]"),
-    ]);
-    const loginStatus = loginResp.status();
-    const loginBody = await loginResp.text().catch(() => "(unreadable)");
-    console.log(`[E2E] login status=${loginStatus} body=${loginBody}`);
-
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
 
-    const intake = await page.request.post("/api/tenders/upload-first", {
-      multipart: {
-        title: "Golden Release Integrity Tender",
-        reference: "RFP-E2E-2026-001",
-        file: {
-          name: "golden-tender.txt",
-          mimeType: "text/plain",
-          buffer: Buffer.from(tenderText),
-        },
-      },
-    });
+    // upload-first is the only canonical tender-intake endpoint — it accepts
+    // multiple files in a single call (form.getAll("file") in
+    // lib/tender-upload-first.ts). The addendum file is included here rather
+    // than via a second call to the obsolete, nonexistent POST /api/upload
+    // route: there is no production endpoint that adds a source file to an
+    // already-created tender, so a "second upload" step would either 404
+    // against real code or require inventing a fake compatibility endpoint
+    // that doesn't exist in production. Testing the real contract means
+    // testing what upload-first actually supports.
+    // Playwright's `multipart` shorthand only accepts one value per key, so a
+    // second file under the same "file" field needs the native FormData API
+    // (Node 18+ global) — this still exercises the exact same
+    // form.getAll("file") code path in lib/tender-upload-first.ts.
+    const form = new FormData();
+    form.append("title", "Golden Release Integrity Tender");
+    form.append("reference", "RFP-E2E-2026-001");
+    form.append("file", new Blob([tenderText], { type: "text/plain" }), "golden-tender.txt");
+    form.append(
+      "file",
+      new Blob(
+        ["ADDENDUM: The submission deadline and evaluation criteria remain unchanged. Include a signed acknowledgement of this addendum."],
+        { type: "text/plain" },
+      ),
+      "golden-addendum.txt",
+    );
+    const intake = await page.request.post("/api/tenders/upload-first", { multipart: form });
     expect(intake.status(), await intake.text()).toBe(201);
     const intakeJson = await intake.json() as {
       success: boolean;
@@ -69,29 +73,16 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       nextAction: string;
     };
     expect(intakeJson.success).toBe(true);
-    expect(intakeJson.uploadedFiles).toBe(1);
+    expect(intakeJson.uploadedFiles).toBe(2);
     expect(intakeJson.tenderId).toBeTruthy();
     expect(["RUN_AI_ANALYZE", "RUN_OCR_OR_REEXTRACT"]).toContain(intakeJson.nextAction);
 
     const tenderId = intakeJson.tenderId;
     try {
-      const additionalUpload = await page.request.post("/api/upload", {
-        multipart: {
-          tenderId,
-          classification: "Tender Addendum",
-          file: {
-            name: "golden-addendum.txt",
-            mimeType: "text/plain",
-            buffer: Buffer.from("ADDENDUM: The submission deadline and evaluation criteria remain unchanged. Include a signed acknowledgement of this addendum."),
-          },
-        },
-      });
-      expect(additionalUpload.status(), await additionalUpload.text()).toBe(202);
-      const uploadJson = await additionalUpload.json() as { success: boolean; uploaded: number; errors: number };
-      expect(uploadJson.success).toBe(true);
-      expect(uploadJson.uploaded).toBe(1);
-      expect(uploadJson.errors).toBe(0);
-
+      // Confirm the real contract for inspecting a tender's source files:
+      // GET /api/tenders/{tenderId} and inspect its files array (there is no
+      // /api/tenders/{id}/source-files endpoint that returns this shape for
+      // this purpose — see tender-pipeline.spec.ts for the same fix).
       const beforeAnalyze = await page.request.get(`/api/tenders/${tenderId}`);
       expect(beforeAnalyze.status(), await beforeAnalyze.text()).toBe(200);
       const beforeJson = await beforeAnalyze.json() as { files: Array<{ id: string; extractedTextLength: number }> };

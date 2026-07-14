@@ -106,6 +106,43 @@ interface LogEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Normalize Error instances for JSON.stringify. Because Error properties
+ * (message, stack, name) are non-enumerable, JSON.stringify(new Error("x"))
+ * produces "{}" — losing the message and stack from structured logs. This
+ * helper recursively converts Error instances to plain objects so the
+ * diagnostic information survives serialization. ~45 call sites across the
+ * codebase pass raw Error objects as context values (e.g. `{ detail: err }`);
+ * without this normalizer, every one of those log lines has `detail: {}`.
+ */
+function normalizeForJson(value: unknown, seen: Set<unknown> = new Set()): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  // Guard against circular references
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (value instanceof Error) {
+    const obj: Record<string, unknown> = {
+      name: value.name,
+      message: value.message,
+    };
+    if (value.stack) obj.stack = value.stack;
+    // Prisma-specific enrichment (code, meta) — non-enumerable but accessible
+    const prismaErr = value as Error & { code?: string; meta?: unknown };
+    if (prismaErr.code) obj.code = prismaErr.code;
+    if (prismaErr.meta !== undefined) obj.meta = normalizeForJson(prismaErr.meta, seen);
+    return obj;
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => normalizeForJson(v, seen));
+  }
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    result[k] = normalizeForJson(v, seen);
+  }
+  return result;
+}
+
 function emit(level: LogLevel, msg: string, context?: LogContext): void {
   if (LEVEL_RANK[level] < activeLevelRank()) return;
 
@@ -122,7 +159,9 @@ function emit(level: LogLevel, msg: string, context?: LogContext): void {
     level,
     msg,
     ...(requestId ? { requestId } : {}),
-    ...(context ?? {}),
+    // Normalize context so Error instances survive JSON.stringify.
+    // Without this, { detail: err } serializes to { detail: {} }.
+    ...(context ? normalizeForJson(context) as LogContext : {}),
   };
 
   // Use the matching console method so Vercel's log filters still work

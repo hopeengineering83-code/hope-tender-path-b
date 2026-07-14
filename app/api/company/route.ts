@@ -1,11 +1,11 @@
 import { logger } from "../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
-import { getSession } from "../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../lib/auth";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
-import { cleanupSupportDocImportedRecords } from "../../../lib/company-support-doc-cleanup";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
 import { logAction } from "../../../lib/audit";
+import { extractRequestId } from "../../../lib/request-id";
 
 const DEFAULT_COMPANY_NAME = "Hope Urban Planning Architectural and Engineering Consultancy";
 const DEFAULT_COMPANY_DESCRIPTION = "AI-powered tender proposal generation workspace";
@@ -40,7 +40,6 @@ function toJsonArray(value: unknown, existing?: string | null): string {
   }
   return existing ?? JSON.stringify([]);
 }
-
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
@@ -91,8 +90,10 @@ function deriveCompanyProfileFallback(docs: Array<{ category: string; originalFi
 }
 
 async function loadCompany(userId: string) {
-  const companyBase = await ensureCompanyForUser(prisma, userId);
-  await cleanupSupportDocImportedRecords(companyBase.id);
+  await ensureCompanyForUser(prisma, userId);
+  // Read requests must not delete Expert or Project records. Destructive
+  // support-import cleanup is available only through its explicit role-gated
+  // mutation endpoint.
   return prisma.company.findUnique({
     where: { userId },
     include: {
@@ -143,14 +144,22 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
+  }
 
-  const rl = rateLimit(`company-update:${userId}`, MUTATION_RATE_LIMIT);
+  const requestId = extractRequestId(req);
+  const rl = await rateLimitPersistent(`company-update:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
     return NextResponse.json(
-      { error: "Too many profile update requests. Wait a moment and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
-      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+      { error: "Too many profile update requests. Wait a moment and retry.", code: "RATE_LIMITED", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
 
@@ -158,10 +167,22 @@ export async function PUT(req: Request) {
   try {
     const body = await req.json().catch(() => null);
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
-    const existing = await prisma.company.findUnique({ where: { userId } });
+
+    // Validate setupCompletedAt BEFORE any database write.
+    if (body.setupCompletedAt !== undefined && body.setupCompletedAt !== null) {
+      const validated = new Date(body.setupCompletedAt as string);
+      if (isNaN(validated.getTime())) {
+        return NextResponse.json(
+          { error: "setupCompletedAt must be a valid ISO 8601 date string", code: "INVALID_DATE", field: "setupCompletedAt", requestId },
+          { status: 400 },
+        );
+      }
+    }
+
+    const existing = await prisma.company.findUnique({ where: { userId: actor.id } });
 
     const company = await prisma.company.upsert({
-      where: { userId },
+      where: { userId: actor.id },
       create: {
         id: crypto.randomUUID(),
         name: clean(body.name) || DEFAULT_COMPANY_NAME,
@@ -176,8 +197,10 @@ export async function PUT(req: Request) {
         sectors: toJsonArray(body.sectors),
         profileSummary: keepOrNull(body.profileSummary),
         knowledgeMode: clean(body.knowledgeMode) || "PROFILE_FIRST",
-        setupCompletedAt: body.setupCompletedAt ? new Date(body.setupCompletedAt as string) : null,
-        // Round-10: institutional metadata used by the proposal generator
+        setupCompletedAt: body.setupCompletedAt ? (() => {
+          const d = new Date(body.setupCompletedAt as string);
+          return isNaN(d.getTime()) ? null : d;
+        })() : null,
         gmName: keepOrNull(body.gmName),
         gmTitle: keepOrNull(body.gmTitle),
         gmLicense: keepOrNull(body.gmLicense),
@@ -187,7 +210,7 @@ export async function PUT(req: Request) {
         registrationNumber: keepOrNull(body.registrationNumber),
         tin: keepOrNull(body.tin),
         vat: keepOrNull(body.vat),
-        userId,
+        userId: actor.id,
       },
       update: {
         name: chooseIncomingOrExisting(body.name, existing?.name) || DEFAULT_COMPANY_NAME,
@@ -202,8 +225,10 @@ export async function PUT(req: Request) {
         sectors: toJsonArray(body.sectors, existing?.sectors),
         profileSummary: chooseIncomingOrExisting(body.profileSummary, existing?.profileSummary),
         ...(body.knowledgeMode !== undefined && { knowledgeMode: clean(body.knowledgeMode) || existing?.knowledgeMode || "PROFILE_FIRST" }),
-        ...(body.setupCompletedAt !== undefined && { setupCompletedAt: new Date(body.setupCompletedAt as string) }),
-        // Round-10: institutional metadata
+        ...(body.setupCompletedAt !== undefined && { setupCompletedAt: body.setupCompletedAt === null ? null : (() => {
+          const d = new Date(body.setupCompletedAt as string);
+          return isNaN(d.getTime()) ? null : d;
+        })() }),
         ...(body.gmName !== undefined && { gmName: chooseIncomingOrExisting(body.gmName, existing?.gmName) }),
         ...(body.gmTitle !== undefined && { gmTitle: chooseIncomingOrExisting(body.gmTitle, existing?.gmTitle) }),
         ...(body.gmLicense !== undefined && { gmLicense: chooseIncomingOrExisting(body.gmLicense, existing?.gmLicense) }),
@@ -221,15 +246,9 @@ export async function PUT(req: Request) {
       },
     });
 
-    await cleanupSupportDocImportedRecords(company.id);
+    // Profile updates must not delete knowledge records as an unrelated side
+    // effect. The explicit support-import cleanup endpoint owns that operation.
 
-    // ─── Auto-extract structured facts from profileSummary (May-7 gap) ────
-    // The May-7 benchmark diff showed Section A.2 emitting "Bid-Team
-    // Action: confirm X" for every cell because the structured columns
-    // (foundingYear, headcount, gmName, tin, vat, licenseGrade) were
-    // empty. We now run a regex-based extractor over profileSummary and
-    // fill the gaps WITHOUT overwriting any value the user already
-    // entered manually. Idempotent: re-running produces the same fields.
     try {
       const { extractCompanyFacts, mergeFactsIntoCompany } = await import("../../../lib/engine/company-fact-extractor");
       if (company.profileSummary && company.profileSummary.trim().length > 100) {
@@ -240,23 +259,43 @@ export async function PUT(req: Request) {
           logger.info(`[company-fact-extractor] Auto-filled ${Object.keys(update).length} field(s):`, { detail: Object.keys(update).join(", ") });
         }
       }
-    } catch (eErr) {
-      // Non-critical: the company is already saved. Log and continue.
-      logger.warn("[company-fact-extractor] auto-extraction failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
+    } catch (error) {
+      logger.warn("[company-fact-extractor] auto-extraction failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
     }
 
     const refreshed = await prisma.company.findUnique({
-      where: { userId },
+      where: { userId: actor.id },
       include: { experts: { orderBy: { createdAt: "desc" } }, projects: { orderBy: { createdAt: "desc" } } },
     });
 
     if (!refreshed) return NextResponse.json({});
-    void logAction({ userId, action: "COMPANY_PROFILE_UPDATED", entityType: "Company", entityId: refreshed.id, description: "Company profile updated" }).catch(() => {});
+    void logAction({
+      userId: actor.id,
+      action: "COMPANY_PROFILE_UPDATED",
+      entityType: "Company",
+      entityId: refreshed.id,
+      description: "Company profile updated",
+      requestId,
+    }).catch((error) => {
+      logger.warn("company profile audit persistence failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    });
     const docs = await getDocumentsForFallback(refreshed.id);
     const fallback = deriveCompanyProfileFallback(docs);
     return NextResponse.json(serializeCompany(refreshed, fallback));
   } catch (error) {
-    logger.error("Request failed", { detail: error });
-    return NextResponse.json({ error: "Failed to save company" }, { status: 500 });
+    logger.error("company profile update failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      { error: "Failed to save company", code: "COMPANY_PROFILE_UPDATE_FAILED", requestId },
+      { status: 500 },
+    );
   }
 }

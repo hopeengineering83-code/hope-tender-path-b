@@ -1,6 +1,9 @@
 import { prisma } from "../prisma";
 import { forbidsBranding } from "./scope-policy";
 import { applyUploadedDocxLetterheadTemplate } from "./docx-letterhead-template";
+import { inspectActualFileBytes } from "./persisted-byte-integrity";
+
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function looksLikeDocx(buffer: Buffer): boolean {
   return buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
@@ -20,7 +23,7 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
       requirements: true,
       generatedDocuments: {
         where: { generationStatus: "GENERATED" },
-        select: { id: true, fileContent: true, contentSummary: true },
+        select: { id: true, name: true, exactFileName: true, fileContent: true, contentSummary: true, storagePath: true },
       },
     },
   });
@@ -56,17 +59,37 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
   let updated = 0;
   for (const doc of tender.generatedDocuments) {
     if (!doc.fileContent) continue;
+    // Storage-backed rows: readers serve the storage object first, so the
+    // inline copy may be stale. Branding it and making it canonical could
+    // replace authoritative bytes — skip instead of guessing.
+    if (doc.storagePath) continue;
     const generatedBuffer = Buffer.from(doc.fileContent, "base64");
     if (!looksLikeDocx(generatedBuffer)) continue;
 
     const applied = await applyUploadedDocxLetterheadTemplate(generatedBuffer, templateBuffer);
     if (applied.equals(generatedBuffer)) continue;
 
+    // Re-pin persisted integrity from the LETTERHEADED bytes. Overwriting
+    // fileContent while the stored digests still describe the pre-letterhead
+    // bytes makes every verified-integrity read (final ZIP, download) fail
+    // with a mismatch. Letterhead is cosmetic: if the branded bytes cannot
+    // verify, keep the original document intact rather than degrade it.
+    const integrity = inspectActualFileBytes({
+      bytes: applied,
+      filename: doc.exactFileName ?? `${doc.name}.docx`,
+      claimedMimeType: DOCX_MIME,
+    });
+    if (integrity.integrityStatus !== "VERIFIED") continue;
+
     const summary = doc.contentSummary ?? "Generated document";
     await prisma.generatedDocument.update({
       where: { id: doc.id },
       data: {
         fileContent: applied.toString("base64"),
+        ...integrity,
+        // Legacy final-ZIP digest columns must describe the same bytes.
+        sha256: integrity.contentSha256,
+        byteSize: integrity.contentByteLength,
         contentSummary: /uploaded Word letterhead applied/i.test(summary) ? summary : `${summary} | uploaded Word letterhead applied: ${letterhead.originalFileName}`,
         updatedAt: new Date(),
       },

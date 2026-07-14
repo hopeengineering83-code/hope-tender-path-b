@@ -1,10 +1,12 @@
+import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
 import { logAction } from "../../../../../lib/audit";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 // Vercel route timeout — knowledge repair runs the configured AI provider chain
 // across uploaded documents. 60 = Hobby max.
@@ -71,17 +73,17 @@ async function buildDiagnostics(companyId: string) {
     };
   });
 
-  const expertSourceDocuments = documentDiagnostics.filter((d) => d.isExpertSource).length;
-  const projectSourceDocuments = documentDiagnostics.filter((d) => d.isProjectSource).length;
-  const extractedDocuments = documentDiagnostics.filter((d) => d.status === "EXTRACTED").length;
-  const reviewedExperts = experts.filter((e) => e.trustLevel === "REVIEWED").length;
-  const aiDraftExperts = experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
-  const regexDraftExperts = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
-  const reviewedProjects = projects.filter((p) => p.trustLevel === "REVIEWED").length;
-  const aiDraftProjects = projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
-  const regexDraftProjects = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT").length;
-  const expectedExperts = docs.map((d) => expectedExpertCount(d.extractedText)).find((n) => n && n > 0) ?? null;
-  const expectedProjects = docs.map((d) => expectedProjectCount(d.extractedText)).find((n) => n && n > 0) ?? null;
+  const expertSourceDocuments = documentDiagnostics.filter((document) => document.isExpertSource).length;
+  const projectSourceDocuments = documentDiagnostics.filter((document) => document.isProjectSource).length;
+  const extractedDocuments = documentDiagnostics.filter((document) => document.status === "EXTRACTED").length;
+  const reviewedExperts = experts.filter((expert) => expert.trustLevel === "REVIEWED").length;
+  const aiDraftExperts = experts.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
+  const regexDraftExperts = experts.filter((expert) => !expert.trustLevel || expert.trustLevel === "REGEX_DRAFT").length;
+  const reviewedProjects = projects.filter((project) => project.trustLevel === "REVIEWED").length;
+  const aiDraftProjects = projects.filter((project) => project.trustLevel === "AI_DRAFT").length;
+  const regexDraftProjects = projects.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
+  const expectedExperts = docs.map((document) => expectedExpertCount(document.extractedText)).find((count) => count && count > 0) ?? null;
+  const expectedProjects = docs.map((document) => expectedProjectCount(document.extractedText)).find((count) => count && count > 0) ?? null;
 
   const gaps: Gap[] = [];
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company profile, CVs, project references, legal records, and evidence documents." });
@@ -147,41 +149,72 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const rl = await rateLimitPersistent(`knowledge-repair:${userId}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) {
-    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
-    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
   }
 
-  await prismaReady;
+  const requestId = extractRequestId(req);
+  const rl = await rateLimitPersistent(`knowledge-repair:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests", code: "RATE_LIMITED", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
-  const company = await getCompany(userId);
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+  try {
+    await prismaReady;
+    const company = await getCompany(actor.id);
+    if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-  const body = await req.json().catch(() => ({}));
-  const force = body?.force !== false;
+    // The importer signature is importCompanyKnowledgeFromDocuments(companyId).
+    // There is no force parameter — the importer always re-derives from the
+    // current document set. Do not extract or audit a force flag that has no
+    // effect on the runtime; that would mislead operators into thinking they
+    // can control re-import behavior via the request body.
+    const result = await importCompanyKnowledgeFromDocuments(company.id);
+    const diagnostics = await buildDiagnostics(company.id);
 
-  const result = await importCompanyKnowledgeFromDocuments(company.id);
-  const diagnostics = await buildDiagnostics(company.id);
+    void logAction({
+      userId: actor.id,
+      action: "COMPANY_KNOWLEDGE_REPAIR",
+      entityType: "Company",
+      entityId: company.id,
+      description: `Ran company knowledge repair for ${company.name}: ${result.expertsCreated} experts and ${result.projectsCreated} projects created`,
+      metadata: {
+        expertsCreated: result.expertsCreated,
+        projectsCreated: result.projectsCreated,
+        aiUsed: result.aiUsed,
+        aiFailures: result.aiFailures,
+        diagnostics: diagnostics.totals,
+      },
+      requestId,
+    }).catch((error) => {
+      logger.warn("company knowledge repair audit persistence failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    });
 
-  await logAction({
-    userId,
-    action: "COMPANY_KNOWLEDGE_REPAIR",
-    entityType: "Company",
-    entityId: company.id,
-    description: `Ran company knowledge repair for ${company.name}: ${result.expertsCreated} experts and ${result.projectsCreated} projects created`,
-    metadata: {
-      force,
-      expertsCreated: result.expertsCreated,
-      projectsCreated: result.projectsCreated,
-      aiUsed: result.aiUsed,
-      aiFailures: result.aiFailures,
-      diagnostics: diagnostics.totals,
-    },
-  });
-
-  return NextResponse.json({ result: { ...result, diagnostics } });
+    return NextResponse.json({ result: { ...result, diagnostics }, requestId });
+  } catch (error) {
+    logger.error("company knowledge repair failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      {
+        error: "Company knowledge repair failed. Retry or contact support with the request ID.",
+        code: "COMPANY_KNOWLEDGE_REPAIR_FAILED",
+        requestId,
+      },
+      { status: 500 },
+    );
+  }
 }

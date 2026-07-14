@@ -79,8 +79,15 @@ describe("tablet E2E spec — exists and covers universal tender intelligence", 
 
   it("spec covers dashboard at tablet viewport", () => {
     const src = read(specPath);
-    assert.ok(src.includes("dashboard redirects to login"), "must test unauthenticated dashboard redirect");
+    // The unauthenticated dashboard-redirect assertion was relocated to
+    // e2e/anonymous/tablet-dashboard-redirect.spec.ts — it's anonymous
+    // (no-session) behavior, not authenticated tablet UX, and now runs
+    // under both chromium-anonymous and samsung-tablet-anonymous like the
+    // rest of the anonymous suite instead of duplicating inside the
+    // authenticated-fixture tablet spec.
     assert.ok(src.includes("authenticated dashboard fits at 800px"), "must test authenticated dashboard at 800px");
+    const anonymousSpec = read("e2e/anonymous/tablet-dashboard-redirect.spec.ts");
+    assert.ok(anonymousSpec.includes("dashboard redirects to login"), "the anonymous suite must test unauthenticated dashboard redirect");
   });
 
   it("spec covers tender intake page at tablet viewport", () => {

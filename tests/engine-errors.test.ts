@@ -11,7 +11,10 @@ describe("actionableEngineError", () => {
     // users to the async ENGINE_RUN job (60s budget per chunk), not
     // synchronous retry which will hit the same 60s cap.
     assert.equal(mapped.body.nextAction, "RETRY_AS_BACKGROUND_JOB");
-    assert.ok(mapped.body.error.includes("operation timed out after 60s"));
+    // SECURITY: the raw error message MUST NOT appear in the public response.
+    // The error field is a safe static summary, not the raw exception text.
+    assert.ok(!mapped.body.error.includes("operation timed out after 60s"));
+    assert.ok(mapped.body.error.includes("timed out"));
   });
 
   it("maps Vercel FUNCTION_INVOCATION_TIMEOUT to ENGINE_TIMEOUT", () => {
@@ -23,6 +26,8 @@ describe("actionableEngineError", () => {
     const mapped = actionableEngineError(new Error("FUNCTION_INVOCATION_TIMEOUT sfo1::cj4lk-1778959201236-5d95d5e9a2b2"));
     assert.equal(mapped.body.code, "ENGINE_TIMEOUT");
     assert.equal(mapped.body.nextAction, "RETRY_AS_BACKGROUND_JOB");
+    // SECURITY: the raw Vercel internal ID must NOT appear in the response.
+    assert.ok(!JSON.stringify(mapped.body).includes("sfo1::"));
   });
 
   it("maps database/runtime failures to ENGINE_DATABASE_ERROR", () => {
@@ -30,7 +35,9 @@ describe("actionableEngineError", () => {
     assert.equal(mapped.status, 503);
     assert.equal(mapped.body.code, "ENGINE_DATABASE_ERROR");
     assert.equal(mapped.body.nextAction, "RETRY_AFTER_DATABASE_CHECK");
-    assert.ok(mapped.body.error.includes("Prisma connection failed"));
+    // SECURITY: the raw error message MUST NOT appear in the public response.
+    assert.ok(!mapped.body.error.includes("Prisma connection failed"));
+    assert.ok(mapped.body.error.includes("database"));
   });
 
   it("maps missing tender failures to TENDER_NOT_FOUND", () => {
@@ -38,22 +45,28 @@ describe("actionableEngineError", () => {
     assert.equal(mapped.status, 404);
     assert.equal(mapped.body.code, "TENDER_NOT_FOUND");
     assert.equal(mapped.body.nextAction, "OPEN_TENDER_LIST");
+    // SECURITY: no raw error message in the response body.
+    assert.ok(!JSON.stringify(mapped.body).includes("Tender not found"));
   });
 
-  it("maps unknown failures to ENGINE_FAILED with detail", () => {
+  it("maps unknown failures to ENGINE_FAILED without leaking raw detail", () => {
     const mapped = actionableEngineError(new Error("unexpected parser issue"));
     assert.equal(mapped.status, 500);
     assert.equal(mapped.body.code, "ENGINE_FAILED");
-    assert.equal(mapped.body.detail, "unexpected parser issue");
+    // SECURITY: the `detail` field was removed — it previously leaked
+    // raw error.message. Confirm it is absent.
+    assert.equal((mapped.body as Record<string, unknown>).detail, undefined);
     assert.equal(mapped.body.nextAction, "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY");
-    assert.ok(mapped.body.error.includes("unexpected parser issue"));
+    // The error field is a safe static summary, not the raw exception text.
+    assert.ok(!mapped.body.error.includes("unexpected parser issue"));
   });
 
-  it("truncates very long details in the user-facing error", () => {
+  it("does not leak very long raw error messages", () => {
     const longMessage = `unexpected ${"x".repeat(400)}`;
     const mapped = actionableEngineError(new Error(longMessage));
-    assert.equal(mapped.body.detail, longMessage);
-    assert.ok(mapped.body.error.length < longMessage.length);
-    assert.ok(mapped.body.error.endsWith("..."));
+    // SECURITY: no `detail` field, no raw message in `error`.
+    assert.equal((mapped.body as Record<string, unknown>).detail, undefined);
+    assert.ok(!mapped.body.error.includes("unexpected"));
+    assert.ok(!JSON.stringify(mapped.body).includes("x".repeat(50)));
   });
 });

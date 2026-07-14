@@ -13,7 +13,6 @@ import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
-import { sanitizeError } from "./sanitize-error";
 import { getStorageAdapter, type StorageProvider } from "./storage";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
 
@@ -149,8 +148,14 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           tenderId,
         });
       } catch (storageError) {
-        const message = storageError instanceof Error ? storageError.message : String(storageError);
-        errors.push(`${validation.safeFileName}: storage failed — ${message}`);
+        logger.error("[upload-first] source storage failed", {
+        requestId,
+        fileName: validation.safeFileName,
+        errorClass: storageError instanceof Error
+          ? storageError.constructor.name
+          : "UnknownError",
+      });
+      errors.push(`${validation.safeFileName}: secure storage is temporarily unavailable.`);
         continue;
       }
 
@@ -164,8 +169,14 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         extractionTruncated = extracted.truncated;
         if (extracted.truncated) warnings.push(`${validation.safeFileName}: extracted text was truncated to the safe analysis limit`);
       } catch (extractionError) {
-        const message = extractionError instanceof Error ? extractionError.message : String(extractionError);
-        warnings.push(`${validation.safeFileName}: file stored, but text extraction failed — ${message}`);
+        logger.warn("[upload-first] source extraction failed", {
+        requestId,
+        fileName: validation.safeFileName,
+        errorClass: extractionError instanceof Error
+          ? extractionError.constructor.name
+          : "UnknownError",
+      });
+      warnings.push(`${validation.safeFileName}: file stored, but text extraction failed. Run OCR or re-extraction.`);
       }
 
       storedUploads.push({
@@ -424,14 +435,15 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     }, { status: 201 });
   } catch (error) {
     if (storedUploads.length > 0) await cleanupStoredUploads(storedUploads);
-    const message = sanitizeError(error);
-    logger.error(`[upload-first tender] failed (requestId=${requestId}):`, { detail: error });
+    logger.error(`[upload-first tender] failed (requestId=${requestId}):`, {
+      detail: error,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     void reportError(error, { route: "/api/tenders/upload-first", requestId });
     return NextResponse.json({
       success: false,
-      error: `Upload-first tender intake failed: ${message}`,
+      error: "Tender intake could not be completed. Retry the upload or contact support with the request ID.",
       code: "TENDER_INTAKE_FAILED",
-      detail: message,
       requestId,
     }, { status: 500 });
   }

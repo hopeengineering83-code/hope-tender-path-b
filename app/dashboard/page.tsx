@@ -36,7 +36,7 @@ export default async function DashboardPage() {
       orderBy: { updatedAt: "desc" },
     }),
     prisma.auditLog.findMany({
-      where: { userId },
+      where: { userId, NOT: { entityType: "TenderStorageCleanup" } },
       orderBy: { createdAt: "desc" },
       take: 5,
     }),

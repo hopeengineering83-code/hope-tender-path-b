@@ -100,8 +100,21 @@ function isPlaceholder(value: string | null | undefined): boolean {
   return PLACEHOLDER_VALUES.has(lower) || containsMetadataPlaceholder(value);
 }
 
+// A resolving override must actually supply a value via USER_CONFIRMED/USER_EDITED.
+// IGNORED_WITH_REASON and NOT_APPLICABLE are audited absences, not values, and must
+// never satisfy a submission-endpoint requirement (matches canonical-field-state.ts,
+// which keeps critical fields BLOCKED under IGNORED_WITH_REASON/NOT_APPLICABLE).
 function hasOverride(overrides: OperationGateInput["overrides"], field: string): boolean {
-  return !!(overrides && overrides.some((o) => o.field === field && o.fieldState !== "NOT_APPLICABLE"));
+  return !!(
+    overrides &&
+    overrides.some(
+      (o) =>
+        o.field === field &&
+        (o.fieldState === "USER_CONFIRMED" || o.fieldState === "USER_EDITED") &&
+        !!o.overrideValue &&
+        o.overrideValue.trim().length > 0
+    )
+  );
 }
 
 function getOverrideValue(overrides: OperationGateInput["overrides"], field: string): string | null {
@@ -218,8 +231,14 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
     }
   } else if (normalized === "HYBRID") {
     // Hybrid tender: require only endpoints explicitly required
-    // Check that at least one endpoint is present
-    if (!submissionEmails && !submissionAddress) {
+    // Check that at least one endpoint is present, honoring a resolving
+    // override on either endpoint (consistent with the EMAIL/PHYSICAL checks above).
+    if (
+      !submissionEmails &&
+      !submissionAddress &&
+      !hasOverride(overrides, "submissionEmails") &&
+      !hasOverride(overrides, "submissionAddress")
+    ) {
       blockers.push("Hybrid submission method requires at least one submission endpoint (email or address).");
     }
   } else {

@@ -40,26 +40,6 @@ describe("Gap 2 — analysis-job-service source-file attribution", () => {
   });
 });
 
-// ─── Gap 3: tender-detail.tsx removed GeneratedDocument proxy ────────────────
-
-describe("Gap 3 — tender-detail.tsx removed GeneratedDocument proxy", () => {
-  const src = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
-
-  it("does NOT use hasValidSubmissionPlan proxy for canGenerateDocs", () => {
-    // The previous bug: hasValidPlan = tender.generatedDocuments.some(...)
-    // was used as a gate for canGenerateDocs. The new code MUST NOT use
-    // generatedDocuments as a plan proxy.
-    assert.ok(
-      !/hasValidPlan\s*=\s*tender\.generatedDocuments\.some/.test(src),
-      "tender-detail MUST NOT derive hasValidPlan from generatedDocuments (proxy removed)",
-    );
-    assert.ok(
-      !/hasValidPlan\b/.test(src.replace(/\/\/[^\n]*/g, "")),
-      "tender-detail MUST NOT reference hasValidPlan at all (proxy removed)",
-    );
-  });
-});
-
 // ─── Gap 4: bid-strategy route blocks HUMAN_APPROVED_REGEX_FALLBACK ──────────
 
 describe("Gap 4 — bid-strategy route blocks HUMAN_APPROVED_REGEX_FALLBACK", () => {

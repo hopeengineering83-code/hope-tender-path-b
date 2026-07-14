@@ -26,14 +26,40 @@ function readJson(path) {
 }
 
 const vercel = readJson("vercel.json");
-// The release-hardening phase that required deploymentEnabled=false has
-// concluded (PR #1070 re-enabled Git deployments). The contract now only
-// verifies that vercel.json exists and has a valid git section — the
-// deployment toggle is no longer a hardening gate.
+// The deployment policy must be an object that explicitly enables deployment
+// for main and explicitly disables it for all other branches. This prevents
+// accidental preview deployments from feature/fix/experiment branches while
+// allowing one production deployment after merge to main.
+//
+// Vercel uses minimatch for git.deploymentEnabled keys. The single-char `"*"`
+// does NOT match branches containing `/` (e.g. `fix/release-candidate`), so
+// those branches still get preview deployments. The correct wildcard is `"**"`
+// which matches all branches including those with slashes.
 if (!vercel) {
   fail("vercel.json is missing or unreadable");
-} else if (!vercel.git || typeof vercel.git.deploymentEnabled !== "boolean") {
-  fail("vercel.json must have a git.deploymentEnabled boolean");
+} else if (!vercel.git || !vercel.git.deploymentEnabled) {
+  fail("vercel.json must have a git.deploymentEnabled configuration");
+} else if (typeof vercel.git.deploymentEnabled === "boolean") {
+  fail("vercel.json git.deploymentEnabled must be an object { '**': false, 'main': true }, not a boolean");
+} else if (typeof vercel.git.deploymentEnabled !== "object") {
+  fail("vercel.json git.deploymentEnabled must be an object");
+} else {
+  const dep = vercel.git.deploymentEnabled;
+  // Must explicitly disable the glob wildcard that covers ALL branches
+  // (including those with slashes like fix/release-candidate).
+  if (dep["**"] !== false) {
+    fail("vercel.json git.deploymentEnabled['**'] must be false to prevent deployments from arbitrary branches (including those with slashes)");
+  }
+  // Must explicitly enable main.
+  if (dep["main"] !== true) {
+    fail("vercel.json git.deploymentEnabled['main'] must be true to allow production deployment after merge");
+  }
+  // Reject any configuration that silently enables unspecified branches.
+  for (const key of Object.keys(dep)) {
+    if (key !== "**" && key !== "main" && dep[key] === true) {
+      fail(`vercel.json git.deploymentEnabled['${key}'] must not be true — only 'main' may deploy`);
+    }
+  }
 }
 
 const providerDoc = readText("docs/ai-provider-order.md");

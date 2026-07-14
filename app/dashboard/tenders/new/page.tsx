@@ -176,10 +176,10 @@ export default function NewTenderPage() {
           </div>
         </div>
         <div className="flex gap-3 pt-2">
-          <button type="submit" disabled={loading} className="rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
+          <button type="submit" disabled={loading} className="min-h-11 rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
             {loading?"Creating...":"Create Manual Tender"}
           </button>
-          <button type="button" onClick={()=>router.back()} className="rounded-lg border px-6 py-2 text-sm hover:bg-slate-50">Cancel</button>
+          <button type="button" onClick={()=>router.back()} className="min-h-11 rounded-lg border px-6 py-2 text-sm hover:bg-slate-50">Cancel</button>
         </div>
       </form>
     </div>

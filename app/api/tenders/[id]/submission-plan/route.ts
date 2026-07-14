@@ -15,7 +15,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
 import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
-import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -25,7 +25,8 @@ function err(message: string, status = 500, extra: Record<string, unknown> = {})
   return NextResponse.json({ ok: false, success: false, code, error: message, message, ...extra }, { status });
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   try {
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
@@ -113,7 +114,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       warnings: report.warnings,
     });
   } catch (error) {
-    logger.error("submission-plan route failed", { detail: error });
-    return err("Submission-plan route failed.", 500, { code: "SUBMISSION_PLAN_RUNTIME_ERROR", detail: sanitizeError(error) });
+    logger.error("submission-plan route failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return err("Submission-plan route failed.", 500, {
+      code: "SUBMISSION_PLAN_RUNTIME_ERROR",
+      requestId,
+    });
   }
 }

@@ -40,6 +40,13 @@ export async function livenessResponse() {
   const ok = allCriticalTablesExist && aiHealth.healthy;
   const status = ok ? "healthy" : allCriticalTablesExist ? "degraded" : "unhealthy";
 
+  // HTTP 200 when the DB is reachable (even if AI providers are not configured —
+  // the app is "degraded" but still serving pages). HTTP 503 only when critical
+  // DB tables are missing (the app cannot function). Previously, a deployment
+  // with valid DB tables but no AI keys returned 503, causing external monitors
+  // and `verify-production-health.mjs` to fail even though pages rendered fine.
+  const httpStatus = allCriticalTablesExist ? 200 : 503;
+
   return NextResponse.json(
     {
       ok,
@@ -52,6 +59,6 @@ export async function livenessResponse() {
       aiProviders: aiHealth,
       timestamp: new Date().toISOString(),
     },
-    { status: ok ? 200 : 503, headers: { "Cache-Control": "no-store" } },
+    { status: httpStatus, headers: { "Cache-Control": "no-store" } },
   );
 }

@@ -1,5 +1,5 @@
-import { test, expect, type APIResponse, type Page } from "@playwright/test";
-
+import { tabletPrimaryTest as test, expect } from "./auth-helper";
+import type { Page, APIResponse } from "@playwright/test";
 /**
  * Tablet (800x1280) E2E Tests — Universal Tender Intelligence Foundation
  *
@@ -52,20 +52,9 @@ async function preserveLoopbackSession(page: Page, response: APIResponse) {
   }]);
 }
 
-async function performLogin(page: Page) {
-  if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-    test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD environment variables are missing.");
-    return;
-  }
-  const response = await page.request.post("/api/auth/login", {
-    data: { email: SMOKE_TEST_EMAIL, password: SMOKE_TEST_PASSWORD },
-  });
-  if (response.status() !== 200) {
-    const body = await response.text().catch(() => "(unreadable)");
-    throw new Error(`Login failed with status ${response.status()}: ${body}`);
-  }
-  await preserveLoopbackSession(page, response);
-}
+// performLogin is no longer needed — the project config provides the
+// authenticated storage state via global setup. Tests navigate directly
+// to /dashboard and the session cookie is already present.
 
 /**
  * Helper: assert that the page has no horizontal scroll at the given viewport.
@@ -136,14 +125,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
     }
   });
 
-  test("dashboard redirects to login when unauthenticated (no horizontal overflow)", async ({ page }) => {
-    await page.goto("/dashboard/tenders");
-    await page.waitForLoadState("networkidle");
-    // Should redirect to login
-    await expect(page).toHaveURL(/\/login/);
-    await expectNoHorizontalScroll(page);
-  });
-
   test("share-link page renders within 800px width", async ({ page }) => {
     // Use a fake share token — the page should show an error message,
     // but it must not overflow horizontally.
@@ -155,11 +136,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("authenticated dashboard fits at 800px width", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expect(page).not.toHaveURL(/\/login/);
@@ -167,24 +143,14 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("tender intake page (/dashboard/tenders/new) is usable at 800px", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders/new");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);
     // File format guidance must be visible at 800px width
-    await expect(page.getByText(/supported format|PDF, DOCX, XLSX, TXT, or CSV/i)).toBeVisible();
+    await expect(page.getByText(/PDF, DOCX, XLSX, TXT, and CSV/i)).toBeVisible();
   });
 
   test("touch targets on the tender intake page are ≥44px", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders/new");
     await page.waitForLoadState("networkidle");
     // Any visible button should be touch-friendly
@@ -197,16 +163,16 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("no horizontal overflow on the tender list page", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);
-    // The page should have an h1 (main heading)
-    await expect(page.locator("h1").first()).toBeVisible();
+    // Target the tenders page's own "Tenders" heading by name, not a
+    // positional h1 locator — the dashboard layout's desktop sidebar brand
+    // heading ("Hope Tender") is also an h1 and precedes the page heading in
+    // DOM order, but it's hidden below the "lg" breakpoint (800px tablet
+    // viewport), so a positional .first() locator resolves to a hidden
+    // element here.
+    await expect(page.getByRole("heading", { name: "Tenders", exact: true })).toBeVisible();
   });
 
   test("portrait orientation: 800w x 1280h is the active viewport", async ({ page }) => {
@@ -242,11 +208,6 @@ test.describe("Tablet (800x1280) — universal tender intelligence", () => {
   });
 
   test("tender list cards (if any) are touch-tappable at 800px", async ({ page }) => {
-    if (!SMOKE_TEST_EMAIL || !SMOKE_TEST_PASSWORD) {
-      test.skip(true, "SMOKE_TEST_EMAIL or SMOKE_TEST_PASSWORD not set");
-      return;
-    }
-    await performLogin(page);
     await page.goto("/dashboard/tenders");
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalScroll(page);

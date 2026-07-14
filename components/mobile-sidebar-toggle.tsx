@@ -67,7 +67,7 @@ export function MobileSidebarToggle({ groups, user, company }: Props) {
         ref={openerRef}
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm"
+        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm"
         aria-label="Open navigation"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -103,7 +103,7 @@ export function MobileSidebarToggle({ groups, user, company }: Props) {
                 ref={closeRef}
                 type="button"
                 onClick={closeDrawer}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
                 aria-label="Close navigation"
               >
                 <span aria-hidden="true">✕</span>

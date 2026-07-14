@@ -393,8 +393,15 @@ async function buildAnalysisState(
   // analysis exists for current source AND deterministic parser cannot provide
   // required context. Otherwise it's a warning.
   const hashMismatch = !!(currentSourceHash && latestGoodAnalysisHash && currentSourceHash !== latestGoodAnalysisHash);
-  const contentChangedHardBlock = hashMismatch && !hasGoodAnalysisForCurrentSource && !latestJob;
-  const contentChangedWarningOnly = hashMismatch && (hasGoodAnalysisForCurrentSource || !!latestJob);
+  // contentChangedHardBlock: content changed since the last good analysis
+  // AND no good analysis exists for the CURRENT source hash. The previous
+  // expression included `&& !latestJob` which is structurally impossible
+  // when hashMismatch is true (hashMismatch requires latestGoodAnalysisHash
+  // to be truthy, which requires latestJob to exist). The `!latestJob`
+  // conjunct made contentChangedHardBlock always false — the bid-control
+  // panel could never hard-block on a content change.
+  const contentChangedHardBlock = hashMismatch && !hasGoodAnalysisForCurrentSource;
+  const contentChangedWarningOnly = hashMismatch && hasGoodAnalysisForCurrentSource;
 
   return {
     currentSourceHash,

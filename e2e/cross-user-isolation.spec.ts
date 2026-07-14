@@ -1,170 +1,149 @@
-import { test, expect, type APIResponse, type Page } from "@playwright/test";
+import { test, expect, type Browser } from "@playwright/test";
+import { injectSavedSessionIntoContext } from "./auth-helper";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 const PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
 const SECONDARY_TENDER_ID = "22222222-2222-4222-8222-222222222222";
 const SECONDARY_DOCUMENT_ID = "33333333-3333-4333-8333-333333333333";
 const SECONDARY_FILE_ID = "44444444-4444-4444-8444-444444444444";
 
-async function preserveLoopbackSession(page: Page, response: APIResponse) {
-  const origin = new URL(baseURL);
-  if (origin.protocol !== "http:") return;
-
-  const sessionHeader = response.headersArray().find(
-    ({ name, value }) => name.toLowerCase() === "set-cookie" && value.startsWith("hope_session="),
-  );
-  expect(sessionHeader, "login response must set the session cookie").toBeTruthy();
-  expect(
-    sessionHeader?.value,
-    "production-like login must retain the Secure cookie attribute",
-  ).toMatch(/;\s*Secure(?:;|$)/i);
-
-  const cookiePair = sessionHeader!.value.split(";", 1)[0];
-  const separator = cookiePair.indexOf("=");
-  expect(separator).toBeGreaterThan(0);
-  const value = cookiePair.slice(separator + 1);
-  expect(value).not.toBe("");
-
-  // `next start` correctly emits a Secure production cookie, but CI serves the
-  // isolated app over loopback HTTP. Clone only that cookie into the browser
-  // context for the test; production cookie policy remains unchanged.
-  await page.context().addCookies([{
-    name: "hope_session",
-    value,
-    url: origin.origin,
-    httpOnly: true,
-    sameSite: "Lax",
-    secure: false,
-  }]);
-}
-
-async function login(page: Page, email: string, password: string) {
-  const response = await page.request.post("/api/auth/login", {
-    data: { email, password },
-  });
-  const body = await response.text().catch(() => "(unreadable)");
-  expect(response.status(), `login failed: ${body}`).toBe(200);
-  await preserveLoopbackSession(page, response);
-}
-
 function expectHiddenOrForbidden(status: number) {
   expect([403, 404]).toContain(status);
+}
+
+/**
+ * Opens a fresh, independent browser context authenticated as the given
+ * saved account. Each caller gets its own cookie jar — no context is ever
+ * mutated from one identity into another, so primary and secondary can be
+ * used simultaneously without any risk of cross-contamination.
+ */
+async function openIsolatedContext(browser: Browser, savedSessionFile: string) {
+  const context = await browser.newContext();
+  await injectSavedSessionIntoContext(context, savedSessionFile);
+  return context;
 }
 
 test.describe("authenticated cross-user isolation", () => {
   test.skip(!FULL, "Set E2E_FULL_AUTH=true with the isolated two-user seed");
 
-  const primaryEmail = process.env.E2E_TEST_EMAIL ?? "";
-  const primaryPassword = process.env.E2E_TEST_PASSWORD ?? "";
-  const secondaryEmail = process.env.E2E_SECOND_EMAIL ?? "";
-  const secondaryPassword = process.env.E2E_SECOND_PASSWORD ?? "";
-
-  test("blocks supplied foreign IDs and preserves the secondary owner's resources", async ({ page, request }) => {
+  test("blocks supplied foreign IDs and preserves the secondary owner's resources", async ({ browser, request }) => {
     const anonymous = await request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
     expect(anonymous.status()).toBe(401);
 
-    // Reuse one authenticated primary session for every attack. Repeated logins
-    // would test the login throttle instead of tenant isolation and can exceed
-    // the real production rate limit when Playwright projects/retries overlap.
-    await login(page, primaryEmail, primaryPassword);
+    // Two genuinely separate, simultaneous contexts — primary and secondary
+    // never share a cookie jar and neither is ever mutated into the other.
+    const primaryContext = await openIsolatedContext(browser, "primary-loopback.json");
+    const secondaryContext = await openIsolatedContext(browser, "secondary-loopback.json");
 
-    const own = await page.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
-    expect(own.status()).toBe(200);
-    expect((await own.json()).title).toBe("Primary Owner Fixture");
+    try {
+      const primaryPage = await primaryContext.newPage();
+      await primaryPage.goto("/dashboard");
+      await primaryPage.waitForLoadState("networkidle");
 
-    const other = await page.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
-    expect(other.status()).toBe(404);
-    expect(await other.json()).toMatchObject({ error: "Not found" });
+      const own = await primaryPage.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
+      expect(own.status()).toBe(200);
+      expect((await own.json()).title).toBe("Primary Owner Fixture");
 
-    const update = await page.request.put(`/api/tenders/${SECONDARY_TENDER_ID}`, {
-      data: { title: "Cross-user overwrite attempt" },
-    });
-    expect(update.status()).toBe(404);
+      const other = await primaryPage.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
+      expect(other.status()).toBe(404);
+      expect(await other.json()).toMatchObject({ error: "Not found" });
 
-    const share = await page.request.post(`/api/tenders/${SECONDARY_TENDER_ID}/share`, {
-      data: { label: "Cross-user share attempt" },
-    });
-    expect(share.status()).toBe(404);
+      const update = await primaryPage.request.put(`/api/tenders/${SECONDARY_TENDER_ID}`, {
+        data: { title: "Cross-user overwrite attempt" },
+      });
+      expect(update.status()).toBe(404);
 
-    const attach = await page.request.post(
-      `/api/tenders/${PRIMARY_TENDER_ID}/documents/${SECONDARY_DOCUMENT_ID}/attach-original`,
-      {
-        multipart: {
-          file: {
-            name: "Secondary-Private-Document.docx",
-            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            buffer: Buffer.concat([
-              Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-              Buffer.from("foreign-write-attempt"),
-            ]),
+      const share = await primaryPage.request.post(`/api/tenders/${SECONDARY_TENDER_ID}/share`, {
+        data: { label: "Cross-user share attempt" },
+      });
+      expect(share.status()).toBe(404);
+
+      const attach = await primaryPage.request.post(
+        `/api/tenders/${PRIMARY_TENDER_ID}/documents/${SECONDARY_DOCUMENT_ID}/attach-original`,
+        {
+          multipart: {
+            file: {
+              name: "Secondary-Private-Document.docx",
+              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              buffer: Buffer.concat([
+                Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+                Buffer.from("foreign-write-attempt"),
+              ]),
+            },
           },
         },
-      },
-    );
-    expectHiddenOrForbidden(attach.status());
+      );
+      expectHiddenOrForbidden(attach.status());
 
-    const readFile = await page.request.get(
-      `/api/tenders/${PRIMARY_TENDER_ID}/files/${SECONDARY_FILE_ID}`,
-    );
-    expectHiddenOrForbidden(readFile.status());
+      const readFile = await primaryPage.request.get(
+        `/api/tenders/${PRIMARY_TENDER_ID}/files/${SECONDARY_FILE_ID}`,
+      );
+      expectHiddenOrForbidden(readFile.status());
 
-    const deleteFile = await page.request.delete(
-      `/api/tenders/${PRIMARY_TENDER_ID}/files/${SECONDARY_FILE_ID}`,
-    );
-    expectHiddenOrForbidden(deleteFile.status());
+      const deleteFile = await primaryPage.request.delete(
+        `/api/tenders/${PRIMARY_TENDER_ID}/files/${SECONDARY_FILE_ID}`,
+      );
+      expectHiddenOrForbidden(deleteFile.status());
 
-    const finalize = await page.request.post(
-      `/api/tenders/${PRIMARY_TENDER_ID}/finalize-pdf`,
-      { data: { docId: SECONDARY_DOCUMENT_ID } },
-    );
-    expectHiddenOrForbidden(finalize.status());
-    expect(await finalize.json()).toMatchObject({ code: "PDF_SOURCE_NOT_FOUND" });
+      const finalize = await primaryPage.request.post(
+        `/api/tenders/${PRIMARY_TENDER_ID}/finalize-pdf`,
+        { data: { docId: SECONDARY_DOCUMENT_ID } },
+      );
+      expectHiddenOrForbidden(finalize.status());
+      expect(await finalize.json()).toMatchObject({ code: "PDF_SOURCE_NOT_FOUND" });
 
-    const exportAttempt = await page.request.post(
-      `/api/tenders/${SECONDARY_TENDER_ID}/export`,
-    );
-    expectHiddenOrForbidden(exportAttempt.status());
+      const exportAttempt = await primaryPage.request.post(`/api/tenders/${SECONDARY_TENDER_ID}/export`);
+      expectHiddenOrForbidden(exportAttempt.status());
 
-    const downloadAttempt = await page.request.get(
-      `/api/tenders/${SECONDARY_TENDER_ID}/download`,
-    );
-    expectHiddenOrForbidden(downloadAttempt.status());
+      const downloadAttempt = await primaryPage.request.get(`/api/tenders/${SECONDARY_TENDER_ID}/download`);
+      expectHiddenOrForbidden(downloadAttempt.status());
 
-    // Switch identities only after all attack requests have completed, then
-    // prove the real secondary rows still have their original values/states.
-    await page.context().clearCookies();
-    await login(page, secondaryEmail, secondaryPassword);
+      // Secondary identity, evaluated concurrently in its own isolated
+      // context — primary's context and page above are untouched by this.
+      const secondaryPage = await secondaryContext.newPage();
+      await secondaryPage.goto("/dashboard");
+      await secondaryPage.waitForLoadState("networkidle");
 
-    const secondaryOwn = await page.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
-    expect(secondaryOwn.status()).toBe(200);
-    const body = await secondaryOwn.json();
-    expect(body.title).toBe("Secondary Owner Private Tender");
+      const secondaryOwn = await secondaryPage.request.get(`/api/tenders/${SECONDARY_TENDER_ID}`);
+      expect(secondaryOwn.status()).toBe(200);
+      const body = await secondaryOwn.json();
+      expect(body.title).toBe("Secondary Owner Private Tender");
 
-    // The tender dashboard intentionally omits PLANNED document rows. Verify the
-    // seeded row through the owner-scoped document endpoint instead, which also
-    // proves the foreign attach/finalize attempts did not alter review state.
-    const secondaryDocument = await page.request.get(
-      `/api/tenders/${SECONDARY_TENDER_ID}/documents/${SECONDARY_DOCUMENT_ID}`,
-    );
-    expect(secondaryDocument.status()).toBe(200);
-    expect(await secondaryDocument.json()).toMatchObject({
-      document: {
-        id: SECONDARY_DOCUMENT_ID,
-        reviewStatus: "PENDING",
-      },
-    });
+      // The tender dashboard intentionally omits PLANNED document rows. Verify the
+      // seeded row through the owner-scoped document endpoint instead, which also
+      // proves the foreign attach/finalize attempts above did not alter review state.
+      const secondaryDocument = await secondaryPage.request.get(
+        `/api/tenders/${SECONDARY_TENDER_ID}/documents/${SECONDARY_DOCUMENT_ID}`,
+      );
+      expect(secondaryDocument.status()).toBe(200);
+      expect(await secondaryDocument.json()).toMatchObject({
+        document: {
+          id: SECONDARY_DOCUMENT_ID,
+          reviewStatus: "PENDING",
+        },
+      });
 
-    expect(body.files).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: SECONDARY_FILE_ID,
-          deletionStatus: "ACTIVE",
-        }),
-      ]),
-    );
+      expect(body.files).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: SECONDARY_FILE_ID,
+            deletionStatus: "ACTIVE",
+          }),
+        ]),
+      );
 
-    const primaryAsSecondary = await page.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
-    expect(primaryAsSecondary.status()).toBe(404);
+      const primaryAsSecondary = await secondaryPage.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
+      expect(primaryAsSecondary.status()).toBe(404);
+
+      // Final proof of isolation: the primary context's own session is still
+      // primary's — it was never mutated by anything done in the secondary
+      // context above.
+      const primaryStillOwn = await primaryPage.request.get(`/api/tenders/${PRIMARY_TENDER_ID}`);
+      expect(primaryStillOwn.status()).toBe(200);
+      expect((await primaryStillOwn.json()).title).toBe("Primary Owner Fixture");
+    } finally {
+      await primaryContext.close();
+      await secondaryContext.close();
+    }
   });
 });

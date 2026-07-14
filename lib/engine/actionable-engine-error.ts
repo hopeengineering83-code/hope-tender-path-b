@@ -1,14 +1,18 @@
-function shortDetail(message: string): string {
-  const clean = message.replace(/\s+/g, " ").trim();
-  if (!clean) return "";
-  return clean.length > 220 ? `${clean.slice(0, 217)}...` : clean;
-}
-
-function withDetail(summary: string, message: string): string {
-  const detail = shortDetail(message);
-  return detail ? `${summary} Detail: ${detail}` : summary;
-}
-
+/**
+ * Maps engine-run errors to safe public response bodies.
+ *
+ * SECURITY: This function MUST NOT include the raw error.message in any
+ * response field. Prisma errors include connection strings (DATABASE_URL),
+ * AI provider errors include request bodies and sometimes API keys, and
+ * Vercel timeout errors include internal request IDs. The raw error is
+ * logged server-side via the caller's catch block; the public response
+ * carries only a safe summary, a structured code, and a nextAction.
+ *
+ * The `detail` field was previously set to `message` (raw error.message) —
+ * that was a security leak. It is now omitted entirely. Callers that need
+ * server-side diagnostics use `logger.error` + `reportError` (which forward
+ * the full error to structured logs and Sentry, not to the client).
+ */
 export function actionableEngineError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Engine failed");
   const lower = message.toLowerCase();
@@ -17,9 +21,8 @@ export function actionableEngineError(error: unknown) {
     return {
       status: 504,
       body: {
-        error: withDetail("Engine run timed out before completion.", message),
+        error: "Engine run timed out before completion.",
         code: "ENGINE_TIMEOUT",
-        detail: message,
         // For Vercel Hobby (60s function cap) the right answer for large
         // tenders is always the async queue, not "retry sync". The
         // ENGINE_RUN job handler runs in its own 60s budget AND can be
@@ -34,9 +37,8 @@ export function actionableEngineError(error: unknown) {
     return {
       status: 503,
       body: {
-        error: withDetail("Engine run failed because the database layer was unavailable or rejected the operation.", message),
+        error: "Engine run failed because the database layer was unavailable or rejected the operation.",
         code: "ENGINE_DATABASE_ERROR",
-        detail: message,
         nextAction: "RETRY_AFTER_DATABASE_CHECK",
         hint: "Check DATABASE_URL/Vercel database availability, then retry. If this repeats, open the latest server log for the failed request.",
       },
@@ -47,9 +49,8 @@ export function actionableEngineError(error: unknown) {
     return {
       status: 404,
       body: {
-        error: withDetail("Tender could not be loaded for engine execution.", message),
+        error: "Tender could not be loaded for engine execution.",
         code: "TENDER_NOT_FOUND",
-        detail: message,
         nextAction: "OPEN_TENDER_LIST",
       },
     };
@@ -58,11 +59,10 @@ export function actionableEngineError(error: unknown) {
   return {
     status: 500,
     body: {
-      error: withDetail("Engine run failed before completion.", message),
+      error: "Engine run failed before completion.",
       code: "ENGINE_FAILED",
-      detail: message,
       nextAction: "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY",
-      hint: "Review Extraction Quality, Analysis Quality, and Matching Quality panels. The original server error is included in detail.",
+      hint: "Review Extraction Quality, Analysis Quality, and Matching Quality panels. Check server logs for diagnostic details.",
     },
   };
 }

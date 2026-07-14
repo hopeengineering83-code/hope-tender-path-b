@@ -19,105 +19,95 @@ const read = (p: string) => readFileSync(p, "utf8");
 // ─── 1. Cleanup cron ────────────────────────────────────────────────────────
 
 describe("Cleanup cron — stale artifact cleanup", () => {
+  const route = read("app/api/cron/cleanup-old-records/route.ts");
+  const helper = read("lib/engine/retention-storage-cleanup.ts");
+
   it("deletes old SUPERSEDED ExportPackage rows using exact ID selection (race-condition-safe)", () => {
-    const src = read("app/api/cron/cleanup-old-records/route.ts");
     assert.ok(
-      src.includes('status: "SUPERSEDED"'),
+      route.includes('status: "SUPERSEDED"'),
       "must delete SUPERSEDED ExportPackage rows older than 30 days",
     );
     assert.ok(
-      src.includes("deletedExportPackages"),
+      route.includes("deletedExportPackages"),
       "must report deleted ExportPackage count in response",
     );
-    // Race-condition-safe: select exact IDs first, then delete only those IDs
     assert.ok(
-      src.includes("supersededExportPkgIds"),
+      route.includes("supersededExportPkgIds"),
       "must select exact ExportPackage IDs first (not broad deleteMany)",
     );
     assert.ok(
-      src.includes("id: { in: supersededExportPkgIds }"),
+      route.includes("id: { in: supersededExportPkgIds }"),
       "must delete only the pre-selected IDs (deterministic deletion)",
     );
   });
 
-  it("deletes old SUPERSEDED GeneratedDocument rows with blob cleanup (race-condition-safe)", () => {
-    const src = read("app/api/cron/cleanup-old-records/route.ts");
-    assert.ok(
-      src.includes('generationStatus: "SUPERSEDED"'),
-      "must delete SUPERSEDED GeneratedDocument rows older than 30 days",
-    );
-    // Race-condition-safe: select exact candidates first, then delete only those IDs
-    assert.ok(
-      src.includes("supersededDocCandidates"),
-      "must select exact candidates first (not broad deleteMany)",
-    );
-    assert.ok(
-      src.includes("supersededDocIds"),
-      "must build ID list from selected candidates",
-    );
-    assert.ok(
-      src.includes("id: { in: supersededDocIds }"),
-      "must delete only the pre-selected IDs (deterministic deletion)",
-    );
-    assert.ok(
-      src.includes("supersededDocBlobsCleaned"),
-      "must report cleaned blob count in response",
-    );
-    assert.ok(
-      src.includes("supersededDocBlobFailures"),
-      "must report blob cleanup failures honestly (partial cleanup)",
-    );
+  it("purges exact SUPERSEDED GeneratedDocument candidates only after byte cleanup", () => {
+    assert.match(helper, /generatedDocument\.findMany\(/);
+    assert.match(helper, /generationStatus: "SUPERSEDED"/);
+    const storagePos = helper.indexOf("deleteStoredBytes(args.storage", helper.indexOf("purgeExpiredSupersededDocuments"));
+    const clearPos = helper.indexOf("generatedDocument.updateMany", storagePos);
+    const deletePos = helper.indexOf("generatedDocument.deleteMany", clearPos);
+    assert.ok(storagePos >= 0 && clearPos > storagePos && deletePos > clearPos);
+    assert.match(helper, /where: \{ id: doc\.id, generationStatus: "SUPERSEDED" \}/);
+    assert.match(route, /supersededDocBlobsCleaned: supersededDocumentCleanup\.blobsCleaned/);
+    assert.match(route, /supersededDocBlobFailures: supersededDocumentCleanup\.failures/);
   });
 
-  it("does NOT use broad deleteMany without ID selection for superseded docs", () => {
-    const src = read("app/api/cron/cleanup-old-records/route.ts");
-    // The old race-condition-prone pattern was a standalone deleteMany with
-    // only status+date criteria (no id: { in: ... }). The fix selects IDs
-    // first, then deletes by ID. Verify the broad pattern is gone.
-    const broadDeleteMatch = src.match(/prisma\.generatedDocument\.deleteMany\(\{[^}]*generationStatus:\s*"SUPERSEDED"[^}]*\}/s);
-    assert.ok(
-      !broadDeleteMatch || broadDeleteMatch[0].includes("id: { in:"),
-      "must NOT use broad deleteMany without ID selection for superseded docs",
-    );
+  it("does NOT use broad cron-local deleteMany for superseded docs", () => {
+    assert.doesNotMatch(route, /prisma\.generatedDocument\.deleteMany\(/);
+    assert.match(route, /purgeExpiredSupersededDocuments\(/);
   });
 
-  it("blob cleanup uses try/catch with safe diagnostics (not .catch(() => {}))", () => {
-    const src = read("app/api/cron/cleanup-old-records/route.ts");
-    assert.ok(
-      !/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src) || !src.includes("supersededDoc"),
-      "must NOT use silent .catch(() => {}) for blob cleanup",
-    );
-    assert.ok(
-      src.includes("supersededDocBlobFailures"),
-      "must count and report blob cleanup failures",
-    );
-    assert.ok(
-      src.includes("errorClass"),
-      "must log error class (not raw error message) for blob failures",
-    );
+  it("blob cleanup uses retryable try/catch with safe diagnostics", () => {
+    assert.match(helper, /try \{/);
+    assert.match(helper, /catch \(error\)/);
+    assert.match(helper, /errorClass: error instanceof Error \? error\.constructor\.name/);
+    assert.doesNotMatch(helper, /error\.message/);
+    assert.match(route, /supersededDocBlobFailures/);
   });
 });
 
 // ─── 2. Tender deletion blob cleanup ────────────────────────────────────────
 
-describe("Tender deletion — GeneratedDocument blob cleanup", () => {
-  it("executeTenderDeletion returns generated doc paths for post-commit cleanup", () => {
+describe("Tender deletion — durable storage cleanup", () => {
+  it("executeTenderDeletion captures storage pointers and creates a durable cleanup task", () => {
     const src = read("lib/tender/delete-tender.ts");
-    assert.ok(
-      src.includes("generatedDocPaths"),
-      "must return generated doc paths for blob cleanup",
-    );
+    // Must select storagePath for both TenderFile and GeneratedDocument
+    // so the durable cleanup manifest has the pointers it needs.
     assert.ok(
       src.includes("storagePath: true"),
-      "must select storagePath before deleting GeneratedDocument rows",
+      "must select storagePath before deleting rows",
+    );
+    // Must create a durable cleanup task inside the transaction.
+    assert.ok(
+      src.includes("createTenderStorageCleanupTask"),
+      "must create a durable cleanup task before the Tender row is deleted",
+    );
+    // Must NOT return ephemeral path arrays — cleanup is durable-only.
+    assert.doesNotMatch(
+      src,
+      /generatedDocPaths/,
+      "must not return ephemeral generatedDocPaths — use durable manifest only",
     );
   });
 
-  it("DELETE route uses returned paths for blob cleanup", () => {
+  it("DELETE route processes the durable cleanup task, not direct Blob deletion", () => {
     const src = read("app/api/tenders/[id]/route.ts");
+    // Must use the durable task processor for blob cleanup.
     assert.ok(
-      src.includes("result.generatedDocPaths"),
-      "must use returned generatedDocPaths for blob cleanup",
+      src.includes("processTenderStorageCleanupTask"),
+      "must process the durable cleanup task after commit",
+    );
+    // Must NOT perform direct best-effort Blob deletion.
+    assert.doesNotMatch(
+      src,
+      /storage\.deleteFile\(/,
+      "must not perform direct best-effort Blob deletion — use durable manifest only",
+    );
+    assert.doesNotMatch(
+      src,
+      /generatedDocPaths/,
+      "must not reference generatedDocPaths — use durable manifest only",
     );
   });
 });

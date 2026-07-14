@@ -14,10 +14,10 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const files = execFileSync("git", ["ls-files", "app/api"], { encoding: "utf8" })
+const files = execFileSync("git", ["ls-files", "app/api", "lib/engine", "lib/secure-password-reset.ts", "lib/tender-upload-first.ts", "lib/liveness.ts"], { encoding: "utf8" })
   .trim()
   .split("\n")
-  .filter((file) => file.endsWith("route.ts"));
+  .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.endsWith(".d.ts"));
 
 const findings = [];
 

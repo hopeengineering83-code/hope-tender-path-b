@@ -1,11 +1,12 @@
 import { logger } from "../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
-import { getSession } from "../../../lib/auth";
+import { getSession, requireRoleOrRespond } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
-import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
+import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit, rateLimitPersistent } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
+import { extractRequestId } from "../../../lib/request-id";
 
 export async function GET(req: Request) {
   const userId = await getSession();
@@ -37,7 +38,6 @@ export async function GET(req: Request) {
       ...(q ? { OR: [{ title: { contains: q } }, { reference: { contains: q } }, { clientName: { contains: q } }] } : {}),
     },
     include: {
-      // Exclude fileContent / base64 fields to keep response small
       files: {
         orderBy: { createdAt: "desc" },
         select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
@@ -62,14 +62,18 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const userId = await getSession();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authResult = await requireRoleOrRespond("ADMIN", "PROPOSAL_MANAGER");
+  if (authResult instanceof Response) return authResult;
+  const actor = authResult;
 
-  const rl = rateLimit(`tender-create:${userId}`, MUTATION_RATE_LIMIT);
+  const requestId = extractRequestId(req);
+  const rl = await rateLimitPersistent(`tender-create:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
-    return NextResponse.json({ error: "Too many tender creation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many tender creation requests. Wait and retry.", code: "RATE_LIMITED", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
   }
 
   await prismaReady;
@@ -92,6 +96,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "budget must be a finite number between 0 and 1,000,000,000,000" }, { status: 400 });
       }
     }
+
     const intakeSummary = body.intakeSummary || body.requirements || null;
     const cleanClient = cleanClientName(body.clientName, body.description || intakeSummary || body.title);
     const cleanTitle = cleanTenderTitle(body.title, { clientName: cleanClient, description: body.description || intakeSummary });
@@ -112,7 +117,7 @@ export async function POST(req: Request) {
         notes: body.notes || null,
         status: "DRAFT",
         stage: "TENDER_INTAKE",
-        userId,
+        userId: actor.id,
       },
       include: {
         files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true } },
@@ -122,18 +127,30 @@ export async function POST(req: Request) {
       },
     });
 
-    await logAction({
-      userId,
+    void logAction({
+      userId: actor.id,
       action: "TENDER_CREATE",
       entityType: "Tender",
       entityId: tender.id,
       description: `Tender "${tender.title}" created`,
       metadata: { tenderId: tender.id, clientName: tender.clientName, category: tender.category },
+      requestId,
+    }).catch((error) => {
+      logger.warn("tender creation audit persistence failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
     });
 
     return NextResponse.json(tender, { status: 201 });
   } catch (error) {
-    logger.error("Request failed", { detail: error });
-    return NextResponse.json({ error: "Failed to create tender" }, { status: 500 });
+    logger.error("Tender creation failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json(
+      { error: "Failed to create tender", code: "TENDER_CREATE_FAILED", requestId },
+      { status: 500 },
+    );
   }
 }

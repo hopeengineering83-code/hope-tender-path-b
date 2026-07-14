@@ -49,9 +49,13 @@ describe("proposal generation stays section-based (no monolithic 16K call)", () 
     // The single-call path exists only as an escape hatch behind
     // PROPOSAL_GENERATION_MODE=single; it is never the default.
     const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
-    assert.match(src, /useParallel\s*\n?\s*\?\s*generateProposalSectionsParallel/);
-    assert.match(src, /:\s*generateBenchmarkProposalWithAI/);
-    // And the default ternary resolves to parallel.
+    // The code now uses an if/else block (to preserve SectionProvenance)
+    // instead of a ternary. Verify both paths exist and parallel is the
+    // default when useParallel is true.
+    assert.match(src, /if \(useParallel\)/);
+    assert.match(src, /generateProposalSectionsParallel\(aiInput\)/);
+    assert.match(src, /generateBenchmarkProposalWithAI\(aiInput\)/);
+    // And the default resolves to parallel.
     assert.match(src, /const useParallel = generationMode === "parallel"/);
   });
 });
