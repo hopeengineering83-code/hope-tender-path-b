@@ -2067,14 +2067,38 @@ ${tenderContent}`;
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return null;
-      // EMPTY-OBJECT GUARD: A provider that returns "{}" would previously be
-      // silently marked as a successful analysis (every field defaulted to
-      // empty/null/[]). This is the same bug pattern that was fixed in
-      // lib/ai-jobs/chunk-recovery.ts — a `{}` response is NOT a valid
-      // analysis result; it means the provider failed to produce any
+      // EMPTY-OBJECT GUARD (literal {}): A provider that returns "{}" would
+      // previously be silently marked as a successful analysis (every field
+      // defaulted to empty/null/[]). This is the same bug pattern that was
+      // fixed in lib/ai-jobs/chunk-recovery.ts — a `{}` response is NOT a
+      // valid analysis result; it means the provider failed to produce any
       // structured output. Reject it so the fallback chain moves to the
       // next provider instead of persisting an empty analysis.
       if (Object.keys(parsed).length === 0) return null;
+
+      // EFFECTIVELY-EMPTY GUARD (round-2 strengthening): A provider that
+      // returns `{"summary":""}` or `{"requirements":[]}` is ALSO broken —
+      // it produced an object with keys but ZERO substantive content. The
+      // literal-{} guard above only catches `{}`; this guard catches the
+      // broader pattern where the provider returned a structurally-valid
+      // but semantically-empty response. Without this, the sanitized result
+      // would have `summary: ""` and `requirements: []`, which downstream
+      // code treats as a successful (but empty) analysis.
+      //
+      // The substance check: a valid analysis MUST have either:
+      //   - a non-empty summary string (after trimming), OR
+      //   - at least one requirement in the requirements array, OR
+      //   - a non-empty tenderTitle, OR
+      //   - a non-empty evaluationMethodology
+      // If ALL of these are empty/missing, the response is effectively empty.
+      const hasSummary = typeof parsed.summary === "string" && parsed.summary.trim().length > 0;
+      const hasRequirements = Array.isArray(parsed.requirements) && parsed.requirements.length > 0;
+      const hasTitle = typeof parsed.tenderTitle === "string" && parsed.tenderTitle.trim().length > 0;
+      const hasMethodology = typeof parsed.evaluationMethodology === "string" && parsed.evaluationMethodology.trim().length > 0;
+      if (!hasSummary && !hasRequirements && !hasTitle && !hasMethodology) {
+        return null;
+      }
+
       // Sanitize: ensure required fields exist with correct types
       // A missing or wrong-type field should never crash downstream consumers.
       return {
