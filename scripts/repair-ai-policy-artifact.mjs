@@ -3,7 +3,13 @@ import { readFileSync, writeFileSync, mkdirSync, cpSync } from "node:fs";
 const aiPath = "lib/ai.ts";
 let ai = readFileSync(aiPath, "utf8");
 
-const enabledPattern = /export function isAIEnabled\(\) \{[\s\S]*?\n\}/;
+// isAIEnabled() has since been fixed at the source to check all 10 canonical
+// providers (Z.ai/Cerebras included) — see lib/ai.ts. That is a strictly
+// more correct implementation than the patch below, which predates Z.ai/
+// Cerebras support. Only apply the patch if the OLD, incomplete
+// implementation is still present; otherwise this is a no-op, same as the
+// tolerant .env.example patches further down.
+const enabledPattern = /export function isAIEnabled\(\) \{\n  return Boolean\(\n    isMistralConfigured\(\)[\s\S]*?\n  \);\n\}/;
 const enabledReplacement = `export function isAIEnabled() {
   return Boolean(
     isMistralConfigured()
@@ -16,15 +22,21 @@ const enabledReplacement = `export function isAIEnabled() {
     || anthropicApiKey
   );
 }`;
-if (!enabledPattern.test(ai)) throw new Error("Unable to find isAIEnabled()");
-ai = ai.replace(enabledPattern, enabledReplacement);
+if (enabledPattern.test(ai)) {
+  ai = ai.replace(enabledPattern, enabledReplacement);
+}
 
+// Tolerant of the anchor already being absent — if the current source no
+// longer contains a marker, that section of lib/ai.ts has already been
+// fixed at the source (e.g. by the AI-provider-chain canonicalization pass),
+// and this patch is a no-op rather than a hard error, same treatment as the
+// .env.example patches below.
 function replaceBetween(source, afterMarker, startMarker, endMarker, replacement) {
   const anchor = source.indexOf(afterMarker);
-  if (anchor < 0) throw new Error(`Missing anchor: ${afterMarker}`);
+  if (anchor < 0) return source;
   const start = source.indexOf(startMarker, anchor);
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  if (start < 0 || end <= start) throw new Error(`Unable to isolate ${startMarker}`);
+  const end = start >= 0 ? source.indexOf(endMarker, start + startMarker.length) : -1;
+  if (start < 0 || end <= start) return source;
   return source.slice(0, start) + replacement + source.slice(end);
 }
 
