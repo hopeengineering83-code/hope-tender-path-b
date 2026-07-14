@@ -1,17 +1,25 @@
 // Regression test for a real gap: the per-section proposal generator
 // (generateOneSection) and the deep-critique/rewrite pass
-// (critiqueProposalWithAI / rewriteProposalWithCritique) each hand-roll
-// their own provider fallback chain instead of using generateWithFallback,
-// and that hand-rolled chain never attempted Z.ai or Cerebras at all —
-// despite them being canonical ranks 1-2 in lib/ai-provider-catalog.cjs.
-// That meant the "multi-provider resilience" story was untrue for the
-// exact code path that writes the document a user downloads.
+// (critiqueProposalWithAI / rewriteProposalWithCritique) each used to
+// hand-roll their own provider fallback chain instead of using
+// generateWithFallback, and that hand-rolled chain never attempted Z.ai or
+// Cerebras at all — despite them being canonical ranks 1-2 in
+// lib/ai-provider-catalog.cjs. That meant the "multi-provider resilience"
+// story was untrue for the exact code path that writes the document a
+// user downloads.
+//
+// generateOneSection keeps a hand-rolled per-provider Promise.race chain
+// (it needs a structured SectionResult with per-provider timeouts, unlike
+// the other two), so its order is still pinned at the source-text level.
+// critiqueProposalWithAI and rewriteProposalWithCritique now delegate
+// entirely to generateWithFallback — the single canonical iterator in
+// lib/ai.ts — instead of duplicating provider order, so this test verifies
+// delegation rather than re-checking isZaiEnabled()/isCerebrasEnabled()
+// calls that no longer exist in those two functions.
 //
 // generateOneSection/critiqueProposalWithAI/rewriteProposalWithCritique
 // call real provider HTTP endpoints and are not easily unit-testable
-// without live keys, so this pins the fix at the source-text level: Z.ai
-// and Cerebras must now be checked, and checked before every other
-// provider tier, in all three functions.
+// without live keys, so this pins the fix at the source-text level.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -49,29 +57,24 @@ describe("proposal-generation provider chains include Z.ai/Cerebras (canonical r
     assert.ok(body.includes('source: "cerebras"'), "a successful Cerebras section result must be labeled source: cerebras");
   });
 
-  it("critiqueProposalWithAI tries Z.ai and Cerebras before OpenAI/Gemini/Mistral/DeepSeek/Claude", () => {
+  it("critiqueProposalWithAI delegates to generateWithFallback (the canonical iterator) for the proposal useCase", () => {
     const body = sliceFunction("critiqueProposalWithAI").split("export async function rewriteProposalWithCritique")[0];
-    const zaiIdx = body.indexOf("isZaiEnabled()");
-    const cerebrasIdx = body.indexOf("isCerebrasEnabled()");
-    const openaiIdx = body.indexOf("isOpenAIEnabled()");
-
-    assert.ok(zaiIdx >= 0, "critiqueProposalWithAI must check isZaiEnabled()");
-    assert.ok(cerebrasIdx >= 0, "critiqueProposalWithAI must check isCerebrasEnabled()");
-    assert.ok(zaiIdx < cerebrasIdx && cerebrasIdx < openaiIdx, "Z.ai then Cerebras must be attempted before OpenAI");
+    assert.ok(body.includes('generateWithFallback(prompt, {'), "critiqueProposalWithAI must call the shared canonical iterator");
+    assert.ok(body.includes('useCase: "proposal"'), "must use the proposal useCase so providerChainForUseCase returns the full canonical order");
+    // No duplicated per-provider branch logic — Z.ai/Cerebras/OpenAI etc. are
+    // now ALL handled inside generateWithFallback, not re-checked here.
+    assert.ok(!body.includes("isZaiEnabled()"), "must NOT duplicate isZaiEnabled() — generateWithFallback owns that check now");
+    assert.ok(!body.includes("isCerebrasEnabled()"), "must NOT duplicate isCerebrasEnabled() — generateWithFallback owns that check now");
   });
 
-  it("rewriteProposalWithCritique tries Z.ai and Cerebras before OpenAI/Gemini/Mistral/DeepSeek/Claude", () => {
+  it("rewriteProposalWithCritique delegates to generateWithFallback (the canonical iterator) for the proposal useCase", () => {
     const start = src.indexOf("export async function rewriteProposalWithCritique");
     assert.ok(start >= 0);
     const body = src.slice(start, start + 4000);
-    const zaiIdx = body.indexOf("isZaiEnabled()");
-    const cerebrasIdx = body.indexOf("isCerebrasEnabled()");
-    const openaiIdx = body.indexOf("isOpenAIEnabled()");
-
-    assert.ok(zaiIdx >= 0, "rewriteProposalWithCritique must check isZaiEnabled()");
-    assert.ok(cerebrasIdx >= 0, "rewriteProposalWithCritique must check isCerebrasEnabled()");
-    assert.ok(zaiIdx < cerebrasIdx && cerebrasIdx < openaiIdx, "Z.ai then Cerebras must be attempted before OpenAI");
-    assert.ok(body.includes('lastProposalProvider = "zai"'));
-    assert.ok(body.includes('lastProposalProvider = "cerebras"'));
+    assert.ok(body.includes('generateWithFallback(prompt, {'), "rewriteProposalWithCritique must call the shared canonical iterator");
+    assert.ok(body.includes('useCase: "proposal"'), "must use the proposal useCase so providerChainForUseCase returns the full canonical order");
+    assert.ok(!body.includes("isZaiEnabled()"), "must NOT duplicate isZaiEnabled() — generateWithFallback owns that check now");
+    assert.ok(!body.includes("isCerebrasEnabled()"), "must NOT duplicate isCerebrasEnabled() — generateWithFallback owns that check now");
+    assert.ok(body.includes("onProviderUsed"), "must track which provider was actually used via generateWithFallback's onProviderUsed hook");
   });
 });
