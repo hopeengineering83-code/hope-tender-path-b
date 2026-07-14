@@ -43,6 +43,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     await prismaReady;
     const { id } = await params;
+
+    // Explicit owner-scoped existence check BEFORE invoking either readiness
+    // model. getFinalPackageReadinessModel throws a generic Error("Tender
+    // not found") for a missing/foreign tender; running it in Promise.all
+    // before ownership was confirmed meant that throw propagated to the
+    // outer catch -> safeApiError, which defaults to 500 -- so an invalid
+    // UUID or another tenant's tender ID returned 500 instead of a clean,
+    // non-enumerating 404. Also protects against leaking any detail beyond
+    // "not found" for a foreign tender.
+    const ownedTender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
+    if (!ownedTender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+
     const [readiness, finalPackage] = await Promise.all([
       getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id, requireFileContent: false }),
       getFinalPackageReadinessModel(prisma, id, actor.id),
