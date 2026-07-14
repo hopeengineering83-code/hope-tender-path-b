@@ -1015,12 +1015,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
   }
 
-  // Zero-evidence guard: when both the selected records AND the vault are empty,
-  // log a production warning so it surfaces in Vercel logs. The AI will still
-  // run but its output will be generic — the user should add and review experts
-  // and projects before generating a submission-ready proposal.
+  // Zero-evidence HARD BLOCK (defense-in-depth): when both the selected
+  // records AND the entire reviewed vault are empty, generation would
+  // produce a proposal with zero factual authority — every expert/project
+  // citation would be hallucinated or generic. The /generate route already
+  // blocks this with its EMPTY_VAULT gate, but this guard ensures that
+  // ANY caller of generateTenderDocuments (including future routes, tests,
+  // or worker paths) cannot bypass the evidence requirement. This mirrors
+  // the NO_REVIEWED_EXPERT_EVIDENCE / NO_REVIEWED_PROJECT_EVIDENCE pattern
+  // in lib/ai-job-handlers.ts for the background PROPOSAL_GENERATION path.
   if (experts.length === 0 && projects.length === 0) {
-    logger.warn(`[generate-elite] ZERO-EVIDENCE: No reviewed experts or projects available for tender "${tender.title ?? tender.id}". Proposal will lack specific evidence citations — add and review experts/projects before generating.`);
+    throw new Error(
+      "ZERO_REVIEWED_EVIDENCE: No reviewed experts or projects are available for generation. " +
+      "Add and review at least one expert CV or one comparable project reference in the Company Vault before generating documents. " +
+      `Tender: "${tender.title ?? tender.id}".`
+    );
   }
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
