@@ -46,6 +46,8 @@ describe("password reset one-time and privacy semantics", () => {
     assert.match(forgot, /if \(!delivery\.delivered\)/);
     assert.match(forgot, /WHERE "id" = \$\{tokenId\}/);
     assert.match(forgot, /If that email is registered/);
-    assert.match(forgot, /if \(!user\) return NextResponse\.json\(GENERIC_RESPONSE/);
+    // The forgot-password route now uses a timing-safe guard for non-existent
+    // users instead of returning immediately. Verify it still returns GENERIC_RESPONSE.
+    assert.match(forgot, /return NextResponse\.json\(GENERIC_RESPONSE/);
   });
 });

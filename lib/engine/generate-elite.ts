@@ -1757,12 +1757,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         contractInput,
       });
 
-      sourceMarkdown = await withProposalAiTimeout(
-        useParallel
-          ? generateProposalSectionsParallel(aiInput).then((r) => r.markdown)
-          : generateBenchmarkProposalWithAI(aiInput),
-        PROPOSAL_AI_TIMEOUT_MS,
-      );
+      // Preserve SectionProvenance and block persistence if any section
+      // used deterministic fallback.
+      if (useParallel) {
+        const sectionResult = await withProposalAiTimeout(
+          generateProposalSectionsParallel(aiInput),
+          PROPOSAL_AI_TIMEOUT_MS,
+        );
+        if (sectionResult.anyFallback) {
+          throw new Error("AI_SECTION_PARTIAL_FALLBACK: one or more sections used deterministic fallback. Output is not fully AI-generated.");
+        }
+        sourceMarkdown = sectionResult.markdown;
+      } else {
+        sourceMarkdown = await withProposalAiTimeout(
+          generateBenchmarkProposalWithAI(aiInput),
+          PROPOSAL_AI_TIMEOUT_MS,
+        );
+      }
       // Retry once when the AI returns a near-empty response (< 500 chars) — the first
       // call likely hit an apology / refusal / transient error that resolved quickly, so
       // a second attempt has a good chance of succeeding within the remaining budget.

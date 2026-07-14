@@ -18,6 +18,7 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -82,6 +83,7 @@ function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
@@ -513,10 +515,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       };
       // Chunked mode always uses parallel section generation (with a section
       // filter) so the correct per-chunk budgets in proposal-sections.ts apply.
-      const generateFn = (useParallel || sectionFilter)
-        ? generateProposalSectionsParallel(aiInputBase, sectionFilter).then((r) => r.markdown)
-        : generateBenchmarkProposalWithAI(aiInputBase);
-      proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
+      // Preserve the full SectionProvenance to check for fallback sections.
+      let sectionProvenance: import("../../../../../lib/ai").SectionProvenance | null = null;
+      if (useParallel || sectionFilter) {
+        const result = await withProposalTimeout(
+          generateProposalSectionsParallel(aiInputBase, sectionFilter),
+          AI_PROPOSAL_TIMEOUT_MS,
+        );
+        sectionProvenance = result;
+        proposal = result.markdown;
+        // Block persistence if ANY section used deterministic fallback.
+        // The interactive route is draft-only (no GeneratedDocument rows),
+        // but we still mark the response so the client knows fallback was used.
+        if (result.anyFallback) {
+          return NextResponse.json({
+            success: true,
+            proposal,
+            fallback: true,
+            fallbackApplied: false,
+            anyFallback: true,
+            sectionProvenance: result.sections,
+            code: "AI_SECTION_PARTIAL_FALLBACK",
+            error: "One or more sections used deterministic fallback. The output is not fully AI-generated and cannot be persisted as a final proposal.",
+            persistBlocked: true,
+            persistBlockerCode: "LEGACY_AI_PROPOSAL_DRAFT_ONLY",
+            nextAction: "Retry after all AI providers are healthy.",
+            requestId,
+          }, { status: 200 });
+        }
+      } else {
+        proposal = await withProposalTimeout(
+          generateBenchmarkProposalWithAI(aiInputBase),
+          AI_PROPOSAL_TIMEOUT_MS,
+        );
+      }
     } catch (aiError) {
       const msg = sanitizeError(aiError);
       logger.error("Benchmark AI proposal failed in /ai-proposal route:", { detail: msg });
