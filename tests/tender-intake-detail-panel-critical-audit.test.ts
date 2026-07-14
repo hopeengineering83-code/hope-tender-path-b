@@ -1,21 +1,13 @@
 // Regression test: TenderIntakeDetailPanel's manual-entry ("Edit") action for
 // missing/invalid facts previously sent only { field, fieldState, overrideValue }
 // to POST /api/tenders/[id]/metadata-override. For submission-critical fields
-// (requiredFor: "final_submission" — clientName, deadline, submissionMethod,
-// submissionEmails, submissionAddress, projectTitle), that route requires a
-// meaningful audit reason (>= MIN_CRITICAL_REASON_LENGTH chars) and a
-// confirmationBasis, and rejects the request with MEANINGFUL_REASON_REQUIRED /
-// CONFIRMATION_BASIS_REQUIRED otherwise (see the "Authority model" block in
-// app/api/tenders/[id]/metadata-override/route.ts). The live panel never
-// collected either field, so manually confirming a critical fact from the
-// normal tender workspace was silently broken for exactly the fields CLAUDE.md
-// marks as blocking (client/procuring entity, submission method, deadline,
-// submission address, submission email).
+// (clientName, title, deadline, submissionMethod, submissionEndpoint), that
+// route requires a meaningful audit reason (>= MIN_CRITICAL_REASON_LENGTH chars)
+// and a confirmationBasis, and rejects the request with
+// MEANINGFUL_REASON_REQUIRED / CONFIRMATION_BASIS_REQUIRED otherwise.
 //
-// This also restores the CLAUDE.md-mandated "manual confirmation with an
-// audit reason and source basis" requirement for critical fields, without
-// reintroducing the ClientSubmissionDetailsPanel duplicate that
-// tests/generic-tender-ui-defects.test.ts's "defect 3" guards against.
+// The panel now imports shared constants from tender-fact-authority.ts
+// instead of duplicating them.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -24,26 +16,33 @@ import { readFileSync } from "node:fs";
 const src = readFileSync("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx", "utf8");
 
 describe("TenderIntakeDetailPanel — critical-field audit trail on manual entry", () => {
-  it("defines a MIN_CRITICAL_REASON_LENGTH matching the backend's requirement", () => {
-    assert.match(src, /MIN_CRITICAL_REASON_LENGTH\s*=\s*10/, "must mirror MIN_CRITICAL_REASON_LENGTH from lib/engine/tender-fact-authority.ts");
+  it("imports MIN_CRITICAL_REASON_LENGTH from tender-fact-authority.ts", () => {
+    assert.match(src, /import\s*\{[^}]*MIN_CRITICAL_REASON_LENGTH[^}]*\}\s*from\s*"[^"]*tender-fact-authority"/,
+      "must import MIN_CRITICAL_REASON_LENGTH from the shared module");
   });
 
-  it("defines the full CONFIRMATION_BASIS_OPTIONS list matching CONFIRMATION_BASES", () => {
-    for (const basis of [
-      "PROCUREMENT_NOTICE", "EMAIL_INVITATION", "PORTAL_LISTING", "PHONE_CALL_WITH_CLIENT",
-      "CLIENT_INSTRUCTION", "PRE_BID_MEETING", "CLARIFICATION_DOCUMENT",
-      "PRIOR_KNOWLEDGE_OF_CLIENT", "PUBLIC_REGISTRY", "OTHER_DOCUMENTED_SOURCE",
-    ]) {
-      assert.ok(src.includes(`"${basis}"`), `must include confirmation basis option ${basis}`);
-    }
+  it("imports CONFIRMATION_BASES from tender-fact-authority.ts", () => {
+    assert.match(src, /import\s*\{[^}]*CONFIRMATION_BASES[^}]*\}\s*from\s*"[^"]*tender-fact-authority"/,
+      "must import CONFIRMATION_BASES from the shared module");
+  });
+
+  it("imports isSubmissionCriticalField from tender-fact-authority.ts", () => {
+    assert.match(src, /import\s*\{[^}]*isSubmissionCriticalField[^}]*\}\s*from\s*"[^"]*tender-fact-authority"/,
+      "must import isSubmissionCriticalField from the shared module");
+  });
+
+  it("derives CONFIRMATION_BASIS_OPTIONS from the shared CONFIRMATION_BASES", () => {
+    assert.match(src, /CONFIRMATION_BASIS_OPTIONS\s*=\s*SHARED_CONFIRMATION_BASES/,
+      "must derive options from the shared constant, not duplicate them");
   });
 
   it("postOverride forwards reason and confirmationBasis to the metadata-override route", () => {
     assert.match(src, /body:\s*JSON\.stringify\(\{\s*field,\s*fieldState,\s*overrideValue,\s*reason,\s*confirmationBasis\s*\}\)/);
   });
 
-  it("FactActions gates critical fields (requiredFor === final_submission) on a valid audit reason + basis", () => {
-    assert.match(src, /const isCritical = fact\.requiredFor === "final_submission"/);
+  it("FactActions gates critical fields using isSubmissionCriticalField", () => {
+    assert.match(src, /isSubmissionCriticalField\(fact\.key\)/,
+      "must use isSubmissionCriticalField to determine if a field is critical");
     assert.match(src, /const auditValid = !isCritical \|\| \(auditReason\.trim\(\)\.length >= MIN_CRITICAL_REASON_LENGTH && auditBasis !== ""\)/);
   });
 
