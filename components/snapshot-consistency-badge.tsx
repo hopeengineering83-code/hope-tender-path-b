@@ -85,10 +85,10 @@ export function SnapshotConsistencyBadge({
       </span>
       {disagree && (
         <p className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800">
-          <WarningIcon className="inline h-4 w-4" /> This panel{localLabel ? ` (${localLabel})` : ""} shows{" "}
+          <WarningIcon className="inline h-4 w-4" /> The strict gate{localLabel ? ` in ${localLabel}` : ""} returned{" "}
           <strong>{localEligible ? "ready" : "blocked"}</strong>, but the authoritative release snapshot shows{" "}
           <strong>{eligible ? "eligible" : "blocked"}</strong>
-          {!eligible && blockers.length > 0 ? `: ${blockers[0]}` : ""}. Trust the snapshot and resolve before relying on this panel.
+          {!eligible && blockers.length > 0 ? `: ${blockers[0]}` : ""}. The panel displays the snapshot-adjusted verdict. Trust the snapshot and resolve before relying on this panel.
         </p>
       )}
     </div>
