@@ -141,15 +141,14 @@ describe("operator-facing provider key guidance derives from canonical policy", 
   const adminDiagnosticsRoute = readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
   const tenderDetail = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
 
-  it("proposal no-provider guards check benchmark-configured providers", () => {
-    // The benchmark proposal path only attempts Gemini → OpenAI → Mistral →
-    // Together → DeepSeek → Groq → OpenRouter → Anthropic. If only Z.ai or
-    // Cerebras is configured, isAIEnabled() returns true but the benchmark
-    // chain would exhaust without a successful call. The guard now checks
-    // only the providers actually in the benchmark chain.
-    assert.match(aiSource, /benchmarkProvidersConfigured/);
+  it("proposal no-provider guards use isAIEnabled so all 10 providers count as configured", () => {
+    // The benchmark proposal chain now includes all 10 canonical providers
+    // (Z.ai, Cerebras, Mistral, Groq, OpenRouter, Gemini, OpenAI, Together,
+    // DeepSeek, Anthropic). The guard uses isAIEnabled() which checks all 10.
+    assert.match(aiSource, /if \(!isAIEnabled\(\)\) \{/);
     assert.match(aiSource, /NO_PROVIDER_CONFIGURED/);
-    assert.ok(!/const configured = \[isGeminiEnabled\(\), isOpenAIEnabled\(\)/.test(aiSource));
+    assert.match(aiSource, /Z\.ai — first tier/);
+    assert.match(aiSource, /Cerebras — second tier/);
   });
 
   it("remaining no-provider guidance imports the canonical env list instead of hardcoding a partial list", () => {

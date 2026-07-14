@@ -104,13 +104,24 @@ const proposalBlock = `  // Mistral — first tier
   }
 
 `;
-ai = replaceBetween(
-  ai,
-  "  // Provider chain for proposal generation:",
-  "  // Gemini — first tier",
-  "  // Claude (Anthropic) — last resort",
-  proposalBlock,
-);
+// Proposal chain replacement: if the old anchors exist, replace them.
+// If they don't (because the code already includes all 10 canonical
+// providers), skip — verify the code has Z.ai and Cerebras.
+const proposalAnchor = ai.indexOf("  // Provider chain for proposal generation:");
+if (proposalAnchor >= 0 && ai.includes("  // Gemini — first tier")) {
+  ai = replaceBetween(
+    ai,
+    "  // Provider chain for proposal generation:",
+    "  // Gemini — first tier",
+    "  // Claude (Anthropic) — last resort",
+    proposalBlock,
+  );
+} else {
+  // Verify the code already includes Z.ai and Cerebras in the benchmark chain.
+  if (!ai.includes("Z.ai — first tier") || !ai.includes("Cerebras — second tier")) {
+    throw new Error("Benchmark proposal chain does not include Z.ai/Cerebras and old anchors are missing");
+  }
+}
 
 const sectionBlock = `  // Mistral — first tier
   if (isMistralEnabled() && !isProviderCooledDown("mistral")) {

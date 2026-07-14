@@ -3064,46 +3064,17 @@ ${input.currentMarkdown}
 `;
 
   try {
-    // Proposal chain order: openai → gemini → deepseek → groq → openrouter → anthropic
-    if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-      try {
-        const r = await withRefinementTimeout(
-          generateWithOpenAI(prompt, REFINEMENT_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-        );
-        if (r) { lastProposalProvider = "openai"; return r; }
-      } catch (e) {
-        logger.warn(`[ai] refineProposalWithAI OpenAI failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-    if (apiKey && !isProviderCooledDown("gemini")) {
-      try {
-        const r = await withRefinementTimeout(generateWithBestModel(prompt));
-        lastProposalProvider = "gemini";
-        return r;
-      } catch (e) { logger.warn(`[ai] refineProposalWithAI Gemini failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-      try {
-        const r = await withRefinementTimeout(
-          generateWithMistral(prompt, REFINEMENT_SYSTEM_PROMPT, undefined, "proposal").then((v) => v ?? Promise.reject(new Error("null"))),
-        );
-        if (r) { lastProposalProvider = "mistral"; return r; }
-      } catch (e) { logger.warn(`[ai] refineProposalWithAI Mistral failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-      try {
-        const r = await withRefinementTimeout(
-          generateWithDeepSeek(prompt, REFINEMENT_SYSTEM_PROMPT).then((v) => v ?? Promise.reject(new Error("null"))),
-        );
-        if (r) { lastProposalProvider = "deepseek"; return r; }
-      } catch (e) { logger.warn(`[ai] refineProposalWithAI DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); }
-    }
-    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, REFINEMENT_SYSTEM_PROMPT)).catch(() => null);
-    if (tail) { lastProposalProvider = tail.provider; return tail.text; }
-    // Claude last — framed as senior bid REVIEWER (preserve-then-strengthen)
-    if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-      const r = await withRefinementTimeout(generateWithClaude(prompt, REFINEMENT_SYSTEM_PROMPT)).catch(() => null);
-      if (r) { lastProposalProvider = "claude"; return r; }
+    // Refinement uses the canonical provider chain via generateWithFallback
+    // so all 10 providers are tried in order: Z.ai → Cerebras → Mistral →
+    // Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic.
+    const result = await generateWithFallback(prompt, {
+      systemPrompt: REFINEMENT_SYSTEM_PROMPT,
+      useCase: "proposal",
+      deadlineAt: Date.now() + REFINEMENT_CALL_TIMEOUT_MS,
+    });
+    if (result) {
+      lastProposalProvider = getLastProposalProvider();
+      return result;
     }
   } catch (err) {
     logger.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -3897,11 +3868,83 @@ ${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  // Provider chain for proposal generation:
-  // Claude is placed last so Anthropic rate limits do not block proposal generation.
-  // lastProposalProvider is set so callers can surface which provider was used.
+  // Provider chain for proposal generation follows the canonical order:
+  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
+  // Together → DeepSeek → Anthropic. Claude is placed last so Anthropic rate
+  // limits do not block proposal generation. lastProposalProvider is set so
+  // callers can surface which provider was used.
 
-    // Gemini — first tier
+  // Z.ai — first tier
+  if (isZaiEnabled() && !isProviderCooledDown("zai")) {
+    try {
+      const zaiResult = await generateWithZai(prompt, DEFAULT_PROPOSAL_SYSTEM_PROMPT, undefined, "proposal").catch((e) => {
+        logger.warn(`[ai] Z.ai failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+        recordProviderFailure("zai", e);
+        return null;
+      });
+      if (zaiResult) { recordProviderSuccess("zai"); lastProposalProvider = "zai"; return zaiResult; }
+    } catch (zaiErr) {
+      recordProviderFailure("zai", zaiErr);
+    }
+  }
+
+  // Cerebras — second tier
+  if (isCerebrasEnabled() && !isProviderCooledDown("cerebras")) {
+    try {
+      const cerebrasResult = await generateWithCerebras(prompt, DEFAULT_PROPOSAL_SYSTEM_PROMPT, undefined, "proposal").catch((e) => {
+        logger.warn(`[ai] Cerebras failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+        recordProviderFailure("cerebras", e);
+        return null;
+      });
+      if (cerebrasResult) { recordProviderSuccess("cerebras"); lastProposalProvider = "cerebras"; return cerebrasResult; }
+    } catch (cerebrasErr) {
+      recordProviderFailure("cerebras", cerebrasErr);
+    }
+  }
+
+  // Mistral — third tier
+  if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
+    try {
+      const mistralResult = await generateWithMistral(prompt).catch((e) => {
+        logger.warn(`[ai] Mistral failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+        recordProviderFailure("mistral", e);
+        return null;
+      });
+      if (mistralResult) { recordProviderSuccess("mistral"); lastProposalProvider = "mistral"; return mistralResult; }
+    } catch (mistralErr) {
+      recordProviderFailure("mistral", mistralErr);
+    }
+  }
+
+  // Groq — fourth tier
+  if (isGroqEnabled() && !isProviderCooledDown("groq")) {
+    try {
+      const groqResult = await generateWithGroq(prompt).catch((e) => {
+        logger.warn(`[ai] Groq failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+        recordProviderFailure("groq", e);
+        return null;
+      });
+      if (groqResult) { recordProviderSuccess("groq"); lastProposalProvider = "groq"; return groqResult; }
+    } catch (groqErr) {
+      recordProviderFailure("groq", groqErr);
+    }
+  }
+
+  // OpenRouter — fifth tier
+  if (isOpenRouterEnabled() && !isProviderCooledDown("openrouter")) {
+    try {
+      const openRouterResult = await generateWithOpenRouter(prompt).catch((e) => {
+        logger.warn(`[ai] OpenRouter failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+        recordProviderFailure("openrouter", e);
+        return null;
+      });
+      if (openRouterResult) { recordProviderSuccess("openrouter"); lastProposalProvider = "openrouter"; return openRouterResult; }
+    } catch (openRouterErr) {
+      recordProviderFailure("openrouter", openRouterErr);
+    }
+  }
+
+  // Gemini — sixth tier
   if (apiKey && !isProviderCooledDown("gemini")) {
     try {
       const geminiResult = await generateWithBestModel(prompt);
@@ -3996,20 +4039,16 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
 
   lastProposalProvider = null;
-  // Check only the providers actually attempted in the benchmark chain above
-  // (Gemini, OpenAI, Mistral, Together, DeepSeek, Groq, OpenRouter,
-  // Anthropic). Z.ai and Cerebras are not in this legacy single-call path;
-  // if only those are configured, we must report NO_PROVIDER_CONFIGURED
-  // rather than ALL_PROVIDERS_EXHAUSTED.
-  const benchmarkProvidersConfigured = isGeminiEnabled() || isOpenAIEnabled() || isMistralEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isClaudeEnabled();
-  if (!benchmarkProvidersConfigured) {
+  // The benchmark chain now includes all 10 canonical providers, so isAIEnabled()
+  // accurately reflects whether any provider in the chain is configured.
+  if (!isAIEnabled()) {
     throw new NoAiProviderReadyError({
       useCase: "proposal",
       providerAttempts: [],
       failureDetails: [],
       errorKind: "NO_PROVIDER_CONFIGURED",
       nextAction: "CONFIGURE_AI_KEYS",
-      message: `No AI provider configured for benchmark proposal — set any of: ${CANONICAL_AI_PROVIDER_ENV_LIST} in environment variables. All 10 providers are automatic.`,
+      message: `No AI provider configured — set any of: ${CANONICAL_AI_PROVIDER_ENV_LIST} in environment variables. All 10 providers are automatic.`,
     });
   }
   throw new NoAiProviderReadyError({
