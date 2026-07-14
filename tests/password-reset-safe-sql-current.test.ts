@@ -46,6 +46,15 @@ describe("password reset one-time and privacy semantics", () => {
     assert.match(forgot, /if \(!delivery\.delivered\)/);
     assert.match(forgot, /WHERE "id" = \$\{tokenId\}/);
     assert.match(forgot, /If that email is registered/);
-    assert.match(forgot, /if \(!user\) return NextResponse\.json\(GENERIC_RESPONSE/);
+    // The non-existent-user path must return the SAME generic response as the
+    // existing-user path (anti-enumeration). The pattern may be a single-line
+    // `if (!user) return ...` or a block `if (!user) { ... return ... }` (the
+    // block form is used when a timing-equalization guard is present).
+    assert.match(
+      forgot,
+      /if \(!user\)\s*\{?[\s\S]*?return NextResponse\.json\(GENERIC_RESPONSE/,
+      "forgot-password must return GENERIC_RESPONSE for non-existent users (anti-enumeration). " +
+      "The return may be inside a block that includes a timing-equalization guard."
+    );
   });
 });
