@@ -84,7 +84,13 @@ describe("PR #872 final safety fixes", () => {
     it("finalizeJob catch block logs structured error", () => {
       const src = read("lib/ai-jobs/analysis-job-service.ts");
       assert.match(src, /catch\(\(updateErr\)/);
-      assert.match(src, /console\.error/);
+      // Audit gap GAP-ARCH-06 (Pass 3): console.error migrated to logger.error
+      // (structured logger via lib/observability.ts — adds requestId, timestamp,
+      // severity, and routes to Sentry if SENTRY_DSN is configured). The test's
+      // intent is "catch block logs structured error"; logger.error satisfies
+      // this more rigorously than console.error. Accept either during the
+      // transition window.
+      assert.match(src, /(console\.error|logger\.error)/);
       assert.match(src, /Failed to mark job/);
     });
   });
