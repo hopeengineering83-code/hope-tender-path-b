@@ -240,7 +240,16 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
 
        assert.ok(routeSrc.includes("finalizeRequiredPdf({"), "PDF route must call finalizeRequiredPdf");
        assert.ok(finalizerSrc.includes("generateProposalPdf({"), "finalizer must call generateProposalPdf");
-       assert.ok(finalizerSrc.includes("markdown: text"), "finalizer must pass extracted visible text as the PDF body");
+       // The finalizer must pass the extracted visible text (now via the
+       // structured markdown extractor for parity with the DOCX) as the PDF
+       // body. The variable was renamed from `text` to `renderText` when the
+       // structured extractor was added — both names refer to the extracted
+       // visible text content, never to contentSummary/title fallbacks.
+       assert.ok(
+         finalizerSrc.includes("markdown: renderText") || finalizerSrc.includes("markdown: text"),
+         "finalizer must pass the extracted visible text (renderText or text) as the PDF body",
+       );
+       assert.ok(finalizerSrc.includes("extractDocxMarkdownText"), "finalizer must use the structured markdown extractor for content parity");
        assert.ok(!routeSrc.includes("target.contentSummary ?? target.name ?? tender.title"), "PDF route must not fall back to contentSummary/title as PDF body");
     });
   });

@@ -38,6 +38,8 @@ function deriveFileExtractionMetrics(extractedText: string): {
   failedPages: number | null;
   extractionScore: number;
   extractionMethod: string | null;
+  pageStatusJson: string | null;
+  ocrModel: string | null;
 } {
   const quality = assessExtractionQuality(extractedText);
   const pageMarkers = (extractedText.match(/\[Page\s+\d+\]/gi) ?? []).length;
@@ -64,6 +66,34 @@ function deriveFileExtractionMetrics(extractedText: string): {
     extractionMethod = extractedPages !== null && ocrPages !== null && ocrPages < extractedPages ? "mixed" : "ocr";
   } else if (extractedText.trim().length > 0) extractionMethod = "text";
 
+  // Persist per-page status JSON so the Extraction Quality dashboard reads
+  // stored truth instead of seeing PAGE_STATUS_INCOMPLETE on every fresh
+  // tender. Mirrors the secure-upload-handler path. Null when there are no
+  // pages (empty/failed extraction) — the dashboard will then correctly show
+  // "no pages detected" rather than a false "incomplete" warning.
+  const pageStatusJson = perPageReport.pages.length > 0 ? JSON.stringify(perPageReport.pages) : null;
+
+  // Extract the OCR model name from the marker prefix so the dashboard's
+  // "OCR engine" badge is honest. The marker format is:
+  //   [PDF text extracted via Claude vision OCR — N page(s). ocrReason=...]
+  // The model name is set by PDF_OCR_MODEL env (default claude-3-5-sonnet-latest)
+  // in lib/extract-text.ts. We can't read that env here without coupling, so
+  // we extract a stable label from the marker text itself.
+  let ocrModel: string | null = null;
+  if (ocrPageMarkers > 0) {
+    const markerMatch = extractedText.match(
+      /\[PDF text extracted via Claude vision OCR[^\]]*\]/i,
+    );
+    if (markerMatch) {
+      ocrModel = "claude-vision";
+    }
+  }
+  if (!ocrModel && quality.hasOcrPlaceholder) {
+    // OCR was attempted but failed (timeout / auth / rate-limit / empty output).
+    // Still record the model label so the UI shows which engine was used.
+    ocrModel = "claude-vision";
+  }
+
   return {
     totalPages,
     extractedPages,
@@ -71,6 +101,8 @@ function deriveFileExtractionMetrics(extractedText: string): {
     failedPages,
     extractionScore: quality.score,
     extractionMethod,
+    pageStatusJson,
+    ocrModel,
   };
 }
 
@@ -301,6 +333,8 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             failedPages: metrics.failedPages,
             extractionScore: metrics.extractionScore,
             extractionMethod: metrics.extractionMethod,
+            pageStatusJson: metrics.pageStatusJson,
+            ocrModel: metrics.ocrModel,
           },
           select: { id: true, originalFileName: true, totalPages: true },
         }));

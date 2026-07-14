@@ -53,7 +53,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const tender = await prisma.tender.findFirst({
       where: { id, userId: actor.id },
-      include: { requirements: true, generatedDocuments: true },
+      include: {
+        requirements: true,
+        generatedDocuments: true,
+        // Include the company relation so the PDF renderer can emit branded
+        // cover/header/footer that match the DOCX's branded cover block.
+        company: {
+          select: { name: true, legalName: true, address: true, phone: true, email: true, website: true },
+        },
+      },
     });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
@@ -219,7 +227,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           title: tender.title ?? null,
           clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,
           reference: tender.reference ?? null,
+          submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
         },
+        company: (tender as any)?.company
+          ? {
+              name: (tender as any).company.name ?? null,
+              address: (tender as any).company.address ?? null,
+              phone: (tender as any).company.phone ?? null,
+              email: (tender as any).company.email ?? null,
+              website: (tender as any).company.website ?? null,
+            }
+          : null,
         sourceDocument: {
           id: String(source.id),
           name: source.name ?? null,

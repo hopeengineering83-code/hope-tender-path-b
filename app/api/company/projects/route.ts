@@ -77,6 +77,23 @@ export async function POST(req: Request) {
     if (contractValue !== null && (!Number.isFinite(contractValue) || contractValue < 0 || contractValue > 1e12)) {
       return NextResponse.json({ error: "contractValue must be a finite non-negative number up to 1,000,000,000,000" }, { status: 400 });
     }
+    // Optional sourceDocumentId — when the user supplies it, the new Project
+    // row is audit-traceable to the uploaded CompanyDocument (testimony
+    // letter, contract, etc.) it was derived from. Earlier the field was
+    // never set on manual creation, so manually entered projects had no
+    // provenance link back to their source document.
+    let sourceDocumentId: string | null = null;
+    if (typeof body.sourceDocumentId === "string" && body.sourceDocumentId.trim()) {
+      const docId = body.sourceDocumentId.trim();
+      const doc = await prisma.companyDocument.findFirst({
+        where: { id: docId, companyId: company.id },
+        select: { id: true },
+      });
+      if (!doc) {
+        return NextResponse.json({ error: "sourceDocumentId does not reference a document in your Company Vault." }, { status: 400 });
+      }
+      sourceDocumentId = doc.id;
+    }
     const project = await prisma.project.create({
       data: {
         companyId: company.id,
@@ -92,6 +109,7 @@ export async function POST(req: Request) {
         reviewedBy: actor.id,
         reviewedAt: new Date(),
         reviewNotes: "Manual project record created by authenticated user.",
+        sourceDocumentId,
       },
     });
 

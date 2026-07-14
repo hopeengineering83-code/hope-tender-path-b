@@ -106,6 +106,170 @@ function visibleXmlText(xml: string): string {
     .trim();
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Structured DOCX text extraction — preserves markdown tables and inline
+// bold/italic so the PDF renderer can produce content equivalent to the DOCX.
+//
+// The flat-text `visibleXmlText()` above is used by the quality validator
+// (placeholders, AI traces, pricing leakage). It MUST stay lossy because the
+// validator runs substring/regex matches that don't expect markdown syntax.
+//
+// The structured extractor below is used ONLY by the PDF finalizer to render
+// a PDF that visually matches the DOCX (tables as tables, bold as bold).
+// It walks the same word/document.xml but emits:
+//   - <w:p> paragraphs  → \n\n separators (preserving paragraph breaks)
+//   - <w:tbl> tables    → markdown |...| rows
+//   - <w:tr> rows       → one markdown row per <w:tr>
+//   - <w:tc> cells      → cell text joined with " | "
+//   - <w:b/> bold runs  → **text**
+//   - <w:i/> italic runs→ *text*
+//   - <w:br/> breaks    → \n
+//   - <w:tab/> tabs     → "  "
+//
+// This is a best-effort structural walk — it does not implement the full
+// OOXML spec. Cell merges (vMerge/gridSpan) are flattened. Nested tables
+// are unwrapped into the outer row. The output is consumed by the PDF
+// renderer's markdown parser, which already handles |...| tables.
+// ───────────────────────────────────────────────────────────────────────────
+
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function walkRunsToMarkdown(runXml: string): string {
+  // Within a run (<w:r>...</w:r>), detect <w:b/> (bold) and <w:i/> (italic)
+  // property flags and wrap the visible text accordingly. Each <w:t> child
+  // contributes its text content; <w:br/> contributes a newline; <w:tab/>
+  // contributes two spaces.
+  let bold = false;
+  let italic = false;
+  const rPrMatch = runXml.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/);
+  if (rPrMatch) {
+    bold = /<w:b\s*\/?>/.test(rPrMatch[1]) && !/<w:b\s+val="false"\s*\/?>/.test(rPrMatch[1]);
+    italic = /<w:i\s*\/?>/.test(rPrMatch[1]) && !/<w:i\s+val="false"\s*\/?>/.test(rPrMatch[1]);
+  }
+  const pieces: string[] = [];
+  const re = /<w:(?:t(?:\s[^>]*)?|br\s*\/?|tab\s*\/?)>([^<]*)<\/w:t>|<w:(br|tab)\s*\/?>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(runXml)) !== null) {
+    if (m[2] === "br") {
+      pieces.push("\n");
+    } else if (m[2] === "tab") {
+      pieces.push("  ");
+    } else if (m[1] !== undefined) {
+      const txt = decodeXmlEntities(m[1]).split("").filter((ch) => ch !== "\r").join("");
+      pieces.push(txt);
+    }
+  }
+  const text = pieces.join("");
+  if (!text) return "";
+  if (bold && italic) return `***${text}***`;
+  if (bold) return `**${text}**`;
+  if (italic) return `*${text}*`;
+  return text;
+}
+
+function walkParagraphToMarkdown(pXml: string): string {
+  const runs: string[] = [];
+  const re = /<w:r>([\s\S]*?)<\/w:r>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(pXml)) !== null) {
+    const piece = walkRunsToMarkdown(m[1]);
+    if (piece) runs.push(piece);
+  }
+  return runs.join("").replace(/[ \t]+/g, " ").trim();
+}
+
+function walkCellToMarkdown(tcXml: string): string {
+  const paragraphs: string[] = [];
+  const re = /<w:p>([\s\S]*?)<\/w:p>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tcXml)) !== null) {
+    const t = walkParagraphToMarkdown(m[1]);
+    if (t) paragraphs.push(t);
+  }
+  return paragraphs
+    .join(" / ")
+    .replace(/\|/g, "\\|")
+    .replace(/\n/g, " ")
+    .trim();
+}
+
+function walkTableToMarkdown(tblXml: string): string {
+  const rows: string[] = [];
+  const re = /<w:tr[\s>][\s\S]*?<\/w:tr>/g;
+  let m: RegExpExecArray | null;
+  let isFirst = true;
+  while ((m = re.exec(tblXml)) !== null) {
+    const cells: string[] = [];
+    const cellRe = /<w:tc>([\s\S]*?)<\/w:tc>/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = cellRe.exec(m[0])) !== null) {
+      cells.push(walkCellToMarkdown(cm[1]));
+    }
+    if (cells.length > 0) {
+      rows.push(`| ${cells.join(" | ")} |`);
+      if (isFirst) {
+        rows.push(`| ${cells.map(() => "---").join(" | ")} |`);
+        isFirst = false;
+      }
+    }
+  }
+  return rows.join("\n");
+}
+
+function visibleXmlTextStructured(xml: string): string {
+  const out: string[] = [];
+  const bodyMatch = xml.match(/<w:body>([\s\S]*?)<\/w:body>/);
+  const body = bodyMatch ? bodyMatch[1] : xml;
+  const re = /<w:(p|tbl|sectPr)([\s>][\s\S]*?)<\/w:\1>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const tag = m[1];
+    const inner = m[2];
+    if (tag === "sectPr") continue;
+    if (tag === "tbl") {
+      const md = walkTableToMarkdown(`<w:tbl>${inner}</w:tbl>`);
+      if (md) {
+        out.push("");
+        out.push(md);
+        out.push("");
+      }
+      continue;
+    }
+    if (tag === "p") {
+      const line = walkParagraphToMarkdown(inner);
+      out.push(line);
+    }
+  }
+  return out
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export async function extractDocxMarkdownText(
+  value: string | null | undefined,
+  filename: string,
+): Promise<string | null> {
+  if (!maybeBase64Docx(value, filename) || !value) return null;
+  try {
+    const buffer = Buffer.from(value, "base64");
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(buffer);
+    const documentXml = await zip.file("word/document.xml")?.async("string");
+    return documentXml ? visibleXmlTextStructured(documentXml) : null;
+  } catch {
+    return null;
+  }
+}
+
 function maybeBase64Docx(value: string | null | undefined, filename: string): boolean {
   if (!value || !filename.toLowerCase().endsWith(".docx")) return false;
   try {

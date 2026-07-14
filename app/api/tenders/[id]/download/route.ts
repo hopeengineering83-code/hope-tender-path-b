@@ -778,7 +778,17 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
       title: tender.title ?? null,
       clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,
       reference: tender.reference ?? null,
+      submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
     },
+    company: (tender as any)?.company
+      ? {
+          name: (tender as any).company.name ?? null,
+          address: (tender as any).company.address ?? null,
+          phone: (tender as any).company.phone ?? null,
+          email: (tender as any).company.email ?? null,
+          website: (tender as any).company.website ?? null,
+        }
+      : null,
     sourceDocument: {
       id: String(target.id),
       name: target.name ?? null,
@@ -831,7 +841,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return err("Invalid envelope query parameter. Use technical, financial, or admin.", 400, { code: "INVALID_ENVELOPE_QUERY" });
     }
 
-    const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, include: { requirements: true, complianceGaps: true, generatedDocuments: true, exportPackages: true } });
+    const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, include: { requirements: true, complianceGaps: true, generatedDocuments: true, exportPackages: true, company: { select: { name: true, legalName: true, address: true, phone: true, email: true, website: true } } } });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     if (docId) return await singleDocument(actor.id, tender, docId);
