@@ -273,13 +273,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "GENERATION_BLOCKED_REGEX_FALLBACK",
       entityType: "Tender",
       entityId: id,
-      description: "AI proposal generation blocked: analysis source is regex fallback and has not been human-approved.",
+      description: "AI proposal generation blocked: analysis source is regex fallback. Human approval is audit-only and does NOT authorize generation.",
     });
     return NextResponse.json({
       error: analysisGate.message,
       code: analysisGate.code,
       nextAction: analysisGate.nextAction,
-      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+      details: "Re-run AI Analyze with healthy providers to obtain a genuine AI analysis. Approving the regex fallback records an audit-only review — it does NOT unblock generation.",
     }, { status: 409 });
   }
 
@@ -514,7 +514,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Chunked mode always uses parallel section generation (with a section
       // filter) so the correct per-chunk budgets in proposal-sections.ts apply.
       const generateFn = (useParallel || sectionFilter)
-        ? generateProposalSectionsParallel(aiInputBase, sectionFilter)
+        ? generateProposalSectionsParallel(aiInputBase, sectionFilter).then((r) => r.markdown)
         : generateBenchmarkProposalWithAI(aiInputBase);
       proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {

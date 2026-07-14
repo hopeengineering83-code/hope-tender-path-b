@@ -445,7 +445,19 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     }
 
     await recordStep(ctx.jobId, { stepName: "proposal.generate", message: `Generating proposal sections${sectionFilter ? ` (filtered: ${sectionFilter.join(", ")})` : " (full)"}`, status: "RUNNING" });
-    const markdown = await generateProposalSectionsParallel(input, sectionFilter);
+    const sectionResult = await generateProposalSectionsParallel(input, sectionFilter);
+    const markdown = sectionResult.markdown;
+    // If ALL sections used deterministic fallback, this is NOT AI output.
+    // Record the provenance but do NOT create a GeneratedDocument — fallback
+    // content must never be persisted as a generated proposal.
+    if (sectionResult.allFallback) {
+      await recordStep(ctx.jobId, {
+        stepName: "proposal.fallback",
+        message: "All sections used deterministic fallback — output is non-AI. No GeneratedDocument persisted.",
+        status: "FAILED",
+      });
+      throw new Error("AI_PROPOSAL_ALL_SECTIONS_FALLBACK");
+    }
     if (!markdown || markdown.trim().length < 50) {
     await recordStep(ctx.jobId, {
       stepName: "proposal.output",

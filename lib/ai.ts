@@ -4193,7 +4193,24 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
  * detect "all sections fell back" can check lastProposalProvider —
  * it will be null in that case.
  */
-export async function generateProposalSectionsParallel(input: AIBidWriterInput, sectionFilter?: ProposalSectionId[]): Promise<string> {
+export type SectionProvenance = {
+  markdown: string;
+  /** Per-section provider/fallback provenance. */
+  sections: Array<{
+    id: string;
+    source: SectionResult["source"];
+    durationMs: number;
+    error?: string;
+  }>;
+  /** True if ANY section used deterministic fallback. */
+  anyFallback: boolean;
+  /** True if ALL sections used deterministic fallback. */
+  allFallback: boolean;
+  /** The provider that produced the dominant successful output, or null if all fell back. */
+  dominantProvider: AIProvider;
+};
+
+export async function generateProposalSectionsParallel(input: AIBidWriterInput, sectionFilter?: ProposalSectionId[]): Promise<SectionProvenance> {
   const t0 = Date.now();
 
   // PROPOSAL_DEEP_MODE — opt-in "FULL POWER" mode. When enabled:
@@ -4314,12 +4331,22 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   const modeLabel = isChunked ? `chunked[${sectionFilter!.join(",")}]` : deepMode ? "deep" : "standard";
   logger.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
 
-  // Stitch in canonical order. Cover+Summary first, then A+B, then C,
-  // then D+Appendices+Declaration. The downstream section-reorderer in
-  // generate-elite.ts will further reorder based on rank if upstream
-  // produced sections in a different order, but we ship them in the
-  // right order here so the reorderer is a no-op in the happy path.
-  return sections.map((s) => s.markdown.trim()).filter(Boolean).join("\n\n");
+  // Stitch in canonical order and return structured provenance.
+  const stitchedMarkdown = sections.map((s) => s.markdown.trim()).filter(Boolean).join("\n\n");
+  const anyFallback = sections.some((s) => s.source === "fallback");
+  const allFallback = sections.every((s) => s.source === "fallback");
+  return {
+    markdown: stitchedMarkdown,
+    sections: sections.map((s) => ({
+      id: s.id,
+      source: s.source,
+      durationMs: s.durationMs,
+      ...(s.error ? { error: s.error } : {}),
+    })),
+    anyFallback,
+    allFallback,
+    dominantProvider: allFallback ? null : lastProposalProvider,
+  };
 
   // Suppress unused import warning — extractSectionCFromMarkdown is
   // exported for callers who want to peel Section C out of an
