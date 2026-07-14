@@ -354,6 +354,69 @@ describe("[docx-pdf-parity] PDF body content matches DOCX body content", () => {
     assert.equal(md, null);
   });
 
+  it("extractDocxMarkdownText decodes XML entities in single pass (no double-unescape)", async () => {
+    // `&amp;lt;` in XML represents the literal text `&lt;` (the `&amp;` is
+    // decoded to `&`, and the remaining `lt;` is NOT an entity — it's just
+    // literal text). A naive sequential replace would double-unescape:
+    //   `&amp;lt;` → `&lt;` → `<`  (WRONG)
+    // The single-pass regex must produce: `&lt;` (CORRECT — `&` + `lt;`).
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>entity test &amp;lt; end</w:t></w:r></w:p>
+  </w:body>
+</w:document>`;
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    zip.file("word/document.xml", xml);
+    zip.file("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="text/xml"/></Types>');
+    zip.file("_rels/.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+    const docxBuffer = await zip.generateAsync({ type: "nodebuffer" });
+    const md = await extractDocxMarkdownText(docxBuffer.toString("base64"), "test.docx");
+    assert.ok(md, "Must extract text");
+    // The single-pass decoder must produce `&lt;` not `<`
+    assert.ok(md.includes("&lt;"), "Single-pass entity decode must not double-unescape &amp;lt; to <");
+    assert.ok(!md.includes("< end"), "Double-unescape would have produced '< end' — must not appear");
+  });
+
+  it("extractDocxMarkdownText escapes backslashes and pipes in table cells", async () => {
+    // A cell containing `a\|b` (literal backslash + pipe) must be escaped so
+    // the markdown table is not broken. Backslash is escaped FIRST (to `\\`),
+    // then pipe (to `\|`), producing `a\\\|b` which renders as `a\|b`.
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>a\\|b</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>plain</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>`;
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    zip.file("word/document.xml", xml);
+    zip.file("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="text/xml"/></Types>');
+    zip.file("_rels/.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+    const docxBuffer = await zip.generateAsync({ type: "nodebuffer" });
+    const md = await extractDocxMarkdownText(docxBuffer.toString("base64"), "test.docx");
+    assert.ok(md, "Must extract text");
+    // The cell text `a\|b` must be escaped to `a\\\|b` (\\ = literal backslash,
+    // \| = literal pipe). Both escape sequences must be present.
+    assert.ok(md.includes("\\\\"), "Backslash must be escaped to \\\\ in cell text");
+    assert.ok(md.includes("\\|"), "Pipe must be escaped to \\| in cell text");
+    // The table row must start with `|`, end with `|`, and have exactly one
+    // ` | ` separator between the two cells. The escaped pipe inside the cell
+    // must NOT be counted as a column separator.
+    const tableLine = md.split("\n").find((l) => l.startsWith("|"));
+    assert.ok(tableLine, "Must have a markdown table row");
+    // Remove the escaped pipe `\|` first, then count remaining pipes.
+    // Should be exactly 3: row-start `|`, cell-separator ` | `, row-end `|`.
+    const pipesAfterRemovingEscaped = tableLine!.replace(/\\\|/g, "").match(/\|/g);
+    assert.equal(pipesAfterRemovingEscaped?.length, 3, "Exactly 3 structural pipes (start, separator, end) after removing escaped cell-internal pipes");
+  });
+
   it("PDF renderer renders markdown tables as PDF tables (no data loss)", async () => {
     const markdown = [
       "Intro paragraph.",

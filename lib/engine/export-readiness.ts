@@ -133,12 +133,30 @@ function visibleXmlText(xml: string): string {
 // ───────────────────────────────────────────────────────────────────────────
 
 function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+  // Single-pass replacement — sequential .replace() calls would double-unescape
+  // entities like `&amp;lt;` (which represents the literal text `&lt;`).
+  // With sequential replaces: `&amp;lt;` → `&lt;` → `<` (WRONG — should be `&lt;`).
+  // With single-pass: `&amp;lt;` → `&` + `lt;` = `&lt;` (CORRECT — the `&` from
+  // `&amp;` is emitted and never re-scanned for further entity matches).
+  return s.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);/g, (match, entity: string) => {
+    switch (entity) {
+      case "amp": return "&";
+      case "lt": return "<";
+      case "gt": return ">";
+      case "quot": return '"';
+      case "apos": return "'";
+      default:
+        if (entity.startsWith("#x") || entity.startsWith("#X")) {
+          const code = parseInt(entity.slice(2), 16);
+          return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+        }
+        if (entity.startsWith("#")) {
+          const code = parseInt(entity.slice(1), 10);
+          return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+        }
+        return match;
+    }
+  });
 }
 
 function walkRunsToMarkdown(runXml: string): string {
@@ -195,6 +213,13 @@ function walkCellToMarkdown(tcXml: string): string {
   }
   return paragraphs
     .join(" / ")
+    // Escape backslashes FIRST, then pipes. In markdown table cells:
+    //   `\\` → literal backslash, `\|` → literal pipe, `|` → column separator.
+    // Escaping `\` before `|` ensures a cell like `a\|b` (literal backslash +
+    // pipe) becomes `a\\\|b` which renders as `a\` + `|` + `b` = `a\|b`.
+    // Reversing the order would turn `a\|b` → `a\\|b` (escaping the pipe
+    // first) → `a\\\\|b` (double-escaping the backslash), corrupting the cell.
+    .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/\n/g, " ")
     .trim();

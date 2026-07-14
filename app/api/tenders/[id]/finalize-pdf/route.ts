@@ -56,10 +56,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       include: {
         requirements: true,
         generatedDocuments: true,
-        // Include the company relation so the PDF renderer can emit branded
-        // cover/header/footer that match the DOCX's branded cover block.
-        company: {
-          select: { name: true, legalName: true, address: true, phone: true, email: true, website: true },
+        // Tender has no direct `company` relation — company is reached via
+        // tender.user.company. Including a nonexistent relation throws a
+        // PrismaClientValidationError at runtime (HTTP 500) which broke the
+        // cross-user-isolation E2E test (foreign docId → expected 404, got 500).
+        user: {
+          select: {
+            company: {
+              select: { name: true, legalName: true, address: true, phone: true, email: true, website: true },
+            },
+          },
         },
       },
     });
@@ -229,13 +235,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           reference: tender.reference ?? null,
           submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
         },
-        company: (tender as any)?.company
+        company: (tender as any)?.user?.company
           ? {
-              name: (tender as any).company.name ?? null,
-              address: (tender as any).company.address ?? null,
-              phone: (tender as any).company.phone ?? null,
-              email: (tender as any).company.email ?? null,
-              website: (tender as any).company.website ?? null,
+              name: (tender as any).user.company.name ?? null,
+              address: (tender as any).user.company.address ?? null,
+              phone: (tender as any).user.company.phone ?? null,
+              email: (tender as any).user.company.email ?? null,
+              website: (tender as any).user.company.website ?? null,
             }
           : null,
         sourceDocument: {
