@@ -2,9 +2,13 @@ name: Generate AI policy repair artifact
 
 on:
   push:
-    branches: [codex-release-integrity-hardening]
+    branches:
+      - main
+      - fix/release-candidate
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - fix/release-candidate
   workflow_dispatch:
 
 permissions:
