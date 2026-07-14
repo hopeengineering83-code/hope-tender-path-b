@@ -157,7 +157,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const cached = await loadChunkOutput(proposalJobId);
     const chunkKey = String(chunkNum);
     if (cached.chunks[chunkKey] && !forceRefresh) {
-      return NextResponse.json({ success: true, proposal: cached.chunks[chunkKey], fallback: false, cached: true, proposalJobId });
+      return NextResponse.json({ success: true, proposal: cached.chunks[chunkKey], fallback: false, cached: true, proposalJobId, persistBlocked: true, persistBlockerCode: "LEGACY_AI_PROPOSAL_DRAFT_ONLY" });
     }
   }
 
@@ -295,7 +295,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // back into intakeSummary). Generated proposals are returned in
     // the response and saved as TenderFile records elsewhere — we do
     // not store the output back in the tender's input fields.
-    return NextResponse.json({ success: true, proposal, fallback: true });
+    return NextResponse.json({ success: true, proposal, fallback: true, persistBlocked: true, persistBlockerCode: "LEGACY_AI_PROPOSAL_DRAFT_ONLY" });
   }
 
   let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
@@ -334,7 +334,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
   if (!forceRefresh && !sectionFilter) {
     const cached = getCachedProposal(cacheKey);
-    if (cached) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: cached.fallback, cached: true });
+    if (cached) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: cached.fallback, cached: true, persistBlocked: true, persistBlockerCode: "LEGACY_AI_PROPOSAL_DRAFT_ONLY" });
   }
 
   const companyEvidenceLines = _buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);

@@ -21,8 +21,8 @@
  */
 
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldAutoTriggerDeepReasoning } from "./feature-flags";
-import { CANONICAL_AI_PROVIDER_ENV } from "../ai-provider-policy";
 import { CANONICAL_AI_PROVIDER_ENV_LIST } from "../ai-provider-env";
+import { CANONICAL_AI_PROVIDER_ORDER, isProviderConfigured as registryIsProviderConfigured } from "../ai-provider-registry";
 
 export type DeepReasoningEstimate = {
   /** Whether deep reasoning will actually run given the current config. */
@@ -93,8 +93,11 @@ export function defaultRefinementThreshold(): number {
   return Number.isFinite(override) && override > 0 ? override : tierDefault;
 }
 
-function isAnyProviderKeyPresent(): boolean {
-  return Object.values(CANONICAL_AI_PROVIDER_ENV).some((envName) => Boolean(process.env[envName]));
+function isAnyProviderConfigured(): boolean {
+  // Use the registry's isProviderConfigured which validates not just key
+  // presence but also model/endpoint configuration (e.g. OpenRouter requires
+  // a valid :free model, Z.ai requires valid endpoint resolution).
+  return CANONICAL_AI_PROVIDER_ORDER.some((p) => registryIsProviderConfigured(p));
 }
 
 function isClaudeKeyPresent(): boolean {
@@ -119,7 +122,7 @@ export function estimateDeepReasoningCost(input: EstimateInput): DeepReasoningEs
       })
     : false;
   const willRunGate = flagOn || autoOn;
-  const aiOn = isAnyProviderKeyPresent();
+  const aiOn = isAnyProviderConfigured();
   const toolUseGen = isToolUseGenerationEnabled() && isClaudeKeyPresent();
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
   const maxCallsRaw = process.env.TENDER_DEEP_REASONING_MAX_CALLS;

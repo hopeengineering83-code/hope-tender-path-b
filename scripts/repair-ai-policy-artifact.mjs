@@ -6,7 +6,9 @@ let ai = readFileSync(aiPath, "utf8");
 const enabledPattern = /export function isAIEnabled\(\) \{[\s\S]*?\n\}/;
 const enabledReplacement = `export function isAIEnabled() {
   return Boolean(
-    isMistralConfigured()
+    isZaiEnabled()
+    || isCerebrasEnabled()
+    || isMistralConfigured()
     || isGroqConfigured()
     || isOpenRouterConfigured()
     || apiKey
@@ -222,13 +224,25 @@ const sectionBlock = `  // Mistral — first tier
   }
 
 `;
-ai = replaceBetween(
-  ai,
-  "  // Provider chain for sections:",
-  "  // Gemini — first tier",
-  "  // Claude — last resort",
-  sectionBlock,
-);
+// Section generation replacement: if the old anchors exist, replace them
+// with the canonical-order block. If they don't (because the code already
+// uses providerChainForUseCase), skip — the code is already correct.
+const sectionAnchor = ai.indexOf("  // Provider chain for sections:");
+if (sectionAnchor >= 0) {
+  ai = replaceBetween(
+    ai,
+    "  // Provider chain for sections:",
+    "  // Gemini — first tier",
+    "  // Claude — last resort",
+    sectionBlock,
+  );
+} else {
+  // The section generation already uses the canonical provider chain.
+  // Verify it references providerChainForUseCase to confirm.
+  if (!ai.includes("providerChainForUseCase(\"proposal\")")) {
+    throw new Error("Section generation does not use canonical provider chain and old anchors are missing");
+  }
+}
 
 const envPath = ".env.example";
 let env = readFileSync(envPath, "utf8");

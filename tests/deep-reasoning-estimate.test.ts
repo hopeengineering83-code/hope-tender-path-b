@@ -42,12 +42,24 @@ describe("estimateDeepReasoningCost — preconditions", () => {
   });
 
   it("recognizes every canonical provider key, including Z.ai and Cerebras", () => {
+    // Provider-specific extra env vars needed for registry validation.
+    // OpenRouter requires a valid :free model; Z.ai and Cerebras need
+    // base URLs and model names. Other providers only need the API key.
+    const providerExtraEnv: Record<string, Record<string, string>> = {
+      ZAI_API_KEY: { ZAI_BASE_URL: "https://api.z.ai/api/paas/v4", ZAI_PROPOSAL_MODEL: "glm-4-flash" },
+      CEREBRAS_API_KEY: { CEREBRAS_BASE_URL: "https://api.test", CEREBRAS_PROPOSAL_MODEL: "test-model" },
+      OPENROUTER_API_KEY: { OPENROUTER_PROPOSAL_MODEL: "test-model:free" },
+      GROQ_API_KEY: { GROQ_MODEL: "test-model", GROQ_BASE_URL: "https://api.test" },
+      MISTRAL_API_KEY: { MISTRAL_PROPOSAL_MODEL: "test-model", MISTRAL_BASE_URL: "https://api.test" },
+      TOGETHER_API_KEY: { TOGETHER_PROPOSAL_MODEL: "test-model", TOGETHER_BASE_URL: "https://api.test" },
+    };
     for (const providerKey of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
       const allKeys = {
         ZAI_API_KEY: undefined, CEREBRAS_API_KEY: undefined, MISTRAL_API_KEY: undefined,
         GROQ_API_KEY: undefined, OPENROUTER_API_KEY: undefined, GEMINI_API_KEY: undefined,
         OPENAI_API_KEY: undefined, TOGETHER_API_KEY: undefined, DEEPSEEK_API_KEY: undefined,
         ANTHROPIC_API_KEY: undefined, TENDER_DEEP_REASONING: "true",
+        ...providerExtraEnv[providerKey],
       } as Record<string, string | undefined>;
       allKeys[providerKey] = "test-key";
       const result = withEnv(allKeys, () => estimateDeepReasoningCost({

@@ -3996,14 +3996,20 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
 
   lastProposalProvider = null;
-  if (!isAIEnabled()) {
+  // Check only the providers actually attempted in the benchmark chain above
+  // (Gemini, OpenAI, Mistral, Together, DeepSeek, Groq, OpenRouter,
+  // Anthropic). Z.ai and Cerebras are not in this legacy single-call path;
+  // if only those are configured, we must report NO_PROVIDER_CONFIGURED
+  // rather than ALL_PROVIDERS_EXHAUSTED.
+  const benchmarkProvidersConfigured = isGeminiEnabled() || isOpenAIEnabled() || isMistralEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isClaudeEnabled();
+  if (!benchmarkProvidersConfigured) {
     throw new NoAiProviderReadyError({
       useCase: "proposal",
       providerAttempts: [],
       failureDetails: [],
       errorKind: "NO_PROVIDER_CONFIGURED",
       nextAction: "CONFIGURE_AI_KEYS",
-      message: `No AI provider configured — set any of: ${CANONICAL_AI_PROVIDER_ENV_LIST} in environment variables. All 10 providers are automatic.`,
+      message: `No AI provider configured for benchmark proposal — set any of: ${CANONICAL_AI_PROVIDER_ENV_LIST} in environment variables. All 10 providers are automatic.`,
     });
   }
   throw new NoAiProviderReadyError({
@@ -4083,12 +4089,18 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   // other AI path: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini →
   // OpenAI → Together → DeepSeek → Anthropic. Skipped providers (unconfigured
   // or cooling down) do not consume time; each actual attempt is bounded by the
-  // per-section timeout.
+  // per-section timeout and the shared caller deadline.
+  const sectionDeadline = typeof spec.deadlineAt === "number"
+    ? spec.deadlineAt
+    : Date.now() + PROPOSAL_SECTION_TIMEOUT_MS * CANONICAL_AI_PROVIDER_ORDER.length;
   for (const provider of providerChainForUseCase("proposal")) {
     if (!isProviderEnabled(provider) || isProviderCooledDown(provider)) continue;
+    // Do not start a new attempt if the shared deadline is already hit.
+    if (Date.now() + 2000 >= sectionDeadline) break;
 
     try {
-      const maxTokens = spec.maxOutputTokens ?? 4096;
+      // Clamp token budget to the provider's output cap.
+      const maxTokens = Math.min(spec.maxOutputTokens ?? 4096, getProviderOutputCap(provider, "proposal"));
       const text = await Promise.race([
         (async () => {
           switch (provider) {

@@ -219,6 +219,11 @@ export interface ProposalSectionSpec {
   // four sections is intentionally LESS than the single-call budget so
   // each call comfortably finishes inside the per-section timeout.
   maxOutputTokens: number;
+  // Optional shared wall-clock deadline (epoch ms). If set, the section
+  // generation loop checks this before each provider attempt and stops
+  // early if the deadline is too close, preventing a slow early provider
+  // from consuming all the time before a healthy later provider is tried.
+  deadlineAt?: number;
 }
 
 // ─── User prompt builders ────────────────────────────────────────────────────
