@@ -1,0 +1,150 @@
+name: Release candidate promotion
+
+# This workflow is the structural fix for the "merged but no visible change"
+# problem. PRs merged into fix/release-candidate had NO path to production
+# because:
+#   1. vercel.json deploys ONLY main ({"**": false, "main": true})
+#   2. NO workflow auto-merged fix/release-candidate into main
+#   3. CI didn't even run on fix/release-candidate
+#
+# Result: 41 commits accumulated on fix/release-candidate while production
+# (main) sat frozen. Users saw PRs "merge" on GitHub but the deployed app
+# never changed.
+#
+# This workflow closes that loop. On every push to fix/release-candidate it:
+#   - Runs the same CI job that guards main (so RC is verified before promotion)
+#   - Opens or updates a PR from fix/release-candidate -> main
+#   - Auto-merges the PR if CI passes and the branch policy allows it
+#
+# The auto-merge is the critical piece. Without it, the PR would sit open
+# indefinitely (which is exactly what happened with PR #1119).
+
+on:
+  push:
+    branches:
+      - fix/release-candidate
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: rc-promotion-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote release-candidate to main
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_ci
+          POSTGRES_DB: hope_tender_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_ci -d hope_tender_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "postgresql://hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
+      SESSION_SECRET: "ci-session-${{ github.run_id }}-${{ github.sha }}"
+      NEXTAUTH_SECRET: "ci-nextauth-${{ github.run_id }}-${{ github.sha }}"
+      GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
+      ANTHROPIC_API_KEY: ""
+      RUN_DB_INTEGRATION: "true"
+
+    steps:
+      - name: Checkout fix/release-candidate
+        uses: actions/checkout@v4
+        with:
+          ref: fix/release-candidate
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit/integration tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify release hardening contract
+        run: node scripts/release-hardening-contract.mjs
+
+      - name: Check for changes ahead of main
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          AHEAD=$(git log --oneline origin/main..fix/release-candidate | wc -l | tr -d ' ')
+          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+          echo "Commits ahead of main: $AHEAD"
+
+      - name: Create or update promotion PR
+        if: steps.diff.outputs.ahead != '0'
+        id: pr
+        uses: repo-sync/pull@v2
+        with:
+          source_branch: fix/release-candidate
+          destination_branch: main
+          pr_title: "Promote release-candidate to main ($(date -u +%Y-%m-%d))"
+          pr_body: |
+            Automated promotion PR created by `release-candidate-promotion.yml`.
+
+            This PR merges the accumulated release-candidate work into `main` so
+            that Vercel deploys it to production. Without this promotion, work
+            merged into `fix/release-candidate` never reaches users — which is
+            the root cause of the "merged but no visible change" problem.
+
+            **Commits ahead of main:** ${{ steps.diff.outputs.ahead }}
+
+            **CI status:** This workflow ran the full CI suite (migrations,
+            typecheck, lint, tests, build, release contract) on
+            `fix/release-candidate` before opening this PR. If this step
+            succeeded, the RC is verified.
+
+            **Merge strategy:** Merge commit (preserves the RC history).
+          pr_label: release-promotion,auto-merge
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge
+        if: steps.diff.outputs.ahead != '0' && steps.pr.outputs.pr_number
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ steps.pr.outputs.pr_number }}"
+          echo "Enabling auto-merge for PR #$PR_NUMBER"
+          # Enable auto-merge with merge commit; the PR will merge once all
+          # required status checks pass (CI runs on the PR automatically).
+          gh pr merge "$PR_NUMBER" --auto --merge
