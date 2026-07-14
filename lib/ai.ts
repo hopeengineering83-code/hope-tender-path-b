@@ -2067,6 +2067,14 @@ ${tenderContent}`;
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return null;
+      // EMPTY-OBJECT GUARD: A provider that returns "{}" would previously be
+      // silently marked as a successful analysis (every field defaulted to
+      // empty/null/[]). This is the same bug pattern that was fixed in
+      // lib/ai-jobs/chunk-recovery.ts — a `{}` response is NOT a valid
+      // analysis result; it means the provider failed to produce any
+      // structured output. Reject it so the fallback chain moves to the
+      // next provider instead of persisting an empty analysis.
+      if (Object.keys(parsed).length === 0) return null;
       // Sanitize: ensure required fields exist with correct types
       // A missing or wrong-type field should never crash downstream consumers.
       return {
