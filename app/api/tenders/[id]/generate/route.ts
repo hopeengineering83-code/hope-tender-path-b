@@ -826,7 +826,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       action: "GENERATION_BLOCKED_REGEX_FALLBACK",
       entityType: "Tender",
       entityId: id,
-      description: "Final generation blocked: analysis source is regex fallback and has not been human-approved.",
+      description: "Final generation blocked: analysis source is regex fallback. Human approval is audit-only and does NOT authorize generation.",
       requestId,
     });
     return NextResponse.json({
@@ -836,7 +836,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       blockers: [analysisGate.message],
       nextAction: analysisGate.nextAction,
       diagnosticId: `analysis-source-${id}`,
-      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+      details: "Re-run AI Analyze with healthy providers to obtain a genuine AI analysis. Approving the regex fallback records an audit-only review — it does NOT unblock generation.",
     }, { status: 409 });
   }
   // ── Source traceability gate ──────────────────────────────────────────────

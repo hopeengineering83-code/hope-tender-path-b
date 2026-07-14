@@ -1759,7 +1759,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
       sourceMarkdown = await withProposalAiTimeout(
         useParallel
-          ? generateProposalSectionsParallel(aiInput)
+          ? generateProposalSectionsParallel(aiInput).then((r) => r.markdown)
           : generateBenchmarkProposalWithAI(aiInput),
         PROPOSAL_AI_TIMEOUT_MS,
       );

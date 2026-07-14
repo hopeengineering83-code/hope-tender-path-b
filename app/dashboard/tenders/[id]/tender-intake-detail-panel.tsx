@@ -24,6 +24,11 @@ import {
   buildTenderFactSourceText,
   parseTenderDocumentIntelligence,
 } from "../../../../lib/engine/source-driven-tender-text-parser";
+import {
+  MIN_CRITICAL_REASON_LENGTH as SHARED_MIN_CRITICAL_REASON_LENGTH,
+  CONFIRMATION_BASES as SHARED_CONFIRMATION_BASES,
+  isSubmissionCriticalField,
+} from "../../../../lib/engine/tender-fact-authority";
 
 type TenderDetailLike = {
   id: string;
@@ -74,24 +79,14 @@ function fmtNumber(value: number | null | undefined, currency?: string | null): 
 
 const MISSING_NOTE = NOT_EXTRACTED;
 
-// Minimum audit-reason length for submission-critical fields.
-// Must match MIN_CRITICAL_REASON_LENGTH in lib/engine/tender-fact-authority.ts.
-const MIN_CRITICAL_REASON_LENGTH = 10;
+// Use the shared constants from tender-fact-authority.ts — no duplication.
+const MIN_CRITICAL_REASON_LENGTH = SHARED_MIN_CRITICAL_REASON_LENGTH;
 
-// The confirmation bases the user can select for a critical-field manual entry.
-// Must match CONFIRMATION_BASES in lib/engine/tender-fact-authority.ts.
-const CONFIRMATION_BASIS_OPTIONS = [
-  { value: "PROCUREMENT_NOTICE", label: "Procurement notice" },
-  { value: "EMAIL_INVITATION", label: "Email invitation" },
-  { value: "PORTAL_LISTING", label: "Portal listing" },
-  { value: "PHONE_CALL_WITH_CLIENT", label: "Phone call with client" },
-  { value: "CLIENT_INSTRUCTION", label: "Client instruction" },
-  { value: "PRE_BID_MEETING", label: "Pre-bid meeting" },
-  { value: "CLARIFICATION_DOCUMENT", label: "Clarification document" },
-  { value: "PRIOR_KNOWLEDGE_OF_CLIENT", label: "Prior knowledge of client" },
-  { value: "PUBLIC_REGISTRY", label: "Public registry" },
-  { value: "OTHER_DOCUMENTED_SOURCE", label: "Other documented source" },
-];
+// Derive the confirmation basis options from the shared constant.
+const CONFIRMATION_BASIS_OPTIONS = SHARED_CONFIRMATION_BASES.map((value) => ({
+  value,
+  label: value.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" "),
+}));
 
 // Sanitize a value for display: returns "Not extracted" for invalid values
 function sanitize(fieldKey: MetadataFieldKey, value: unknown): string {
@@ -160,7 +155,10 @@ function FactActions({
   // block in app/api/tenders/[id]/metadata-override/route.ts. Without these,
   // the backend rejects the override with MEANINGFUL_REASON_REQUIRED /
   // CONFIRMATION_BASIS_REQUIRED, so the fields must be collected here.
-  const isCritical = fact.requiredFor === "final_submission";
+  // Use the shared isSubmissionCriticalField from tender-fact-authority.ts
+  // so clientName, submissionMethod, title, deadline, and submissionEndpoint
+  // all require audit reason + confirmation basis when manually entered.
+  const isCritical = isSubmissionCriticalField(fact.key) || fact.requiredFor === "final_submission";
   const auditValid = !isCritical || (auditReason.trim().length >= MIN_CRITICAL_REASON_LENGTH && auditBasis !== "");
 
   async function handleIgnore() {
