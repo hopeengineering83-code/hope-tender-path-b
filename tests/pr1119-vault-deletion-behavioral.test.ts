@@ -8,7 +8,10 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { classifyDeleteResponse, type DeleteResponse } from "../lib/company-vault-delete-classifier";
+
+const pageSource = readFileSync("app/dashboard/company/page.tsx", "utf8");
 
 describe("Company Vault deletion — behavioral response classification", () => {
   describe("200 success", () => {
@@ -118,15 +121,46 @@ describe("Company Vault deletion — behavioral response classification", () => 
   });
 
   describe("duplicate-submit protection", () => {
-    it("deleteDoc guards on deletingDocId (verified in source by a11y test)", () => {
-      // The if (deletingDocId) return; guard at the top of deleteDoc
-      // prevents concurrent deletes. This is verified by the source-text
-      // test in tests/company-vault-document-actions-a11y.test.ts.
-      // The behavioral proof is that the classifier is a pure function —
-      // it cannot be called concurrently for the same doc because the
-      // UI guard prevents the second call.
-      assert.ok(true, "duplicate-submit protection verified by if (deletingDocId) return guard in deleteDoc");
+    it("deleteDoc guards on deletingDocId before issuing any DELETE request", () => {
+      // Real source assertion (not a placeholder): the guard must appear
+      // before the fetch() call inside deleteDoc, so a second click while a
+      // delete is in flight sends zero additional DELETE requests.
+      const fnStart = pageSource.indexOf("async function deleteDoc(doc: CompanyDoc) {");
+      assert.ok(fnStart >= 0, "deleteDoc function not found in page.tsx");
+      const guardIndex = pageSource.indexOf("if (deletingDocId) return;", fnStart);
+      const fetchIndex = pageSource.indexOf("fetch(`/api/company/documents/${doc.id}`, { method: \"DELETE\" })", fnStart);
+      assert.ok(guardIndex >= 0, "deletingDocId guard not found in deleteDoc");
+      assert.ok(fetchIndex >= 0, "DELETE fetch call not found in deleteDoc");
+      assert.ok(guardIndex < fetchIndex, "deletingDocId guard must run before the DELETE request is sent");
     });
+  });
+});
+
+describe("Company Vault page — deleteDoc delegates entirely to the shared classifier", () => {
+  it("imports and calls the real classifyDeleteResponse instead of re-implementing status/code branches", () => {
+    assert.match(pageSource, /import \{ classifyDeleteResponse, type DeleteResponse \} from "\.\.\/\.\.\/\.\.\/lib\/company-vault-delete-classifier"/);
+    const fnStart = pageSource.indexOf("async function deleteDoc(doc: CompanyDoc) {");
+    const fnEnd = pageSource.indexOf("\n  async function reextractDoc", fnStart);
+    assert.ok(fnStart >= 0 && fnEnd > fnStart, "deleteDoc function boundaries not found");
+    const fnBody = pageSource.slice(fnStart, fnEnd);
+
+    assert.match(fnBody, /classifyDeleteResponse\(deleteResponse, refreshSucceeded\)/);
+    // The classifier owns every status/code decision now — the component must
+    // not re-implement any of the branch conditions it used to duplicate.
+    assert.doesNotMatch(fnBody, /res\.status === 404/);
+    assert.doesNotMatch(fnBody, /REVIEWED_PROVENANCE_DEPENDENCY/);
+    assert.doesNotMatch(fnBody, /STORAGE_DELETE_FAILED/);
+    assert.doesNotMatch(fnBody, /DELETE_FINALIZATION_FAILED/);
+  });
+
+  it("applies the classifier's UI actions (remove row, disable row, message, close confirmation) generically", () => {
+    const fnStart = pageSource.indexOf("async function deleteDoc(doc: CompanyDoc) {");
+    const fnEnd = pageSource.indexOf("\n  async function reextractDoc", fnStart);
+    const fnBody = pageSource.slice(fnStart, fnEnd);
+    assert.match(fnBody, /classified\.shouldRemoveRow/);
+    assert.match(fnBody, /classified\.shouldDisableRow/);
+    assert.match(fnBody, /classified\.message/);
+    assert.match(fnBody, /classified\.shouldCloseConfirmation/);
   });
 });
 

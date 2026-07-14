@@ -1,5 +1,6 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
+import { classifyDeleteResponse, type DeleteResponse } from "../../../lib/company-vault-delete-classifier";
 
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
@@ -333,63 +334,40 @@ export default function CompanyPage() {
     setDeletingDocId(doc.id);
     setError("");
     try {
-      const res = await fetch(`/api/company/documents/${doc.id}`, { method:"DELETE" });
-      if (!res.ok) {
+      const res = await fetch(`/api/company/documents/${doc.id}`, { method: "DELETE" });
+
+      let deleteResponse: DeleteResponse;
+      if (res.ok) {
+        deleteResponse = { ok: true, status: res.status };
+      } else {
         // Parse the structured error response without exposing technical details.
         const data = await res.json().catch(() => ({} as Record<string, unknown>));
-        const code = typeof data?.code === "string" ? data.code : "";
-        const retryable = data?.retryable === true;
-
-        if (res.status === 404 || code === "NOT_FOUND") {
-          // Idempotent: document was already deleted (or never existed). Reload
-          // the authoritative list so the UI matches the server state.
-          const refreshed = await loadDocs();
-          if (!refreshed) {
-            // Deletion succeeded on the server but we can't confirm the list
-            // state. Tell the user separately — deletion succeeded, refresh failed.
-            setDocs(d => d.filter(x => x.id !== doc.id));
-            setError("The document was deleted, but the document list could not be refreshed. Please refresh the page to see the current list.");
-          }
-          setConfirmingDeleteDocId(null);
-          return;
-        }
-
-        if (code === "REVIEWED_PROVENANCE_DEPENDENCY") {
-          // 409: reviewed experts/projects depend on this source document.
-          // Preserve the row so the user can see which document is blocked.
-          setError("Deletion blocked because reviewed experts or projects still depend on this source document. Remove or un-review the dependent records first.");
-          return;
-        }
-
-        if (retryable || code === "STORAGE_DELETE_FAILED" || code === "DELETE_FINALIZATION_FAILED") {
-          // 502: deletion is pending a safe retry. The row is marked
-          // PENDING_DELETE on the server. Reload the authoritative list so
-          // the pending row cannot retain broken Download or Re-extract actions.
-          const refreshed = await loadDocs();
-          setConfirmingDeleteDocId(null);
-          if (!refreshed) {
-            // Even if refresh fails, the server has marked the row as
-            // PENDING_DELETE. Optimistically disable the row's actions so
-            // the user can't click Download/Re-extract on a pending-delete doc.
-            setDocs(d => d.map(x => x.id === doc.id ? { ...x, aiExtractionStatus: "PENDING_DELETE" } : x));
-          }
-          setError("Document deletion is in progress but has not completed yet. The document has been marked for pending deletion and its download/re-extract actions are disabled. It will be removed automatically when storage cleanup completes.");
-          return;
-        }
-
-        // Unknown non-success response — safe generic message, no technical detail.
-        setError("We could not delete that Company Vault document. Please retry, or refresh to check whether it was already removed.");
-        return;
+        deleteResponse = {
+          ok: false,
+          status: res.status,
+          code: typeof data?.code === "string" ? data.code : undefined,
+          retryable: data?.retryable === true,
+        };
       }
-      // Success: server confirmed deletion. Reload the authoritative list
-      // (do NOT optimistically remove — the server is the source of truth).
-      const refreshed = await loadDocs();
-      setConfirmingDeleteDocId(null);
-      if (!refreshed) {
-        // Deletion succeeded but list refresh failed. Tell the user clearly
-        // that deletion worked — the list is just stale.
+
+      // Always attempt to reload the authoritative list — classifyDeleteResponse
+      // interprets whether that attempt succeeded (or was even relevant) per
+      // response type. This is the single source of UI-action truth; no
+      // per-status branching lives in the component.
+      const refreshSucceeded = await loadDocs();
+      const classified = classifyDeleteResponse(deleteResponse, refreshSucceeded);
+
+      if (classified.shouldRemoveRow) {
         setDocs(d => d.filter(x => x.id !== doc.id));
-        setError("The document was deleted successfully, but the document list could not be refreshed. Please refresh the page to see the updated list.");
+      }
+      if (classified.shouldDisableRow) {
+        setDocs(d => d.map(x => x.id === doc.id ? { ...x, aiExtractionStatus: "PENDING_DELETE" } : x));
+      }
+      if (classified.message) {
+        setError(classified.message);
+      }
+      if (classified.shouldCloseConfirmation) {
+        setConfirmingDeleteDocId(null);
       }
     } catch {
       setError("Network interruption while deleting the Company Vault document. Please retry when your connection is stable.");

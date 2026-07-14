@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync("app/dashboard/company/page.tsx", "utf8");
+const deleteClassifierSource = readFileSync("lib/company-vault-delete-classifier.ts", "utf8");
 
 describe("Company Vault document row actions", () => {
   it("keeps row actions keyboard discoverable with focus-within, not hover only", () => {
@@ -46,7 +47,9 @@ describe("Company Vault document row actions", () => {
     assert.match(source, /onDeleteConfirmationKeyDown/);
     assert.match(source, /event\.key !== "Escape"/);
     assert.match(source, /Press Escape to cancel/);
-    assert.match(source, /We could not delete that Company Vault document/);
+    // The unknown-error message now lives in the shared classifier
+    // (lib/company-vault-delete-classifier.ts), not duplicated in page.tsx.
+    assert.match(deleteClassifierSource, /We could not delete that Company Vault document/);
     assert.match(source, /role="alert" aria-live="assertive"/);
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
   });

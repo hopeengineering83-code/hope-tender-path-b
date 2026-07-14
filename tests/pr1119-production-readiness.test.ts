@@ -44,18 +44,36 @@ describe("Fix 1 — Vercel deployment policy covers branches with slashes", () =
 // ─── Fix 2: Company Vault deletion handles all response codes ───────────────
 
 describe("Fix 2 — Company Vault deletion handles structured error codes", () => {
-  it("deleteDoc parses JSON response and branches on code", () => {
+  // As of the classifyDeleteResponse refactor, deleteDoc() in page.tsx no
+  // longer branches on status/code itself — it builds a DeleteResponse and
+  // delegates the entire decision to lib/company-vault-delete-classifier.ts.
+  // These tests verify the delegation, and the classifier's own behavioral
+  // coverage of NOT_FOUND/REVIEWED_PROVENANCE_DEPENDENCY/STORAGE_DELETE_FAILED/
+  // DELETE_FINALIZATION_FAILED lives in tests/pr1119-vault-deletion-behavioral.test.ts.
+
+  it("deleteDoc parses the JSON response and delegates classification to the shared classifier", () => {
     const src = read("app/dashboard/company/page.tsx");
-    // Must parse the JSON error body
     assert.match(src, /res\.json\(\)\.catch/, "must safely parse error JSON");
-    // Must handle NOT_FOUND (404) by reloading
-    assert.match(src, /code === "NOT_FOUND"/, "must handle NOT_FOUND");
-    assert.match(src, /code === "REVIEWED_PROVENANCE_DEPENDENCY"/, "must handle 409 dependency block");
-    assert.match(src, /code === "STORAGE_DELETE_FAILED"/, "must handle retryable 502");
-    assert.match(src, /code === "DELETE_FINALIZATION_FAILED"/, "must handle finalization failure");
-    // Must reload authoritative list on success (not optimistic removal)
-    assert.ok(!src.includes("setDocs(d => d.filter(x => x.id!==doc.id))"), "must NOT optimistically remove — reload from server");
-    assert.match(src, /await loadDocs\(\)/, "must reload docs from server on success");
+    assert.match(src, /import \{ classifyDeleteResponse, type DeleteResponse \} from "\.\.\/\.\.\/\.\.\/lib\/company-vault-delete-classifier"/);
+    assert.match(src, /classifyDeleteResponse\(deleteResponse, refreshSucceeded\)/);
+    // No duplicated branch logic — the classifier owns every status/code decision.
+    const fnStart = src.indexOf("async function deleteDoc(doc: CompanyDoc) {");
+    const fnEnd = src.indexOf("\n  async function reextractDoc", fnStart);
+    const fnBody = src.slice(fnStart, fnEnd);
+    assert.doesNotMatch(fnBody, /code === "NOT_FOUND"/, "must NOT duplicate NOT_FOUND branch logic in the component");
+    assert.doesNotMatch(fnBody, /code === "REVIEWED_PROVENANCE_DEPENDENCY"/, "must NOT duplicate 409 branch logic in the component");
+    assert.doesNotMatch(fnBody, /code === "STORAGE_DELETE_FAILED"/, "must NOT duplicate 502 branch logic in the component");
+    assert.doesNotMatch(fnBody, /code === "DELETE_FINALIZATION_FAILED"/, "must NOT duplicate finalization-failure branch logic in the component");
+    // Must always attempt an authoritative reload — the classifier decides what to do with the result.
+    assert.match(fnBody, /await loadDocs\(\)/, "must reload docs from server");
+  });
+
+  it("the shared classifier handles every structured error code deleteDoc used to duplicate", () => {
+    const src = read("lib/company-vault-delete-classifier.ts");
+    assert.match(src, /res\.status === 404 \|\| res\.code === "NOT_FOUND"/, "classifier must handle NOT_FOUND");
+    assert.match(src, /res\.code === "REVIEWED_PROVENANCE_DEPENDENCY"/, "classifier must handle 409 dependency block");
+    assert.match(src, /res\.code === "STORAGE_DELETE_FAILED"/, "classifier must handle retryable 502");
+    assert.match(src, /res\.code === "DELETE_FINALIZATION_FAILED"/, "classifier must handle finalization failure");
   });
 
   it("confirmation text is truthful about draft record removal", () => {
@@ -64,13 +82,13 @@ describe("Fix 2 — Company Vault deletion handles structured error codes", () =
     assert.match(src, /Reviewed records remain for audit but will block deletion/i, "must warn about dependency blocking");
   });
 
-  it("pending-deletion responses reload the authoritative list", () => {
-    const src = read("app/dashboard/company/page.tsx");
-    // The retryable/pending path must call loadDocs
-    const retryableIdx = src.indexOf("retryable || code === \"STORAGE_DELETE_FAILED\"");
-    assert.ok(retryableIdx > -1, "must have retryable branch");
-    const afterBranch = src.slice(retryableIdx, retryableIdx + 400);
-    assert.match(afterBranch, /await loadDocs\(\)/, "must reload docs on retryable/pending");
+  it("pending-deletion responses are handled by the classifier's retryable branch, which reloads on success and disables the row on refresh failure", () => {
+    const src = read("lib/company-vault-delete-classifier.ts");
+    const retryableIdx = src.indexOf('res.code === "STORAGE_DELETE_FAILED" || res.code === "DELETE_FINALIZATION_FAILED"');
+    assert.ok(retryableIdx > -1, "classifier must have a retryable branch");
+    const afterBranch = src.slice(retryableIdx, retryableIdx + 1000);
+    assert.match(afterBranch, /shouldDisableRow: true/, "must disable the row when refresh fails");
+    assert.match(afterBranch, /shouldReload: true/, "must reload docs when refresh succeeds");
   });
 });
 
