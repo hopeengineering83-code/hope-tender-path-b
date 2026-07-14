@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Page } from "@playwright/test";
+import { authenticatedTest as test, expect } from "./auth-helper";
+import type { Page, APIResponse } from "@playwright/test";
 /**
  * Tablet (800x1280) E2E Tests — Universal Tender Intelligence Foundation
  *

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { authenticatedTest as test, expect } from "./auth-helper";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
 

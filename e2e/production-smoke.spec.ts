@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Page } from "@playwright/test";
+import { authenticatedTest as test, expect } from "./auth-helper";
+import type { Page, APIResponse } from "@playwright/test";
 /**
  * Production Critical Smoke Tests
  *

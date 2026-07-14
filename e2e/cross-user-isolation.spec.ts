@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Page } from "@playwright/test";
+import { authenticatedTest as test, expect } from "./auth-helper";
+import type { Page, APIResponse } from "@playwright/test";
 const FULL = process.env.E2E_FULL_AUTH === "true";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 const PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
@@ -130,27 +131,30 @@ test.describe("authenticated cross-user isolation", () => {
     );
     expectHiddenOrForbidden(downloadAttempt.status());
 
-    // Switch to the secondary identity using the saved loopback-safe storage state.
-    // The global setup saved the secondary session to .auth/secondary-loopback.json
-    // with secure: false for loopback HTTP CI.
+    // Switch to the secondary identity by logging in as the secondary user.
+    // This is the only test that needs the secondary identity, so it's safe
+    // to do one additional login here (total: 1 primary + 1 secondary per CI run).
     await page.context().clearCookies();
-    const fs = await import("node:fs");
-    const secondaryStatePath = ".auth/secondary-loopback.json";
-    const secondaryState = JSON.parse(fs.readFileSync(secondaryStatePath, "utf8"));
-    const cookies = secondaryState.cookies || [];
-    if (cookies.length > 0) {
-      // Use url instead of domain for addCookies — this ensures the cookie
-      // is set for the correct origin regardless of domain matching rules.
-      const origin = new URL(baseURL);
-      await page.context().addCookies(cookies.map((c: any) => ({
-        name: c.name,
-        value: c.value,
-        url: origin.origin,
-        httpOnly: c.httpOnly ?? true,
-        secure: false,
-        sameSite: "Lax" as const,
-      })));
+    const secondaryEmail = process.env.E2E_SECOND_EMAIL ?? "";
+    const secondaryPassword = process.env.E2E_SECOND_PASSWORD ?? "";
+    const secondaryLoginResp = await page.request.post("/api/auth/login", {
+      data: { email: secondaryEmail, password: secondaryPassword },
+    });
+    if (secondaryLoginResp.status() !== 200) {
+      throw new Error(`Secondary login failed: ${secondaryLoginResp.status()}`);
     }
+    // Extract cookie from Set-Cookie header and inject with secure:false
+    const secondarySetCookie = secondaryLoginResp.headers()["set-cookie"] || "";
+    const secondaryCookieValue = secondarySetCookie.split(";")[0].split("=").slice(1).join("");
+    const origin = new URL(baseURL);
+    await page.context().addCookies([{
+      name: "hope_session",
+      value: secondaryCookieValue,
+      url: origin.origin,
+      httpOnly: true,
+      secure: false,
+      sameSite: "Lax" as const,
+    }]);
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
 

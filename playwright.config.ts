@@ -2,10 +2,6 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
-const hasGoldenAuth = process.env.E2E_GOLDEN_AUTH === "true";
-const hasSmokeCreds = Boolean(process.env.SMOKE_TEST_EMAIL && process.env.SMOKE_TEST_PASSWORD);
-
-const needsGlobalSetup = isolatedFullAuth || hasGoldenAuth || hasSmokeCreds;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -20,7 +16,6 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  globalSetup: needsGlobalSetup ? "./e2e/global-setup.ts" : undefined,
   projects: [
     // ─── Anonymous desktop (no auth) ───────────────────────────────────
     {
@@ -29,16 +24,12 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     // ─── Authenticated desktop (primary account) ───────────────────────
-    // Runs all spec files in e2e/ EXCEPT those in e2e/anonymous/
     {
       name: "chromium-primary",
       testDir: "./e2e",
       testMatch: /.*\.spec\.ts/,
       testIgnore: /anonymous/,
-      use: {
-        ...devices["Desktop Chrome"],
-        storageState: needsGlobalSetup ? ".auth/primary-loopback.json" : undefined,
-      },
+      use: { ...devices["Desktop Chrome"] },
     },
     // ─── Tablet authenticated (primary account, 800x1280) ──────────────
     {
@@ -53,7 +44,6 @@ export default defineConfig({
         deviceScaleFactor: 2,
         isMobile: true,
         hasTouch: true,
-        storageState: needsGlobalSetup ? ".auth/primary-loopback.json" : undefined,
       },
     },
     // ─── Tablet anonymous ──────────────────────────────────────────────
