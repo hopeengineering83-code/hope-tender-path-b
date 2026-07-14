@@ -83,7 +83,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
     <div ref={ref} className="relative">
       <button
         onClick={handleOpen}
-        className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
         aria-label="Notifications"
       >
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>

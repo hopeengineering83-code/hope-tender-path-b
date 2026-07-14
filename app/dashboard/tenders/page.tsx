@@ -226,7 +226,7 @@ export default async function TendersPage({
           <h1 className="text-2xl font-bold text-slate-900">Tenders</h1>
           <p className="mt-1 text-slate-500">{kpi.total} total · {tenders.length} shown</p>
         </div>
-        <Link href="/dashboard/tenders/new" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
+        <Link href="/dashboard/tenders/new" className="flex min-h-11 items-center rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
           + New Tender
         </Link>
       </div>
@@ -356,7 +356,7 @@ export default async function TendersPage({
               </p>
               <Link
                 href="/dashboard/tenders/new"
-                className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+                className="flex min-h-11 items-center rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
               >
                 Upload First Tender
               </Link>
