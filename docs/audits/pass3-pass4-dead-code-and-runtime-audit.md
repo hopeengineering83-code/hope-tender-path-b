@@ -189,11 +189,10 @@ Based on Pass 3 + Pass 4 findings, the following **safe, verified, non-overlappi
 6. **Add `docs/adr/` directory + template + 3 seed ADRs** — (GAP-DOC-02).
 7. **Add `QUICKSTART.md`** — fast-onboarding alternative to the 747-line README (GAP-DOC-03).
 8. **Add `docs/user-guide/` stub** — end-user documentation scaffolding (GAP-DOC-01).
-9. **Add `.github/workflows/codeql.yml`** — CodeQL SAST scan (GAP-SEC-10).
-10. **Add `scripts/archive-worklog.mjs`** — quarterly worklog archival script (GAP-ARCH-04).
-11. **Add `docs/audits/ai-proposal-quality-benchmark.md`** — benchmark harness + rubric (Pass 5).
-12. **Add `docs/audits/hope-tender-audit-current-disposition.md`** — audit-report disposition.
-13. **Re-enable `@typescript-eslint/no-explicit-any` as `warn`** — first step toward re-tightening (GAP-ARCH-03).
+9. **Add `docs/audits/ai-proposal-quality-benchmark.md`** — benchmark harness + rubric (Pass 5).
+10. **Add `docs/audits/hope-tender-audit-current-disposition.md`** — audit-report disposition.
+11. **Re-enable `@typescript-eslint/no-explicit-any` as `warn`** — first step toward re-tightening (GAP-ARCH-03). **REVERTED** — produces 820 warnings, exceeds `--max-warnings 50` threshold.
+12. **Add `.github/workflows/codeql.yml`** — CodeQL SAST (GAP-SEC-10). **REVERTED** — Hope has already enabled GitHub's default CodeQL setup; advanced config conflicts with default (error: "CodeQL analyses from advanced configurations cannot be processed when the default setup is enabled"). Default setup already runs CodeQL on every PR.
 
 All fixes are **additive or documentation-only** — no behavior change, no schema migration, no test weakening, no overlap with any open PR.
 
