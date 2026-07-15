@@ -46,7 +46,7 @@ git commit -qm integration-change
 START_SHA=$(git rev-parse HEAD)
 
 git switch -qc candidate "$START_SHA"
-git cherry-pick -q "$WORKER_ONE"
+git cherry-pick "$WORKER_ONE" >/dev/null
 if git cherry-pick "$WORKER_TWO" >/dev/null 2>&1; then
   echo "expected cherry-pick conflict did not occur"
   exit 1
