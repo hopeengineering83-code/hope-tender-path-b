@@ -138,11 +138,20 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
     {
       key: "worker_auth",
       title: "Background worker authentication",
-      severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET) ? "OK" : "WARNING",
-      requiredForProduction: false,
+      // In production, background workers without auth can be invoked by
+      // anyone with the URL — that is a security hole. We mark this as
+      // required for production so productionReady correctly fails closed.
+      // In non-production (dev/test), this is a WARNING so local dev isn't
+      // blocked on setting up secrets.
+      severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
+        ? "OK"
+        : (production ? "CRITICAL" : "WARNING"),
+      requiredForProduction: true,
       detail: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "At least one worker authentication secret is configured."
-        : "No worker or cron secret is configured; only user-scoped workers can run.",
+        : (production
+          ? "Production requires AI_JOBS_WORKER_SECRET or CRON_SECRET — without it, background worker endpoints are unauthenticated."
+          : "No worker or cron secret is configured; only user-scoped workers can run. Set AI_JOBS_WORKER_SECRET or CRON_SECRET before deploying to production."),
     },
   );
 

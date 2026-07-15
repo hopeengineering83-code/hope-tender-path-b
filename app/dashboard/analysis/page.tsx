@@ -184,7 +184,9 @@ export default async function AnalysisPage() {
                             const state = verdict?.currentness ?? "BLOCKED";
                             if (state === "NOT_ANALYZED") return <span className="text-xs font-medium text-slate-500">NOT ANALYZED</span>;
                             if (state === "BLOCKED") return <span className="text-xs font-medium text-red-600">BLOCKED</span>;
-                            return <span className="text-xs text-green-600">✓ Clear</span>;
+                            // PROVISIONAL_NOT_BLOCKED — NOT a canonical Clear verdict.
+                            // The per-tender resolver may still find chunk/content-hash blockers.
+                            return <span className="text-xs text-slate-500">◐ Provisional</span>;
                           })()
                       }
                     </td>

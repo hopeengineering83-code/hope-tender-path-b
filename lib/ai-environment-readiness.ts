@@ -111,6 +111,30 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
+  // Runtime timeout guards — these are BLOCKERS in production, not just
+  // recommended. Without them, AI calls can hang indefinitely and hit the
+  // Vercel function timeout, costing money and blocking the worker pool.
+  // A missing or non-positive timeout is treated as a missing guard.
+  const parseTimeoutMs = (name: string): number | null => {
+    const raw = (process.env[name] ?? "").trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+  };
+  const requiredTimeouts = [
+    "AI_ANALYSIS_TIMEOUT_MS",
+    "AI_PROPOSAL_TIMEOUT_MS",
+    "PROPOSAL_SECTION_TIMEOUT_MS",
+  ];
+  for (const t of requiredTimeouts) {
+    const ms = parseTimeoutMs(t);
+    if (ms === null) {
+      blockers.push(
+        `${t} is missing or not a positive finite number. AI calls without a timeout guard can hang indefinitely and exhaust the worker pool.`,
+      );
+    }
+  }
   if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. OCR runs by default when ANTHROPIC_API_KEY is present. Set PDF_OCR_ENABLED=false to disable, or PDF_OCR_ENABLED=true to make it explicit.");
   // PDF_OCR_MAX_RACES removed — it was a phantom env var that was never read
   // by any code. The "race/concurrency guard" described in its docstring did

@@ -22,6 +22,12 @@ export default async function DashboardPage() {
   // Truthful workspace totals — use real COUNT / GROUP-BY queries so global
   // metrics are not silently capped by any "take" limit on the recent-tender
   // list. The recent-tender list below only feeds the Live Pipeline table.
+  //
+  // NOTE: We intentionally do NOT load readinessScore for a workspace-wide
+  // average — there is no honest way to compute such an average without
+  // per-tender resolution (see PROVISIONAL_NOT_BLOCKED caveat in
+  // lib/engine/tender-currentness.ts). The Avg Workflow Progress card was
+  // removed entirely.
   const [
     activeTenderCount,
     overdueCount,
@@ -32,7 +38,6 @@ export default async function DashboardPage() {
     budgetByCurrencyRows,
     wonCount,
     decidedCount,
-    scoredRows,
     recentTenders,
     recentActivity,
   ] = await Promise.all([
@@ -65,8 +70,8 @@ export default async function DashboardPage() {
         severity: "CRITICAL",
       },
     }),
-    // Per-tender extraction state — used for canonical currentness check
-    // and for the global critical-blockers count.
+    // Per-tender extraction state — used for workspace currentness
+    // projection and for the global critical-blockers lower-bound count.
     prisma.tender.findMany({
       where: { userId },
       select: {
@@ -75,34 +80,22 @@ export default async function DashboardPage() {
         _count: { select: { requirements: true } },
       },
     }),
-    // Aggregate budget by currency across ALL tenders, not just recent.
-    // PR #1141 (open, not yet merged) makes Tender.currency nullable. We
-    // defensively skip null currencies at runtime in the loop below so
-    // this code is forward-compatible with the nullable schema.
+    // Count tenders with budget > 0 grouped by currency. We do NOT
+    // aggregate the sum — Issue #1134 requires unsupported budgets not
+    // to be displayed as authoritative financial values. PR #1141's
+    // source-grounded currency authority is open and not yet merged.
+    // We only fetch the count per currency group for inventory purposes.
     prisma.tender.groupBy({
       by: ["currency"],
       where: {
         userId,
         budget: { gt: 0 },
       },
-      _sum: { budget: true },
       _count: true,
     }),
     prisma.tender.count({ where: { userId, bidOutcome: "WON" } }),
     prisma.tender.count({
       where: { userId, NOT: { bidOutcome: null }, bidOutcome: { not: "PENDING" } },
-    }),
-    // Only fetch readinessScore for averaging — cheap column.
-    // readinessScore is non-nullable (Float @default(0)) so no filter needed.
-    // Note: we'll exclude blocked tenders from the average below.
-    prisma.tender.findMany({
-      where: { userId },
-      select: {
-        id: true,
-        readinessScore: true,
-        analysisExtractionStatus: true,
-        _count: { select: { requirements: true } },
-      },
     }),
     // Recent tenders for the Live Pipeline display table only.
     prisma.tender.findMany({
@@ -157,63 +150,52 @@ export default async function DashboardPage() {
     })),
   );
 
-  // ─── Critical blockers count ─────────────────────────────────────────────
-  // "Critical blockers" replaces "Critical Gaps" to make the semantics clear:
-  //   - 1 tender with 3 CRITICAL compliance gaps + a stale extraction → 4 blockers
-  //   - This is a count of BLOCKERS, not a count of tenders.
-  // The card label was changed to "Critical blockers" and the subtitle reads
-  // "gaps + extraction blockers" so the reader cannot mistake it for a
-  // tender count.
+  // ─── Critical blockers count (LOWER BOUND) ───────────────────────────────
+  // This is a LOWER BOUND on the true blocker count. The workspace
+  // projection can prove a tender is blocked (latest job failed/superseded/
+  // unpromoted/empty-hash, OR persisted BLOCKED status), but it CANNOT prove
+  // a tender is clear — only the per-tender resolver
+  // (resolveTenderAnalysisState) can do that, because it also checks
+  // AiAnalyzeChunk rows, content-hash equality, fallback/mixed-result
+  // provenance, and section-detected-but-no-requirements edge cases.
+  //
+  // Subtitle "minimum — per-tender verification still required" makes the
+  // lower-bound semantics explicit.
   const extractionBlockedCount = allTenderIds.filter((id) => {
     const v = currentnessVerdicts.get(id);
     return v ? isCanonicalCurrentnessCritical(v) : true;
   }).length;
   const criticalBlockers = criticalComplianceGapCount + extractionBlockedCount;
 
-  // ─── Budget totals — group by present currency, suppress when mixed ──────
-  // NOTE: This counts tenders by their persisted `currency` column. It does
-  // NOT prove field-level source/human authority on each currency value
-  // (that authority is being introduced by PR #1141, not yet merged). The
-  // label "with non-null currency" is intentionally honest — it does not
-  // claim "verified". When PR #1141 merges, default/legacy USD rows will
-  // have null currency and be excluded automatically; until then, this
-  // metric counts every tender with budget > 0 and a non-null currency.
-  const budgetsByCurrency = new Map<string, number>();
+  // ─── Budget count (no aggregate sum) ───────────────────────────────────────
+  // Issue #1134 requires unsupported budgets not to be displayed as
+  // authoritative financial values. PR #1141 introduces source-grounded
+  // currency authority, but it is open and not yet merged. Until it merges,
+  // we CANNOT prove any currency value is source-grounded. Therefore:
+  //   - We count tenders with budget > 0 and a non-null currency (for
+  //     inventory purposes only).
+  //   - We do NOT compute or display an aggregate pipeline value. Summing
+  //     unverified currency values would present unsupported financial
+  //     authority.
+  // When PR #1141 merges, this count will automatically exclude rows with
+  // null currency (defensive `if (!curr) continue`).
   let activeBudgetCount = 0;
   for (const row of budgetByCurrencyRows) {
-    // row.currency is non-null in the current schema (default "USD") but
-    // becomes nullable after PR #1141 merges. Skip nulls defensively.
     const curr = row.currency;
     if (!curr) continue;
-    const sum = row._sum?.budget ?? 0;
-    budgetsByCurrency.set(curr, (budgetsByCurrency.get(curr) ?? 0) + sum);
-    // _count from groupBy returns the number of tenders in this currency group.
     const groupCount = typeof row._count === "number" ? row._count : 0;
     activeBudgetCount += groupCount;
   }
-  const currencies = Array.from(budgetsByCurrency.keys());
-  const singleCurrency = currencies.length === 1 ? currencies[0] : null;
-  const pipelineValue = singleCurrency ? (budgetsByCurrency.get(singleCurrency) ?? 0) : null;
 
-  // ─── Avg workflow progress — exclude blocked tenders, suppress green ──────
-  // Blocked tenders cannot be "ready" — including their persisted
-  // readinessScore would let a stale 100% score appear beside canonical
-  // blockers. We:
-  //   1. Compute currentness for every tender with a readinessScore.
-  //   2. Exclude tenders whose currentness is BLOCKED or NOT_ANALYZED.
-  //   3. Average only the CANONICAL_CLEAR tenders.
-  //   4. Color the metric neutrally (slate) — no green authority, because
-  //      the persisted readinessScore is workflow progress, not export
-  //      readiness. Even on a CLEAR tender, it must not read as release-
-  //      ready green.
-  const clearScoredRows = scoredRows.filter((r) => {
-    const v = currentnessVerdicts.get(r.id);
-    return v ? v.currentness === "CANONICAL_CLEAR" : false;
-  });
-  const avgReadiness = clearScoredRows.length > 0
-    ? Math.round(clearScoredRows.reduce((a, b) => a + (b.readinessScore ?? 0), 0) / clearScoredRows.length)
-    : null;
-
+  // ─── Avg workflow progress REMOVED ─────────────────────────────────────────
+  // The persisted readinessScore is NOT export readiness, and there is no
+  // honest way to compute a workspace-wide average that excludes blocked
+  // tenders without per-tender resolution. Even on PROVISIONAL_NOT_BLOCKED
+  // tenders, the readinessScore is workflow progress, not authoritative
+  // readiness. The card was removed entirely.
+  //
+  // The winRate card is kept because bidOutcome is a discrete outcome
+  // (WON/LOST) — not a readiness claim.
   const winRate = decidedCount > 0 ? Math.round((wonCount / decidedCount) * 100) : null;
 
   return (
@@ -236,14 +218,26 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
+      {/* Workspace projection warning — required by Issue #1134 recheck 7.
+          The dashboard's extraction state is a LOWER BOUND projection.
+          It can prove a tender is blocked, but it cannot prove a tender is
+          clear. The per-tender resolver (command center / export gate) is
+          the canonical authority. Do not interpret PROVISIONAL_NOT_BLOCKED
+          as overall readiness. */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <strong>Workspace projection notice:</strong> Counts on this page are
+        lower bounds. Per-tender verification (command center / export gate) is
+        the canonical authority for Clear / Blocked / Export readiness.
+      </div>
+
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Active Tenders", value: activeTenderCount, color: "text-blue-600" },
           {
             label: "Critical blockers",
             value: criticalBlockers,
-            color: criticalBlockers > 0 ? "text-red-600" : "text-green-600",
-            subtitle: "gaps + extraction blockers",
+            color: criticalBlockers > 0 ? "text-red-600" : "text-slate-500",
+            subtitle: "minimum — per-tender verification still required",
           },
           { label: "Due ≤ 7 Days", value: dueSoon7Count, color: dueSoon7Count > 0 ? "text-amber-600" : "text-slate-400" },
           { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-700" : "text-slate-400" },
@@ -256,43 +250,18 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {(winRate !== null || (pipelineValue !== null && pipelineValue > 0) || avgReadiness !== null || (pipelineValue === null && activeBudgetCount > 0)) && (
+      {winRate !== null && (
         <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
-          {winRate !== null && (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500 font-medium">Win Rate</p>
+            <p className={`mt-1 text-3xl font-bold ${winRate >= 50 ? "text-green-600" : "text-amber-600"}`}>{winRate}%</p>
+            <p className="mt-1 text-xs text-slate-400">{wonCount} of {decidedCount} decided</p>
+          </div>
+          {activeBudgetCount > 0 && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Win Rate</p>
-              <p className={`mt-1 text-3xl font-bold ${winRate >= 50 ? "text-green-600" : "text-amber-600"}`}>{winRate}%</p>
-              <p className="mt-1 text-xs text-slate-400">{wonCount} of {decidedCount} decided</p>
-            </div>
-          )}
-          {pipelineValue !== null && pipelineValue > 0 && singleCurrency && (
-            <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Pipeline Value ({singleCurrency})</p>
-              <p className="mt-1 text-2xl font-bold text-blue-600">
-                {pipelineValue >= 1_000_000
-                  ? `${singleCurrency} ${(pipelineValue / 1_000_000).toFixed(1)}M`
-                  : pipelineValue >= 1_000
-                  ? `${singleCurrency} ${(pipelineValue / 1_000).toFixed(0)}K`
-                  : `${singleCurrency} ${pipelineValue.toLocaleString()}`}
-              </p>
-              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} with non-null currency</p>
-            </div>
-          )}
-          {pipelineValue === null && activeBudgetCount > 0 && (
-            <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Pipeline Value</p>
-              <p className="mt-1 text-2xl font-bold text-slate-400">Mixed currencies</p>
-              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} budgets in {currencies.length} currencies</p>
-            </div>
-          )}
-          {avgReadiness !== null && (
-            <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Avg Workflow Progress</p>
-              {/* Color is intentionally slate (neutral), never green. Persisted
-                  readinessScore is workflow progress, not export readiness. */}
-              <p className="mt-1 text-3xl font-bold text-slate-600">{avgReadiness}%</p>
-              <p className="mt-1 text-xs text-slate-400">Not export readiness</p>
-              <p className="mt-1 text-xs text-slate-400">across {clearScoredRows.length} canonical-clear tenders</p>
+              <p className="text-sm text-slate-500 font-medium">Tenders with budget</p>
+              <p className="mt-1 text-3xl font-bold text-slate-600">{activeBudgetCount}</p>
+              <p className="mt-1 text-xs text-slate-400">non-null currency — no aggregate until source-grounded authority</p>
             </div>
           )}
           {/* NOTE: The workspace-wide "documents validated" card was removed.
@@ -301,6 +270,25 @@ export default async function DashboardPage() {
               final-package readiness (lib/engine/final-submission-readiness.ts).
               Surface that on the command center / export hub, not as a
               workspace-wide count. */}
+          {/* NOTE: The Avg Workflow Progress card was removed. The persisted
+              readinessScore is workflow progress, not export readiness, and
+              there is no honest way to compute a workspace-wide average that
+              excludes blocked tenders without per-tender resolution. */}
+          {/* NOTE: The Pipeline Value aggregate was removed. Issue #1134
+              requires unsupported budgets not to be displayed as authoritative
+              financial values. PR #1141's source-grounded currency authority
+              is open and not yet merged. Until it merges, summing unverified
+              currency values would present unsupported financial authority. */}
+        </div>
+      )}
+
+      {winRate === null && activeBudgetCount > 0 && (
+        <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500 font-medium">Tenders with budget</p>
+            <p className="mt-1 text-3xl font-bold text-slate-600">{activeBudgetCount}</p>
+            <p className="mt-1 text-xs text-slate-400">non-null currency — no aggregate until source-grounded authority</p>
+          </div>
         </div>
       )}
 
@@ -310,7 +298,7 @@ export default async function DashboardPage() {
             <div>
               <h2 className="font-bold text-slate-900">Live Pipeline</h2>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                Recent {recentTenders.length} tenders · Canonical extraction state, not the workflow % bar.
+                Recent {recentTenders.length} tenders · Workspace projection (NOT canonical Clear).
               </p>
             </div>
             <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
@@ -337,17 +325,15 @@ export default async function DashboardPage() {
                   const critical = tender._count.complianceGaps;
                   const workflowPct = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
-                  // Use canonical-currentness verdict instead of bare
-                  // analysisExtractionStatus string. This catches stale
-                  // statuses that no longer have a promoted AI job.
+                  // Use workspace-currentness verdict. This is a LOWER BOUND
+                  // projection — it can prove blocked, but cannot prove clear.
+                  // PROVISIONAL_NOT_BLOCKED is NOT a Clear verdict; it just
+                  // means "no job-level blocker detected at the workspace
+                  // level". The per-tender resolver is the canonical authority.
                   const verdict = recentCurrentnessVerdicts.get(tender.id);
                   const extractionState = verdict?.currentness ?? "BLOCKED";
-                  // Suppress green authority styling on the workflow % bar
-                  // whenever the canonical currentness is not CLEAR. The bar
-                  // is workflow progress, not export readiness.
-                  const workflowBarColor = extractionState === "CANONICAL_CLEAR"
-                    ? (workflowPct >= 80 ? "bg-slate-500" : workflowPct >= 50 ? "bg-slate-400" : "bg-slate-300")
-                    : "bg-slate-200";
+                  // Workflow % bar uses neutral slate always — never green.
+                  const workflowBarColor = "bg-slate-300";
 
                   return (
                     <tr key={tender.id} className="hover:bg-slate-50 group">
@@ -362,13 +348,13 @@ export default async function DashboardPage() {
                       </td>
                       <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                       <td className="px-6 py-4">
-                        {extractionState === "CANONICAL_CLEAR" && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 border border-emerald-200" title="Persisted CLEAR status with a non-superseded promoted AI job.">
-                            ✓ Clear
+                        {extractionState === "PROVISIONAL_NOT_BLOCKED" && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 border border-slate-200" title="No job-level blocker detected. NOT a canonical Clear verdict — per-tender resolver may still find chunk/content-hash blockers.">
+                            ◐ Provisional
                           </span>
                         )}
                         {extractionState === "BLOCKED" && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 border border-red-200" title="Persisted status is BLOCKED, unknown, or stale (no promoted AI job).">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 border border-red-200" title="Persisted status is BLOCKED, unknown, or stale (no promoted AI job, or latest job failed/superseded/unpromoted/empty-hash).">
                             ✗ Blocked
                           </span>
                         )}

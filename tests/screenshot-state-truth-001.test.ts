@@ -52,27 +52,14 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /AI providers configured/);
     });
 
-    it("labels the count as Critical blockers with semantics subtitle", () => {
+    it("labels the count as Critical blockers with lower-bound subtitle", () => {
       assert.match(dashboardSrc, /Critical blockers/);
-      assert.match(dashboardSrc, /gaps \+ extraction blockers/);
+      assert.match(dashboardSrc, /minimum — per-tender verification still required/);
     });
   });
 
   describe("dashboard currency handling is forward-compatible with PR #1141 nullable currency", () => {
-    it("groups budgets by currency", () => {
-      assert.match(dashboardSrc, /budgetsByCurrency/);
-    });
-
-    it("suppresses aggregate when currencies differ", () => {
-      assert.match(dashboardSrc, /Mixed currencies/);
-      assert.match(dashboardSrc, /singleCurrency/);
-    });
-
-    it("does not hardcode dollar sign", () => {
-      assert.doesNotMatch(dashboardSrc, /\$\$\{/);
-    });
-
-    it("uses prisma.groupBy for budget aggregation across all tenders", () => {
+    it("uses prisma.groupBy for budget count across all tenders", () => {
       assert.match(dashboardSrc, /prisma\.tender\.groupBy/);
     });
 
@@ -80,12 +67,18 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /if \(!curr\) continue/);
     });
 
-    it("labels budget count as 'non-null currency' (honest, not verified)", () => {
-      // The label is honest — it does NOT claim source-grounded "verified"
-      // authority (that requires PR #1141's currency-authority helper, not
-      // yet merged). It only claims the currency column is non-null.
-      assert.match(dashboardSrc, /non-null currency/);
-      assert.doesNotMatch(dashboardSrc, /verified currency/);
+    it("labels budget count as 'non-null currency' in the rendered card (honest, not verified)", () => {
+      // The label appears in the rendered card text, not just in comments.
+      // Match the rendered text content.
+      assert.match(dashboardSrc, />non-null currency/);
+    });
+
+    it("does NOT compute or display a Pipeline Value aggregate sum", () => {
+      // The aggregate was removed entirely. No budgetsByCurrency Map,
+      // no singleCurrency, no pipelineValue variable.
+      assert.doesNotMatch(dashboardSrc, /budgetsByCurrency/);
+      assert.doesNotMatch(dashboardSrc, /singleCurrency/);
+      assert.doesNotMatch(dashboardSrc, /pipelineValue/);
     });
   });
 
@@ -272,9 +265,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(currentnessSrc, /if \(!hash\)/);
     });
 
-    it("populates canonicalJobId with the real job ID when CANONICAL_CLEAR", () => {
+    it("populates canonicalJobId with the real job ID when PROVISIONAL_NOT_BLOCKED", () => {
       // The verdict field must NOT always be null — it must be set to
-      // latestJob.id when currentness === CANONICAL_CLEAR.
+      // latestJob.id when currentness === PROVISIONAL_NOT_BLOCKED.
       assert.match(currentnessSrc, /canonicalJobId:\s*latestJob\.id/);
     });
 
@@ -288,10 +281,13 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("isCanonicalCurrentnessCritical returns true for BLOCKED and NOT_ANALYZED", () => {
       const blocked: TenderCurrentnessVerdict = { tenderId: "t1", currentness: "BLOCKED", canonicalJobId: null };
       const notAnalyzed: TenderCurrentnessVerdict = { tenderId: "t2", currentness: "NOT_ANALYZED", canonicalJobId: null };
-      const clear: TenderCurrentnessVerdict = { tenderId: "t3", currentness: "CANONICAL_CLEAR", canonicalJobId: "job-1" };
+      const provisional: TenderCurrentnessVerdict = { tenderId: "t3", currentness: "PROVISIONAL_NOT_BLOCKED", canonicalJobId: "job-1" };
       assert.equal(isCanonicalCurrentnessCritical(blocked), true);
       assert.equal(isCanonicalCurrentnessCritical(notAnalyzed), true);
-      assert.equal(isCanonicalCurrentnessCritical(clear), false);
+      // PROVISIONAL_NOT_BLOCKED is NOT a Clear verdict — but it is also not
+      // a critical blocker at the workspace projection level. The function
+      // returns false so the lower-bound blocker count excludes these tenders.
+      assert.equal(isCanonicalCurrentnessCritical(provisional), false);
     });
 
     it("isStatusInClearAllowlist identifies AI_SUCCEEDED as clear", () => {
@@ -513,8 +509,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /○ Not analyzed/);
     });
 
-    it("renders Clear badge only when currentness === CANONICAL_CLEAR", () => {
-      assert.match(dashboardSrc, /extractionState === "CANONICAL_CLEAR"/);
+    it("renders Provisional badge (NOT Clear) when currentness === PROVISIONAL_NOT_BLOCKED", () => {
+      // The dashboard must NEVER render "Clear" wording — the workspace
+      // projection is a lower bound, not a canonical authority.
+      assert.match(dashboardSrc, /extractionState === "PROVISIONAL_NOT_BLOCKED"/);
+      assert.match(dashboardSrc, /◐ Provisional/);
+      assert.doesNotMatch(dashboardSrc, /✓ Clear/);
     });
 
     it("uses neutral slate color for the workflow bar even when CLEAR", () => {
@@ -523,23 +523,18 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("Avg Workflow Progress excludes blocked tenders and uses neutral color", () => {
-    it("excludes BLOCKED and NOT_ANALYZED tenders from the average", () => {
-      assert.match(dashboardSrc, /clearScoredRows/);
-      assert.match(dashboardSrc, /currentness === "CANONICAL_CLEAR"/);
+  describe("Avg Workflow Progress card REMOVED (no honest workspace average)", () => {
+    it("does not render an Avg Workflow Progress card in the rendered output", () => {
+      // The card was removed entirely. The only mention of the name is in
+      // a code comment documenting the removal — there is no rendered card.
+      // Check that there is no rendered card header with that text.
+      assert.doesNotMatch(dashboardSrc, /font-medium">Avg Workflow Progress/);
+      assert.doesNotMatch(dashboardSrc, /clearScoredRows/);
     });
 
-    it("uses neutral slate color (not green) for the avg metric", () => {
-      // The avg readiness number must be slate-600 (neutral), not green-600.
-      assert.match(dashboardSrc, /text-slate-600/);
-    });
-
-    it("labels the metric as 'Not export readiness'", () => {
-      assert.match(dashboardSrc, /Not export readiness/);
-    });
-
-    it("labels the count as 'canonical-clear tenders'", () => {
-      assert.match(dashboardSrc, /canonical-clear tenders/);
+    it("does not reference readinessScore for a workspace average", () => {
+      assert.doesNotMatch(dashboardSrc, /scoredRows/);
+      assert.doesNotMatch(dashboardSrc, /avgReadiness/);
     });
   });
 
@@ -551,6 +546,124 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
 
     it("documents the removal reason in a code comment", () => {
       assert.match(dashboardSrc, /documents validated.*card was removed/);
+    });
+  });
+
+  describe("Pipeline Value aggregate removed (no source-grounded currency authority)", () => {
+    it("does NOT compute or display a Pipeline Value aggregate in rendered output", () => {
+      // The only mention of "Pipeline Value" is in a code comment documenting
+      // the removal. There is no rendered card with that header text.
+      assert.doesNotMatch(dashboardSrc, /font-medium">Pipeline Value/);
+      // The pipelineValue variable was removed entirely.
+      assert.doesNotMatch(dashboardSrc, /\bpipelineValue\b/);
+    });
+
+    it("displays a count-only 'Tenders with budget' card with honest label", () => {
+      assert.match(dashboardSrc, /Tenders with budget/);
+      assert.match(dashboardSrc, /no aggregate until source-grounded authority/);
+    });
+
+    it("does not fetch _sum.budget in the groupBy query", () => {
+      assert.doesNotMatch(dashboardSrc, /_sum:\s*\{\s*budget:\s*true\s*\}/);
+    });
+  });
+
+  describe("Workspace projection warning (lower-bound semantics)", () => {
+    it("renders a prominent workspace projection notice", () => {
+      assert.match(dashboardSrc, /Workspace projection notice/);
+      assert.match(dashboardSrc, /lower bounds/);
+      assert.match(dashboardSrc, /per-tender verification/i);
+    });
+
+    it("labels Critical blockers with lower-bound subtitle", () => {
+      assert.match(dashboardSrc, /minimum — per-tender verification still required/);
+    });
+
+    it("labels Live Pipeline as 'Workspace projection (NOT canonical Clear)'", () => {
+      assert.match(dashboardSrc, /Workspace projection \(NOT canonical Clear\)/);
+    });
+
+    it("does not use green color for the Critical blockers count", () => {
+      // Even when criticalBlockers === 0, the color is slate (neutral), not
+      // green. A zero lower-bound does NOT mean zero blockers.
+      assert.doesNotMatch(dashboardSrc, /criticalBlockers > 0 \? "text-red-600" : "text-green-600"/);
+    });
+  });
+
+  describe("AI environment readiness production path (fail-closed on missing timeouts)", () => {
+    it("treats missing AI_ANALYSIS_TIMEOUT_MS as a blocker", () => {
+      assert.match(aiEnvSrc, /AI_ANALYSIS_TIMEOUT_MS/);
+      assert.match(aiEnvSrc, /requiredTimeouts/);
+    });
+
+    it("treats missing AI_PROPOSAL_TIMEOUT_MS as a blocker", () => {
+      assert.match(aiEnvSrc, /AI_PROPOSAL_TIMEOUT_MS/);
+    });
+
+    it("treats missing PROPOSAL_SECTION_TIMEOUT_MS as a blocker", () => {
+      assert.match(aiEnvSrc, /PROPOSAL_SECTION_TIMEOUT_MS/);
+    });
+
+    it("parses timeout values and rejects non-positive / non-finite", () => {
+      // The check is `!Number.isFinite(n) || n <= 0` — inverted form.
+      assert.match(aiEnvSrc, /Number\.isFinite\(n\)/);
+      assert.match(aiEnvSrc, /n <= 0/);
+    });
+
+    it("ready === false when any required timeout is missing", () => {
+      const saved: Record<string, string | undefined> = {
+        AI_ANALYSIS_TIMEOUT_MS: process.env.AI_ANALYSIS_TIMEOUT_MS,
+        AI_PROPOSAL_TIMEOUT_MS: process.env.AI_PROPOSAL_TIMEOUT_MS,
+        PROPOSAL_SECTION_TIMEOUT_MS: process.env.PROPOSAL_SECTION_TIMEOUT_MS,
+      };
+      delete process.env.AI_ANALYSIS_TIMEOUT_MS;
+      delete process.env.AI_PROPOSAL_TIMEOUT_MS;
+      delete process.env.PROPOSAL_SECTION_TIMEOUT_MS;
+      try {
+        const r = getAIEnvironmentReadiness();
+        assert.equal(r.ready, false, "ready must be false when timeouts missing");
+        assert.ok(
+          r.blockers.some((b) => b.includes("AI_ANALYSIS_TIMEOUT_MS")),
+          "blockers must mention AI_ANALYSIS_TIMEOUT_MS",
+        );
+      } finally {
+        for (const [k, v] of Object.entries(saved)) {
+          if (v !== undefined) process.env[k] = v;
+        }
+      }
+    });
+  });
+
+  describe("System readiness production path (worker_auth required in production)", () => {
+    it("marks worker_auth as requiredForProduction: true", () => {
+      // Previously this was false, allowing production to deploy without
+      // worker auth — a security hole.
+      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: true/);
+    });
+
+    it("returns CRITICAL worker_auth in production when no secret", async () => {
+      // NODE_ENV is typed as readonly in @types/node. Use Reflect.set to
+      // bypass the type guard for this test only.
+      const savedNodeEnv = process.env.NODE_ENV;
+      const savedVercelEnv = process.env.VERCEL_ENV;
+      const savedWorker = process.env.AI_JOBS_WORKER_SECRET;
+      const savedCron = process.env.CRON_SECRET;
+      Reflect.set(process.env, "NODE_ENV", "production");
+      delete process.env.VERCEL_ENV;
+      delete process.env.AI_JOBS_WORKER_SECRET;
+      delete process.env.CRON_SECRET;
+      try {
+        const r = await getSystemReadiness();
+        const workerCheck = r.checks.find((c) => c.key === "worker_auth");
+        assert.equal(workerCheck?.severity, "CRITICAL");
+        assert.equal(workerCheck?.requiredForProduction, true);
+        assert.equal(r.productionReady, false);
+      } finally {
+        Reflect.set(process.env, "NODE_ENV", savedNodeEnv ?? "test");
+        if (savedVercelEnv !== undefined) process.env.VERCEL_ENV = savedVercelEnv;
+        if (savedWorker !== undefined) process.env.AI_JOBS_WORKER_SECRET = savedWorker;
+        if (savedCron !== undefined) process.env.CRON_SECRET = savedCron;
+      }
     });
   });
 });
