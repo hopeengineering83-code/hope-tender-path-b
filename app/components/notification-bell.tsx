@@ -43,6 +43,9 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
   const [markingReadIds, setMarkingReadIds] = useState<Record<string, boolean>>({});
   const ref = useRef<HTMLDivElement>(null);
 
+  // Synchronous mutex lock to protect against same-tick race conditions
+  const isMarkingRef = useRef(false);
+
   // Derived state to check if any individual markRead request is currently in flight
   const isAnyMarkingRead = Object.values(markingReadIds).some(Boolean);
 
@@ -74,7 +77,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
   }
 
   async function markAllRead(): Promise<boolean> {
-    if (markingAllRead || isAnyMarkingRead) return false;
+    if (isMarkingRef.current || markingAllRead || isAnyMarkingRead) return false;
+    isMarkingRef.current = true;
     setMarkingAllRead(true);
     setError(null);
     try {
@@ -97,11 +101,13 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
       return false;
     } finally {
       setMarkingAllRead(false);
+      isMarkingRef.current = false;
     }
   }
 
   async function markRead(id: string): Promise<boolean> {
-    if (markingAllRead || markingReadIds[id]) return false;
+    if (isMarkingRef.current || markingReadIds[id]) return false;
+    isMarkingRef.current = true;
     setMarkingReadIds((prev) => ({ ...prev, [id]: true }));
     setError(null);
     try {
@@ -124,6 +130,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
       return false;
     } finally {
       setMarkingReadIds((prev) => ({ ...prev, [id]: false }));
+      isMarkingRef.current = false;
     }
   }
 
@@ -192,7 +199,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                       href={n.link}
                       onClick={async (e) => {
                         e.preventDefault();
-                        if (markingAllRead || markingReadIds[n.id]) return;
+                        if (isMarkingRef.current || markingAllRead || markingReadIds[n.id]) return;
                         const success = await markRead(n.id);
                         if (success) {
                           setOpen(false);

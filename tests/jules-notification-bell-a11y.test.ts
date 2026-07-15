@@ -466,4 +466,156 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       assert.match(alertDiv.textContent ?? "", /Failed to mark notification as read/);
     });
   });
+
+  it("uses synchronous useRef mutex to prevent same-tick race between mark-all and mark-one close clicks", async () => {
+    // Redefine fetch mock so PATCH is deferred
+    cleanup();
+    let resolvePatch: any;
+    const patchPromise = new Promise((resolve) => {
+      resolvePatch = resolve;
+    });
+
+    calls = [];
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      calls.push({
+        url: typeof input === "string" ? input : input.url,
+        method: init?.method || "GET",
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+      });
+      if (init?.method === "PATCH") {
+        await patchPromise;
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(
+        JSON.stringify({
+          unreadCount: 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const markAllBtn = Array.from(container.querySelectorAll("#notification-popup button")).find(
+      (btn) => btn.textContent?.trim() === "Mark all read"
+    ) as HTMLButtonElement;
+    assert.ok(markAllBtn);
+
+    const closeButtons = container.querySelectorAll("#notification-popup button");
+    const markReadBtn = Array.from(closeButtons).find(
+      (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+    ) as HTMLButtonElement;
+    assert.ok(markReadBtn);
+
+    // Click BOTH in the SAME synchronous tick!
+    fireEvent.click(markAllBtn);
+    fireEvent.click(markReadBtn);
+
+    // Wait and verify that only 1 PATCH fetch request was dispatched (markAllRead)
+    const patchCalls = calls.filter((c) => c.method === "PATCH");
+    assert.equal(patchCalls.length, 1);
+    assert.equal((patchCalls[0].body as any)?.markAll, true);
+
+    // Resolve deferred patch to finish clean
+    resolvePatch();
+    await waitFor(() => {
+      assert.equal(button.getAttribute("aria-label"), "Notifications");
+    });
+  });
+
+  it("uses synchronous useRef mutex to prevent same-tick race between mark-one and mark-all clicks", async () => {
+    // Redefine fetch mock so PATCH is deferred
+    cleanup();
+    let resolvePatch: any;
+    const patchPromise = new Promise((resolve) => {
+      resolvePatch = resolve;
+    });
+
+    calls = [];
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      calls.push({
+        url: typeof input === "string" ? input : input.url,
+        method: init?.method || "GET",
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+      });
+      if (init?.method === "PATCH") {
+        await patchPromise;
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(
+        JSON.stringify({
+          unreadCount: 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const markAllBtn = Array.from(container.querySelectorAll("#notification-popup button")).find(
+      (btn) => btn.textContent?.trim() === "Mark all read"
+    ) as HTMLButtonElement;
+    assert.ok(markAllBtn);
+
+    const closeButtons = container.querySelectorAll("#notification-popup button");
+    const markReadBtn = Array.from(closeButtons).find(
+      (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+    ) as HTMLButtonElement;
+    assert.ok(markReadBtn);
+
+    // Click BOTH in the SAME synchronous tick - mark-one first!
+    fireEvent.click(markReadBtn);
+    fireEvent.click(markAllBtn);
+
+    // Wait and verify that only 1 PATCH fetch request was dispatched (markRead)
+    const patchCalls = calls.filter((c) => c.method === "PATCH");
+    assert.equal(patchCalls.length, 1);
+    assert.deepEqual((patchCalls[0].body as any)?.ids, ["n1"]);
+
+    // Resolve deferred patch to finish clean
+    resolvePatch();
+    await waitFor(() => {
+      assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
+    });
+  });
 });
