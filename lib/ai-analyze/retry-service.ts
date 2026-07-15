@@ -204,15 +204,20 @@ export async function rearmJobForRetry(jobId: string): Promise<boolean> {
 
   // Verify the tender content still hashes to the same value the job ran on.
   const { computeAnalysisContentHash, buildTenderAnalysisContent } = await import("../engine/tender-analysis-content");
+  // ACTIVE files + UNBOUNDED vault — must reproduce the canonical analysisInputHash
+  // the job was stored with (route/createAnalysisJob build from ACTIVE files + the
+  // full vault; snapshot/gate recompute the same). A divergent input set here would
+  // make currentHash !== job.analysisInputHash for tenders with a soft-deleted file
+  // or >5 vault docs, wrongly marking the job non-retryable ("CONTENT_HASH_CHANGED").
   const tender = await prisma.tender.findFirst({
     where: { id: job.tenderId, userId: job.userId },
-    include: { files: { select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true } } },
+    include: { files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true } } },
   });
   if (!tender) return false;
 
   const company = await prisma.company.findUnique({
     where: { userId: job.userId },
-    include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+    include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
   }).catch(() => null);
 
   const currentHash = computeAnalysisContentHash(buildTenderAnalysisContent(tender, company ?? undefined));

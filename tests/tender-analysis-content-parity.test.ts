@@ -65,8 +65,10 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
 describe("both execution paths wire the shared builder (single source of truth)", () => {
   it("the AI Analyze route uses buildTenderAnalysisContent + computeAnalysisContentHash", () => {
     const route = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-    const builds = (route.match(/buildTenderAnalysisContent\(tenderRecord, company\)/g) ?? []).length;
-    assert.ok(builds >= 2, `both route paths must use the shared builder (found ${builds})`);
+    // Both paths build from the tender record's ACTIVE files + the company vault,
+    // matching the input set the snapshot/gate recompute the hash from.
+    const builds = (route.match(/buildTenderAnalysisContent\(\s*\{ \.\.\.tenderRecord, files:[\s\S]*?company,\s*\)/g) ?? []).length;
+    assert.ok(builds >= 2, `both route paths must use the shared builder with ACTIVE files + company (found ${builds})`);
     assert.match(route, /computeAnalysisContentHash\(tenderContent\)/);
     // The old inline builders/hashing must be gone.
     assert.doesNotMatch(route, /crypto\.createHash\("sha256"\)\.update\(tenderContent\)/);
@@ -74,9 +76,13 @@ describe("both execution paths wire the shared builder (single source of truth)"
 
   it("the durable job service uses the shared builder + hash", () => {
     const svc = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
-    assert.match(svc, /buildTenderAnalysisContent\(tender, company\)/);
+    // Builds from the tender's ACTIVE files + company vault, matching the input
+    // set the snapshot/gate recompute the hash from.
+    assert.match(svc, /buildTenderAnalysisContent\(\s*\{ \.\.\.tender, files:[\s\S]*?company,\s*\)/);
     assert.match(svc, /computeAnalysisContentHash\(tenderText\)/);
     // The old raw-text full-sha256 scheme must be gone.
     assert.doesNotMatch(svc, /createHash\("sha256"\)\.update\(normalizedText\)/);
+    // The vault query feeding the hash must NOT be capped (must match snapshot/gate).
+    assert.doesNotMatch(svc, /originalFileName: true, extractedText: true \}, take:/);
   });
 });

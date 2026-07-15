@@ -474,7 +474,14 @@ async function handleStreamingAnalyze(
           }),
           prisma.company.findUnique({
             where: { userId },
-            include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+            // Unbounded, unordered select — MUST match the vault-document set that
+      // tender-release-snapshot.ts and generation-readiness-gate.ts recompute
+      // the content hash from. A `take`/`orderBy` here would make the route
+      // hash a different document set than the gate, so a fresh analysis would
+      // store a hash the gate can never reproduce (permanent ANALYSIS_HASH_MISMATCH
+      // for any company with more than the capped number of vault documents).
+      // Deterministic ordering is handled downstream by buildTenderAnalysisContent.
+      include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
           }),
         ]);
 
@@ -566,7 +573,16 @@ async function handleStreamingAnalyze(
         // Shared builder — IDENTICAL content + hash to the non-streaming path
         // and the durable job service, so all execution paths share one
         // chunk-state identity.
-        const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
+        // Build the analysis content (and its hash) from ACTIVE files only, so
+        // the persisted analysisInputHash matches what tender-release-snapshot.ts
+        // and generation-readiness-gate.ts recompute (they both filter
+        // `deletionStatus === "ACTIVE"`). Hashing soft-deleted/non-active files
+        // here would store a hash the gate can never reproduce, leaving the
+        // tender permanently stuck on ANALYSIS_HASH_MISMATCH after a re-analyze.
+        const tenderContent = buildTenderAnalysisContent(
+          { ...tenderRecord, files: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE") },
+          company,
+        );
         const contentHash = computeAnalysisContentHash(tenderContent);
         if (force) {
           await clearAnalyzeCheckpoints(id, userId, contentHash);
@@ -636,6 +652,11 @@ async function handleStreamingAnalyze(
             return await tx.aiJob.create({
               data: {
                 tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
+                // Bind the canonical content hash to the durable AiJob column so the
+                // release snapshot + generation gate can confirm the analysis is
+                // current. Without this the column stays null and every tender is
+                // permanently reported as "content changed since the last analysis".
+                analysisInputHash: contentHash,
                 input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
               },
               select: { id: true },
@@ -913,6 +934,11 @@ async function handleStreamingAnalyze(
                 data: {
                   status: streamTerminalStatus,
                   finishedAt: new Date(),
+                  // Re-affirm the canonical hash binding on success. Resumed jobs
+                  // (continueJobId) were created by an earlier request that may
+                  // predate the hash binding, so bind it here too — the release
+                  // snapshot compares this column against the current content hash.
+                  analysisInputHash: contentHash,
                   errorMessage: streamPromoSuperseded
                     ? "Superseded by a newer AI Analyze job. Not promoted to canonical."
                     : null,
@@ -1270,7 +1296,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     prisma.company.findUnique({
       where: { userId },
-      include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+      // Unbounded, unordered select — MUST match the vault-document set that
+      // tender-release-snapshot.ts and generation-readiness-gate.ts recompute
+      // the content hash from. A `take`/`orderBy` here would make the route
+      // hash a different document set than the gate, so a fresh analysis would
+      // store a hash the gate can never reproduce (permanent ANALYSIS_HASH_MISMATCH
+      // for any company with more than the capped number of vault documents).
+      // Deterministic ordering is handled downstream by buildTenderAnalysisContent.
+      include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
     }),
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
@@ -1428,7 +1461,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Shared builder — IDENTICAL content + hash to the streaming path and
         // the durable job service (lib/ai-jobs/analysis-job-service.ts), so all
         // execution paths share one chunk-state identity.
-        const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
+        // Build the analysis content (and its hash) from ACTIVE files only, so
+        // the persisted analysisInputHash matches what tender-release-snapshot.ts
+        // and generation-readiness-gate.ts recompute (they both filter
+        // `deletionStatus === "ACTIVE"`). Hashing soft-deleted/non-active files
+        // here would store a hash the gate can never reproduce, leaving the
+        // tender permanently stuck on ANALYSIS_HASH_MISMATCH after a re-analyze.
+        const tenderContent = buildTenderAnalysisContent(
+          { ...tenderRecord, files: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE") },
+          company,
+        );
 
         // Compute content hash for continuation validation and auto-resume discovery
         const contentHash = computeAnalysisContentHash(tenderContent);
@@ -1487,6 +1529,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               jobType: "AI_ANALYZE",
               status: "RUNNING",
               startedAt: new Date(),
+              // Bind the canonical content hash so downstream gates can confirm
+              // the analysis matches the current tender content (see streaming path).
+              analysisInputHash: contentHash,
               input: JSON.stringify({
                 contentLength: tenderContent.length,
                 chunkCount: Math.ceil(tenderContent.length / 50_000),
@@ -1705,6 +1750,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             data: {
               status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
               finishedAt: new Date(),
+              // Re-affirm the canonical hash binding on success (covers resumed jobs).
+              analysisInputHash: contentHash,
               output: JSON.stringify({
                 isPartial: aiMeta.isPartial,
                 totalChunks: aiMeta.totalChunks,
