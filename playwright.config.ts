@@ -19,11 +19,13 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   "tender-list.spec.ts",
 ];
 
-// Tablet-authenticated contract specs validate responsive UI and the settings
-// API used by that UI. Both reuse the one primary session created by global setup.
+// Tablet-authenticated contract specs validate responsive UI, role-aware
+// navigation, and the settings API used by that UI. They reuse the one primary
+// session created by global setup.
 const TABLET_AUTHENTICATED_SPECS = [
   "tablet-universal-tender-intelligence.spec.ts",
   "settings-api-contract.spec.ts",
+  "dashboard-role-navigation.spec.ts",
 ];
 
 export default defineConfig({
