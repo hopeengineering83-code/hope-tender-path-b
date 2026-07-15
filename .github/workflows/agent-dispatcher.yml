@@ -1,0 +1,271 @@
+# Agent Dispatcher
+#
+# Event-driven: routes work to the appropriate agent based on labels.
+# When an issue is labeled `agent:app`, `agent:worker`, or `agent:integrator`,
+# this workflow creates a dispatch payload, posts it as an issue comment, and
+# (optionally) triggers the corresponding agent workflow.
+#
+# This workflow MUST NOT:
+#   - merge to main
+#   - deploy
+#   - modify application runtime code
+#   - auto-approve a PR
+#   - write to the integration branch
+#   - dispatch multiple agents for the same finding simultaneously
+
+name: Agent Dispatcher
+
+on:
+  issues:
+    types: [labeled, assigned]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [labeled]
+  schedule:
+    # Backup: check for issues labeled agent-dispatch-needed that haven't been dispatched
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to dispatch."
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: agent-dispatcher-${{ github.event.issue.number || github.event.pull_request.number || github.event.schedule }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Dispatch to Agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      (github.event_name == 'issues' && contains(github.event.label.name, 'agent:')) ||
+      (github.event_name == 'pull_request' && contains(github.event.label.name, 'agent:')) ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/dispatch ')) ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Determine target issue and agent
+        id: target
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let issueNumber = null;
+            let agentLabel = null;
+            let dispatchReason = '';
+
+            if (context.eventName === 'issues') {
+              issueNumber = context.payload.issue.number;
+              const label = context.payload.label.name;
+              if (label.startsWith('agent:')) {
+                agentLabel = label;
+                dispatchReason = `issue labeled ${label}`;
+              }
+            } else if (context.eventName === 'pull_request') {
+              issueNumber = context.payload.pull_request.number;
+              const label = context.payload.label.name;
+              if (label.startsWith('agent:')) {
+                agentLabel = label;
+                dispatchReason = `PR labeled ${label}`;
+              }
+            } else if (context.eventName === 'issue_comment') {
+              const body = context.payload.comment.body;
+              const match = body.match(/^\/dispatch\s+(app|worker|integrator)\b/);
+              if (match) {
+                issueNumber = context.payload.issue.number;
+                agentLabel = `agent:${match[1]}`;
+                dispatchReason = `/dispatch command by @${context.payload.comment.user.login}`;
+              }
+            } else if (context.eventName === 'workflow_dispatch') {
+              issueNumber = parseInt('${{ inputs.issue_number }}');
+              // Fetch the issue to see its labels
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber
+              });
+              const agentLabels = issue.labels.filter(l => l.name.startsWith('agent:'));
+              if (agentLabels.length > 0) {
+                agentLabel = agentLabels[0].name;
+                dispatchReason = 'manual workflow_dispatch';
+              }
+            } else if (context.eventName === 'schedule') {
+              // Backup: find issues with 'agent-dispatch-needed' label
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'agent-dispatch-needed',
+                per_page: 5
+              });
+              if (issues.length === 0) {
+                console.log('No issues needing dispatch.');
+                return;
+              }
+              const issue = issues[0];
+              issueNumber = issue.number;
+              // Determine agent from issue body or labels
+              const agentMatch = issue.body.match(/agent:(app|worker|integrator)/);
+              if (agentMatch) {
+                agentLabel = `agent:${agentMatch[1]}`;
+              } else {
+                // Default to worker for triage
+                agentLabel = 'agent:worker';
+              }
+              dispatchReason = 'backup schedule reconciliation';
+            }
+
+            if (!issueNumber || !agentLabel) {
+              console.log('No dispatch target determined. Exiting.');
+              return;
+            }
+
+            const agent = agentLabel.replace('agent:', '');
+
+            // Check for existing dispatch (avoid double-dispatch)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 50
+            });
+
+            const alreadyDispatched = comments.some(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes(`[agent-dispatcher]`) &&
+              c.body.includes(`agent: ${agent}`)
+            );
+
+            if (alreadyDispatched && context.eventName !== 'workflow_dispatch') {
+              console.log(`Issue #${issueNumber} already dispatched to ${agent}. Skipping.`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setOutput('skip', 'false');
+            core.setOutput('issue_number', issueNumber.toString());
+            core.setOutput('agent', agent);
+            core.setOutput('reason', dispatchReason);
+            console.log(`Dispatching issue #${issueNumber} to ${agent} agent. Reason: ${dispatchReason}`);
+
+      - name: Skip if no target
+        if: steps.target.outputs.skip == 'true' || steps.target.outputs.issue_number == ''
+        run: echo "No dispatch needed."
+
+      - name: Create dispatch payload
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.issue_number != ''
+        id: payload
+        shell: bash
+        run: |
+          # Generate a dispatch ID
+          DISPATCH_ID="DISP-$(date -u +%Y%m%d-%H%M%S)-${{ github.run_id }}"
+          echo "dispatch_id=$DISPATCH_ID" >> $GITHUB_OUTPUT
+
+          # Read the finding if it exists
+          FINDING_FILE=""
+          if [ -d .github/release-control/findings ]; then
+            # Look for a finding referencing this issue
+            ISSUE_NUM="${{ steps.target.outputs.issue_number }}"
+            FINDING_FILE=$(grep -rl "\"github_issue\": ${ISSUE_NUM}" .github/release-control/findings/ 2>/dev/null | head -1)
+          fi
+
+          echo "finding_file=${FINDING_FILE:-none}" >> $GITHUB_OUTPUT
+
+      - name: Post dispatch comment
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.issue_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const agent = '${{ steps.target.outputs.agent }}';
+            const issueNumber = parseInt('${{ steps.target.outputs.issue_number }}');
+            const dispatchId = '${{ steps.payload.outputs.dispatch_id }}';
+            const findingFile = '${{ steps.payload.outputs.finding_file }}';
+            const reason = '${{ steps.target.outputs.reason }}';
+
+            const contractPath = `.github/agents/${agent}-contract.md`;
+
+            const body = [
+              `[agent-dispatcher] Dispatch ID: \`${dispatchId}\``,
+              ``,
+              `| Field | Value |`,
+              `|---|---|`,
+              `| **Agent** | \`${agent}\` |`,
+              `| **Issue/PR** | #${issueNumber} |`,
+              `| **Reason** | ${reason} |`,
+              `| **Dispatched at** | ${new Date().toISOString()} |`,
+              `| **Contract** | [${contractPath}](${contractPath}) |`,
+              `| **Finding** | ${findingFile === 'none' ? 'none' : `\`${findingFile}\``} |`,
+              ``,
+              `**Instructions for ${agent} agent:**`,
+              `1. Read the contract at \`${contractPath}\`.`,
+              `2. Read the issue/finding above.`,
+              `3. Follow the operating procedure in the contract.`,
+              `4. Report back by appending to \`.github/release-control/agent-log.md\`.`,
+              ``,
+              `**Constraints:**`,
+              `- Do NOT merge to main.`,
+              `- Do NOT deploy.`,
+              `- Do NOT modify application runtime code (unless you are the app agent working on a verified finding).`,
+              `- Do NOT auto-approve any PR.`,
+              `- Do NOT write to the integration branch (unless you are the integrator agent).`,
+              ``,
+              `**This dispatch was created by automation. A human release manager must review the result before any merge.**`
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body
+            });
+
+            // Remove the agent-dispatch-needed label if present
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                name: 'agent-dispatch-needed'
+              });
+            } catch (e) { /* label may not exist */ }
+
+      - name: Update finding dispatch_history
+        if: steps.target.outputs.skip != 'true' && steps.payload.outputs.finding_file != 'none'
+        shell: bash
+        run: |
+          FINDING_FILE="${{ steps.payload.outputs.finding_file }}"
+          if [ -f "$FINDING_FILE" ]; then
+            # Append to dispatch_history using python
+            python3 -c "
+            import json, sys
+            with open('$FINDING_FILE', 'r') as f:
+                    data = json.load(f)
+            if 'dispatch_history' not in data:
+                data['dispatch_history'] = []
+            data['dispatch_history'].append({
+                'timestamp': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+                'agent': '${{ steps.target.outputs.agent }}',
+                'action': 'dispatched',
+                'result': 'Dispatch ID: ${{ steps.payload.outputs.dispatch_id }}',
+                'run_id': '${{ github.run_id }}'
+            })
+            data['status'] = 'in-progress'
+            with open('$FINDING_FILE', 'w') as f:
+                json.dump(data, f, indent=2)
+            print('Updated finding dispatch_history.')
+            "
+          fi

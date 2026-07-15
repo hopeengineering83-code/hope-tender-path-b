@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hopeengineering83-code/hope-tender-path-b/.github/release-control/findings.schema.json",
+  "title": "Release Control Finding",
+  "description": "A single verified gap, defect, or task discovered by the change-monitor or release-auditor workflows and dispatched to an agent for resolution.",
+  "type": "object",
+  "required": ["id", "timestamp", "severity", "category", "source", "title", "description", "agent", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique finding identifier. Format: FINDING-<YYYYMMDD>-<HHMMSS>-<short-slug>.",
+      "pattern": "^FINDING-\\d{8}-\\d{6}-[a-z0-9-]+$",
+      "examples": ["FINDING-20260715-143022-stale-analysis-blocker"]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when the finding was created."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "info"],
+      "description": "Severity rating. critical = blocks release; high = should fix before release; medium = fix in next cycle; low = backlog; info = documentation only."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "security",
+        "performance",
+        "correctness",
+        "compliance",
+        "dead-code",
+        "test-gap",
+        "doc",
+        "infra",
+        "integration",
+        "contract-violation"
+      ],
+      "description": "Classification of the finding."
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "change-monitor",
+        "release-auditor",
+        "release-gate",
+        "integration-controller",
+        "agent-dispatcher",
+        "manual"
+      ],
+      "description": "The workflow or actor that created the finding."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 200,
+      "description": "One-line summary of the finding."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Detailed description including the defect, the evidence, and the expected behavior."
+    },
+    "file": {
+      "type": ["string", "null"],
+      "description": "File path relative to repo root, if applicable. null for non-file findings."
+    },
+    "line": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Line number in the file, if applicable."
+    },
+    "endLine": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "End line number for multi-line findings."
+    },
+    "agent": {
+      "type": "string",
+      "enum": ["app", "worker", "integrator", "none"],
+      "description": "The agent role responsible for resolving this finding. 'none' means the finding requires human (release-manager) action."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "in-progress", "resolved", "wontfix", "superseded"],
+      "description": "Current status of the finding."
+    },
+    "github_issue": {
+      "type": ["integer", "null"],
+      "description": "GitHub issue number created for this finding, if any."
+    },
+    "github_pr": {
+      "type": ["integer", "null"],
+      "description": "GitHub PR number that resolves this finding, if any."
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Supporting evidence for the finding.",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": ["string", "null"],
+          "description": "The command that produced the evidence (e.g., 'npm run typecheck')."
+        },
+        "exit_code": {
+          "type": ["integer", "null"],
+          "description": "Exit code of the command."
+        },
+        "stdout_excerpt": {
+          "type": ["string", "null"],
+          "description": "Relevant excerpt of stdout (first 2000 chars)."
+        },
+        "stderr_excerpt": {
+          "type": ["string", "null"],
+          "description": "Relevant excerpt of stderr (first 2000 chars)."
+        },
+        "sha": {
+          "type": ["string", "null"],
+          "description": "The commit SHA the evidence was collected against."
+        }
+      }
+    },
+    "dispatch_history": {
+      "type": "array",
+      "description": "Chronological log of agent dispatches for this finding.",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "agent", "action", "result"],
+        "additionalProperties": false,
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "agent": {
+            "type": "string",
+            "enum": ["app", "worker", "integrator", "none"]
+          },
+          "action": {
+            "type": "string",
+            "description": "What the agent did (e.g., 'dispatched', 'branch-created', 'pr-opened', 'blocked', 'resolved')."
+          },
+          "result": {
+            "type": "string",
+            "description": "Outcome of the action."
+          },
+          "run_id": {
+            "type": ["string", "null"],
+            "description": "GitHub Actions run ID, if dispatched via workflow."
+          }
+        }
+      }
+    },
+    "related_findings": {
+      "type": "array",
+      "description": "IDs of related findings (duplicates, dependencies, supersessions).",
+      "items": {
+        "type": "string",
+        "pattern": "^FINDING-\\d{8}-\\d{6}-[a-z0-9-]+$"
+      }
+    },
+    "labels": {
+      "type": "array",
+      "description": "GitHub labels applied to the issue for this finding.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["agent:app", "severity:high", "category:security"]]
+    },
+    "non_negotiable_rule": {
+      "type": ["string", "null"],
+      "description": "If this finding relates to a non-negotiable rule from operator_handoff.md, name it here (e.g., 'rule-4-provider-order')."
+    }
+  }
+}
