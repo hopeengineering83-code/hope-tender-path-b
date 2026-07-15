@@ -64,12 +64,20 @@ export default async function DashboardPage() {
     : null;
 
   // Only aggregate budgets that have both a valid amount AND a currency.
-  // Hardcoding '$' for all tenders misrepresents non-USD budgets.
-  const activeBudgets = tenders
-    .filter((t) => t.budget && t.budget > 0 && t.currency)
-    .map((t) => ({ amount: t.budget as number, currency: t.currency as string }));
-  const pipelineValue = activeBudgets.reduce((a, b) => a + b.amount, 0);
-  const pipelineCurrency = activeBudgets.length > 0 ? activeBudgets[0].currency : null;
+  // Group by currency to avoid summing ETB + USD into one misleading total.
+  const budgetsByCurrency = new Map<string, number>();
+  for (const t of tenders) {
+    if (t.budget && t.budget > 0 && t.currency) {
+      const curr = t.currency as string;
+      budgetsByCurrency.set(curr, (budgetsByCurrency.get(curr) ?? 0) + (t.budget as number));
+    }
+  }
+  // Only show a single aggregate if all budgets share one currency.
+  // If currencies differ, suppress the aggregate to avoid misrepresentation.
+  const currencies = Array.from(budgetsByCurrency.keys());
+  const singleCurrency = currencies.length === 1 ? currencies[0] : null;
+  const pipelineValue = singleCurrency ? (budgetsByCurrency.get(singleCurrency) ?? 0) : null;
+  const activeBudgetCount = Array.from(budgetsByCurrency.values()).reduce((a, b) => a + (b > 0 ? 1 : 0), 0);
 
   const scoredTenders = tenders.filter((t) => t.readinessScore !== null);
   const avgReadiness = scoredTenders.length > 0
@@ -88,11 +96,15 @@ export default async function DashboardPage() {
   // critical gap even if it has zero compliance gap rows.
   const EXTRACTION_BLOCKED_STATES = new Set([
     "OCR_REQUIRED",
-    "EXTRACTION_CORRUPTED_ENGINE_SKIPPED",
+    "EXTRACTION_CORRUPTED_AI_SKIPPED",
+    "EXTRACTION_CORRUPTED",
     "EXTRACTION_QUALITY_ENGINE_BLOCKED",
+    "EXTRACTION_QUALITY_BLOCKED",
     "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
     "ANALYSIS_FROM_WEAK_EXTRACTION",
     "PARTIAL_EXTRACTION_AI_ANALYZED",
+    "REGEX_FALLBACK_AI_ERROR",
+    "REGEX_FALLBACK_UNAPPROVED",
   ]);
   const criticalGaps = tenders.reduce((sum, t) => {
     const gapCount = t.complianceGaps?.length ?? 0;
@@ -159,7 +171,7 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {(winRate !== null || pipelineValue > 0 || avgReadiness !== null || totalGenDocs > 0) && (
+      {(winRate !== null || (pipelineValue !== null && pipelineValue > 0) || avgReadiness !== null || totalGenDocs > 0) && (
         <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
           {winRate !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -168,17 +180,24 @@ export default async function DashboardPage() {
               <p className="mt-1 text-xs text-slate-400">{wonCount} of {tendersWithOutcome.length} decided</p>
             </div>
           )}
-          {pipelineValue > 0 && (
+          {pipelineValue !== null && pipelineValue > 0 && singleCurrency && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Pipeline Value</p>
+              <p className="text-sm text-slate-500 font-medium">Pipeline Value ({singleCurrency})</p>
               <p className="mt-1 text-2xl font-bold text-blue-600">
                 {pipelineValue >= 1_000_000
-                  ? `${pipelineCurrency ?? ""}${(pipelineValue / 1_000_000).toFixed(1)}M`
+                  ? `${singleCurrency} ${(pipelineValue / 1_000_000).toFixed(1)}M`
                   : pipelineValue >= 1_000
-                  ? `${pipelineCurrency ?? ""}${(pipelineValue / 1_000).toFixed(0)}K`
-                  : `${pipelineCurrency ?? ""}${pipelineValue.toLocaleString()}`}
+                  ? `${singleCurrency} ${(pipelineValue / 1_000).toFixed(0)}K`
+                  : `${singleCurrency} ${pipelineValue.toLocaleString()}`}
               </p>
-              <p className="mt-1 text-xs text-slate-400">{activeBudgets.length} with budget</p>
+              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} with budget</p>
+            </div>
+          )}
+          {pipelineValue === null && activeBudgetCount > 0 && (
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500 font-medium">Pipeline Value</p>
+              <p className="mt-1 text-2xl font-bold text-slate-400">Mixed currencies</p>
+              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} budgets in {currencies.length} currencies</p>
             </div>
           )}
           {avgReadiness !== null && (
