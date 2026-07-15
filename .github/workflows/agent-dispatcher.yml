@@ -8,10 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
-        description: Issue number to dispatch
         required: true
       agent:
-        description: app, worker, or integrator
         required: true
 
 permissions:
@@ -26,126 +24,65 @@ concurrency:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-      - name: Resolve and authorize request
-        id: request
+      - name: Resolve, authorize, and record dispatch
         uses: actions/github-script@v7
         with:
           script: |
-            const allowedAgents = new Set(['app', 'worker', 'integrator']);
+            const allowedAgents = new Set(['glm','jules','codex','claude-code','chatgpt-review']);
             let issueNumber;
             let agent;
             let actor = context.actor;
 
             if (context.eventName === 'issue_comment') {
-              if (context.payload.comment.user.type === 'Bot') {
-                core.setFailed('Bot-authored dispatch commands are ignored.');
-                return;
-              }
-              const match = context.payload.comment.body.match(/^\/dispatch\s+(app|worker|integrator)\s*$/);
-              if (!match) {
-                core.setFailed('Unsupported command.');
-                return;
-              }
+              if (context.payload.comment.user.type === 'Bot') throw new Error('Bot dispatch commands are rejected.');
+              const match = context.payload.comment.body.match(/^\/dispatch\s+(glm|jules|codex|claude-code|chatgpt-review)\s*$/);
+              if (!match) throw new Error('Unsupported dispatch command.');
               issueNumber = context.payload.issue.number;
               agent = match[1];
             } else if (context.eventName === 'issues') {
               issueNumber = context.payload.issue.number;
-              const name = context.payload.label.name;
-              if (!name.startsWith('agent:')) {
-                core.setFailed('Not an agent label.');
-                return;
-              }
-              agent = name.slice('agent:'.length);
+              const label = context.payload.label.name;
+              if (!label.startsWith('agent:')) throw new Error('Not an agent label.');
+              agent = label.slice('agent:'.length);
               actor = context.payload.sender.login;
             } else {
               issueNumber = Number('${{ inputs.issue_number }}');
               agent = '${{ inputs.agent }}';
             }
 
-            if (!Number.isInteger(issueNumber) || !allowedAgents.has(agent)) {
-              core.setFailed('Invalid dispatch target.');
-              return;
-            }
+            if (!Number.isInteger(issueNumber) || !allowedAgents.has(agent)) throw new Error('Invalid dispatch target.');
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner: context.repo.owner, repo: context.repo.repo, username: actor });
+            if (!['admin','maintain','write'].includes(permission.permission)) throw new Error(`@${actor} is not authorized.`);
 
-            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              username: actor
-            });
-            const allowed = new Set(['admin', 'maintain', 'write']);
-            if (!allowed.has(permission.permission)) {
-              core.setFailed(`@${actor} is not authorized to dispatch agents.`);
-              return;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              per_page: 100
-            });
             const marker = `<!-- control-tower-dispatch:${issueNumber}:${agent} -->`;
-            const active = comments.some(c => c.body?.includes(marker) && /DISPATCHED|RUNNING|PR_OPENED/.test(c.body));
-            if (active) {
-              core.setOutput('skip', 'true');
+            const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, per_page: 100 });
+            if (comments.some(c => c.body?.includes(marker) && /WORKING|PR_OPENED|WAITING_FOR_TOOL/.test(c.body))) {
+              core.notice('Existing active dispatch found.');
               return;
             }
 
-            core.setOutput('skip', 'false');
-            core.setOutput('issue_number', String(issueNumber));
-            core.setOutput('agent', agent);
-            core.setOutput('marker', marker);
-
-      - name: Dispatch configured provider
-        if: steps.request.outputs.skip != 'true'
-        uses: actions/github-script@v7
-        env:
-          PROVIDER: ${{ vars.CODING_AGENT_PROVIDER }}
-          COPILOT_ASSIGNEE: ${{ vars.COPILOT_CODING_AGENT_ASSIGNEE }}
-          ISSUE_NUMBER: ${{ steps.request.outputs.issue_number }}
-          AGENT_ROLE: ${{ steps.request.outputs.agent }}
-          MARKER: ${{ steps.request.outputs.marker }}
-        with:
-          script: |
-            const issueNumber = Number(process.env.ISSUE_NUMBER);
-            const provider = process.env.PROVIDER || '';
-            const marker = process.env.MARKER;
-            const role = process.env.AGENT_ROLE;
-
-            if (provider !== 'github-copilot') {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body: `${marker}\nState: BLOCKED_NO_AGENT_PROVIDER\nRole: ${role}\nConfigure repository variable CODING_AGENT_PROVIDER=github-copilot and COPILOT_CODING_AGENT_ASSIGNEE before retrying.`
-              });
-              core.setFailed('No supported coding-agent provider is configured.');
-              return;
-            }
-
-            const assignee = process.env.COPILOT_ASSIGNEE || 'copilot-swe-agent';
-            try {
-              await github.rest.issues.addAssignees({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                assignees: [assignee]
-              });
-            } catch (error) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body: `${marker}\nState: FAILED\nRole: ${role}\nProvider: github-copilot\nThe configured coding-agent assignee could not be assigned.`
-              });
-              throw error;
-            }
+            const state = agent === 'glm'
+              ? 'WAITING_FOR_GLM_CHAT'
+              : agent === 'jules'
+                ? 'WAITING_FOR_JULES'
+                : agent === 'codex'
+                  ? 'WAITING_FOR_CODEX_LIMIT_RESET'
+                  : agent === 'claude-code'
+                    ? 'WAITING_FOR_CLAUDE_LIMIT_RESET'
+                    : 'WAITING_FOR_REVIEW_CHAT';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
-              body: `${marker}\nState: DISPATCHED\nRole: ${role}\nProvider: github-copilot\nAssignee: @${assignee}\nRun: ${context.runId}`
+              body: [
+                marker,
+                `State: ${state}`,
+                `Assigned tool: ${agent}`,
+                `Target branch: integration/controlled-recovery`,
+                `Instruction authority: this issue and its linked PR comments`,
+                `Do not create a replacement PR, merge, approve, or deploy.`,
+                `Update this issue with WORKING, PR_OPENED, REVISION_REQUIRED, ACCEPTED, or BLOCKED.`
+              ].join('\n')
             });
