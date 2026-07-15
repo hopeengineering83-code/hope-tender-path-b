@@ -20,8 +20,8 @@ function SearchClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const initialQuery = searchParams.get("q") ?? "";
-  const [query, setQuery] = useState(initialQuery);
+  const urlQuery = searchParams.get("q") ?? "";
+  const [query, setQuery] = useState(urlQuery);
   const [tenders, setTenders] = useState<TenderResult[]>([]);
   const [experts, setExperts] = useState<ExpertResult[]>([]);
   const [projects, setProjects] = useState<ProjectResult[]>([]);
@@ -77,16 +77,18 @@ function SearchClient() {
     }
   }, []);
 
+  // The URL is the single query authority. Updating it schedules exactly one
+  // debounced request; there is no second request path in the input handler.
   useEffect(() => {
-    setQuery(initialQuery);
-    void runSearch(initialQuery);
-    return () => requestRef.current?.abort();
-  }, [initialQuery, runSearch]);
-
-  useEffect(() => () => {
+    setQuery(urlQuery);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    requestRef.current?.abort();
-  }, []);
+    debounceRef.current = setTimeout(() => void runSearch(urlQuery), urlQuery.trim().length >= 2 ? 300 : 0);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [urlQuery, runSearch]);
+
+  useEffect(() => () => requestRef.current?.abort(), []);
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
     const nextQuery = event.target.value;
@@ -98,9 +100,6 @@ function SearchClient() {
     else nextParams.delete("q");
     const suffix = nextParams.toString();
     router.replace(`${pathname}${suffix ? `?${suffix}` : ""}`, { scroll: false });
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void runSearch(nextQuery), 300);
   }
 
   const hasResults = tenders.length > 0 || experts.length > 0 || projects.length > 0;
