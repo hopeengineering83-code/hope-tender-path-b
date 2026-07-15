@@ -8,7 +8,7 @@ CONTROLLER=.github/workflows/integration-controller.yml
 COORDINATOR=.github/workflows/repair-coordinator.yml
 RELEASE_GATE=.github/workflows/release-gate.yml
 
-grep -q "ACCEPTED_HEAD_SHA" "$CONTROLLER"
+grep -q "CONTROL_TOWER_AUDIT" "$CONTROLLER"
 grep -q "Missing authorized exact-head acceptance comment" "$CONTROLLER"
 grep -q "currentSuiteId" "$CONTROLLER"
 grep -q "VALIDATED_HEAD_SHA" "$COORDINATOR"

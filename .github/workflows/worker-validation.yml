@@ -1,0 +1,247 @@
+name: Worker Exact-Head Validation
+
+# Fail-closed, exact-head CI for application-worker PRs (including drafts) whose
+# base is integration/controlled-recovery. Closes the gap where worker PRs
+# received no CI at all.
+#
+# This workflow is VALIDATION ONLY. It never merges, approves, marks ready,
+# deploys, or runs a production migration. A green result is NOT approval — the
+# Repair Coordinator may at most move the PR to `awaiting-independent-audit`, and
+# integration still requires an authorized independent CONTROL_TOWER_AUDIT tied
+# to the exact head (see integration-controller.yml).
+#
+# Safety model:
+#   - `pull_request` trigger (never pull_request_target): repository secrets are
+#     NOT exposed to PR-authored code, and forked heads run with a read-only
+#     token. Forked heads are additionally rejected outright.
+#   - Least privilege: the workflow default is contents:read. The single job
+#     narrowly adds checks:write ONLY to publish the exact-head evidence check
+#     run that the Integration Controller verifies. No write to contents,
+#     pull-requests, or issues is granted.
+#   - Missing database configuration => NOT_CONFIGURED (blocks, never PASS).
+#   - Any skipped required test => SKIPPED_BLOCKER (blocks, never PASS).
+#   - Exact head: the run is pinned to the PR head SHA, cancels on a new push,
+#     and fails if the head moves — stale evidence cannot survive a push.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - integration/controlled-recovery
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Worker PR number to validate at its exact current head
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  # A new push to the same PR cancels the in-flight validation so published
+  # evidence is always tied to the current exact head.
+  group: worker-validation-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+    steps:
+      - name: Resolve exact worker head and reject ineligible PRs (fail closed)
+        id: resolve
+        uses: actions/github-script@v7
+        env:
+          INPUT_PR: ${{ inputs.pr_number }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? Number(process.env.INPUT_PR)
+              : context.payload.pull_request.number;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (pr.state !== 'open') { core.setFailed('NOT_CONFIGURED: PR is not open.'); return; }
+            if (pr.base.ref !== 'integration/controlled-recovery') {
+              core.setFailed('NOT_CONFIGURED: worker validation only runs for base integration/controlled-recovery.');
+              return;
+            }
+            if (pr.head.repo.full_name !== `${owner}/${repo}`) {
+              core.setFailed('NOT_CONFIGURED: fork heads are not eligible; workers must use an in-repository branch.');
+              return;
+            }
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('pr_number', String(prNumber));
+
+  exact-head-validation:
+    needs: resolve-head
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_ci
+          POSTGRES_DB: hope_tender_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_ci -d hope_tender_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Disposable PostgreSQL service on localhost ONLY. No production database
+      # URL or secret is referenced anywhere in this workflow.
+      DATABASE_URL: "postgresql://hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
+      SESSION_SECRET: "ci-session-${{ github.run_id }}-${{ github.sha }}"
+      NEXTAUTH_SECRET: "ci-nextauth-${{ github.run_id }}-${{ github.sha }}"
+      GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
+      ANTHROPIC_API_KEY: ""
+      RUN_DB_INTEGRATION: "true"
+      E2E_FULL_AUTH: "false"
+      WORKER_HEAD_SHA: ${{ needs.resolve-head.outputs.head_sha }}
+      WORKER_PR_NUMBER: ${{ needs.resolve-head.outputs.pr_number }}
+    steps:
+      - name: Checkout the exact worker head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-head.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Confirm checkout is the exact PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${WORKER_HEAD_SHA}" \
+            || { echo "NOT_CONFIGURED: checkout head does not match the resolved PR head."; exit 1; }
+
+      - name: Fail closed on missing database configuration (NOT_CONFIGURED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo "NOT_CONFIGURED: DATABASE_URL is empty."; exit 1; }
+          case "${DATABASE_URL}" in
+            postgres://*|postgresql://*) : ;;
+            *) echo "NOT_CONFIGURED: DATABASE_URL is not a PostgreSQL URL."; exit 1 ;;
+          esac
+          test "${RUN_DB_INTEGRATION}" = "true" \
+            || { echo "SKIPPED_BLOCKER: RUN_DB_INTEGRATION must be true so database suites are not skipped."; exit 1; }
+          for _ in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U hope_ci -d hope_tender_ci >/dev/null 2>&1; then
+              echo "Disposable PostgreSQL reachable."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "NOT_CONFIGURED: disposable PostgreSQL service is not reachable."
+          exit 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reject install-time source mutation
+        run: git diff --exit-code
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Prepare the disposable database schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Disposable service only (127.0.0.1). This is never a production
+          # migration — no production DATABASE_URL/secret is used here.
+          npx prisma migrate deploy
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit and database integration tests (fail closed on skips)
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p worker-validation-results
+          npm test 2>&1 | tee worker-validation-results/npm-test.log
+          # A required suite that is skipped must NEVER pass. The node test
+          # runner prints "# skipped N"; any skip is a SKIPPED_BLOCKER.
+          summary_line="$(grep -E '^# skipped [0-9]+' worker-validation-results/npm-test.log | tail -1 || true)"
+          test -n "${summary_line}" \
+            || { echo "SKIPPED_BLOCKER: could not find the test skip summary; refusing to pass."; exit 1; }
+          skipped="$(printf '%s' "${summary_line}" | grep -oE '[0-9]+' | tail -1)"
+          test "${skipped}" = "0" \
+            || { echo "SKIPPED_BLOCKER: ${skipped} required test(s) were skipped; database/behavioral suites must execute."; exit 1; }
+
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build
+
+      - name: Focused gate tests (extraction, generation, export readiness)
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsx --test \
+            tests/generate-docs-gate.test.ts \
+            tests/export-readiness-gates.test.ts \
+            tests/release-integrity-hardening.test.ts
+
+      - name: Confirm the PR head did not move (invalidate stale evidence)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.WORKER_PR_NUMBER),
+            });
+            if (pr.head.sha !== process.env.WORKER_HEAD_SHA) {
+              core.setFailed(`Worker head moved during validation (${process.env.WORKER_HEAD_SHA} -> ${pr.head.sha}); this validation evidence is invalid.`);
+            }
+
+      - name: Publish exact-head validation evidence
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'worker-exact-head-validation',
+              head_sha: process.env.WORKER_HEAD_SHA,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: 'Worker exact-head validation passed',
+                summary: [
+                  `Exact head: ${process.env.WORKER_HEAD_SHA}`,
+                  'npm ci, prisma validate/generate, disposable PostgreSQL migrate, typecheck, lint,',
+                  'unit + database integration tests (zero skips), build, and focused gate tests passed.',
+                  'This is validation only — not approval, acceptance, merge, or deployment.',
+                ].join('\n'),
+              },
+            });

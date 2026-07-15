@@ -50,15 +50,30 @@ jobs:
             if (pr.state !== 'open') throw new Error('PR is not open.');
             if (pr.base.ref !== 'integration/controlled-recovery') throw new Error('Worker PR must target integration/controlled-recovery.');
             if (pr.head.repo.full_name !== `${owner}/${repo}`) throw new Error('Fork PRs are not eligible.');
+            const head = pr.head.sha;
 
             const actor = context.eventName === 'pull_request' ? context.payload.sender.login : context.actor;
             const { data: actorLevel } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: actor });
             if (!['admin', 'maintain', 'write'].includes(actorLevel.permission)) throw new Error('Integration actor lacks write permission.');
 
+            // Reviews — a requested-changes review or ANY unresolved actionable
+            // review thread blocks integration.
             const { data: reviews } = await github.rest.pulls.listReviews({ owner, repo, pull_number: prNumber, per_page: 100 });
             const latestReviews = new Map();
             for (const review of reviews) latestReviews.set(review.user.login, review.state);
             if ([...latestReviews.values()].includes('CHANGES_REQUESTED')) throw new Error('Requested-changes review exists.');
+            const threadQuery = await github.graphql(
+              `query($owner:String!,$repo:String!,$number:Int!){
+                 repository(owner:$owner,name:$repo){
+                   pullRequest(number:$number){
+                     reviewThreads(first:100){ nodes { isResolved isOutdated } }
+                   }
+                 }
+               }`,
+              { owner, repo, number: prNumber });
+            const threads = threadQuery.repository.pullRequest.reviewThreads.nodes || [];
+            const unresolved = threads.filter(thread => !thread.isResolved && !thread.isOutdated);
+            if (unresolved.length) throw new Error(`${unresolved.length} unresolved actionable review thread(s) remain.`);
 
             const { data: files } = await github.rest.pulls.listFiles({ owner, repo, pull_number: prNumber, per_page: 100 });
             const forbidden = files.filter(file => file.filename.startsWith('.github/') || file.filename === 'vercel.json');
@@ -66,11 +81,30 @@ jobs:
             const migrations = files.filter(file => file.filename.startsWith('prisma/migrations/'));
             if (migrations.length && !/MIGRATION_DECLARED:\s*YES/i.test(pr.body || '')) throw new Error('Migration not declared.');
 
-            const marker = `ACCEPTED_HEAD_SHA: ${pr.head.sha}`;
+            // Authorized independent audit tied to the EXACT head. Green CI alone
+            // is never enough — integration requires a CONTROL_TOWER_AUDIT block:
+            //   CONTROL_TOWER_AUDIT
+            //   Decision: ACCEPT
+            //   Reviewed-Head-SHA: <exact head>
+            //   Reviewer-Role: independent
+            // The auditor must be a non-bot write+ collaborator who is NOT the PR
+            // author (independent). An audit whose Reviewed-Head-SHA does not equal
+            // the current head is stale and rejected, so any head movement after the
+            // audit invalidates acceptance.
+            const fieldOf = (lines, key) => {
+              const found = lines.find(line => line.toLowerCase().startsWith(`${key.toLowerCase()}:`));
+              return found ? found.slice(found.indexOf(':') + 1).trim() : null;
+            };
             const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
             let acceptedBy = null;
             for (const comment of [...comments].reverse()) {
-              if (comment.user?.type === 'Bot' || !(comment.body || '').split(/\r?\n/).some(line => line.trim() === marker)) continue;
+              if (comment.user?.type === 'Bot') continue;
+              const lines = (comment.body || '').split(/\r?\n/).map(line => line.trim());
+              if (!lines.includes('CONTROL_TOWER_AUDIT')) continue;
+              if (fieldOf(lines, 'Decision') !== 'ACCEPT') continue;
+              if ((fieldOf(lines, 'Reviewer-Role') || '').toLowerCase() !== 'independent') continue;
+              if (fieldOf(lines, 'Reviewed-Head-SHA') !== head) continue;
+              if (comment.user.login === pr.user.login) continue;
               try {
                 const { data: level } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login });
                 if (['admin', 'maintain', 'write'].includes(level.permission)) {
@@ -78,29 +112,38 @@ jobs:
                   break;
                 }
               } catch {
-                // Ignore comments from actors who are no longer collaborators.
+                // Ignore audits from actors who are no longer collaborators.
               }
             }
-            if (!acceptedBy) throw new Error(`Missing authorized exact-head acceptance comment: ${marker}`);
+            if (!acceptedBy) throw new Error(`Missing authorized exact-head acceptance comment: an independent CONTROL_TOWER_AUDIT with Decision: ACCEPT and Reviewed-Head-SHA: ${head} is required. Green CI alone is not approval.`);
 
-            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: pr.head.sha });
-            if (combined.state !== 'success') throw new Error('Exact-head commit status is not successful.');
+            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: head });
+            if (combined.state !== 'success') throw new Error('Exact-head combined commit status is not successful.');
 
             const { data: currentRun } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId });
             const currentSuiteId = currentRun.check_suite_id;
-            const { data: suites } = await github.rest.checks.listSuitesForRef({ owner, repo, ref: pr.head.sha });
+            const { data: suites } = await github.rest.checks.listSuitesForRef({ owner, repo, ref: head });
             const externalSuites = suites.check_suites.filter(suite => suite.id !== currentSuiteId);
             if (externalSuites.length === 0) throw new Error('No external exact-head check suites were found.');
-            if (externalSuites.some(suite => suite.status !== 'completed' || suite.conclusion !== 'success')) {
-              throw new Error('External exact-head checks are not all green.');
+            for (const suite of externalSuites) {
+              if (suite.status !== 'completed') throw new Error(`Exact-head check suite ${suite.id} is not completed (status=${suite.status}).`);
+              // Anything other than success — missing, skipped, neutral, cancelled,
+              // stale, timed_out, action_required, or failure — blocks integration.
+              if (suite.conclusion !== 'success') throw new Error(`Exact-head check suite ${suite.id} concluded '${suite.conclusion}', which blocks integration.`);
             }
 
-            const currentHead = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data.head.sha;
-            if (currentHead !== pr.head.sha) throw new Error('PR head moved during preflight.');
+            // The exact-head worker validation evidence must be present and green.
+            const { data: runs } = await github.rest.checks.listForRef({ owner, repo, ref: head, per_page: 100 });
+            const workerCheck = runs.check_runs.find(run => run.name === 'worker-exact-head-validation');
+            if (!workerCheck) throw new Error('Missing worker-exact-head-validation evidence for the exact head.');
+            if (workerCheck.status !== 'completed' || workerCheck.conclusion !== 'success') throw new Error(`worker-exact-head-validation concluded '${workerCheck.conclusion}' (status=${workerCheck.status}); integration is blocked.`);
 
-            core.notice(`Accepted by @${acceptedBy} for exact head ${pr.head.sha}`);
+            const currentHead = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data.head.sha;
+            if (currentHead !== head) throw new Error('PR head moved during preflight.');
+
+            core.notice(`Independent audit by @${acceptedBy} accepted exact head ${head}`);
             core.setOutput('pr_number', String(prNumber));
-            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_sha', head);
             core.setOutput('integration_branch', 'integration/controlled-recovery');
 
   integrate-atomically:

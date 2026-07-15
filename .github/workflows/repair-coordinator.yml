@@ -103,10 +103,13 @@ jobs:
                     marker,
                     `VALIDATED_HEAD_SHA: ${pr.head.sha}`,
                     'Exact-head CI completed successfully.',
-                    'This is validation only, not approval or acceptance.',
-                    'Await an authorized manager comment and integration-approved label.'
+                    'This is validation ONLY — not approval, acceptance, or integration authority.',
+                    'Green CI does not create any approval or integrator-ready marker.',
+                    'Integration requires an independent CONTROL_TOWER_AUDIT (Decision: ACCEPT,',
+                    `Reviewed-Head-SHA: ${pr.head.sha}, Reviewer-Role: independent) from a write+`,
+                    'collaborator who is not the PR author, plus the integration-approved label.'
                   ].join('\n')
                 });
               }
-              await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['awaiting-manager-acceptance'] });
+              await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['awaiting-independent-audit'] });
             }

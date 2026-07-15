@@ -20,15 +20,23 @@ The worker PR must:
 
 1. Be open and target `integration/controlled-recovery`.
 2. Match the exact accepted head SHA.
-3. Have all required external checks completed successfully on that SHA.
-4. Have no unresolved `CHANGES_REQUESTED` review.
+3. Have all required external checks completed successfully on that SHA, including the exact-head `worker-exact-head-validation` evidence. Missing, skipped, neutral, cancelled, stale, timed-out, action-required, or failed checks all block.
+4. Have no unresolved `CHANGES_REQUESTED` review and no unresolved actionable review threads.
 5. Contain no forbidden files or undeclared migration.
 6. Contain executable tests appropriate to the change.
 7. Not overlap an active worker's file/function ownership.
-8. Have a non-bot authorized manager comment containing exactly `ACCEPTED_HEAD_SHA: <current-head-sha>`.
+8. Have an authorized **independent audit** — a non-bot comment from a write, maintain, or admin collaborator who is **not** the PR author, containing the exact block:
+
+   ```text
+   CONTROL_TOWER_AUDIT
+   Decision: ACCEPT
+   Reviewed-Head-SHA: <current-head-sha>
+   Reviewer-Role: independent
+   ```
+
 9. Receive the `integration-approved` label from an actor with write, maintain, or admin permission.
 
-`VALIDATED_HEAD_SHA` records green CI only and is never acceptance. A moved head invalidates both validation and manager acceptance.
+Green CI alone is never acceptance: it can at most move a PR to `awaiting-independent-audit`. `VALIDATED_HEAD_SHA` records green CI only. A moved head invalidates both validation and the independent audit, because the audit is bound to `Reviewed-Head-SHA` and the controller re-checks the live head.
 
 ## Atomic incorporation
 
