@@ -1,233 +1,132 @@
-# Change Monitor
-#
-# Event-driven: inspects changes on push to main and on PR events. Classifies
-# changes, detects drift, and creates findings for any verified gap. Dispatches
-# to the appropriate agent via labels.
-#
-# 5-minute schedule is BACKUP ONLY — it reconciles state that event-driven
-# triggers might have missed (e.g., a workflow run that was cancelled).
-#
-# This workflow MUST NOT:
-#   - merge to main
-#   - deploy
-#   - modify application runtime code
-#   - auto-approve a PR
-#   - write to the integration branch
-
 name: Change Monitor
 
 on:
   push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/audits/**'
-      - 'worklog.md'
-      - 'operator_handoff.md'
+    branches: [main, integration/controlled-recovery]
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, closed]
-  schedule:
-    # Backup reconciliation every 5 minutes (event-driven is primary).
-    - cron: '*/5 * * * *'
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Ref to inspect (defaults to main)."
-        required: false
-        default: main
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   issues: write
-  actions: read
 
 concurrency:
-  group: change-monitor-${{ github.event.pull_request.number || github.sha || github.event.schedule }}
-  cancel-in-progress: false
+  group: change-monitor-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
-  detect-changes:
-    name: Detect & Classify Changes
+  detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event_name != 'schedule' || github.run_attempt == '1'
-
-    outputs:
-      findings-created: ${{ steps.create-findings.outputs.count }}
-      dispatch-needed: ${{ steps.dispatch.outputs.needed }}
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout
+      - name: Checkout event SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Determine trigger context
-        id: context
+      - name: Collect changed files
+        id: files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "trigger=push" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.sha }}" >> $GITHUB_OUTPUT
-            echo "before=${{ github.event.before }}" >> $GITHUB_OUTPUT
-            echo "after=${{ github.event.after }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "trigger=pull_request" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
-            echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-            echo "pr_action=${{ github.event.action }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "trigger=schedule" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.sha }}" >> $GITHUB_OUTPUT
-          else
-            echo "trigger=manual" >> $GITHUB_OUTPUT
-            echo "ref=${{ inputs.ref || github.sha }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Check for application runtime code changes
-        id: runtime-check
-        shell: bash
-        run: |
-          # On push: check what files changed
-          if [ "${{ steps.context.outputs.trigger }}" = "push" ]; then
-            BEFORE="${{ steps.context.outputs.before }}"
-            AFTER="${{ steps.context.outputs.after }}"
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(gh pr diff "${{ github.event.pull_request.number }}" --name-only)
+            SHA="${{ github.event.pull_request.head.sha }}"
+            PR="${{ github.event.pull_request.number }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
             if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               FILES=$(git ls-tree -r --name-only HEAD)
             else
-              FILES=$(git diff --name-only "$BEFORE" "$AFTER")
+              FILES=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
             fi
-          elif [ "${{ steps.context.outputs.trigger }}" = "pull_request" ]; then
-            PR_NUM="${{ steps.context.outputs.pr_number }}"
-            FILES=$(gh pr diff "$PR_NUM" --name-only 2>/dev/null || echo "")
+            SHA="${{ github.sha }}"
+            PR=""
           else
             FILES=""
+            SHA="${{ github.sha }}"
+            PR=""
           fi
-
-          RUNTIME_FILES=""
-          DOC_FILES=""
-          INFRA_FILES=""
-          TEST_FILES=""
-
-          for f in $FILES; do
-            case "$f" in
-              lib/*|app/*|components/*|prisma/*|scripts/*|middleware.ts|next.config.*|tsconfig.json|package.json|package-lock.json)
-                RUNTIME_FILES="$RUNTIME_FILES $f" ;;
-              docs/*|*.md|QUICKSTART.md)
-                DOC_FILES="$DOC_FILES $f" ;;
-              .github/*)
-                INFRA_FILES="$INFRA_FILES $f" ;;
-              tests/*|e2e/*|__tests__/*)
-                TEST_FILES="$TEST_FILES $f" ;;
-            esac
-          done
-
-          echo "runtime_files=$RUNTIME_FILES" >> $GITHUB_OUTPUT
-          echo "doc_files=$DOC_FILES" >> $GITHUB_OUTPUT
-          echo "infra_files=$INFRA_FILES" >> $GITHUB_OUTPUT
-          echo "test_files=$TEST_FILES" >> $GITHUB_OUTPUT
-
-          if [ -n "$RUNTIME_FILES" ]; then
-            echo "has_runtime=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_runtime=false" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Reconcile state (backup schedule only)
-        if: steps.context.outputs.trigger == 'schedule'
-        shell: bash
-        run: |
-          echo "Backup reconciliation: checking for stale findings and und Patchwork PRs."
-          # Check for findings older than 24 hours still in 'open' status
-          if [ -d .github/release-control/findings ]; then
-            STALE_COUNT=$(find .github/release-control/findings -name '*.json' -mmin +1440 | wc -l)
-            echo "Stale findings (open >24h): $STALE_COUNT"
-            if [ "$STALE_COUNT" -gt 0 ]; then
-              echo "stale_findings=$STALE_COUNT" >> $GITHUB_ENV
-            fi
-          fi
-
-          # Check for PRs labeled integration-approved but not yet cherry-picked
-          echo "Checking for stale integration-approved PRs..."
-
-      - name: Create findings for detected gaps
-        id: create-findings
-        shell: bash
-        run: |
-          set -e
-          mkdir -p .github/release-control/findings
-
-          COUNT=0
-          TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
-
-          # Example: if runtime code changed without an associated issue/finding,
-          # create a "verify-release-gate" finding.
-          if [ "${{ steps.runtime-check.outputs.has_runtime }}" = "true" ]; then
-            cat > ".github/release-control/findings/FINDING-${TIMESTAMP}-verify-release-gate.json" << EOF
+          RUNTIME=$(printf '%s\n' "$FILES" | grep -E '^(app|lib|components|prisma|scripts)/|^(middleware\.ts|next\.config\.|package(-lock)?\.json|vercel\.json)' || true)
           {
-            "id": "FINDING-${TIMESTAMP}-verify-release-gate",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "severity": "info",
-            "category": "infra",
-            "source": "change-monitor",
-            "title": "Runtime code changed — release-gate suite required",
-            "description": "Application runtime code was modified. The release-gate suite must pass before this change reaches main. If this change is on a PR, ensure the PR description references the finding it resolves.",
-            "file": null,
-            "line": null,
-            "agent": "none",
-            "status": "open",
-            "github_issue": null,
-            "github_pr": ${{ steps.context.outputs.pr_number || 'null' }},
-            "evidence": {
-              "command": "change-monitor-detect",
-              "exit_code": 0,
-              "stdout_excerpt": "Runtime files: ${{ steps.runtime-check.outputs.runtime_files }}",
-              "stderr_excerpt": null,
-              "sha": "${{ steps.context.outputs.ref }}"
-            },
-            "labels": ["agent:none", "severity:info", "category:infra"]
-          }
-          EOF
-            COUNT=$((COUNT + 1))
-          fi
+            echo 'runtime<<EOF'
+            echo "$RUNTIME"
+            echo EOF
+            echo "sha=$SHA"
+            echo "pr=$PR"
+          } >> "$GITHUB_OUTPUT"
 
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
-          echo "Created $COUNT finding(s)."
-
-      - name: Commit findings (infra branch only)
-        if: steps.create-findings.outputs.count > 0
-        shell: bash
-        run: |
-          # Findings are committed to a dedicated findings branch, not main.
-          # The integrator agent cherry-picks them into the integration branch.
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b findings/${{ steps.context.outputs.ref }}-${{ github.run_id }} 2>/dev/null || git checkout findings/${{ steps.context.outputs.ref }}-${{ github.run_id }}
-          git add .github/release-control/findings/
-          git commit -m "chore: add ${{ steps.create-findings.outputs.count }} finding(s) from change-monitor" || echo "Nothing to commit"
-          # Do NOT push — the integrator agent will pick this up.
-          echo "Findings staged locally. Integrator agent will sync."
-
-      - name: Dispatch to agents
-        id: dispatch
-        if: steps.create-findings.outputs.count > 0
+      - name: Create or update durable finding issue
+        if: steps.files.outputs.runtime != ''
         uses: actions/github-script@v7
+        env:
+          RUNTIME_FILES: ${{ steps.files.outputs.runtime }}
+          TARGET_SHA: ${{ steps.files.outputs.sha }}
+          PR_NUMBER: ${{ steps.files.outputs.pr }}
         with:
           script: |
-            const count = parseInt('${{ steps.create-findings.outputs.count }}');
-            if (count > 0) {
-              // Create or update an issue that the agent-dispatcher will pick up
-              await github.rest.issues.create({
+            const crypto = require('crypto');
+            const files = process.env.RUNTIME_FILES.split('\n').filter(Boolean).sort();
+            const sha = process.env.TARGET_SHA;
+            const pr = process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null;
+            const scope = files.join('|');
+            const key = crypto.createHash('sha256').update(`${sha}|${scope}`).digest('hex').slice(0, 16);
+            const findingId = `FINDING-${key}`;
+            const title = `[${findingId}] Runtime change requires autonomous audit`;
+            const finding = {
+              id: findingId,
+              timestamp: new Date().toISOString(),
+              severity: 'high',
+              category: 'runtime-change',
+              source: 'change-monitor',
+              title: 'Runtime change requires autonomous audit',
+              description: 'Inspect the actual diff, verify non-negotiable gates, add executable tests, and open a draft worker PR targeting integration/controlled-recovery. No merge or deployment.',
+              files,
+              agent: 'app',
+              status: 'QUEUED',
+              github_pr: pr,
+              evidence: { sha, command: 'git diff --name-only' },
+              attempt: 0,
+              max_attempts: 3
+            };
+            const body = [
+              `<!-- control-tower-finding:${findingId} -->`,
+              '## Machine-readable finding',
+              '```json',
+              JSON.stringify(finding, null, 2),
+              '```',
+              '',
+              '## Required outcome',
+              '- Verify the gap still exists on the exact SHA.',
+              '- Do not invent evidence or weaken extraction, analysis, generation, ownership, or ZIP gates.',
+              '- Add executable tests, including database row assertions where persistence is affected.',
+              '- Target only `integration/controlled-recovery`.',
+              '- Do not merge, approve, or deploy.'
+            ].join('\n');
+
+            const query = `repo:${context.repo.owner}/${context.repo.repo} is:issue in:title "${findingId}"`;
+            const { data } = await github.rest.search.issuesAndPullRequests({ q: query, per_page: 10 });
+            const existing = data.items.find(item => item.title === title && !item.pull_request);
+            if (existing) {
+              await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: `[change-monitor] ${count} finding(s) need dispatch — run ${{ github.run_id }}`,
-                body: `The change-monitor workflow created ${count} finding(s) that need agent dispatch.\n\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\nTrigger: ${{ steps.context.outputs.trigger }}\nRef: ${{ steps.context.outputs.ref }}`,
-                labels: ['agent-dispatch-needed', 'auto-generated']
+                issue_number: existing.number,
+                body
               });
-              core.setOutput('needed', 'true');
-            } else {
-              core.setOutput('needed', 'false');
+              core.notice(`Updated durable finding issue #${existing.number}`);
+              return;
             }
+            const created = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['auto-generated', 'agent:app', 'status:queued', 'risk:high']
+            });
+            core.notice(`Created durable finding issue #${created.data.number}`);
