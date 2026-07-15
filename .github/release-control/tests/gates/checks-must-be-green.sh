@@ -13,7 +13,10 @@ CONTROLLER=.github/workflows/integration-controller.yml
 grep -qF 'externalSuites.length === 0' "$CONTROLLER"           # missing checks block
 grep -qF 'is not completed' "$CONTROLLER"                      # incomplete blocks
 grep -qF 'which blocks integration' "$CONTROLLER"              # any non-success conclusion blocks
-grep -qF "combined.state !== 'success'" "$CONTROLLER"          # combined status must be success
+grep -qF 'worker-exact-head-validation' "$CONTROLLER"          # named exact-head check required
+# The legacy combined-status hard requirement must be gone (named checks are the
+# repository's real status model).
+if grep -qF 'getCombinedStatusForRef' "$CONTROLLER"; then echo 'must not require a legacy combined status'; exit 1; fi
 
 # --- Deterministic simulation of the suite gate ---
 gate() { # gate <status> <conclusion> -> PASS | BLOCK

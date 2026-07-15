@@ -113,17 +113,28 @@ jobs:
           grep -q 'RUN_DB_INTEGRATION' "$wf"
           grep -q 'NOT_CONFIGURED' "$wf"
           grep -q 'SKIPPED_BLOCKER' "$wf"
-          # Required build/test surface.
+          # Required build/test surface. The test surface is declared in the
+          # required-suite manifest and executed by the fail-closed runner.
           grep -q 'npm ci' "$wf"
           grep -q 'prisma validate' "$wf"
           grep -q 'prisma generate' "$wf"
           grep -q 'npm run typecheck' "$wf"
           grep -q 'npm run lint' "$wf"
-          grep -q 'npm test' "$wf"
+          grep -q 'run-required-suites.sh' "$wf"
           grep -q 'npm run build' "$wf"
-          # Least privilege: only the narrowly justified checks:write, no other write.
+          test -f .github/release-control/required-suites.json
+          test -f .github/release-control/run-required-suites.sh
+          test -f .github/release-control/independent-auditors.json
+          jq empty .github/release-control/required-suites.json
+          jq empty .github/release-control/independent-auditors.json
+          # Privilege separation: an untrusted execute job runs worker code, a
+          # separate publish-evidence job holds checks:write and runs none.
+          grep -q 'execute:' "$wf"
+          grep -q 'publish-evidence:' "$wf"
           grep -q 'checks: write' "$wf"
-          if grep -qE 'pull-requests:[[:space:]]*write|issues:[[:space:]]*write|contents:[[:space:]]*write' "$wf"; then echo 'worker validation must not request write scopes beyond checks:write.'; exit 1; fi
+          # Least privilege: no write to contents/pull-requests/issues anywhere
+          # (anchored to real permission-key lines so comments cannot trip it).
+          if grep -qE '^[[:space:]]*(pull-requests|issues|contents):[[:space:]]*write[[:space:]]*$' "$wf"; then echo 'worker validation must not request write scopes beyond checks:write.'; exit 1; fi
           # Exact-head invalidation and no production database secret / deploy / merge.
           grep -q 'head moved during validation' "$wf"
           if grep -qE 'secrets\.[A-Z_]*DATABASE' "$wf"; then echo 'worker validation must not reference a production database secret.'; exit 1; fi

@@ -23,19 +23,20 @@ grep -qF 'RUN_DB_INTEGRATION' "$WF"
 grep -qF 'NOT_CONFIGURED' "$WF"
 grep -qF 'SKIPPED_BLOCKER' "$WF"
 
-# Required build/test surface.
+# Required build/test surface. The test suites are declared in the required-suite
+# manifest and executed by the fail-closed runner (not inline npm test).
 grep -qF 'npm ci' "$WF"
 grep -qF 'prisma validate' "$WF"
 grep -qF 'prisma generate' "$WF"
 grep -qF 'npm run typecheck' "$WF"
 grep -qF 'npm run lint' "$WF"
-grep -qF 'npm test' "$WF"
+grep -qF 'run-required-suites.sh' "$WF"
 grep -qF 'npm run build' "$WF"
 
 # Least privilege: only the narrowly justified checks:write, no other write scope,
 # and no production database secret is referenced.
 grep -qF 'checks: write' "$WF"
-if grep -qE 'pull-requests:[[:space:]]*write|issues:[[:space:]]*write|contents:[[:space:]]*write' "$WF"; then echo 'must not request write scopes beyond checks:write'; exit 1; fi
+if grep -qE '^[[:space:]]*(pull-requests|issues|contents):[[:space:]]*write[[:space:]]*$' "$WF"; then echo 'must not request write scopes beyond checks:write'; exit 1; fi
 if grep -qE 'secrets\.[A-Z_]*(DATABASE|POSTGRES|NEON)' "$WF"; then echo 'must not reference a production database secret'; exit 1; fi
 
 # Exact-head invalidation guard.

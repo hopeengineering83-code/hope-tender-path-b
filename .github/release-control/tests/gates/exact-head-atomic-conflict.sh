@@ -12,8 +12,8 @@ grep -q "CONTROL_TOWER_AUDIT" "$CONTROLLER"
 grep -q "Missing authorized exact-head acceptance comment" "$CONTROLLER"
 grep -q "currentSuiteId" "$CONTROLLER"
 grep -q "VALIDATED_HEAD_SHA" "$COORDINATOR"
-! grep -q "APPROVED_HEAD_SHA" "$COORDINATOR"
-! grep -q "release-control/findings" "$RELEASE_GATE"
+if grep -q "APPROVED_HEAD_SHA" "$COORDINATOR"; then echo 'coordinator must not mint APPROVED_HEAD_SHA'; exit 1; fi
+if grep -q "release-control/findings" "$RELEASE_GATE"; then echo 'release gate must not reference obsolete file-backed findings'; exit 1; fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

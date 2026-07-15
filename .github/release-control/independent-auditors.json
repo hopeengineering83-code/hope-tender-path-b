@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "description": "Allow-list of identities permitted to record an independent CONTROL_TOWER_AUDIT acceptance. An independent auditor MUST be a distinct GitHub identity from the PR author and from every worker account. This list is intentionally EMPTY until a genuinely independent collaborator account, or a verifiable trusted GitHub App, is provisioned. While it is empty the integration gate fails closed: no acceptance can be authorized, because a same-account or self marker is never independent. Do NOT add a worker account or the shared authoring account here to unblock integration.",
+  "independent_auditor_logins": [],
+  "independent_auditor_app_slugs": [],
+  "rules": {
+    "auditor_must_not_be_pr_author": true,
+    "auditor_must_not_be_worker_account": true,
+    "same_account_marker_is_not_independent": true,
+    "empty_list_fails_closed": true
+  }
+}

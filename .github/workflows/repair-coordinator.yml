@@ -6,7 +6,7 @@ on:
   pull_request:
     types: [opened, synchronize, closed]
   workflow_run:
-    workflows: [CI, Control Tower CI, Release Gate Suite]
+    workflows: [CI, Control Tower CI, Release Gate Suite, Worker Exact-Head Validation]
     types: [completed]
   schedule:
     - cron: '*/15 * * * *'
@@ -79,21 +79,31 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const { data: prs } = await github.rest.pulls.list({ owner, repo, state: 'open', base: 'integration/controlled-recovery', per_page: 100 });
+            const prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'integration/controlled-recovery', per_page: 100 });
+            const { data: currentRun } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId }).catch(() => ({ data: {} }));
+            const currentSuiteId = currentRun.check_suite_id;
             for (const pr of prs) {
               if (!/FINDING-[a-z0-9-]+/i.test(pr.body || '')) continue;
-              const { data: suites } = await github.rest.checks.listSuitesForRef({ owner, repo, ref: pr.head.sha });
-              const complete = suites.check_suites.length > 0 && suites.check_suites.every(s => s.status === 'completed');
-              const green = complete && suites.check_suites.every(s => s.conclusion === 'success');
+              const head = pr.head.sha;
+              // Exclude the coordinator's OWN in-progress suite when testing whether
+              // every suite has completed. All enumerations are fully paginated.
+              const suites = (await github.paginate(github.rest.checks.listSuitesForRef, { owner, repo, ref: head, per_page: 100 }))
+                .filter(s => s.id !== currentSuiteId);
+              const complete = suites.length > 0 && suites.every(s => s.status === 'completed');
               if (!complete) continue;
-              if (!green) {
+              const green = suites.every(s => s.conclusion === 'success');
+              // The named exact-head worker validation check must be present and green.
+              const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: head, per_page: 100 });
+              const workerCheck = runs.find(r => r.name === 'worker-exact-head-validation');
+              const validated = green && workerCheck && workerCheck.status === 'completed' && workerCheck.conclusion === 'success';
+              if (!validated) {
                 await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['revision-required'] });
-                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: `REVISION_REQUIRED\nReviewed SHA: ${pr.head.sha}\nExact-head checks failed. Update this same PR.` });
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: `REVISION_REQUIRED\nReviewed SHA: ${head}\nExact-head checks failed or the required worker-exact-head-validation check is missing/not green. Update this same PR.` });
                 continue;
               }
 
-              const marker = `<!-- exact-head-validated:${pr.number}:${pr.head.sha} -->`;
-              const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: pr.number, per_page: 100 });
+              const marker = `<!-- exact-head-validated:${pr.number}:${head} -->`;
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
               if (!comments.some(comment => comment.body?.includes(marker))) {
                 await github.rest.issues.createComment({
                   owner,
@@ -101,13 +111,13 @@ jobs:
                   issue_number: pr.number,
                   body: [
                     marker,
-                    `VALIDATED_HEAD_SHA: ${pr.head.sha}`,
-                    'Exact-head CI completed successfully.',
+                    `VALIDATED_HEAD_SHA: ${head}`,
+                    'Exact-head CI completed successfully, including worker-exact-head-validation.',
                     'This is validation ONLY — not approval, acceptance, or integration authority.',
                     'Green CI does not create any approval or integrator-ready marker.',
                     'Integration requires an independent CONTROL_TOWER_AUDIT (Decision: ACCEPT,',
-                    `Reviewed-Head-SHA: ${pr.head.sha}, Reviewer-Role: independent) from a write+`,
-                    'collaborator who is not the PR author, plus the integration-approved label.'
+                    `Reviewed-Head-SHA: ${head}, Reviewer-Role: independent) from an allow-listed`,
+                    'independent identity that is not the PR author, plus the integration-approved label.'
                   ].join('\n')
                 });
               }
