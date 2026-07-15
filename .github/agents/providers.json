@@ -1,0 +1,50 @@
+{
+  "default_provider": "glm",
+  "max_concurrent_workers": 6,
+  "providers": {
+    "glm": {
+      "mode": "github-issue-worker",
+      "priority": 1,
+      "capacity": 6,
+      "specialties": ["ai", "generation", "security", "database", "export", "deployment", "ui", "audit"],
+      "labels": ["agent:glm"]
+    },
+    "jules": {
+      "mode": "github-issue-worker",
+      "priority": 2,
+      "capacity": 3,
+      "specialties": ["tests", "security", "export", "ui", "repository-scan"],
+      "labels": ["agent:jules"]
+    },
+    "codex": {
+      "mode": "limited-burst",
+      "priority": 3,
+      "capacity": 1,
+      "specialties": ["transactions", "race-conditions", "background-workers", "complex-backend"],
+      "labels": ["agent:codex"]
+    },
+    "claude-code": {
+      "mode": "limited-integrator",
+      "priority": 4,
+      "capacity": 1,
+      "specialties": ["integration", "conflicts", "cross-file-architecture"],
+      "labels": ["agent:claude-code"]
+    },
+    "chatgpt-review": {
+      "mode": "review-only",
+      "priority": 5,
+      "capacity": 1,
+      "specialties": ["independent-review", "pr-comparison"],
+      "labels": ["agent:chatgpt-review"]
+    }
+  },
+  "rules": {
+    "one_provider_per_finding": true,
+    "max_attempts_per_finding": 3,
+    "no_overlapping_file_ownership": true,
+    "workers_target": "integration/controlled-recovery",
+    "integrator_only_writes_integration": true,
+    "never_merge_main": true,
+    "never_deploy_production": true
+  }
+}
