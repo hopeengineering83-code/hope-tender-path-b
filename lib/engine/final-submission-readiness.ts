@@ -1215,19 +1215,40 @@ export async function getFinalSubmissionReadiness(
     })(),
   };
 
-  // ── Currency authority (shared canonical helper) ──────────────────
-  // Per REVISION_REQUIRED (recheck 7): integrate the currency authority
-  // helper into the canonical server readiness object so every page/API
-  // that calls getFinalSubmissionReadiness inherits the CURRENCY_UNVERIFIED
-  // blocker automatically. This ensures the report page, export page,
-  // documents page, download API, and export-readiness API all see the
-  // same blocker — no local reimplementation.
-  const currencyAuthority = await resolveCurrencyAuthority(
-    client,
-    opts.tenderId,
-    tender.currency,
-  ).catch(() => null);
-  if (currencyAuthority?.isUnverified && currencyAuthority.blocker) {
+  // ── Currency authority (shared canonical helper, fail-closed) ─────
+  // Per REVISION_REQUIRED (recheck 8): do NOT .catch(() => null) — that
+  // fails open. If the authority lookup throws, propagate the error so
+  // the readiness check fails closed. The helper itself catches per-query
+  // errors and returns CURRENCY_AUTHORITY_UNAVAILABLE.
+  let currencyAuthority: Awaited<ReturnType<typeof resolveCurrencyAuthority>>;
+  try {
+    currencyAuthority = await resolveCurrencyAuthority(
+      client,
+      opts.tenderId,
+      tender.currency,
+    );
+  } catch {
+    // If the helper itself throws (shouldn't happen — it catches internally),
+    // fail closed with CURRENCY_AUTHORITY_UNAVAILABLE.
+    currencyAuthority = {
+      isNull: false,
+      isVerified: false,
+      isUnverified: false,
+      isUnavailable: true,
+      display: "Authority unavailable",
+      blockerCode: "CURRENCY_AUTHORITY_UNAVAILABLE",
+      blocker: {
+        category: "CURRENCY_AUTHORITY_UNAVAILABLE",
+        severity: "CRITICAL",
+        title: "Currency authority lookup failed — cannot verify currency provenance",
+        recommendedAction: "The database query for currency override/ledger failed. Retry the operation or contact support if the error persists.",
+      },
+    };
+  }
+  if (currencyAuthority.isUnverified && currencyAuthority.blocker) {
+    tenderLevelBlockers.push(currencyAuthority.blocker);
+  }
+  if (currencyAuthority.isUnavailable && currencyAuthority.blocker) {
     tenderLevelBlockers.push(currencyAuthority.blocker);
   }
 

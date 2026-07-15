@@ -744,12 +744,26 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 (recheck 7) — helper integrated into 
   it("getFinalSubmissionReadiness pushes the currency blocker into tenderLevelBlockers", () => {
     const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
     assert.ok(
-      /currencyAuthority\?\.isUnverified && currencyAuthority\.blocker/.test(src.replace(/\s+/g, " ")),
+      /currencyAuthority\.isUnverified && currencyAuthority\.blocker/.test(src.replace(/\s+/g, " ")),
       "getFinalSubmissionReadiness must check currencyAuthority.isUnverified and push currencyAuthority.blocker",
     );
     assert.ok(
       /tenderLevelBlockers\.push\(currencyAuthority\.blocker\)/.test(src),
       "getFinalSubmissionReadiness must push currencyAuthority.blocker into tenderLevelBlockers",
+    );
+  });
+
+  it("getFinalSubmissionReadiness fails closed on currency authority errors (no .catch(() => null))", () => {
+    const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
+    // Per recheck 8 item 1: must NOT use .catch(() => null) — that fails open
+    assert.ok(
+      !/resolveCurrencyAuthority.*\.catch\(\(\) => null\)/.test(src),
+      "getFinalSubmissionReadiness must NOT .catch(() => null) on resolveCurrencyAuthority — fails open",
+    );
+    // Must push CURRENCY_AUTHORITY_UNAVAILABLE when isUnavailable
+    assert.ok(
+      /currencyAuthority\.isUnavailable && currencyAuthority\.blocker/.test(src.replace(/\s+/g, " ")),
+      "getFinalSubmissionReadiness must check currencyAuthority.isUnavailable and push the unavailable blocker",
     );
   });
 
