@@ -7,9 +7,30 @@
  * This prevents drift when new analysisExtractionStatus values are added
  * to the engine (e.g. stale-hash, partial-provider, mixed-fallback,
  * currentness blockers).
+ *
+ * IMPORTANT — fail-closed policy:
+ *   Unknown status strings (anything not in the explicit CLEAR allowlist
+ *   AND not in the BLOCKED denylist) are classified as BLOCKED, never
+ *   CLEAR. This prevents a new misspelled, stale-hash, partial-provider,
+ *   mixed-fallback, or currentness blocker from accidentally rendering
+ *   green. A CLEAR result requires membership in CLEAR_EXTRACTION_STATES.
  */
 
 export type TenderExtractionState = "NOT_ANALYZED" | "BLOCKED" | "CLEAR";
+
+/**
+ * Authoritative current-success extraction statuses.
+ * ONLY these statuses may render as CLEAR. Anything not in this set is
+ * BLOCKED (if in BLOCKED_EXTRACTION_STATES) or treated as BLOCKED by
+ * the fail-closed policy.
+ */
+export const CLEAR_EXTRACTION_STATES: ReadonlySet<string> = new Set([
+  "AI_SUCCEEDED",
+  "AI_COMPLETED",
+  "COMPLETED",
+  "EXTRACTION_SUCCEEDED",
+  "AI_ANALYZED",
+]);
 
 /** Every actual persisted analysisExtractionStatus that blocks generation. */
 export const BLOCKED_EXTRACTION_STATES: ReadonlySet<string> = new Set([
@@ -30,9 +51,13 @@ export const BLOCKED_EXTRACTION_STATES: ReadonlySet<string> = new Set([
 
 /**
  * Classify a tender's extraction state for UI display.
- * Returns NOT_ANALYZED if no analysis has been run, BLOCKED if the
- * extraction status indicates a generation blocker, or CLEAR if the
- * tender has been analyzed without blockers.
+ *
+ * Returns:
+ *   - NOT_ANALYZED if no analysis has been run (no requirements, or
+ *     null/NOT_STARTED status).
+ *   - CLEAR ONLY if the status is in CLEAR_EXTRACTION_STATES (allowlist).
+ *   - BLOCKED if the status is in BLOCKED_EXTRACTION_STATES (denylist).
+ *   - BLOCKED for any unknown status (fail-closed — never CLEAR).
  *
  * A tender with zero requirements is NOT_ANALYZED regardless of status.
  */
@@ -46,10 +71,13 @@ export function classifyTenderExtractionState(
   if (!analysisExtractionStatus || analysisExtractionStatus === "NOT_STARTED") {
     return "NOT_ANALYZED";
   }
-  if (BLOCKED_EXTRACTION_STATES.has(analysisExtractionStatus)) {
-    return "BLOCKED";
+  if (CLEAR_EXTRACTION_STATES.has(analysisExtractionStatus)) {
+    return "CLEAR";
   }
-  return "CLEAR";
+  // Unknown statuses (not in the allowlist) are BLOCKED — never CLEAR.
+  // This catches stale-hash, partial-provider, mixed-fallback, currentness,
+  // misspellings, and any future status that has not been promoted to CLEAR.
+  return "BLOCKED";
 }
 
 /**

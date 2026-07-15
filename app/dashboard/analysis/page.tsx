@@ -11,6 +11,8 @@ export default async function AnalysisPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
+  // Load all user tenders for truthful global analysis totals. Prior cap
+  // at 20 rows made workspace stats false when more than 20 existed.
   const tenders = await prisma.tender.findMany({
     where: { userId },
     select: {
@@ -27,7 +29,6 @@ export default async function AnalysisPage() {
       complianceGaps: { select: { id: true, isResolved: true, severity: true } },
     },
     orderBy: { updatedAt: "desc" },
-    take: 20,
   });
 
   const totalReqs = tenders.reduce((s,t) => s+t.requirements.length, 0);

@@ -5,34 +5,116 @@ import { prisma, prismaReady } from "../../lib/prisma";
 import { StatusBadge } from "../../components/status-badge";
 import { formatDate } from "../../lib/tender-workflow";
 import { isAIEnabled } from "../../lib/ai";
-import { isExtractionCritical } from "../../lib/engine/tender-extraction-state";
+import {
+  isExtractionCritical,
+  classifyTenderExtractionState,
+} from "../../lib/engine/tender-extraction-state";
 
 export default async function DashboardPage() {
   const userId = await getSession();
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const [tenders, recentActivity] = await Promise.all([
+  const now = new Date();
+  const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  // Truthful workspace totals — use real COUNT / GROUP-BY queries so global
+  // metrics are not silently capped by any "take" limit on the recent-tender
+  // list. The recent-tender list below only feeds the Live Pipeline table.
+  const [
+    activeTenderCount,
+    overdueCount,
+    dueSoon3Count,
+    dueSoon7Count,
+    criticalComplianceGapCount,
+    extractionStateRows,
+    budgetByCurrencyRows,
+    wonCount,
+    decidedCount,
+    scoredRows,
+    recentTenders,
+    recentActivity,
+  ] = await Promise.all([
+    prisma.tender.count({ where: { userId } }),
+    prisma.tender.count({
+      where: {
+        userId,
+        deadline: { lt: now },
+        status: { notIn: ["EXPORTED", "CLOSED"] },
+      },
+    }),
+    prisma.tender.count({
+      where: {
+        userId,
+        deadline: { gte: now, lte: in3days },
+        status: { notIn: ["EXPORTED", "CLOSED"] },
+      },
+    }),
+    prisma.tender.count({
+      where: {
+        userId,
+        deadline: { gte: now, lte: in7days },
+        status: { notIn: ["EXPORTED", "CLOSED"] },
+      },
+    }),
+    prisma.complianceGap.count({
+      where: {
+        tender: { userId },
+        isResolved: false,
+        severity: "CRITICAL",
+      },
+    }),
+    // Per-tender extraction state (cheap — just status + requirements _count).
     prisma.tender.findMany({
       where: { userId },
-      take: 25,
-      include: {
+      select: {
+        analysisExtractionStatus: true,
+        _count: { select: { requirements: true } },
+      },
+    }),
+    // Aggregate budget by currency across ALL tenders, not just recent.
+    // currency is non-nullable in schema (default "USD"), and budget>0
+    // excludes null budgets (gt requires non-null).
+    prisma.tender.groupBy({
+      by: ["currency"],
+      where: {
+        userId,
+        budget: { gt: 0 },
+      },
+      _sum: { budget: true },
+      _count: true,
+    }),
+    prisma.tender.count({ where: { userId, bidOutcome: "WON" } }),
+    prisma.tender.count({
+      where: { userId, NOT: { bidOutcome: null }, bidOutcome: { not: "PENDING" } },
+    }),
+    // Only fetch readinessScore for averaging — cheap column.
+    // readinessScore is non-nullable (Float @default(0)) so no filter needed.
+    prisma.tender.findMany({
+      where: { userId },
+      select: { readinessScore: true },
+    }),
+    // Recent tenders for the Live Pipeline display table only.
+    prisma.tender.findMany({
+      where: { userId },
+      take: 8,
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        clientName: true,
+        deadline: true,
+        status: true,
+        analysisExtractionStatus: true,
+        readinessScore: true,
         _count: {
           select: {
             requirements: true,
-            complianceGaps: { where: { isResolved: false } },
+            complianceGaps: { where: { isResolved: false, severity: "CRITICAL" } },
           },
         },
-        complianceGaps: {
-          select: { severity: true, isResolved: true },
-          where: { isResolved: false, severity: "CRITICAL" },
-        },
-        generatedDocuments: {
-          select: { id: true, validationStatus: true },
-          where: { generationStatus: { not: "SUPERSEDED" } },
-        },
       },
-      orderBy: { updatedAt: "desc" },
     }),
     prisma.auditLog.findMany({
       where: { userId, NOT: { entityType: "TenderStorageCleanup" } },
@@ -42,67 +124,34 @@ export default async function DashboardPage() {
   ]);
 
   const aiEnabled = isAIEnabled();
-  const now = new Date();
-  const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  const overdue = tenders.filter((t) => t.deadline && new Date(t.deadline) < now && !["EXPORTED", "CLOSED"].includes(t.status));
-  const dueSoon3 = tenders.filter((t) => {
-    if (!t.deadline) return false;
-    const d = new Date(t.deadline);
-    return d >= now && d <= in3days && !["EXPORTED", "CLOSED"].includes(t.status);
-  });
-  const dueSoon7 = tenders.filter((t) => {
-    if (!t.deadline) return false;
-    const d = new Date(t.deadline);
-    return d >= now && d <= in7days && !["EXPORTED", "CLOSED"].includes(t.status);
-  });
+  // Critical gaps = unresolved CRITICAL compliance gaps + extraction-blocked tenders.
+  // Computed from full workspace (not the recent 8).
+  const extractionBlockedCount = extractionStateRows.filter((r) =>
+    isExtractionCritical(r.analysisExtractionStatus, r._count?.requirements ?? 0),
+  ).length;
+  const criticalGaps = criticalComplianceGapCount + extractionBlockedCount;
 
-  const tendersWithOutcome = tenders.filter((t) => t.bidOutcome && t.bidOutcome !== "PENDING");
-  const wonCount = tenders.filter((t) => t.bidOutcome === "WON").length;
-  const winRate = tendersWithOutcome.length > 0
-    ? Math.round((wonCount / tendersWithOutcome.length) * 100)
-    : null;
-
-  // Only aggregate budgets that have both a valid amount AND a currency.
-  // Group by currency to avoid summing ETB + USD into one misleading total.
+  // Budget totals — group by currency, suppress aggregate when mixed.
   const budgetsByCurrency = new Map<string, number>();
-  for (const t of tenders) {
-    if (t.budget && t.budget > 0 && t.currency) {
-      const curr = t.currency as string;
-      budgetsByCurrency.set(curr, (budgetsByCurrency.get(curr) ?? 0) + (t.budget as number));
-    }
+  let activeBudgetCount = 0;
+  for (const row of budgetByCurrencyRows) {
+    const curr = row.currency;
+    const sum = row._sum?.budget ?? 0;
+    budgetsByCurrency.set(curr, (budgetsByCurrency.get(curr) ?? 0) + sum);
+    activeBudgetCount += row._count ?? 0;
   }
-  // Only show a single aggregate if all budgets share one currency.
-  // If currencies differ, suppress the aggregate to avoid misrepresentation.
   const currencies = Array.from(budgetsByCurrency.keys());
   const singleCurrency = currencies.length === 1 ? currencies[0] : null;
   const pipelineValue = singleCurrency ? (budgetsByCurrency.get(singleCurrency) ?? 0) : null;
-  // Count individual tenders with valid budgets, not currency groups.
-  const activeBudgetCount = tenders.filter((t) => t.budget && t.budget > 0 && t.currency).length;
 
-  const scoredTenders = tenders.filter((t) => t.readinessScore !== null);
-  const avgReadiness = scoredTenders.length > 0
-    ? Math.round(scoredTenders.reduce((a, b) => a + (b.readinessScore ?? 0), 0) / scoredTenders.length)
+  // Avg workflow progress — derived from persisted readinessScore across the
+  // WHOLE workspace. Labeled as workflow progress (NOT export readiness).
+  const avgReadiness = scoredRows.length > 0
+    ? Math.round(scoredRows.reduce((a, b) => a + (b.readinessScore ?? 0), 0) / scoredRows.length)
     : null;
 
-  const totalGenDocs = tenders.reduce((a, b) => a + b.generatedDocuments.length, 0);
-  const exportReadyDocs = tenders.reduce(
-    (a, b) => a + b.generatedDocuments.filter((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED").length,
-    0
-  );
-
-  // Critical gaps include both unresolved CRITICAL compliance gaps AND tenders
-  // with corrupted/partial/fallback/stale extraction that block generation.
-  // Uses the canonical extraction-state helper — never duplicate status lists.
-  const criticalGaps = tenders.reduce((sum, t) => {
-    const gapCount = t.complianceGaps?.length ?? 0;
-    const extractionCritical = isExtractionCritical(
-      t.analysisExtractionStatus,
-      t._count?.requirements ?? 0,
-    );
-    return sum + gapCount + (extractionCritical ? 1 : 0);
-  }, 0);
+  const winRate = decidedCount > 0 ? Math.round((wonCount / decidedCount) * 100) : null;
 
   return (
     <div className="space-y-8">
@@ -124,34 +173,12 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
-      {/* Urgency alerts */}
-      {(overdue.length > 0 || dueSoon3.length > 0) && (
-        <div className="space-y-2">
-          {overdue.map((t) => (
-            <Link key={t.id} href={`/dashboard/tenders/${t.id}`}
-              className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm hover:bg-red-100">
-              <span className="text-red-500 font-bold">OVERDUE</span>
-              <span className="font-medium text-red-900">{t.title}</span>
-              <span className="text-red-400">— was due {formatDate(t.deadline)}</span>
-            </Link>
-          ))}
-          {dueSoon3.filter((t) => !overdue.includes(t)).map((t) => (
-            <Link key={t.id} href={`/dashboard/tenders/${t.id}`}
-              className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm hover:bg-amber-100">
-              <span className="text-amber-600 font-bold">DUE SOON</span>
-              <span className="font-medium text-amber-900">{t.title}</span>
-              <span className="text-amber-500">— due {formatDate(t.deadline)}</span>
-            </Link>
-          ))}
-        </div>
-      )}
-
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "Active Tenders", value: tenders.length, color: "text-blue-600" },
+          { label: "Active Tenders", value: activeTenderCount, color: "text-blue-600" },
           { label: "Critical Gaps", value: criticalGaps, color: criticalGaps > 0 ? "text-red-600" : "text-green-600" },
-          { label: "Due ≤ 7 Days", value: dueSoon7.length, color: dueSoon7.length > 0 ? "text-amber-600" : "text-slate-400" },
-          { label: "Overdue", value: overdue.length, color: overdue.length > 0 ? "text-red-700" : "text-slate-400" },
+          { label: "Due ≤ 7 Days", value: dueSoon7Count, color: dueSoon7Count > 0 ? "text-amber-600" : "text-slate-400" },
+          { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-700" : "text-slate-400" },
         ].map((s) => (
           <div key={s.label} className="rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{s.label}</p>
@@ -160,13 +187,13 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {(winRate !== null || (pipelineValue !== null && pipelineValue > 0) || avgReadiness !== null || totalGenDocs > 0) && (
+      {(winRate !== null || (pipelineValue !== null && pipelineValue > 0) || avgReadiness !== null || (pipelineValue === null && activeBudgetCount > 0)) && (
         <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
           {winRate !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
               <p className="text-sm text-slate-500 font-medium">Win Rate</p>
               <p className={`mt-1 text-3xl font-bold ${winRate >= 50 ? "text-green-600" : "text-amber-600"}`}>{winRate}%</p>
-              <p className="mt-1 text-xs text-slate-400">{wonCount} of {tendersWithOutcome.length} decided</p>
+              <p className="mt-1 text-xs text-slate-400">{wonCount} of {decidedCount} decided</p>
             </div>
           )}
           {pipelineValue !== null && pipelineValue > 0 && singleCurrency && (
@@ -194,26 +221,30 @@ export default async function DashboardPage() {
               <p className="text-sm text-slate-500 font-medium">Avg Workflow Progress</p>
               <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
               <p className="mt-1 text-xs text-slate-400">Not export readiness</p>
-              <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} tenders</p>
+              <p className="mt-1 text-xs text-slate-400">across {scoredRows.length} tenders</p>
             </div>
           )}
-          {totalGenDocs > 0 && (
-            <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Ready for Export</p>
-              <p className={`mt-1 text-3xl font-bold ${exportReadyDocs === totalGenDocs ? "text-green-600" : exportReadyDocs > 0 ? "text-amber-600" : "text-slate-400"}`}>{exportReadyDocs}</p>
-              <p className="mt-1 text-xs text-slate-400">of {totalGenDocs} docs</p>
-            </div>
-          )}
+          {/* NOTE: The workspace-wide "documents validated" card was removed.
+              Counting documents by validationStatus === PASSED/VALIDATED is
+              NOT export authority. The canonical export gate is per-tender
+              final-package readiness (lib/engine/final-submission-readiness.ts).
+              Surface that on the command center / export hub, not as a
+              workspace-wide count. */}
         </div>
       )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
         <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b px-6 py-4">
-            <h2 className="font-bold text-slate-900">Live Pipeline</h2>
+            <div>
+              <h2 className="font-bold text-slate-900">Live Pipeline</h2>
+              <p className="mt-0.5 text-[10px] text-slate-400">
+                Recent {recentTenders.length} tenders · Extraction state is authoritative, not the workflow % bar.
+              </p>
+            </div>
             <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
           </div>
-          {tenders.length === 0 ? (
+          {recentTenders.length === 0 ? (
             <div className="py-12 text-center text-slate-400">
               <p>No tenders yet.</p>
               <Link href="/dashboard/tenders/new" className="mt-2 inline-block text-sm text-black underline">Create your first tender</Link>
@@ -225,15 +256,23 @@ export default async function DashboardPage() {
                   <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Tender Title</th>
                   <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Deadline</th>
                   <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Status</th>
-                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Readiness</th>
+                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Extraction State</th>
+                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Workflow %</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {tenders.slice(0, 8).map((tender) => {
+                {recentTenders.map((tender) => {
                   const total = tender._count.requirements;
-                  const critical = tender.complianceGaps?.length ?? 0;
-                  const readiness = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
+                  const critical = tender._count.complianceGaps;
+                  const workflowPct = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
+                  const extractionState = classifyTenderExtractionState(tender.analysisExtractionStatus, total);
+                  // Suppress green authority styling on the workflow % bar
+                  // when canonical extraction is blocked — the bar is
+                  // workflow progress, not export readiness.
+                  const workflowBarColor = extractionState === "BLOCKED"
+                    ? "bg-slate-300"
+                    : workflowPct >= 80 ? "bg-slate-400" : workflowPct >= 50 ? "bg-slate-300" : "bg-slate-200";
 
                   return (
                     <tr key={tender.id} className="hover:bg-slate-50 group">
@@ -248,12 +287,29 @@ export default async function DashboardPage() {
                       </td>
                       <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                       <td className="px-6 py-4">
+                        {extractionState === "CLEAR" && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 border border-emerald-200">
+                            ✓ Clear
+                          </span>
+                        )}
+                        {extractionState === "BLOCKED" && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 border border-red-200">
+                            ✗ Blocked
+                          </span>
+                        )}
+                        {extractionState === "NOT_ANALYZED" && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 border border-slate-200">
+                            ○ Not analyzed
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <div className="h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
-                            <div className={`h-full rounded-full ${readiness >= 80 ? "bg-green-500" : readiness >= 50 ? "bg-amber-400" : "bg-red-400"}`}
-                              style={{ width: `${readiness}%` }} />
+                            <div className={`h-full rounded-full ${workflowBarColor}`}
+                              style={{ width: `${workflowPct}%` }} />
                           </div>
-                          <span className="text-[10px] font-bold text-slate-500">{readiness}%</span>
+                          <span className="text-[10px] font-bold text-slate-500" title="Workflow progress, not export readiness">{workflowPct}%</span>
                         </div>
                       </td>
                     </tr>

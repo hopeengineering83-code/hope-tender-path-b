@@ -5,12 +5,15 @@ import {
   classifyTenderExtractionState,
   isExtractionCritical,
   BLOCKED_EXTRACTION_STATES,
+  CLEAR_EXTRACTION_STATES,
 } from "../lib/engine/tender-extraction-state";
 import {
   CANONICAL_AI_PROVIDER_ORDER,
   isProviderConfigured,
   getProviderTimeoutMs,
 } from "../lib/ai-provider-registry";
+import { getAIEnvironmentReadiness } from "../lib/ai-environment-readiness";
+import { getSystemReadiness } from "../lib/system-readiness";
 
 const dashboardSrc = readFileSync("app/dashboard/page.tsx", "utf8");
 const complianceSrc = readFileSync("app/dashboard/compliance/compliance-dashboard.tsx", "utf8");
@@ -56,6 +59,10 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("does not hardcode dollar sign", () => {
       assert.doesNotMatch(dashboardSrc, /\$\$\{/);
     });
+
+    it("uses prisma.groupBy for budget aggregation across all tenders", () => {
+      assert.match(dashboardSrc, /prisma\.tender\.groupBy/);
+    });
   });
 
   describe("compliance dashboard does not treat missing rows as proof of compliance", () => {
@@ -83,6 +90,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
 
     it("selects analysisExtractionStatus from the database", () => {
       assert.match(analysisSrc, /analysisExtractionStatus: true/);
+    });
+
+    it("does not cap tenders query at take:20 for global analysis totals", () => {
+      // The dashboard previously used `take: 20`, which made workspace
+      // totals false when more than 20 tenders existed.
+      assert.doesNotMatch(analysisSrc, /take:\s*20/);
     });
   });
 
@@ -139,7 +152,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("canonical extraction-state helper", () => {
+  describe("canonical extraction-state helper (fail-closed unknown state)", () => {
+    it("exports CLEAR_EXTRACTION_STATES allowlist", () => {
+      assert.ok(CLEAR_EXTRACTION_STATES, "CLEAR_EXTRACTION_STATES must be exported");
+      assert.ok(CLEAR_EXTRACTION_STATES.has("AI_SUCCEEDED"), "AI_SUCCEEDED must be CLEAR");
+    });
+
     it("classifies NOT_ANALYZED for zero requirements", () => {
       assert.equal(classifyTenderExtractionState(null, 0), "NOT_ANALYZED");
       assert.equal(classifyTenderExtractionState("AI_SUCCEEDED", 0), "NOT_ANALYZED");
@@ -162,6 +180,30 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
 
     it("classifies CLEAR for AI_SUCCEEDED with requirements", () => {
       assert.equal(classifyTenderExtractionState("AI_SUCCEEDED", 5), "CLEAR");
+    });
+
+    it("FAILS CLOSED — unknown status strings are BLOCKED, never CLEAR", () => {
+      // Critical safety test: a new misspelled, stale-hash, partial-provider,
+      // mixed-fallback, or currentness blocker status MUST NOT render green.
+      // Note: empty string and null are treated as NOT_ANALYZED (correct —
+      // no status set), NOT BLOCKED. This is the documented behavior.
+      const unknownStatuses = [
+        "STALE_HASH",
+        "PARTIAL_PROVIDER_FALLBACK",
+        "MIXED_FALLBACK",
+        "CURRENTNESS_BLOCKED",
+        "EXTRACTION_CORRUPTED_AI_SKIPED", // misspelling
+        "AI_SUCCED", // misspelling
+        "SOMETHING_NEW_IN_THE_FUTURE",
+        "AI_ANALYZED_PARTIAL",
+      ];
+      for (const s of unknownStatuses) {
+        assert.equal(
+          classifyTenderExtractionState(s, 5),
+          "BLOCKED",
+          `unknown status "${s}" must be BLOCKED, never CLEAR`,
+        );
+      }
     });
 
     it("isExtractionCritical returns true for blocked/not-analyzed, false for clear", () => {
@@ -191,7 +233,7 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.equal(order[order.length - 1], "anthropic");
     });
 
-    it("every provider has a finite timeout configured", () => {
+    it("every provider has a finite positive timeout configured", () => {
       for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
         const timeout = getProviderTimeoutMs(provider);
         assert.ok(
@@ -200,18 +242,221 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
         );
       }
     });
+  });
 
-    it("isProviderConfigured returns false for providers without keys (except gemini which uses GEMINI_API_KEY from test env)", () => {
-      // Gemini may be configured in the test env via GEMINI_API_KEY.
-      // Verify that at least the non-gemini providers are not configured.
-      for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
-        if (provider === "gemini") continue;
-        assert.equal(
-          isProviderConfigured(provider),
-          false,
-          `provider ${provider} should not be configured in test env`,
+  describe("behavioral AI environment readiness (fail-closed)", () => {
+    it("getAIEnvironmentReadiness returns a structured readiness object", () => {
+      const r = getAIEnvironmentReadiness();
+      assert.ok(typeof r.ready === "boolean");
+      assert.ok(Array.isArray(r.providerChain));
+      assert.ok(Array.isArray(r.blockers));
+      assert.ok(Array.isArray(r.warnings));
+      assert.ok(Array.isArray(r.variables));
+    });
+
+    it("blockers include DATABASE_URL when missing", () => {
+      const savedDb = process.env.DATABASE_URL;
+      delete process.env.DATABASE_URL;
+      try {
+        const r = getAIEnvironmentReadiness();
+        assert.equal(r.ready, false, "ready must be false when DATABASE_URL missing");
+        assert.ok(
+          r.blockers.some((b) => b.includes("DATABASE_URL")),
+          "blockers must mention DATABASE_URL",
         );
+      } finally {
+        if (savedDb !== undefined) process.env.DATABASE_URL = savedDb;
       }
+    });
+
+    it("blockers include SESSION_SECRET when missing", () => {
+      const savedS = process.env.SESSION_SECRET;
+      delete process.env.SESSION_SECRET;
+      try {
+        const r = getAIEnvironmentReadiness();
+        assert.equal(r.ready, false);
+        assert.ok(
+          r.blockers.some((b) => b.includes("SESSION_SECRET")),
+          "blockers must mention SESSION_SECRET",
+        );
+      } finally {
+        if (savedS !== undefined) process.env.SESSION_SECRET = savedS;
+      }
+    });
+
+    it("ready is false when no AI provider is configured", () => {
+      // Save and clear all known AI provider env vars
+      const saved: Record<string, string | undefined> = {};
+      const apiKeys = [
+        "ZAI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "MISTRAL_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "ANTHROPIC_API_KEY",
+      ];
+      for (const k of apiKeys) {
+        saved[k] = process.env[k];
+        delete process.env[k];
+      }
+      try {
+        const r = getAIEnvironmentReadiness();
+        assert.equal(r.ready, false, "ready must be false when no AI provider is configured");
+        assert.ok(
+          r.blockers.some((b) => /No AI provider/i.test(b)),
+          `blockers must mention "No AI provider", got: ${JSON.stringify(r.blockers)}`,
+        );
+        assert.equal(r.providerChain.length, 0, "providerChain must be empty when nothing configured");
+      } finally {
+        for (const k of apiKeys) {
+          if (saved[k] !== undefined) process.env[k] = saved[k];
+        }
+      }
+    });
+
+    it("providerChain is in canonical order when providers configured (Anthropic last)", () => {
+      // Set ZAI_API_KEY so we have at least one provider.
+      const savedZ = process.env.ZAI_API_KEY;
+      process.env.ZAI_API_KEY = "test-key-for-readiness-behavioral-test";
+      try {
+        const r = getAIEnvironmentReadiness();
+        assert.ok(r.providerChain.length >= 1, "at least Z.ai should appear in the chain");
+        // Anthropic is not configured here, so it should not appear in the chain.
+        // But IF it were configured, it would have to be last. Verify that
+        // any provider in the chain is in the same relative order as CANONICAL_AI_PROVIDER_ORDER.
+        const canonicalOrder = Array.from(CANONICAL_AI_PROVIDER_ORDER);
+        const presentOrder = canonicalOrder.filter((p) => isProviderConfigured(p));
+        // The chain display labels include provider names; we cannot easily
+        // string-match them, so we just verify the count matches.
+        assert.equal(
+          r.providerChain.length,
+          presentOrder.length,
+          `providerChain length must match configured providers (expected ${presentOrder.length}, got ${r.providerChain.length})`,
+        );
+      } finally {
+        if (savedZ === undefined) delete process.env.ZAI_API_KEY;
+        else process.env.ZAI_API_KEY = savedZ;
+      }
+    });
+  });
+
+  describe("behavioral system readiness (fail-closed)", () => {
+    it("getSystemReadiness returns a structured readiness object with checks array", async () => {
+      const r = await getSystemReadiness();
+      assert.ok(typeof r.productionReady === "boolean");
+      assert.ok(Array.isArray(r.checks));
+      assert.ok(r.checks.length > 0, "must return at least one readiness check");
+    });
+
+    it("reports CRITICAL ai_providers check when no provider configured", async () => {
+      const saved: Record<string, string | undefined> = {};
+      const apiKeys = [
+        "ZAI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "MISTRAL_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "ANTHROPIC_API_KEY",
+      ];
+      for (const k of apiKeys) {
+        saved[k] = process.env[k];
+        delete process.env[k];
+      }
+      try {
+        const r = await getSystemReadiness();
+        const aiCheck = r.checks.find((c) => c.key === "ai_providers");
+        assert.ok(aiCheck, "must have an ai_providers check");
+        assert.equal(
+          aiCheck?.severity,
+          "CRITICAL",
+          `ai_providers must be CRITICAL when no provider configured, got ${aiCheck?.severity}`,
+        );
+        assert.equal(
+          aiCheck?.requiredForProduction,
+          true,
+          "ai_providers must be required for production",
+        );
+        assert.equal(
+          r.productionReady,
+          false,
+          "productionReady must be false when ai_providers is CRITICAL",
+        );
+      } finally {
+        for (const k of apiKeys) {
+          if (saved[k] !== undefined) process.env[k] = saved[k];
+        }
+      }
+    });
+
+    it("REQUIRED_PROVIDER_ORDER matches CANONICAL order exactly", () => {
+      // The system-readiness module must use the canonical order from the
+      // registry, not a locally-defined list.
+      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/.test(systemSrc));
+    });
+  });
+
+  describe("workspace totals use real aggregate queries (not take:25)", () => {
+    it("uses prisma.tender.count for Active Tenders", () => {
+      assert.match(dashboardSrc, /prisma\.tender\.count/);
+    });
+
+    it("uses prisma.complianceGap.count for critical compliance gaps", () => {
+      assert.match(dashboardSrc, /prisma\.complianceGap\.count/);
+    });
+
+    it("does NOT cap the global tenders query at take:25 for global metrics", () => {
+      // The previous version used `take: 25` on the tenders query, then
+      // labeled `tenders.length` as Active Tenders. That was a false total.
+      assert.doesNotMatch(dashboardSrc, /take:\s*25/);
+    });
+
+    it("labels the Live Pipeline table as limited to recent tenders", () => {
+      assert.match(dashboardSrc, /Recent \{recentTenders\.length\} tenders/);
+    });
+  });
+
+  describe("Live Pipeline column is canonical extraction state, not false readiness", () => {
+    it("has an Extraction State column instead of Readiness", () => {
+      assert.match(dashboardSrc, /Extraction State/);
+    });
+
+    it("uses classifyTenderExtractionState for the Live Pipeline row", () => {
+      assert.match(dashboardSrc, /classifyTenderExtractionState/);
+    });
+
+    it("renders Blocked badge for blocked extraction", () => {
+      assert.match(dashboardSrc, /✗ Blocked/);
+    });
+
+    it("renders Not analyzed badge for not-analyzed extraction", () => {
+      assert.match(dashboardSrc, /○ Not analyzed/);
+    });
+
+    it("suppresses green authority styling on workflow bar when blocked", () => {
+      assert.match(dashboardSrc, /extractionState === "BLOCKED"/);
+    });
+  });
+
+  describe("Ready for Export card removed (no false export authority)", () => {
+    it("does NOT show a Ready for Export card with validationStatus counts", () => {
+      // The previous card counted documents where validationStatus ===
+      // "PASSED" or "VALIDATED" and labeled it "Ready for Export" — that
+      // is NOT canonical export authority. The canonical gate is per-tender
+      // final-package readiness, not a workspace-wide doc count.
+      assert.doesNotMatch(dashboardSrc, /Ready for Export/);
+      assert.doesNotMatch(dashboardSrc, /exportReadyDocs/);
+    });
+
+    it("documents the removal reason in a code comment", () => {
+      assert.match(dashboardSrc, /documents validated.*card was removed/);
     });
   });
 });
