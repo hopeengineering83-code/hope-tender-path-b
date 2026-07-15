@@ -51,6 +51,7 @@ import {
 } from "../lib/engine/tender-analysis-content";
 import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 import { assertTenderReadyForGenerationAndExport } from "../lib/engine/generation-readiness-gate";
+import { createAnalysisJob } from "../lib/ai-jobs/analysis-job-service";
 
 const EXTRACTED = [
   "SECTION 1 — SUBMISSION INSTRUCTIONS. Proposals must be submitted by email to",
@@ -341,6 +342,37 @@ dbDescribe("AI Analyze analysisInputHash binding (PostgreSQL behavioral)", () =>
 
     const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId, userId: user.id, purpose: "generate" });
     assert.equal(gate.ok, false, "superseded analysis must not authorize generation");
+  });
+
+  // ── Background/durable path: createAnalysisJob persists the canonical hash ──
+  // Invokes the REAL durable job service (the path AI Analyze uses in background
+  // mode) against Postgres and proves the persisted analysisInputHash is exactly
+  // what the snapshot recomputes — even with a soft-deleted file present and > the
+  // old 5-doc vault cap. This is the end-to-end guard for the second P1.
+  it("createAnalysisJob persists an analysisInputHash the snapshot reproduces (ACTIVE files + full vault)", async () => {
+    const tenderId = await seedTenderWithFile(); // 1 active + 1 DELETED file; company has 7 vault docs
+    const { tender, files, companyDocs } = await loadCanonicalInputs(prisma, tenderId, user.id);
+    const canonical = canonicalHashFor(files, companyDocs, tender);
+
+    const result = await createAnalysisJob({ tenderId, userId: user.id });
+    const job = await prisma.aiJob.findUniqueOrThrow({
+      where: { id: result.jobId },
+      select: { analysisInputHash: true },
+    });
+
+    // The durable path must persist the SAME canonical hash (active files + full vault).
+    assert.equal(
+      job.analysisInputHash,
+      canonical,
+      "createAnalysisJob must persist the canonical hash built from ACTIVE files + the full vault set",
+    );
+
+    // And the snapshot must reproduce it — no ANALYSIS_HASH_MISMATCH from the background path.
+    const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, user.id);
+    assert.ok(snapshot, "snapshot must resolve");
+    assert.equal(snapshot!.analysis.latestJobHash, canonical, "persisted background hash must equal canonical");
+    assert.equal(snapshot!.analysis.currentContentHash, canonical, "snapshot must recompute the identical canonical hash");
+    assert.equal(snapshot!.analysis.contentHashMatch, true, "background-path hash must be reproducible (contentHashMatch=true)");
   });
 
   // ── Deterministic Company-Vault ordering: hash is order-independent ──

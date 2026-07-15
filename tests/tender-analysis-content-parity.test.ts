@@ -76,9 +76,13 @@ describe("both execution paths wire the shared builder (single source of truth)"
 
   it("the durable job service uses the shared builder + hash", () => {
     const svc = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
-    assert.match(svc, /buildTenderAnalysisContent\(tender, company\)/);
+    // Builds from the tender's ACTIVE files + company vault, matching the input
+    // set the snapshot/gate recompute the hash from.
+    assert.match(svc, /buildTenderAnalysisContent\(\s*\{ \.\.\.tender, files:[\s\S]*?company,\s*\)/);
     assert.match(svc, /computeAnalysisContentHash\(tenderText\)/);
     // The old raw-text full-sha256 scheme must be gone.
     assert.doesNotMatch(svc, /createHash\("sha256"\)\.update\(normalizedText\)/);
+    // The vault query feeding the hash must NOT be capped (must match snapshot/gate).
+    assert.doesNotMatch(svc, /originalFileName: true, extractedText: true \}, take:/);
   });
 });

@@ -58,17 +58,28 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     throw new Error("Tender not found or access denied");
   }
 
-  // Load the company vault documents exactly as the AI Analyze route does, so
-  // the company-document digest (and therefore the content hash) matches.
+  // Load the company vault documents exactly as the AI Analyze route AND the
+  // readiness recomputation do: UNBOUNDED and unordered. tender-release-snapshot.ts
+  // and generation-readiness-gate.ts select all vault documents with no `take`/
+  // `orderBy`; a cap here would make this background job persist an
+  // analysisInputHash the gate can never reproduce (permanent ANALYSIS_HASH_MISMATCH
+  // for any company with more than the capped number of vault documents).
+  // Deterministic order is handled downstream by buildTenderAnalysisContent.
   const company = await prisma.company.findUnique({
     where: { userId },
-    include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+    include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
   });
 
   // Build the AI-analysis content via the SHARED builder so the durable job
   // service and the synchronous route produce byte-identical content, hash, and
-  // (via the shared chunker) chunk identity.
-  const tenderText = buildTenderAnalysisContent(tender, company);
+  // (via the shared chunker) chunk identity. ACTIVE files only — the snapshot and
+  // generation gate recompute the hash from `deletionStatus === "ACTIVE"` files,
+  // so hashing soft-deleted files here would store an unreproducible hash and
+  // strand a background analysis on ANALYSIS_HASH_MISMATCH.
+  const tenderText = buildTenderAnalysisContent(
+    { ...tender, files: tender.files.filter((f) => f.deletionStatus === "ACTIVE") },
+    company,
+  );
 
   if (!tenderText || tenderText.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
