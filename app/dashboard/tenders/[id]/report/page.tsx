@@ -105,6 +105,39 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
   const canonicalBlockers = canonicalReadiness?.tenderLevelBlockers ?? [];
   const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
 
+  // ── Currency authority (non-proxy model) ──────────────────────────────
+  // Per REVISION_REQUIRED (recheck 3): extraction status is NOT proof that
+  // currency was sourced. A successful extraction does not prove the
+  // currency value came from the tender document — it may be a legacy
+  // schema default. The only non-proxy authority is:
+  //   1. A TenderMetadataOverride for field="currency" with authorityClass
+  //      SOURCE_GROUNDED_CONFIRMED or HUMAN_CONFIRMED_OPERATIONAL (user
+  //      explicitly confirmed or edited the currency with a reason).
+  //   2. A TenderFactsLedger row for semanticKey="currency" with
+  //      authorityState SOURCE_GROUNDED_CONFIRMED or HUMAN_CONFIRMED_OPERATIONAL.
+  // Without either, the currency is "unverified" and must not appear in
+  // authoritative output — even if the tender has a valid extraction status.
+  const currencyOverride = await prisma.tenderMetadataOverride.findFirst({
+    where: {
+      tenderId: id,
+      field: "currency",
+      authorityClass: { in: ["SOURCE_GROUNDED", "SOURCE_GROUNDED_CONFIRMED", "HUMAN_CONFIRMED_OPERATIONAL"] },
+    },
+    select: { authorityClass: true, fieldState: true, overrideValue: true },
+    orderBy: { updatedAt: "desc" },
+  }).catch(() => null);
+  const currencyLedgerFact = await prisma.tenderFactsLedger.findFirst({
+    where: {
+      tenderId: id,
+      semanticKey: "currency",
+      authorityState: { in: ["SOURCE_GROUNDED_CONFIRMED", "HUMAN_CONFIRMED_OPERATIONAL"] },
+      sourceStatus: "active",
+    },
+    select: { authorityState: true, normalizedValue: true },
+    orderBy: { updatedAt: "desc" },
+  }).catch(() => null);
+  const isCurrencyVerified = Boolean(currencyOverride) || Boolean(currencyLedgerFact);
+
   // Sort requirements: MANDATORY first, then by priority order
   const sortedRequirements = [...tender.requirements].sort(
     (a, b) => priorityOrder(a.priority) - priorityOrder(b.priority),
@@ -117,26 +150,14 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
-  // ── Currency provenance ───────────────────────────────────────────────
-  // The schema previously defaulted currency to "USD". Legacy tenders may
-  // have currency="USD" from that default, not from document extraction.
-  // There is no currencySourcePage/currencySourceQuote column, so we use
-  // analysisExtractionStatus as a proxy: if extraction was corrupted/skipped/
-  // weak, the currency value is "unverified legacy" and must not appear in
-  // authoritative output. For tenders with valid extraction (FULL or PARTIAL),
-  // the currency is trusted (it was either sourced or explicitly set).
-  const CORRUPTED_STATUSES = new Set([
-    "EXTRACTION_CORRUPTED_AI_SKIPPED",
-    "OCR_REQUIRED",
-    "EXTRACTION_WEAK_REVIEW_REQUIRED",
-    "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
-  ]);
-  const extractionStatus = tender.analysisExtractionStatus ?? null;
-  const isCurrencyUnverified = Boolean(
-    tender.currency &&
-    extractionStatus &&
-    CORRUPTED_STATUSES.has(extractionStatus),
-  );
+  // ── Currency provenance (non-proxy authority model) ───────────────────
+  // Per REVISION_REQUIRED (recheck 3): do NOT use analysisExtractionStatus
+  // as a proxy. Without field-level source provenance or explicit user
+  // confirmation, ALL legacy currency is unverified. The only authority
+  // is a TenderMetadataOverride or TenderFactsLedger row with a trusted
+  // authorityClass/authorityState. This fails SAFE (unverified) for any
+  // tender that lacks explicit confirmation — no denylist, no fail-open.
+  const isCurrencyUnverified = Boolean(tender.currency) && !isCurrencyVerified;
   const currencyDisplay = tender.currency
     ? (isCurrencyUnverified ? "Unverified legacy value" : tender.currency)
     : "Not extracted";
