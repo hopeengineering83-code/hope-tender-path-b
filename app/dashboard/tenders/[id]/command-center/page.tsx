@@ -83,8 +83,11 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
     include: { lines: true },
   });
 
+  // Query ONLY jobs for THIS tender — never include jobs from other tenders
+  // belonging to the same user. Cross-tender contamination causes stale
+  // failures from one tender to appear beside newer successes in another.
   const recentJobs: any[] = await (prisma as any).aiJob.findMany({
-    where: { OR: [{ tenderId: id }, { userId }] },
+    where: { tenderId: id },
     orderBy: { createdAt: "desc" },
     take: 6,
     select: { id: true, jobType: true, status: true, createdAt: true, finishedAt: true },

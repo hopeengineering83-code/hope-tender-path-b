@@ -14,7 +14,7 @@ export default async function DashboardPage() {
   const [tenders, recentActivity] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
-      take: 25, // Pagination — was unbounded (loaded ALL tenders + ALL gaps + ALL docs)
+      take: 25,
       include: {
         _count: {
           select: {
@@ -22,12 +22,10 @@ export default async function DashboardPage() {
             complianceGaps: { where: { isResolved: false } },
           },
         },
-        // Only fetch critical unresolved gaps for the count — was loading ALL gaps
         complianceGaps: {
           select: { severity: true, isResolved: true },
           where: { isResolved: false, severity: "CRITICAL" },
         },
-        // Only fetch doc count + status summary, not full rows
         generatedDocuments: {
           select: { id: true, validationStatus: true },
           where: { generationStatus: { not: "SUPERSEDED" } },
@@ -81,7 +79,26 @@ export default async function DashboardPage() {
     0
   );
 
-  const criticalGaps = tenders.reduce((sum, t) => sum + (t.complianceGaps?.length ?? 0), 0);
+  // Critical gaps include both unresolved CRITICAL compliance gaps AND tenders
+  // with corrupted/partial/fallback/stale extraction that block generation.
+  // A tender with EXTRACTION_CORRUPTED_AI_SKIPPED or similar states IS a
+  // critical gap even if it has zero compliance gap rows.
+  const EXTRACTION_BLOCKED_STATES = new Set([
+    "OCR_REQUIRED",
+    "EXTRACTION_CORRUPTED_ENGINE_SKIPPED",
+    "EXTRACTION_QUALITY_ENGINE_BLOCKED",
+    "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+    "ANALYSIS_FROM_WEAK_EXTRACTION",
+    "PARTIAL_EXTRACTION_AI_ANALYZED",
+  ]);
+  const criticalGaps = tenders.reduce((sum, t) => {
+    const gapCount = t.complianceGaps?.length ?? 0;
+    const extractionBlocked = t.analysisExtractionStatus
+      ? EXTRACTION_BLOCKED_STATES.has(t.analysisExtractionStatus)
+      : false;
+    const hasNoAnalysis = !t.analysisExtractionStatus || t.analysisExtractionStatus === "NOT_STARTED";
+    return sum + gapCount + (extractionBlocked || hasNoAnalysis ? 1 : 0);
+  }, 0);
 
   return (
     <div className="space-y-8">
@@ -90,7 +107,7 @@ export default async function DashboardPage() {
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Workspace Overview</h1>
           <p className="mt-1 text-slate-500 flex items-center gap-2">
             {aiEnabled
-              ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✦ AI enabled</span>
+              ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5" title="AI providers are configured. This does not mean analysis is complete or authoritative.">✦ AI providers configured</span>
               : <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">AI offline — rule-based mode</span>
             }
           </p>
