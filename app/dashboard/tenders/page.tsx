@@ -481,9 +481,9 @@ export default async function TendersPage({
                       )}
                     </div>
 
-                    {/* Readiness bar */}
+                    {/* Workflow progress bar (not export readiness) */}
                     {tender.readinessScore != null && (
-                      <div className="h-1 rounded-full bg-slate-100">
+                      <div className="h-1 rounded-full bg-slate-100" title="Workflow progress — not export readiness">
                         <div className="h-1 rounded-full bg-emerald-400" style={{ width: `${tender.readinessScore}%` }} />
                       </div>
                     )}
