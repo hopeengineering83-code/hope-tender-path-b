@@ -238,7 +238,13 @@ export async function executeAnalysis(
       title: true,
       description: true,
       intakeSummary: true,
+      // ACTIVE files only — the content hash (used here as the durable
+      // chunk-checkpoint key) MUST match the canonical hash the route/createAnalysisJob
+      // persist and the snapshot/gate recompute (all filter deletionStatus === "ACTIVE").
+      // Hashing soft-deleted files would key this run's chunks under a hash that
+      // does not match the promoted analysisInputHash, breaking resume + state.
       files: {
+        where: { deletionStatus: "ACTIVE" },
         select: {
           id: true,
           originalFileName: true,
@@ -254,7 +260,9 @@ export async function executeAnalysis(
     throw new Error("Tender not found");
   }
 
-  // Load company if exists for shared builder input (user has a 1:1 company relation)
+  // Load company if exists for shared builder input (user has a 1:1 company relation).
+  // UNBOUNDED, unordered — must match the vault-document set the snapshot/gate
+  // recompute the hash from; a `take`/`orderBy` cap would diverge the chunk-key hash.
   const companyRecord = await prisma.company.findUnique({
     where: { userId },
     select: {
@@ -264,8 +272,6 @@ export async function executeAnalysis(
           originalFileName: true,
           extractedText: true,
         },
-        take: 5,
-        orderBy: { createdAt: "desc" as const },
       },
     },
   }).catch(() => null);

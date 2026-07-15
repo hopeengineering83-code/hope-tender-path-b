@@ -128,6 +128,34 @@ describe("AI Analyze route hashes the SAME input set the snapshot/gate recompute
   });
 });
 
+describe("no canonical-hash site caps the company vault document set (systemic guard)", () => {
+  // Every site that builds or recomputes the canonical analysis content hash must
+  // fold in the FULL, unbounded vault-document set. A `take:` cap on the digest
+  // select makes that site hash a different document set than the others, so a
+  // stored analysisInputHash and a recomputed hash diverge for companies with more
+  // than the capped number of vault documents → permanent ANALYSIS_HASH_MISMATCH.
+  // This guard enumerates all known hash sites and forbids the capped-select pattern.
+  const HASH_SITES = [
+    "app/api/tenders/[id]/ai-analyze/route.ts",
+    "lib/ai-jobs/analysis-job-service.ts",
+    "lib/engine/analysis-orchestrator.ts",
+    "lib/ai-analyze/retry-service.ts",
+    "lib/engine/tender-release-snapshot.ts",
+    "lib/engine/generation-readiness-gate.ts",
+    "lib/engine/build-plan.ts",
+    "lib/engine/runtime-readiness-facts.ts",
+  ];
+  for (const site of HASH_SITES) {
+    it(`${site} does not cap the vault-document digest with take:`, () => {
+      const s = readFileSync(resolve(process.cwd(), site), "utf8");
+      assert.ok(
+        !/extractedText: true \},\s*take:/.test(s),
+        `${site} caps the company vault documents feeding the content hash with take: — it must be unbounded to match the snapshot/gate`,
+      );
+    });
+  }
+});
+
 describe("canonical content hash is independent of Company Vault document order", () => {
   // Company.documents is loaded WITHOUT an orderBy in the route, the snapshot,
   // and the generation gate, so PostgreSQL may return the rows in different
