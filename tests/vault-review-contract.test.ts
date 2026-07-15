@@ -7,6 +7,9 @@ const repairRoute = readFileSync("app/api/company/knowledge/repair/route.ts", "u
 const provenanceSource = readFileSync("lib/vault-review-provenance.ts", "utf8");
 const expertBatch = readFileSync("app/api/company/experts/batch/route.ts", "utf8");
 const projectBatch = readFileSync("app/api/company/projects/batch/route.ts", "utf8");
+const uploadRoute = readFileSync("app/api/upload/route.ts", "utf8");
+const secureUpload = readFileSync("lib/secure-upload-handler.ts", "utf8");
+const byteIntegrity = readFileSync("lib/engine/persisted-byte-integrity.ts", "utf8");
 
 describe("company review privacy and pagination contracts", () => {
   it("does not fetch or render raw company expert/project narratives", () => {
@@ -45,6 +48,20 @@ describe("company review privacy and pagination contracts", () => {
     assert.match(provenanceSource, /contentByteLength: true/);
     assert.match(provenanceSource, /integrityStatus: true/);
     assert.match(provenanceSource, /record\.sourceDocument\.companyId !== record\.companyId/);
+  });
+
+  it("pins company-document integrity from uploaded bytes before persistence", () => {
+    assert.match(uploadRoute, /return handleSecureUpload\(req\)/);
+    assert.match(secureUpload, /Buffer\.from\(await file\.arrayBuffer\(\)\)/);
+    assert.match(secureUpload, /inspectActualFileBytes/);
+    assert.match(secureUpload, /integrity\.integrityStatus !== "VERIFIED"/);
+    assert.match(secureUpload, /prisma\.companyDocument\.create/);
+    assert.match(secureUpload, /\.\.\.integrity/);
+    assert.ok(secureUpload.indexOf("inspectActualFileBytes") < secureUpload.indexOf("storage.putFile"));
+    assert.match(byteIntegrity, /contentSha256: computeByteSha256\(bytes\)/);
+    assert.match(byteIntegrity, /contentByteLength: bytes\.length/);
+    assert.match(byteIntegrity, /integrityStatus: "VERIFIED"/);
+    assert.match(byteIntegrity, /PERSISTED_BYTE_INTEGRITY_MISMATCH/);
   });
 });
 

@@ -104,6 +104,16 @@ describe("durable per-field vault review provenance", () => {
       ...record,
       sourceDocument: { ...sourceDocument, companyId: "company-2" },
     }), false);
+    for (const sourceDocumentMutation of [
+      { contentSha256: "0".repeat(64) },
+      { contentByteLength: sourceDocument.contentByteLength + 1 },
+      { integrityStatus: "MISMATCH" },
+    ]) {
+      assert.equal(isDurablyReviewed({
+        ...record,
+        sourceDocument: { ...sourceDocument, ...sourceDocumentMutation },
+      }), false);
+    }
 
     const changedSource = {
       ...record,
