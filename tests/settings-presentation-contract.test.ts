@@ -25,3 +25,10 @@ test("settings API returns the shared presentation semantics contract", () => {
   assert.match(source, /presentationSemantics/);
   assert.doesNotMatch(source, /prisma\.tender\.(?:create|update|upsert)/);
 });
+
+test("settings API rejects ZIP instead of silently normalizing it", () => {
+  const source = readFileSync("app/api/settings/route.ts", "utf8");
+  assert.match(source, /if \(!VALID_EXPORT_FORMATS\.has\(upper\)\)/);
+  assert.match(source, /ZIP is a package-download mode, not a document format/);
+  assert.doesNotMatch(source, /upper === ["']ZIP["']\s*\?\s*["']DOCX["']/);
+});
