@@ -107,9 +107,15 @@ describe("[SCREENSHOT-EXPORT-003] Gap 2 — Report page Print/Save-as-PDF gating
 
   it("report page renders 'Not extracted' when currency is null", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    // The currencyDisplay helper must produce "Not extracted" when currency is null
     assert.ok(
-      src.includes('Currency: Not extracted') || /tender\.currency \?\? "Not extracted"/.test(src),
-      "report page must render 'Not extracted' when tender.currency is null (not '—' or 'USD')",
+      src.includes("Not extracted"),
+      "report page must render 'Not extracted' when tender.currency is null",
+    );
+    // The currencyDisplay variable must be used in the header
+    assert.ok(
+      src.includes("currencyDisplay"),
+      "report page must use the currencyDisplay variable (not raw tender.currency)",
     );
   });
 });

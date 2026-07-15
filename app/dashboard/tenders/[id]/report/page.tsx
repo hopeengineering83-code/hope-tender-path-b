@@ -56,6 +56,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       currency: true,
       status: true,
       stage: true,
+      analysisExtractionStatus: true,
       clientContactName: true,
       clientContactEmail: true,
       clientContactPhone: true,
@@ -116,8 +117,66 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
+  // ── Currency provenance ───────────────────────────────────────────────
+  // The schema previously defaulted currency to "USD". Legacy tenders may
+  // have currency="USD" from that default, not from document extraction.
+  // There is no currencySourcePage/currencySourceQuote column, so we use
+  // analysisExtractionStatus as a proxy: if extraction was corrupted/skipped/
+  // weak, the currency value is "unverified legacy" and must not appear in
+  // authoritative output. For tenders with valid extraction (FULL or PARTIAL),
+  // the currency is trusted (it was either sourced or explicitly set).
+  const CORRUPTED_STATUSES = new Set([
+    "EXTRACTION_CORRUPTED_AI_SKIPPED",
+    "OCR_REQUIRED",
+    "EXTRACTION_WEAK_REVIEW_REQUIRED",
+    "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+  ]);
+  const extractionStatus = tender.analysisExtractionStatus ?? null;
+  const isCurrencyUnverified = Boolean(
+    tender.currency &&
+    extractionStatus &&
+    CORRUPTED_STATUSES.has(extractionStatus),
+  );
+  const currencyDisplay = tender.currency
+    ? (isCurrencyUnverified ? "Unverified legacy value" : tender.currency)
+    : "Not extracted";
+
   return (
     <div className="mx-auto max-w-4xl px-6 py-8 font-sans text-slate-900 print:max-w-none print:px-0 print:py-0">
+      {/* Print-VISIBLE watermark for non-authoritative previews.
+          This MUST NOT use print:hidden — otherwise a user can invoke the
+          browser print dialog directly and the warning disappears, producing
+          an apparently authoritative PDF. The watermark is screen-hidden
+          (hidden) when authoritative, and screen-shown + print-shown when
+          non-authoritative. */}
+      {!isAuthoritative && (
+        <div className="mb-6 rounded-lg border-2 border-dashed border-amber-500 bg-amber-50 px-4 py-3 print:border-amber-700 print:bg-amber-100">
+          <p className="text-sm font-bold text-amber-900 print:text-amber-950">
+            ⚠ NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
+          </p>
+          <p className="mt-1 text-xs text-amber-800 print:text-amber-900">
+            This report has NOT passed canonical final-submission readiness.
+            It must not be submitted to any procuring entity. Resolve the
+            blockers below and re-run the engine to produce an authoritative
+            document. This watermark is print-visible to prevent bypass via
+            the browser print dialog.
+          </p>
+          {canonicalBlockers.length > 0 && (
+            <ul className="mt-2 list-inside list-disc text-xs text-amber-800 print:text-amber-900">
+              {canonicalBlockers.slice(0, 5).map((b, i) => (
+                <li key={i}>
+                  <span className="font-mono font-semibold">{b.category}:</span> {b.title}
+                  {b.recommendedAction ? <span className="block pl-4 italic">→ {b.recommendedAction}</span> : null}
+                </li>
+              ))}
+              {canonicalBlockers.length > 5 && (
+                <li className="italic">…and {canonicalBlockers.length - 5} more</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Print controls — hidden in print */}
       <div className="print:hidden mb-6 flex items-center justify-between">
         <h1 className="text-lg font-bold text-slate-700">Tender Report Preview</h1>
@@ -137,7 +196,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
         )}
       </div>
 
-      {/* Non-authoritative preview banner — visible only when not canonical-ready */}
+      {/* Non-authoritative preview banner (screen-only summary) — visible only when not canonical-ready */}
       {!isAuthoritative && (
         <div className="print:hidden mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
           <p className="text-sm font-semibold text-amber-800">
@@ -148,19 +207,6 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             PDF, or ZIP row. Authoritative printing/export requires all canonical final-submission
             gates to pass. Resolve the blockers below and re-run the engine.
           </p>
-          {canonicalBlockers.length > 0 && (
-            <ul className="mt-2 list-inside list-disc text-xs text-amber-700">
-              {canonicalBlockers.slice(0, 5).map((b, i) => (
-                <li key={i}>
-                  <span className="font-mono font-semibold">{b.category}:</span> {b.title}
-                  {b.recommendedAction ? <span className="block pl-4 italic">→ {b.recommendedAction}</span> : null}
-                </li>
-              ))}
-              {canonicalBlockers.length > 5 && (
-                <li className="italic">…and {canonicalBlockers.length - 5} more</li>
-              )}
-            </ul>
-          )}
         </div>
       )}
 
@@ -174,7 +220,13 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <span><span className="font-medium">Client:</span> {(tender.clientName || tender.procuringEntityName) ?? "—"}</span>
           <span><span className="font-medium">Country:</span> {tender.country ?? "—"}</span>
           <span><span className="font-medium">Deadline:</span> {fmt(tender.deadline)}</span>
-          <span><span className="font-medium">Currency:</span> {tender.currency ?? "Not extracted"}</span>
+          <span>
+            <span className="font-medium">Currency:</span>{" "}
+            {currencyDisplay}
+            {isCurrencyUnverified && (
+              <span className="ml-1 text-xs text-amber-600">(unverified — not in authoritative output)</span>
+            )}
+          </span>
           <span>
             <span className="font-medium">Status:</span>{" "}
             <span className="inline-block rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
