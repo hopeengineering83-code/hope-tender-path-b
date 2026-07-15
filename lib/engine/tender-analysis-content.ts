@@ -146,12 +146,25 @@ export function buildTenderAnalysisContent(
     .join("\n\n");
 
   const companyContext = company?.documents?.length
-    ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
-        const textDigest = d.extractedText
-          ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
-          : "no-text";
-        return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
-      }).join("\n")}`
+    ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents
+        .map((d) => {
+          const textDigest = d.extractedText
+            ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
+            : "no-text";
+          return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
+        })
+        // Deterministic vault-document order. Company.documents is loaded
+        // WITHOUT an orderBy in the AI Analyze route, the release snapshot, and
+        // the generation gate, so PostgreSQL may return the rows in different
+        // physical orders across calls. Without this sort the stored
+        // analysisInputHash (computed by the route) and the recomputed hash
+        // (snapshot/gate) can differ purely because the vault documents came
+        // back in a different sequence — resurfacing the false "content changed
+        // since the last analysis" blocker that this fix removes. Sorting the
+        // fully-rendered digest lines keys off filename + category + text digest
+        // in one stable lexicographic pass.
+        .sort()
+        .join("\n")}`
     : "";
 
   return [

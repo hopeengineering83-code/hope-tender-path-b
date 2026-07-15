@@ -26,6 +26,11 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  buildTenderAnalysisContent,
+  computeAnalysisContentHash,
+  type AnalysisContentCompanyDocument,
+} from "../lib/engine/tender-analysis-content";
 
 const ROUTE = resolve(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts");
 const src = readFileSync(ROUTE, "utf8");
@@ -81,5 +86,47 @@ describe("release snapshot + generation gate compare against analysisInputHash (
     const gate = readFileSync(resolve(process.cwd(), "lib/engine/generation-readiness-gate.ts"), "utf8");
     assert.ok(gate.includes("analysisInputHash"), "gate must read analysisInputHash");
     assert.ok(gate.includes("computeAnalysisContentHash"), "gate must use the canonical Scheme-A hash builder");
+  });
+});
+
+describe("canonical content hash is independent of Company Vault document order", () => {
+  // Company.documents is loaded WITHOUT an orderBy in the route, the snapshot,
+  // and the generation gate, so PostgreSQL may return the rows in different
+  // physical orders across calls. If the hash depended on that order, the stored
+  // analysisInputHash and the recomputed hash could differ purely from row
+  // sequence — resurfacing the false "content changed" blocker. The digest lines
+  // are sorted, so the hash must be order-independent.
+  const docs: AnalysisContentCompanyDocument[] = [
+    { originalFileName: "Zulu Audited Financials.pdf", category: "FINANCIAL", extractedText: "Audited statements 2025." },
+    { originalFileName: "Alpha Company Profile.pdf", category: "PROFILE", extractedText: "Company profile and history." },
+    { originalFileName: "Mike Key Personnel CVs.pdf", category: "CV", extractedText: "CVs of key experts." },
+  ];
+  const tender = {
+    title: "Test Tender",
+    description: "A tender for testing.",
+    intakeSummary: null,
+    files: [{ id: "f1", originalFileName: "rfp.pdf", extractedText: "Submission instructions and evaluation criteria." }],
+  };
+
+  function hashWith(order: AnalysisContentCompanyDocument[]): string {
+    return computeAnalysisContentHash(buildTenderAnalysisContent(tender, { documents: order }));
+  }
+
+  it("produces the same hash for forward, reversed, and shuffled document order", () => {
+    const forward = hashWith(docs);
+    const reversed = hashWith([...docs].reverse());
+    const shuffled = hashWith([docs[2], docs[0], docs[1]]);
+    assert.equal(reversed, forward, "reversed vault order must hash identically");
+    assert.equal(shuffled, forward, "shuffled vault order must hash identically");
+  });
+
+  it("still changes the hash when a document's content actually changes", () => {
+    const base = hashWith(docs);
+    const mutated = hashWith([
+      { ...docs[0], extractedText: "Different audited statements 2026." },
+      docs[1],
+      docs[2],
+    ]);
+    assert.notEqual(mutated, base, "a genuine content change must change the hash");
   });
 });
