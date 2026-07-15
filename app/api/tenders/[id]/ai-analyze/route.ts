@@ -636,6 +636,11 @@ async function handleStreamingAnalyze(
             return await tx.aiJob.create({
               data: {
                 tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
+                // Bind the canonical content hash to the durable AiJob column so the
+                // release snapshot + generation gate can confirm the analysis is
+                // current. Without this the column stays null and every tender is
+                // permanently reported as "content changed since the last analysis".
+                analysisInputHash: contentHash,
                 input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
               },
               select: { id: true },
@@ -913,6 +918,11 @@ async function handleStreamingAnalyze(
                 data: {
                   status: streamTerminalStatus,
                   finishedAt: new Date(),
+                  // Re-affirm the canonical hash binding on success. Resumed jobs
+                  // (continueJobId) were created by an earlier request that may
+                  // predate the hash binding, so bind it here too — the release
+                  // snapshot compares this column against the current content hash.
+                  analysisInputHash: contentHash,
                   errorMessage: streamPromoSuperseded
                     ? "Superseded by a newer AI Analyze job. Not promoted to canonical."
                     : null,
@@ -1487,6 +1497,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               jobType: "AI_ANALYZE",
               status: "RUNNING",
               startedAt: new Date(),
+              // Bind the canonical content hash so downstream gates can confirm
+              // the analysis matches the current tender content (see streaming path).
+              analysisInputHash: contentHash,
               input: JSON.stringify({
                 contentLength: tenderContent.length,
                 chunkCount: Math.ceil(tenderContent.length / 50_000),
@@ -1705,6 +1718,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             data: {
               status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
               finishedAt: new Date(),
+              // Re-affirm the canonical hash binding on success (covers resumed jobs).
+              analysisInputHash: contentHash,
               output: JSON.stringify({
                 isPartial: aiMeta.isPartial,
                 totalChunks: aiMeta.totalChunks,
