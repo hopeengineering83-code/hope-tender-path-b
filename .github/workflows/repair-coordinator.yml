@@ -1,0 +1,117 @@
+name: Repair Coordinator
+
+on:
+  issues:
+    types: [opened, labeled, edited, closed]
+  pull_request:
+    types: [opened, synchronize, closed]
+  workflow_run:
+    types: [completed]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+concurrency:
+  group: repair-coordinator
+  cancel-in-progress: false
+
+jobs:
+  coordinate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Select and advance one finding
+        uses: actions/github-script@v7
+        env:
+          PROVIDER: ${{ vars.CODING_AGENT_PROVIDER }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const severityRank = { 'risk:critical': 0, 'risk:high': 1, 'risk:medium': 2, 'risk:low': 3 };
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              labels: 'auto-generated,agent:app',
+              per_page: 100
+            });
+
+            const candidates = issues
+              .filter(i => !i.pull_request)
+              .filter(i => !i.labels.some(l => ['status:running', 'status:pr-opened', 'status:blocked'].includes(l.name)))
+              .sort((a, b) => {
+                const ar = Math.min(...a.labels.map(l => severityRank[l.name] ?? 99));
+                const br = Math.min(...b.labels.map(l => severityRank[l.name] ?? 99));
+                return ar - br || a.number - b.number;
+              });
+
+            if (!candidates.length) {
+              core.notice('No queued finding requires action.');
+              return;
+            }
+
+            const issue = candidates[0];
+            const attempts = (issue.body?.match(/"attempt"\s*:\s*(\d+)/) || [])[1];
+            const attempt = attempts ? Number(attempts) : 0;
+            if (attempt >= 3) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: ['status:blocked'] });
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: 'State: BLOCKED\nReason: Maximum three repair attempts reached. No merge or deployment performed.' });
+              return;
+            }
+
+            if (process.env.PROVIDER !== 'github-copilot') {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: ['status:blocked'] });
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: 'State: BLOCKED_NO_AGENT_PROVIDER\nConfigure the approved coding-agent provider before autonomous repair can continue.' });
+              return;
+            }
+
+            await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: ['status:queued-for-dispatch'] });
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: [
+                '<!-- repair-coordinator -->',
+                `State: QUEUED`,
+                `Attempt: ${attempt + 1}/3`,
+                'Required target: integration/controlled-recovery',
+                'Required output: draft worker PR with executable tests and exact database assertions where persistence is affected.',
+                'Forbidden: merge, approval, production deployment, provider-order drift, weakened gates.'
+              ].join('\n')
+            });
+
+      - name: Reconcile worker PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: prs } = await github.rest.pulls.list({ owner, repo, state: 'open', base: 'integration/controlled-recovery', per_page: 100 });
+            for (const pr of prs) {
+              const marker = /FINDING-[a-f0-9-]+/i.exec(pr.body || '');
+              if (!marker) continue;
+              const { data: checks } = await github.rest.checks.listSuitesForRef({ owner, repo, ref: pr.head.sha });
+              const complete = checks.check_suites.length > 0 && checks.check_suites.every(s => s.status === 'completed');
+              const green = complete && checks.check_suites.every(s => s.conclusion === 'success');
+              const approvedMarker = `APPROVED_HEAD_SHA: ${pr.head.sha}`;
+              if (green && !(pr.body || '').includes(approvedMarker)) {
+                await github.rest.pulls.update({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  body: `${pr.body || ''}\n\n${approvedMarker}`
+                });
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['ready-for-integrator'] });
+              } else if (complete && !green) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['revision-required'] });
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: 'Exact-head checks failed. Revise this same PR. Do not create a replacement PR, merge, or deploy.' });
+              }
+            }
