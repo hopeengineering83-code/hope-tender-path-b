@@ -10,7 +10,7 @@ RELEASE_GATE=.github/workflows/release-gate.yml
 
 grep -q "CONTROL_TOWER_AUDIT" "$CONTROLLER"
 grep -q "Missing authorized exact-head acceptance comment" "$CONTROLLER"
-grep -q "currentSuiteId" "$CONTROLLER"
+grep -q "required-checks.json" "$CONTROLLER"
 grep -q "VALIDATED_HEAD_SHA" "$COORDINATOR"
 if grep -q "APPROVED_HEAD_SHA" "$COORDINATOR"; then echo 'coordinator must not mint APPROVED_HEAD_SHA'; exit 1; fi
 if grep -q "release-control/findings" "$RELEASE_GATE"; then echo 'release gate must not reference obsolete file-backed findings'; exit 1; fi

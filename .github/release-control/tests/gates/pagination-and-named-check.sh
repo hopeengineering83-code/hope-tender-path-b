@@ -10,17 +10,16 @@ cd "$ROOT"
 CONTROLLER=.github/workflows/integration-controller.yml
 COORDINATOR=.github/workflows/repair-coordinator.yml
 
-# --- Integration controller: paginate files, reviews, comments, suites, runs, threads. ---
+# --- Integration controller: paginate files, reviews, comments, runs, threads. ---
 grep -qF 'github.paginate(github.rest.pulls.listFiles' "$CONTROLLER"
 grep -qF 'github.paginate(github.rest.pulls.listReviews' "$CONTROLLER"
 grep -qF 'github.paginate(github.rest.issues.listComments' "$CONTROLLER"
-grep -qF 'github.paginate(github.rest.checks.listSuitesForRef' "$CONTROLLER"
 grep -qF 'github.paginate(github.rest.checks.listForRef' "$CONTROLLER"
 grep -qF 'pageInfo { hasNextPage endCursor }' "$CONTROLLER"   # review-thread cursor pagination
 # The legacy combined-status hard requirement must be gone.
 if grep -qF 'getCombinedStatusForRef' "$CONTROLLER"; then echo 'controller must not require a legacy combined status'; exit 1; fi
-# Named exact-head validation evidence is required directly.
-grep -qF 'worker-exact-head-validation' "$CONTROLLER"
+# The named exact-head validation check is required via the trusted allow-list.
+grep -qF 'required-checks.json' "$CONTROLLER"
 
 # --- Repair coordinator: subscribe to the validation workflow, require the named
 #     check, exclude its own suite, and paginate. ---

@@ -125,8 +125,14 @@ jobs:
           test -f .github/release-control/required-suites.json
           test -f .github/release-control/run-required-suites.sh
           test -f .github/release-control/independent-auditors.json
+          test -f .github/release-control/required-checks.json
           jq empty .github/release-control/required-suites.json
           jq empty .github/release-control/independent-auditors.json
+          jq empty .github/release-control/required-checks.json
+          # Trusted harness: the runner+manifest execute from a trusted default-branch
+          # checkout, and authenticated E2E users are seeded with CI-only credentials.
+          grep -q '_trusted/.github/release-control/run-required-suites.sh' "$wf"
+          grep -q 'scripts/seed-e2e-user.mjs' "$wf"
           # Privilege separation: an untrusted execute job runs worker code, a
           # separate publish-evidence job holds checks:write and runs none.
           grep -q 'execute:' "$wf"

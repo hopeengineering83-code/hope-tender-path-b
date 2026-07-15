@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "description": "Trusted allow-list of NAMED check runs that MUST be present and successful on the exact worker head before integration. Only these checks grant or deny integration authority. Unrelated informational, neutral, cancelled, or stale third-party check suites discovered on the SHA are NOT treated as mandatory and cannot, by themselves, grant authority or permanently block. A required check that is missing or not 'success' fails closed.",
+  "required_checks": [
+    "worker-exact-head-validation"
+  ]
+}

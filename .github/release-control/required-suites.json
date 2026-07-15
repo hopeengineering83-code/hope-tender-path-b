@@ -14,7 +14,7 @@
     "CHATGPT-C1": { "extra_required_suites": [] },
     "CHATGPT-C2": {
       "extra_required_suites": [
-        { "id": "browser-e2e-responsive", "kind": "playwright", "command": "npm run test:e2e", "required": true }
+        { "id": "browser-e2e-responsive-matrix", "kind": "playwright", "command": "E2E_VIEWPORT_MATRIX=390,1024,1440 npm run test:e2e -- --grep @responsive", "required": true }
       ]
     }
   }

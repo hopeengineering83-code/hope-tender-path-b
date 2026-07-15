@@ -138,26 +138,33 @@ jobs:
             }
             if (!acceptedBy) throw new Error(`Missing authorized exact-head acceptance comment: an INDEPENDENT CONTROL_TOWER_AUDIT (Decision: ACCEPT, Reviewed-Head-SHA: ${head}, Reviewer-Role: independent) from an allow-listed independent identity that is not the PR author is required. Green CI alone is not approval.`);
 
-            // Named exact-head check runs are the repository's real status model.
-            // Do NOT require a legacy combined commit status. All check suites and
-            // runs are paginated; the controller's own in-progress suite is excluded.
-            const { data: currentRun } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId });
-            const currentSuiteId = currentRun.check_suite_id;
-            const suites = await github.paginate(github.rest.checks.listSuitesForRef, { owner, repo, ref: head, per_page: 100 });
-            const externalSuites = suites.filter(suite => suite.id !== currentSuiteId);
-            if (externalSuites.length === 0) throw new Error('No external exact-head check suites were found.');
-            for (const suite of externalSuites) {
-              if (suite.status !== 'completed') throw new Error(`Exact-head check suite ${suite.id} is not completed (status=${suite.status}).`);
-              // Anything other than success — missing, skipped, neutral, cancelled,
-              // stale, timed_out, action_required, or failure — blocks integration.
-              if (suite.conclusion !== 'success') throw new Error(`Exact-head check suite ${suite.id} concluded '${suite.conclusion}', which blocks integration.`);
+            // Required-check allow-list from the trusted control-plane config. Named
+            // check runs are the repository's real status model; a legacy combined
+            // commit status is NOT required. ONLY the allow-listed required checks
+            // grant or deny authority — unrelated informational, neutral, cancelled,
+            // or stale third-party suites are not mandatory and cannot by themselves
+            // block integration. A required check that is missing or not successful
+            // fails closed. Check runs are fully paginated.
+            let requiredChecks = [];
+            try {
+              const { data: rc } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/required-checks.json' });
+              requiredChecks = JSON.parse(Buffer.from(rc.content, 'base64').toString('utf8')).required_checks || [];
+            } catch (e) {
+              throw new Error('required-checks.json is missing/unreadable; the required-check policy cannot be established (fail closed).');
             }
-
-            // The exact-head worker validation evidence must be present and green.
+            if (requiredChecks.length === 0) throw new Error('No required checks are configured; integration cannot be authorized (fail closed).');
             const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: head, per_page: 100 });
-            const workerCheck = runs.find(run => run.name === 'worker-exact-head-validation');
-            if (!workerCheck) throw new Error('Missing worker-exact-head-validation evidence for the exact head.');
-            if (workerCheck.status !== 'completed' || workerCheck.conclusion !== 'success') throw new Error(`worker-exact-head-validation concluded '${workerCheck.conclusion}' (status=${workerCheck.status}); integration is blocked.`);
+            for (const name of requiredChecks) {
+              const matching = runs.filter(run => run.name === name);
+              if (matching.length === 0) throw new Error(`Missing required exact-head check '${name}'.`);
+              for (const run of matching) {
+                // Anything other than completed + success — missing, skipped, neutral,
+                // cancelled, stale, timed_out, action_required, or failure — blocks.
+                if (run.status !== 'completed' || run.conclusion !== 'success') {
+                  throw new Error(`Required exact-head check '${name}' concluded '${run.conclusion}' (status=${run.status}); integration is blocked.`);
+                }
+              }
+            }
 
             const currentHead = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data.head.sha;
             if (currentHead !== head) throw new Error('PR head moved during preflight.');

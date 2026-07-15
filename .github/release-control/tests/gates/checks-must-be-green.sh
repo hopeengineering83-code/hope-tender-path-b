@@ -10,13 +10,17 @@ cd "$ROOT"
 CONTROLLER=.github/workflows/integration-controller.yml
 
 # --- Static contract ---
-grep -qF 'externalSuites.length === 0' "$CONTROLLER"           # missing checks block
-grep -qF 'is not completed' "$CONTROLLER"                      # incomplete blocks
-grep -qF 'which blocks integration' "$CONTROLLER"              # any non-success conclusion blocks
-grep -qF 'worker-exact-head-validation' "$CONTROLLER"          # named exact-head check required
+# Only the trusted required-check allow-list grants/denies authority; a required
+# check that is missing or not completed+success blocks. An empty policy fails closed.
+grep -qF 'required-checks.json' "$CONTROLLER"
+grep -qF 'No required checks are configured' "$CONTROLLER"     # empty policy fails closed
+grep -qF 'Missing required exact-head check' "$CONTROLLER"     # a missing required check blocks
+grep -qF 'integration is blocked' "$CONTROLLER"                # any non-success conclusion blocks
 # The legacy combined-status hard requirement must be gone (named checks are the
 # repository's real status model).
 if grep -qF 'getCombinedStatusForRef' "$CONTROLLER"; then echo 'must not require a legacy combined status'; exit 1; fi
+# The controller must NOT treat every discovered suite as mandatory.
+if grep -qF 'listSuitesForRef' "$CONTROLLER"; then echo 'controller must not gate on every check suite'; exit 1; fi
 
 # --- Deterministic simulation of the suite gate ---
 gate() { # gate <status> <conclusion> -> PASS | BLOCK

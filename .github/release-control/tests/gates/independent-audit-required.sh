@@ -17,7 +17,7 @@ grep -qF 'Reviewer-Role' "$CONTROLLER"
 grep -qF 'Reviewed-Head-SHA' "$CONTROLLER"
 grep -qF 'author self-audit is never independent' "$CONTROLLER"   # independent of the author
 grep -qF 'PR head moved during preflight' "$CONTROLLER"          # head move invalidates
-grep -qF 'worker-exact-head-validation' "$CONTROLLER"            # exact-head evidence required
+grep -qF 'required-checks.json' "$CONTROLLER"                    # named exact-head evidence via allow-list
 grep -qF 'Green CI alone is not approval' "$CONTROLLER"
 
 # Green CI alone must not approve: the coordinator only marks awaiting-independent-audit
