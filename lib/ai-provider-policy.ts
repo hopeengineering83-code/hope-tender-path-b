@@ -14,6 +14,13 @@ import {
   CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
   type AiProviderName,
 } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ENV_LIST, CANONICAL_AI_PROVIDER_ENV_NAMES } from "./ai-provider-env";
+
+// Re-export the browser-safe env-name list so consumers that already import
+// from this module can reach it without adding a second import site. The list
+// is derived from the single literal provider order in
+// lib/ai-provider-catalog.cjs — it never re-declares the order.
+export { CANONICAL_AI_PROVIDER_ENV_LIST, CANONICAL_AI_PROVIDER_ENV_NAMES };
 
 export const CANONICAL_AI_PROVIDER_CHAIN = CANONICAL_AI_PROVIDER_ORDER;
 
