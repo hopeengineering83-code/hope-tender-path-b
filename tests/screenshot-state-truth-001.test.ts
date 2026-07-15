@@ -1,6 +1,16 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import {
+  classifyTenderExtractionState,
+  isExtractionCritical,
+  BLOCKED_EXTRACTION_STATES,
+} from "../lib/engine/tender-extraction-state";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  isProviderConfigured,
+  getProviderTimeoutMs,
+} from "../lib/ai-provider-registry";
 
 const dashboardSrc = readFileSync("app/dashboard/page.tsx", "utf8");
 const complianceSrc = readFileSync("app/dashboard/compliance/compliance-dashboard.tsx", "utf8");
@@ -13,17 +23,19 @@ const EXPECTED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gem
 
 describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("dashboard critical-gaps counting includes extraction-blocked tenders", () => {
-    it("counts tenders with the ACTUAL persisted status EXTRACTION_CORRUPTED_AI_SKIPPED", () => {
-      assert.match(dashboardSrc, /EXTRACTION_CORRUPTED_AI_SKIPPED/);
+    it("uses the canonical extraction-state helper (no local status arrays)", () => {
+      assert.match(dashboardSrc, /isExtractionCritical/);
+      assert.doesNotMatch(dashboardSrc, /EXTRACTION_BLOCKED_STATES\s*=\s*new Set/);
     });
 
-    it("includes REGEX_FALLBACK states as blocked", () => {
-      assert.match(dashboardSrc, /REGEX_FALLBACK_AI_ERROR/);
-      assert.match(dashboardSrc, /REGEX_FALLBACK_UNAPPROVED/);
+    it("includes REGEX_FALLBACK states as blocked via canonical helper", () => {
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_AI_ERROR"));
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_UNAPPROVED"));
     });
 
-    it("counts tenders with no analysis as critical gaps", () => {
-      assert.match(dashboardSrc, /hasNoAnalysis/);
+    it("counts tenders with no analysis as critical gaps via canonical helper", () => {
+      assert.match(dashboardSrc, /isExtractionCritical/);
+      assert.match(dashboardSrc, /analysisExtractionStatus/);
     });
 
     it("does not show AI enabled as analysis authority", () => {
@@ -58,13 +70,15 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(analysisSrc, /NOT ANALYZED/);
     });
 
-    it("shows BLOCKED for EXTRACTION_CORRUPTED_AI_SKIPPED (the actual persisted status)", () => {
-      assert.match(analysisSrc, /EXTRACTION_CORRUPTED_AI_SKIPPED/);
+    it("uses the canonical extraction-state helper for BLOCKED detection", () => {
+      assert.match(analysisSrc, /classifyTenderExtractionState/);
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("EXTRACTION_CORRUPTED_AI_SKIPPED"));
     });
 
-    it("shows BLOCKED for REGEX_FALLBACK states", () => {
-      assert.match(analysisSrc, /REGEX_FALLBACK_AI_ERROR/);
-      assert.match(analysisSrc, /REGEX_FALLBACK_UNAPPROVED/);
+    it("shows BLOCKED for REGEX_FALLBACK states via the canonical helper", () => {
+      assert.match(analysisSrc, /classifyTenderExtractionState/);
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_AI_ERROR"));
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_UNAPPROVED"));
     });
 
     it("selects analysisExtractionStatus from the database", () => {
@@ -122,6 +136,82 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
         /Workflow progress|workflow progress|not export readiness/i.test(tendersPageSrc),
         "must label the readinessScore bar as workflow progress, not export readiness"
       );
+    });
+  });
+
+  describe("canonical extraction-state helper", () => {
+    it("classifies NOT_ANALYZED for zero requirements", () => {
+      assert.equal(classifyTenderExtractionState(null, 0), "NOT_ANALYZED");
+      assert.equal(classifyTenderExtractionState("AI_SUCCEEDED", 0), "NOT_ANALYZED");
+    });
+
+    it("classifies NOT_ANALYZED for null/NOT_STARTED status with requirements", () => {
+      assert.equal(classifyTenderExtractionState(null, 5), "NOT_ANALYZED");
+      assert.equal(classifyTenderExtractionState("NOT_STARTED", 5), "NOT_ANALYZED");
+    });
+
+    it("classifies BLOCKED for all actual persisted blocked statuses", () => {
+      for (const status of BLOCKED_EXTRACTION_STATES) {
+        assert.equal(
+          classifyTenderExtractionState(status, 5),
+          "BLOCKED",
+          `status ${status} must be BLOCKED`,
+        );
+      }
+    });
+
+    it("classifies CLEAR for AI_SUCCEEDED with requirements", () => {
+      assert.equal(classifyTenderExtractionState("AI_SUCCEEDED", 5), "CLEAR");
+    });
+
+    it("isExtractionCritical returns true for blocked/not-analyzed, false for clear", () => {
+      assert.equal(isExtractionCritical(null, 0), true);
+      assert.equal(isExtractionCritical("EXTRACTION_CORRUPTED_AI_SKIPPED", 5), true);
+      assert.equal(isExtractionCritical("REGEX_FALLBACK_UNAPPROVED", 5), true);
+      assert.equal(isExtractionCritical("AI_SUCCEEDED", 5), false);
+    });
+
+    it("includes HUMAN_APPROVED_FALLBACK and SUPERSEDED in blocked states", () => {
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("HUMAN_APPROVED_FALLBACK"));
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("SUPERSEDED"));
+      assert.ok(BLOCKED_EXTRACTION_STATES.has("FAILED"));
+    });
+  });
+
+  describe("behavioral runtime provider-order tests", () => {
+    it("CANONICAL_AI_PROVIDER_ORDER at runtime matches expected 10-provider chain", () => {
+      assert.deepEqual(
+        Array.from(CANONICAL_AI_PROVIDER_ORDER),
+        EXPECTED_ORDER,
+      );
+    });
+
+    it("Anthropic is last at runtime", () => {
+      const order = Array.from(CANONICAL_AI_PROVIDER_ORDER);
+      assert.equal(order[order.length - 1], "anthropic");
+    });
+
+    it("every provider has a finite timeout configured", () => {
+      for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
+        const timeout = getProviderTimeoutMs(provider);
+        assert.ok(
+          typeof timeout === "number" && timeout > 0 && Number.isFinite(timeout),
+          `provider ${provider} must have a finite positive timeout, got ${timeout}`,
+        );
+      }
+    });
+
+    it("isProviderConfigured returns false for providers without keys (except gemini which uses GEMINI_API_KEY from test env)", () => {
+      // Gemini may be configured in the test env via GEMINI_API_KEY.
+      // Verify that at least the non-gemini providers are not configured.
+      for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
+        if (provider === "gemini") continue;
+        assert.equal(
+          isProviderConfigured(provider),
+          false,
+          `provider ${provider} should not be configured in test env`,
+        );
+      }
     });
   });
 });

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
+import { classifyTenderExtractionState } from "../../../lib/engine/tender-extraction-state";
 import { StatusBadge } from "../../../components/status-badge";
 import { formatDate } from "../../../lib/tender-workflow";
 
@@ -165,11 +166,12 @@ export default async function AnalysisPage() {
                     <td className="px-5 py-3 hidden md:table-cell">
                       {gaps>0
                         ? <span className={`text-xs font-medium ${critGaps>0?"text-red-600":"text-amber-600"}`}>{gaps} open</span>
-                        : tender.requirements.length===0
-                          ? <span className="text-xs font-medium text-slate-500">NOT ANALYZED</span>
-                          : tender.analysisExtractionStatus && ["OCR_REQUIRED","EXTRACTION_CORRUPTED_AI_SKIPPED","EXTRACTION_CORRUPTED","EXTRACTION_QUALITY_ENGINE_BLOCKED","EXTRACTION_QUALITY_BLOCKED","PARTIAL_EXTRACTION_AI_ANALYZED","ANALYSIS_FROM_CORRUPTED_EXTRACTION","ANALYSIS_FROM_WEAK_EXTRACTION","REGEX_FALLBACK_AI_ERROR","REGEX_FALLBACK_UNAPPROVED"].includes(tender.analysisExtractionStatus)
-                            ? <span className="text-xs font-medium text-red-600">BLOCKED</span>
-                            : <span className="text-xs text-green-600">✓ Clear</span>
+                        : (() => {
+                            const state = classifyTenderExtractionState(tender.analysisExtractionStatus, tender.requirements.length);
+                            if (state === "NOT_ANALYZED") return <span className="text-xs font-medium text-slate-500">NOT ANALYZED</span>;
+                            if (state === "BLOCKED") return <span className="text-xs font-medium text-red-600">BLOCKED</span>;
+                            return <span className="text-xs text-green-600">✓ Clear</span>;
+                          })()
                       }
                     </td>
                     <td className="px-5 py-3"><StatusBadge status={tender.status} /></td>

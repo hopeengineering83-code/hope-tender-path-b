@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../lib/prisma";
 import { StatusBadge } from "../../components/status-badge";
 import { formatDate } from "../../lib/tender-workflow";
 import { isAIEnabled } from "../../lib/ai";
+import { isExtractionCritical } from "../../lib/engine/tender-extraction-state";
 
 export default async function DashboardPage() {
   const userId = await getSession();
@@ -77,7 +78,8 @@ export default async function DashboardPage() {
   const currencies = Array.from(budgetsByCurrency.keys());
   const singleCurrency = currencies.length === 1 ? currencies[0] : null;
   const pipelineValue = singleCurrency ? (budgetsByCurrency.get(singleCurrency) ?? 0) : null;
-  const activeBudgetCount = Array.from(budgetsByCurrency.values()).reduce((a, b) => a + (b > 0 ? 1 : 0), 0);
+  // Count individual tenders with valid budgets, not currency groups.
+  const activeBudgetCount = tenders.filter((t) => t.budget && t.budget > 0 && t.currency).length;
 
   const scoredTenders = tenders.filter((t) => t.readinessScore !== null);
   const avgReadiness = scoredTenders.length > 0
@@ -92,27 +94,14 @@ export default async function DashboardPage() {
 
   // Critical gaps include both unresolved CRITICAL compliance gaps AND tenders
   // with corrupted/partial/fallback/stale extraction that block generation.
-  // A tender with EXTRACTION_CORRUPTED_AI_SKIPPED or similar states IS a
-  // critical gap even if it has zero compliance gap rows.
-  const EXTRACTION_BLOCKED_STATES = new Set([
-    "OCR_REQUIRED",
-    "EXTRACTION_CORRUPTED_AI_SKIPPED",
-    "EXTRACTION_CORRUPTED",
-    "EXTRACTION_QUALITY_ENGINE_BLOCKED",
-    "EXTRACTION_QUALITY_BLOCKED",
-    "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
-    "ANALYSIS_FROM_WEAK_EXTRACTION",
-    "PARTIAL_EXTRACTION_AI_ANALYZED",
-    "REGEX_FALLBACK_AI_ERROR",
-    "REGEX_FALLBACK_UNAPPROVED",
-  ]);
+  // Uses the canonical extraction-state helper — never duplicate status lists.
   const criticalGaps = tenders.reduce((sum, t) => {
     const gapCount = t.complianceGaps?.length ?? 0;
-    const extractionBlocked = t.analysisExtractionStatus
-      ? EXTRACTION_BLOCKED_STATES.has(t.analysisExtractionStatus)
-      : false;
-    const hasNoAnalysis = !t.analysisExtractionStatus || t.analysisExtractionStatus === "NOT_STARTED";
-    return sum + gapCount + (extractionBlocked || hasNoAnalysis ? 1 : 0);
+    const extractionCritical = isExtractionCritical(
+      t.analysisExtractionStatus,
+      t._count?.requirements ?? 0,
+    );
+    return sum + gapCount + (extractionCritical ? 1 : 0);
   }, 0);
 
   return (
@@ -202,8 +191,9 @@ export default async function DashboardPage() {
           )}
           {avgReadiness !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500 font-medium">Avg Readiness</p>
+              <p className="text-sm text-slate-500 font-medium">Avg Workflow Progress</p>
               <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
+              <p className="mt-1 text-xs text-slate-400">Not export readiness</p>
               <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} tenders</p>
             </div>
           )}
