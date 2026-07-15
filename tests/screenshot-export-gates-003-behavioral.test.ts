@@ -437,11 +437,11 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration verification (PostgreSQ
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────
 
 describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, value-bound authority)", () => {
-  it("report page renders 'Unverified legacy value' for non-null currency without explicit confirmation", () => {
-    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+  it("shared helper produces 'Unverified legacy value' for non-null currency without explicit confirmation", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
     assert.ok(
       src.includes("Unverified legacy value"),
-      "report page must render 'Unverified legacy value' for non-null currency without explicit confirmation",
+      "shared helper must return 'Unverified legacy value' display for non-null currency without explicit confirmation",
     );
   });
 
@@ -453,64 +453,122 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, 
     );
   });
 
-  it("report page uses TenderMetadataOverride as currency authority (value-bound)", () => {
-    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+  it("shared helper uses TenderMetadataOverride as currency authority (value-bound)", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
     assert.ok(
       src.includes("tenderMetadataOverride.findFirst"),
-      "report page must query TenderMetadataOverride for currency authority",
+      "shared helper must query TenderMetadataOverride for currency authority",
     );
     assert.ok(
       src.includes('field: "currency"'),
-      "report page must query for field='currency' override",
+      "shared helper must query for field='currency' override",
     );
     // Must NOT accept bare SOURCE_GROUNDED — only confirmed states
     assert.ok(
       src.includes("SOURCE_GROUNDED_CONFIRMED"),
-      "report page must accept SOURCE_GROUNDED_CONFIRMED",
+      "shared helper must accept SOURCE_GROUNDED_CONFIRMED",
     );
     assert.ok(
       src.includes("HUMAN_CONFIRMED_OPERATIONAL"),
-      "report page must accept HUMAN_CONFIRMED_OPERATIONAL",
+      "shared helper must accept HUMAN_CONFIRMED_OPERATIONAL",
     );
   });
 
-  it("report page uses TenderFactsLedger as a second currency authority (value-bound)", () => {
-    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+  it("shared helper uses TenderFactsLedger as a second currency authority (value-bound)", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
     assert.ok(
       src.includes("tenderFactsLedger.findFirst"),
-      "report page must query TenderFactsLedger for currency authority",
+      "shared helper must query TenderFactsLedger for currency authority",
     );
     assert.ok(
       src.includes('semanticKey: "currency"'),
-      "report page must query for semanticKey='currency' ledger fact",
+      "shared helper must query for semanticKey='currency' ledger fact",
     );
   });
 
-  it("report page binds authority value to current tender.currency (rejects stale authority)", () => {
+  it("report page uses the shared resolveCurrencyAuthority helper (not local reimplementation)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    // Per REVISION_REQUIRED (recheck 5) item 1: authority must be value-bound.
-    // The overrideValue / normalizedValue must equal the current tender.currency.
     assert.ok(
-      /authorityValueMatchesTender/.test(src),
-      "report page must compute authorityValueMatchesTender (value-bound check)",
+      src.includes("resolveCurrencyAuthority"),
+      "report page must import and call resolveCurrencyAuthority from the shared helper",
+    );
+    // Must NOT contain local override/ledger queries (reimplemented logic)
+    assert.ok(
+      !src.includes("tenderMetadataOverride.findFirst"),
+      "report page must NOT query tenderMetadataOverride directly (use shared helper)",
+    );
+    assert.ok(
+      !src.includes("tenderFactsLedger.findFirst"),
+      "report page must NOT query tenderFactsLedger directly (use shared helper)",
+    );
+  });
+
+  it("shared helper binds authority value to current tender.currency (rejects stale authority)", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
+    // Per REVISION_REQUIRED (recheck 5) item 1: authority must be value-bound.
+    assert.ok(
+      /overrideValueMatches/.test(src),
+      "shared helper must compute overrideValueMatches (value-bound check)",
+    );
+    assert.ok(
+      /ledgerValueMatches/.test(src),
+      "shared helper must compute ledgerValueMatches (value-bound check)",
     );
     assert.ok(
       /overrideValue.*toUpperCase.*===.*upperCurrency/.test(src.replace(/\s+/g, " ")),
-      "report page must compare overrideValue (normalized) to tender.currency (normalized)",
+      "shared helper must compare overrideValue (normalized) to tender.currency (normalized)",
     );
     assert.ok(
       /normalizedValue.*toUpperCase.*===.*upperCurrency/.test(src.replace(/\s+/g, " ")),
-      "report page must compare normalizedValue (normalized) to tender.currency (normalized)",
+      "shared helper must compare normalizedValue (normalized) to tender.currency (normalized)",
+    );
+  });
+
+  it("shared helper resolves the LATEST override decision (currentness)", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
+    // Per REVISION_REQUIRED (recheck 6) item 2: resolve the latest field
+    // decision first and fail closed when it is no longer current.
+    assert.ok(
+      /orderBy.*updatedAt.*desc/.test(src.replace(/\s+/g, " ")),
+      "shared helper must order by updatedAt desc to get the LATEST decision",
+    );
+    // The helper must query ALL overrides (not just qualifying ones) so the
+    // latest non-qualifying decision takes precedence over older qualifying ones.
+    assert.ok(
+      /where.*tenderId.*field.*currency/.test(src.replace(/\s+/g, " ")),
+      "shared helper must query all currency overrides (not just qualifying classes)",
+    );
+  });
+
+  it("shared helper accepts only SOURCE_GROUNDED_CONFIRMED and HUMAN_CONFIRMED_OPERATIONAL", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
+    assert.ok(
+      src.includes("SOURCE_GROUNDED_CONFIRMED"),
+      "shared helper must accept SOURCE_GROUNDED_CONFIRMED",
+    );
+    assert.ok(
+      src.includes("HUMAN_CONFIRMED_OPERATIONAL"),
+      "shared helper must accept HUMAN_CONFIRMED_OPERATIONAL",
+    );
+    assert.ok(
+      !/authorityClass.*SOURCE_GROUNDED[^_]/.test(src),
+      "shared helper must NOT accept bare SOURCE_GROUNDED",
+    );
+  });
+
+  it("shared helper returns CURRENCY_UNVERIFIED blocker code", () => {
+    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
+    assert.ok(
+      src.includes("CURRENCY_UNVERIFIED"),
+      "shared helper must return CURRENCY_UNVERIFIED blocker code",
     );
   });
 
   it("report page feeds currency verification into isAuthoritative", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    // Per REVISION_REQUIRED (recheck 5) item 3: unverified currency must
-    // block authoritative output.
     assert.ok(
       /hasUnverifiedCurrency/.test(src),
-      "report page must compute hasUnverifiedCurrency",
+      "report page must compute hasUnverifiedCurrency from the shared helper",
     );
     assert.ok(
       /isAuthoritative.*hasUnverifiedCurrency|!hasUnverifiedCurrency.*isAuthoritative/.test(src.replace(/\s+/g, " ")),
@@ -521,8 +579,8 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, 
   it("report page adds CURRENCY_UNVERIFIED blocker when currency is unverified", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      src.includes("CURRENCY_UNVERIFIED"),
-      "report page must add a CURRENCY_UNVERIFIED blocker category when currency is unverified",
+      /currencyAuthority\.blocker/.test(src),
+      "report page must add the shared helper's blocker object to canonicalBlockers",
     );
   });
 

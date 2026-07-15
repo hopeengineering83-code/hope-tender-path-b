@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { resolveCurrencyAuthority } from "../../../../../lib/engine/currency-authority";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -102,73 +103,48 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
     userId,
   }).catch(() => null);
 
-  // ── Currency authority (non-proxy, value-bound model) ─────────────────
-  // Per REVISION_REQUIRED (recheck 5):
-  //   1. Authority must be VALUE-BOUND: the overrideValue / normalizedValue
-  //      must equal the current tender.currency. A stale EUR authority row
-  //      must NOT make a later USD value appear verified.
-  //   2. Only SOURCE_GROUNDED_CONFIRMED and HUMAN_CONFIRMED_OPERATIONAL are
-  //      accepted — bare SOURCE_GROUNDED is NOT enough (no confirmed current
-  //      authority).
-  //   3. Unverified currency feeds into isAuthoritative: if currency is
-  //      non-null but unverified, the report is non-authoritative (the
-  //      canonical readiness model may not include this field-level gate).
-  const currencyOverride = await prisma.tenderMetadataOverride.findFirst({
-    where: {
-      tenderId: id,
-      field: "currency",
-      authorityClass: { in: ["SOURCE_GROUNDED_CONFIRMED", "HUMAN_CONFIRMED_OPERATIONAL"] },
-    },
-    select: { authorityClass: true, fieldState: true, overrideValue: true },
-    orderBy: { updatedAt: "desc" },
-  }).catch(() => null);
-  const currencyLedgerFact = await prisma.tenderFactsLedger.findFirst({
-    where: {
-      tenderId: id,
-      semanticKey: "currency",
-      authorityState: { in: ["SOURCE_GROUNDED_CONFIRMED", "HUMAN_CONFIRMED_OPERATIONAL"] },
-      sourceStatus: "active",
-    },
-    select: { authorityState: true, normalizedValue: true },
-    orderBy: { updatedAt: "desc" },
-  }).catch(() => null);
-
-  // Value-bound check: the authority value must match the current tender.currency.
-  // A stale authority row for a different currency value does NOT verify the
-  // current value.
-  const authorityValueMatchesTender = (() => {
-    if (!tender.currency) return false;
-    const upperCurrency = tender.currency.toUpperCase().trim();
-    if (currencyOverride?.overrideValue) {
-      if (currencyOverride.overrideValue.toUpperCase().trim() === upperCurrency) return true;
-    }
-    if (currencyLedgerFact?.normalizedValue) {
-      if (currencyLedgerFact.normalizedValue.toUpperCase().trim() === upperCurrency) return true;
-    }
-    return false;
-  })();
-  const isCurrencyVerified = Boolean(tender.currency) && authorityValueMatchesTender;
-  const hasUnverifiedCurrency = Boolean(tender.currency) && !isCurrencyVerified;
-
-  // isAuthoritative now requires BOTH canonical readiness AND verified currency
-  // (when currency is non-null). If currency is null, it's "Not extracted"
-  // (not unverified) and does not block authority.
-  const isAuthoritative =
-    canonicalReadiness?.ok === true &&
-    (canonicalReadiness.tenderLevelBlockers.length === 0) &&
-    !hasUnverifiedCurrency;
-  const canonicalBlockers = canonicalReadiness?.tenderLevelBlockers ?? [];
-  const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
-
-  // Add a currency-specific blocker when currency is unverified, so the
-  // non-authoritative banner explains WHY.
-  if (hasUnverifiedCurrency) {
-    canonicalBlockers.push({
+  // ── Currency authority (shared canonical helper) ─────────────────────
+  // Per REVISION_REQUIRED (recheck 6): the currency decision must live in
+  // ONE shared server helper (lib/engine/currency-authority.ts), not
+  // reimplemented in each page. The helper resolves the LATEST override
+  // + ledger decision (currentness), binds the authority value to the
+  // current tender.currency (value-bound), and returns the same
+  // CURRENCY_UNVERIFIED code to every consumer.
+  const currencyAuthority = await resolveCurrencyAuthority(
+    prisma,
+    id,
+    tender.currency,
+  ).catch(() => ({
+    isNull: !tender.currency,
+    isVerified: false,
+    isUnverified: Boolean(tender.currency),
+    display: tender.currency ?? "Not extracted",
+    blockerCode: tender.currency ? "CURRENCY_UNVERIFIED" : null,
+    blocker: tender.currency ? {
       category: "CURRENCY_UNVERIFIED",
       severity: "HIGH",
       title: "Currency value lacks source provenance or explicit user confirmation",
       recommendedAction: "Confirm the currency via the metadata override panel with a source quote, or clear it to 'Not extracted'.",
-    });
+    } : null,
+  }));
+  const hasUnverifiedCurrency = currencyAuthority.isUnverified;
+  const currencyDisplay = currencyAuthority.display;
+
+  // isAuthoritative requires BOTH canonical readiness AND verified currency
+  // (when currency is non-null). Null currency is "Not extracted" (not a
+  // blocker). Unverified currency blocks authority.
+  const isAuthoritative =
+    canonicalReadiness?.ok === true &&
+    (canonicalReadiness.tenderLevelBlockers.length === 0) &&
+    !hasUnverifiedCurrency;
+  const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
+  const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
+
+  // Add the canonical currency blocker when currency is unverified, so the
+  // non-authoritative banner explains WHY. The blocker object comes from
+  // the shared helper — every consumer gets the same object.
+  if (hasUnverifiedCurrency && currencyAuthority.blocker) {
+    canonicalBlockers.push(currencyAuthority.blocker);
   }
 
   // Sort requirements: MANDATORY first, then by priority order
@@ -183,17 +159,9 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
-  // ── Currency provenance (non-proxy authority model) ───────────────────
-  // Per REVISION_REQUIRED (recheck 3): do NOT use analysisExtractionStatus
-  // as a proxy. Without field-level source provenance or explicit user
-  // confirmation, ALL legacy currency is unverified. The only authority
-  // is a TenderMetadataOverride or TenderFactsLedger row with a trusted
-  // authorityClass/authorityState. This fails SAFE (unverified) for any
-  // tender that lacks explicit confirmation — no denylist, no fail-open.
-  const isCurrencyUnverified = Boolean(tender.currency) && !isCurrencyVerified;
-  const currencyDisplay = tender.currency
-    ? (isCurrencyUnverified ? "Unverified legacy value" : tender.currency)
-    : "Not extracted";
+  // currencyDisplay is set by the shared resolveCurrencyAuthority helper above.
+  // isCurrencyUnverified is derived from the shared helper result.
+  const isCurrencyUnverified = hasUnverifiedCurrency;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8 font-sans text-slate-900 print:max-w-none print:px-0 print:py-0">
