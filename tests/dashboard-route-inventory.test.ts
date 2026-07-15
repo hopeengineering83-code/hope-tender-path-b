@@ -24,3 +24,19 @@ test("dead dashboard admin root is neither advertised nor implemented", () => {
   assert.equal(existsSync("app/dashboard/admin/page.tsx"), false);
   assert.equal(existsSync("app/dashboard/admin/ai-readiness/page.tsx"), true, "authorized child admin route remains available");
 });
+
+test("owned restricted routes use the shared server-side role guard", () => {
+  const expected: Record<string, string[]> = {
+    "app/dashboard/settings/layout.tsx": ["ADMIN", "PROPOSAL_MANAGER"],
+    "app/dashboard/assets/layout.tsx": ["ADMIN", "PROPOSAL_MANAGER"],
+    "app/dashboard/setup/layout.tsx": ["ADMIN", "PROPOSAL_MANAGER"],
+    "app/dashboard/users/layout.tsx": ["ADMIN"],
+  };
+
+  for (const [path, roles] of Object.entries(expected)) {
+    assert.equal(existsSync(path), true, `${path} must exist`);
+    const source = readFileSync(path, "utf8");
+    assert.match(source, /requireDashboardRole/);
+    for (const role of roles) assert.match(source, new RegExp(`["']${role}["']`));
+  }
+});
