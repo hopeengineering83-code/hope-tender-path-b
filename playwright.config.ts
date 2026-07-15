@@ -19,9 +19,12 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   "tender-list.spec.ts",
 ];
 
-// Tablet-only authenticated specs — validate tablet-specific UX (touch
-// targets, overflow, viewport). These run only under samsung-tablet-primary.
-const TABLET_AUTHENTICATED_SPECS = ["tablet-universal-tender-intelligence.spec.ts"];
+// Tablet-authenticated contract specs validate responsive UI and the settings
+// API used by that UI. Both reuse the one primary session created by global setup.
+const TABLET_AUTHENTICATED_SPECS = [
+  "tablet-universal-tender-intelligence.spec.ts",
+  "settings-api-contract.spec.ts",
+];
 
 export default defineConfig({
   testDir: "./e2e",
