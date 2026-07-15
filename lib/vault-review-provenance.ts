@@ -11,20 +11,43 @@ export type ReviewEvidenceField = {
 
 export type ReviewSourceDocument = {
   id: string;
+  companyId?: string | null;
   extractedText: string | null | undefined;
   contentSha256?: string | null;
   contentByteLength?: number | null;
   integrityStatus?: string | null;
 };
 
-export type ReviewRecordState = {
+export const VAULT_REVIEW_CONSUMER_SELECT = {
+  companyId: true,
+  trustLevel: true,
+  reviewedBy: true,
+  reviewedAt: true,
+  reviewNotes: true,
+  sourceDocumentId: true,
+  sourceDocument: {
+    select: {
+      id: true,
+      companyId: true,
+      extractedText: true,
+      contentSha256: true,
+      contentByteLength: true,
+      integrityStatus: true,
+    },
+  },
+} as const;
+
+export type VaultReviewConsumerRecord = {
+  companyId: string;
   trustLevel?: string | null;
   reviewedBy?: string | null;
   reviewedAt?: Date | string | null;
   reviewNotes?: string | null;
   sourceDocumentId?: string | null;
-  sourceDocument?: ReviewSourceDocument | null;
+  sourceDocument?: (ReviewSourceDocument & { companyId: string }) | null;
 };
+
+export type ReviewRecordState = VaultReviewConsumerRecord;
 
 export type DurableReviewEvidence = {
   field: string;
@@ -262,6 +285,7 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
     provenance.sourceDocumentId !== record.sourceDocumentId ||
     !record.sourceDocument ||
     record.sourceDocument.id !== record.sourceDocumentId ||
+    record.sourceDocument.companyId !== record.companyId ||
     !sourceTextIsUsable(record.sourceDocument.extractedText) ||
     !sourceByteIntegrityIsVerified(record.sourceDocument) ||
     !record.reviewedBy ||

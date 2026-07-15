@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
 const repairRoute = readFileSync("app/api/company/knowledge/repair/route.ts", "utf8");
+const provenanceSource = readFileSync("lib/vault-review-provenance.ts", "utf8");
 const expertBatch = readFileSync("app/api/company/experts/batch/route.ts", "utf8");
 const projectBatch = readFileSync("app/api/company/projects/batch/route.ts", "utf8");
 
@@ -34,6 +35,16 @@ describe("company review privacy and pagination contracts", () => {
     assert.match(repairRoute, /unsupportedReviewedProjects/);
     assert.match(repairRoute, /effectiveReviewTrustLevel/);
     assert.match(reviewPage, /Blocked — provenance required/);
+  });
+
+  it("exports one fail-closed consumer record and query contract", () => {
+    assert.match(provenanceSource, /VAULT_REVIEW_CONSUMER_SELECT/);
+    assert.match(provenanceSource, /companyId: true/);
+    assert.match(provenanceSource, /reviewNotes: true/);
+    assert.match(provenanceSource, /contentSha256: true/);
+    assert.match(provenanceSource, /contentByteLength: true/);
+    assert.match(provenanceSource, /integrityStatus: true/);
+    assert.match(provenanceSource, /record\.sourceDocument\.companyId !== record\.companyId/);
   });
 });
 

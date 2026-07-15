@@ -10,6 +10,7 @@ import {
   redactVaultText,
   REVIEW_PROVENANCE_PREFIX,
   safeVaultFileLabel,
+  VAULT_REVIEW_CONSUMER_SELECT,
 } from "../lib/vault-review-provenance";
 
 describe("vault privacy redaction", () => {
@@ -53,6 +54,7 @@ describe("durable per-field vault review provenance", () => {
   const sourceHash = createHash("sha256").update(sourceText, "utf8").digest("hex");
   const sourceDocument = {
     id: "source-doc-1",
+    companyId: "company-1",
     extractedText: sourceText,
     contentSha256: sourceHash,
     contentByteLength: Buffer.byteLength(sourceText),
@@ -84,6 +86,7 @@ describe("durable per-field vault review provenance", () => {
     assert.ok(result.evidenceFields.includes("title"));
 
     const record = {
+      companyId: "company-1",
       trustLevel: "REVIEWED",
       reviewedBy: "reviewer-1",
       reviewedAt,
@@ -96,6 +99,11 @@ describe("durable per-field vault review provenance", () => {
     assert.equal(canUseVaultRecord(record, "MATCHING"), true);
     assert.equal(canUseVaultRecord(record, "GENERATION"), true);
     assert.equal(canUseVaultRecord(record, "EXPORT"), true);
+
+    assert.equal(isDurablyReviewed({
+      ...record,
+      sourceDocument: { ...sourceDocument, companyId: "company-2" },
+    }), false);
 
     const changedSource = {
       ...record,
@@ -118,6 +126,7 @@ describe("durable per-field vault review provenance", () => {
 
   it("fails closed when reviewer, timestamp, source, or provenance is missing", () => {
     const unsupported = {
+      companyId: "company-1",
       trustLevel: "REVIEWED",
       reviewedBy: "reviewer-1",
       reviewedAt: new Date(),
@@ -129,6 +138,27 @@ describe("durable per-field vault review provenance", () => {
     assert.equal(canUseVaultRecord(unsupported, "MATCHING"), false);
     assert.equal(canUseVaultRecord(unsupported, "GENERATION"), false);
     assert.equal(canUseVaultRecord(unsupported, "EXPORT"), false);
+  });
+
+  it("exports one required consumer query shape", () => {
+    assert.deepEqual(VAULT_REVIEW_CONSUMER_SELECT, {
+      companyId: true,
+      trustLevel: true,
+      reviewedBy: true,
+      reviewedAt: true,
+      reviewNotes: true,
+      sourceDocumentId: true,
+      sourceDocument: {
+        select: {
+          id: true,
+          companyId: true,
+          extractedText: true,
+          contentSha256: true,
+          contentByteLength: true,
+          integrityStatus: true,
+        },
+      },
+    });
   });
 
   it("rejects extracted text when verified source-byte integrity is missing", () => {

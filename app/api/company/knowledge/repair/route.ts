@@ -97,6 +97,7 @@ async function buildDiagnostics(
     prisma.expert.findMany({
       where: { companyId, deletedAt: null },
       select: {
+        companyId: true,
         trustLevel: true,
         reviewedBy: true,
         reviewedAt: true,
@@ -110,6 +111,7 @@ async function buildDiagnostics(
     prisma.project.findMany({
       where: { companyId, deletedAt: null },
       select: {
+        companyId: true,
         trustLevel: true,
         reviewedBy: true,
         reviewedAt: true,
@@ -124,6 +126,7 @@ async function buildDiagnostics(
       where: { companyId, deletedAt: null },
       select: {
         id: true,
+        companyId: true,
         fullName: true,
         title: true,
         yearsExperience: true,
@@ -147,6 +150,7 @@ async function buildDiagnostics(
       where: { companyId, deletedAt: null },
       select: {
         id: true,
+        companyId: true,
         name: true,
         clientName: true,
         country: true,

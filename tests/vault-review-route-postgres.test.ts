@@ -205,6 +205,7 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
     const reviewed = await prisma.expert.findUniqueOrThrow({
       where: { id: ownedExpert.id },
       select: {
+        companyId: true,
         trustLevel: true,
         reviewedBy: true,
         reviewedAt: true,
@@ -213,6 +214,7 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
         sourceDocument: {
           select: {
             id: true,
+            companyId: true,
             extractedText: true,
             contentSha256: true,
             contentByteLength: true,

@@ -107,11 +107,11 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
     const [expert, project] = await Promise.all([
       prisma.expert.findUniqueOrThrow({
         where: { id: expertId },
-        select: { trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
       prisma.project.findUniqueOrThrow({
         where: { id: projectId },
-        select: { trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
     ]);
 
@@ -126,6 +126,7 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
   it("accepts records only after per-field source evidence and reviewer audit are persisted", async () => {
     const sourceDocument = {
       id: documentId,
+      companyId,
       extractedText: sourceText,
       contentSha256: sourceHash,
       contentByteLength: Buffer.byteLength(sourceText),
@@ -170,11 +171,11 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
     const [expert, project] = await Promise.all([
       prisma.expert.findUniqueOrThrow({
         where: { id: expertId },
-        select: { trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
       prisma.project.findUniqueOrThrow({
         where: { id: projectId },
-        select: { trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
     ]);
     assert.equal(isDurablyReviewed(expert), true);
