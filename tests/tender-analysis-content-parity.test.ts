@@ -65,8 +65,10 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
 describe("both execution paths wire the shared builder (single source of truth)", () => {
   it("the AI Analyze route uses buildTenderAnalysisContent + computeAnalysisContentHash", () => {
     const route = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-    const builds = (route.match(/buildTenderAnalysisContent\(tenderRecord, company\)/g) ?? []).length;
-    assert.ok(builds >= 2, `both route paths must use the shared builder (found ${builds})`);
+    // Both paths build from the tender record's ACTIVE files + the company vault,
+    // matching the input set the snapshot/gate recompute the hash from.
+    const builds = (route.match(/buildTenderAnalysisContent\(\s*\{ \.\.\.tenderRecord, files:[\s\S]*?company,\s*\)/g) ?? []).length;
+    assert.ok(builds >= 2, `both route paths must use the shared builder with ACTIVE files + company (found ${builds})`);
     assert.match(route, /computeAnalysisContentHash\(tenderContent\)/);
     // The old inline builders/hashing must be gone.
     assert.doesNotMatch(route, /crypto\.createHash\("sha256"\)\.update\(tenderContent\)/);

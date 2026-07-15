@@ -88,8 +88,9 @@ describe("release gap audit regressions", () => {
     const builder = source("lib/engine/tender-analysis-content.ts");
     assert.match(builder, /createHash\("sha256"\)\.update\(d\.extractedText\.slice\(0, 10_000\)\)/);
     assert.match(builder, /\[digest:\$\{textDigest\}\]/);
-    // And the route delegates to the shared builder.
+    // And the route delegates to the shared builder, passing the tender record's
+    // ACTIVE files + the company vault so vault text still folds into the hash.
     const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(route, /buildTenderAnalysisContent\(tenderRecord, company\)/);
+    assert.match(route, /buildTenderAnalysisContent\(\s*\{ \.\.\.tenderRecord, files:[\s\S]*?company,\s*\)/);
   });
 });

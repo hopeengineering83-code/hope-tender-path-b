@@ -474,7 +474,14 @@ async function handleStreamingAnalyze(
           }),
           prisma.company.findUnique({
             where: { userId },
-            include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+            // Unbounded, unordered select — MUST match the vault-document set that
+      // tender-release-snapshot.ts and generation-readiness-gate.ts recompute
+      // the content hash from. A `take`/`orderBy` here would make the route
+      // hash a different document set than the gate, so a fresh analysis would
+      // store a hash the gate can never reproduce (permanent ANALYSIS_HASH_MISMATCH
+      // for any company with more than the capped number of vault documents).
+      // Deterministic ordering is handled downstream by buildTenderAnalysisContent.
+      include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
           }),
         ]);
 
@@ -566,7 +573,16 @@ async function handleStreamingAnalyze(
         // Shared builder — IDENTICAL content + hash to the non-streaming path
         // and the durable job service, so all execution paths share one
         // chunk-state identity.
-        const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
+        // Build the analysis content (and its hash) from ACTIVE files only, so
+        // the persisted analysisInputHash matches what tender-release-snapshot.ts
+        // and generation-readiness-gate.ts recompute (they both filter
+        // `deletionStatus === "ACTIVE"`). Hashing soft-deleted/non-active files
+        // here would store a hash the gate can never reproduce, leaving the
+        // tender permanently stuck on ANALYSIS_HASH_MISMATCH after a re-analyze.
+        const tenderContent = buildTenderAnalysisContent(
+          { ...tenderRecord, files: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE") },
+          company,
+        );
         const contentHash = computeAnalysisContentHash(tenderContent);
         if (force) {
           await clearAnalyzeCheckpoints(id, userId, contentHash);
@@ -1280,7 +1296,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     prisma.company.findUnique({
       where: { userId },
-      include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
+      // Unbounded, unordered select — MUST match the vault-document set that
+      // tender-release-snapshot.ts and generation-readiness-gate.ts recompute
+      // the content hash from. A `take`/`orderBy` here would make the route
+      // hash a different document set than the gate, so a fresh analysis would
+      // store a hash the gate can never reproduce (permanent ANALYSIS_HASH_MISMATCH
+      // for any company with more than the capped number of vault documents).
+      // Deterministic ordering is handled downstream by buildTenderAnalysisContent.
+      include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
     }),
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
@@ -1438,7 +1461,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Shared builder — IDENTICAL content + hash to the streaming path and
         // the durable job service (lib/ai-jobs/analysis-job-service.ts), so all
         // execution paths share one chunk-state identity.
-        const tenderContent = buildTenderAnalysisContent(tenderRecord, company);
+        // Build the analysis content (and its hash) from ACTIVE files only, so
+        // the persisted analysisInputHash matches what tender-release-snapshot.ts
+        // and generation-readiness-gate.ts recompute (they both filter
+        // `deletionStatus === "ACTIVE"`). Hashing soft-deleted/non-active files
+        // here would store a hash the gate can never reproduce, leaving the
+        // tender permanently stuck on ANALYSIS_HASH_MISMATCH after a re-analyze.
+        const tenderContent = buildTenderAnalysisContent(
+          { ...tenderRecord, files: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE") },
+          company,
+        );
 
         // Compute content hash for continuation validation and auto-resume discovery
         const contentHash = computeAnalysisContentHash(tenderContent);

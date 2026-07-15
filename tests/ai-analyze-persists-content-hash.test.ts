@@ -89,6 +89,45 @@ describe("release snapshot + generation gate compare against analysisInputHash (
   });
 });
 
+describe("AI Analyze route hashes the SAME input set the snapshot/gate recompute from", () => {
+  // The release snapshot (tender-release-snapshot.ts) and the generation gate
+  // (generation-readiness-gate.ts) recompute the current content hash from ONLY
+  // active tender files (deletionStatus === "ACTIVE") and an UNBOUNDED vault
+  // document select. If the route binds a hash built from a different input set —
+  // e.g. all files including soft-deleted ones, or a `take`-capped vault subset —
+  // a fresh analysis stores a hash the gate can never reproduce, leaving the
+  // tender permanently stuck on ANALYSIS_HASH_MISMATCH. These guards lock the
+  // route's analysis-content inputs to the canonical set.
+
+  it("builds analysis content from ACTIVE files only at every buildTenderAnalysisContent call site", () => {
+    const callSites = src.split("buildTenderAnalysisContent(").length - 1;
+    assert.ok(callSites >= 2, `expected the streaming + non-streaming content builders, found ${callSites}`);
+    const activeFilters = src.split('files: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE")').length - 1;
+    assert.ok(
+      activeFilters >= 2,
+      `every buildTenderAnalysisContent call must pass ACTIVE-filtered files (found ${activeFilters} of ${callSites})`,
+    );
+  });
+
+  it("does NOT cap the vault-document set feeding the content hash", () => {
+    assert.ok(
+      !src.includes("{ category: true, originalFileName: true, extractedText: true }, take:"),
+      "the company documents query feeding analysis content must not use `take:` — it must match the snapshot/gate's unbounded select",
+    );
+  });
+
+  it("matches the snapshot/gate active-file predicate exactly (=== \"ACTIVE\", not a null fallback)", () => {
+    const snap = readFileSync(resolve(process.cwd(), "lib/engine/tender-release-snapshot.ts"), "utf8");
+    const gate = readFileSync(resolve(process.cwd(), "lib/engine/generation-readiness-gate.ts"), "utf8");
+    assert.ok(snap.includes('f.deletionStatus === "ACTIVE"'), "snapshot must filter active files with === \"ACTIVE\"");
+    assert.ok(gate.includes('f.deletionStatus === "ACTIVE"'), "gate must filter active files with === \"ACTIVE\"");
+    assert.ok(
+      src.includes('f.deletionStatus === "ACTIVE"'),
+      "route must use the identical === \"ACTIVE\" predicate so the hashed file set matches the gate",
+    );
+  });
+});
+
 describe("canonical content hash is independent of Company Vault document order", () => {
   // Company.documents is loaded WITHOUT an orderBy in the route, the snapshot,
   // and the generation gate, so PostgreSQL may return the rows in different

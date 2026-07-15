@@ -174,9 +174,16 @@ dbDescribe("AI Analyze analysisInputHash binding (PostgreSQL behavioral)", () =>
     companyId = company.id;
     // Seed vault documents in a deliberately NON-alphabetical insertion order so
     // the deterministic-sort fix is genuinely exercised (physical order != sorted).
+    // SEVEN documents (> the old take:5 cap) so every success assertion below also
+    // proves the route now hashes the FULL, unbounded vault-document set — matching
+    // the snapshot/gate — rather than a capped subset that could never reproduce.
     await seedCompanyDocument(prisma, companyId, "Zulu Audited Financials.pdf", "FINANCIAL", "Audited statements 2025.");
     await seedCompanyDocument(prisma, companyId, "Alpha Company Profile.pdf", "PROFILE", "Company profile and history.");
     await seedCompanyDocument(prisma, companyId, "Mike Key Personnel CVs.pdf", "CV", "CVs of key experts.");
+    await seedCompanyDocument(prisma, companyId, "Delta Tax Clearance.pdf", "LEGAL", "Tax clearance certificate.");
+    await seedCompanyDocument(prisma, companyId, "Echo ISO Certificate.pdf", "CERT", "ISO 9001 certificate.");
+    await seedCompanyDocument(prisma, companyId, "Foxtrot Bank Reference.pdf", "FINANCIAL", "Bank reference letter.");
+    await seedCompanyDocument(prisma, companyId, "Golf Project References.pdf", "PROJECT", "Past project references.");
   });
 
   after(async () => {
@@ -188,6 +195,15 @@ dbDescribe("AI Analyze analysisInputHash binding (PostgreSQL behavioral)", () =>
     const t = await seedTender(prisma, { userId: user.id, suffix: testSuffix() });
     tenderIds.push(t.id);
     await seedTenderFile(prisma, { tenderId: t.id, suffix: testSuffix(), extractedText: EXTRACTED });
+    // A soft-deleted file that MUST NOT participate in the content hash. The
+    // snapshot/gate exclude deletionStatus !== "ACTIVE"; the fixed route now does
+    // too. Its presence proves a non-active file does not break contentHashMatch.
+    await seedTenderFile(prisma, {
+      tenderId: t.id,
+      suffix: testSuffix(),
+      extractedText: "SUPERSEDED DRAFT — this soft-deleted file must be excluded from the analysis hash.",
+      deletionStatus: "DELETED",
+    });
     // At least one requirement so the resolver treats the success as fully
     // structured (avoids SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED).
     await seedRequirement(prisma, { tenderId: t.id, title: "Audited financial statements", priority: "MANDATORY" });
@@ -333,7 +349,9 @@ dbDescribe("AI Analyze analysisInputHash binding (PostgreSQL behavioral)", () =>
     assert.ok(companyDocs.length >= 3, "expected the seeded vault documents");
     const forward = canonicalHashFor(files, [...companyDocs], tender);
     const reversed = canonicalHashFor(files, [...companyDocs].reverse(), tender);
-    const shuffled = canonicalHashFor(files, [companyDocs[1], companyDocs[2], companyDocs[0]], tender);
+    // A full permutation of ALL documents (rotate by 2) — not a subset — so the
+    // set is identical and only the order differs.
+    const shuffled = canonicalHashFor(files, [...companyDocs.slice(2), ...companyDocs.slice(0, 2)], tender);
     assert.equal(forward, reversed, "hash must be identical when vault documents are reversed");
     assert.equal(forward, shuffled, "hash must be identical when vault documents are shuffled");
   });
