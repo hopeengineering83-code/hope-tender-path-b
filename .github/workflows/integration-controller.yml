@@ -34,37 +34,71 @@ jobs:
       head_sha: ${{ steps.validate.outputs.head_sha }}
       integration_branch: ${{ steps.validate.outputs.integration_branch }}
     steps:
-      - name: Validate immutable approved PR
+      - name: Validate immutable manager-accepted PR
         id: validate
         uses: actions/github-script@v7
         env:
           INPUT_PR: ${{ inputs.pr_number }}
         with:
           script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
             const prNumber = context.eventName === 'pull_request'
               ? context.payload.pull_request.number
               : Number(process.env.INPUT_PR);
-            const { data: pr } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber });
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
             if (pr.state !== 'open') throw new Error('PR is not open.');
             if (pr.base.ref !== 'integration/controlled-recovery') throw new Error('Worker PR must target integration/controlled-recovery.');
-            if (pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) throw new Error('Fork PRs are not eligible.');
+            if (pr.head.repo.full_name !== `${owner}/${repo}`) throw new Error('Fork PRs are not eligible.');
+
             const actor = context.eventName === 'pull_request' ? context.payload.sender.login : context.actor;
-            const { data: level } = await github.rest.repos.getCollaboratorPermissionLevel({ owner: context.repo.owner, repo: context.repo.repo, username: actor });
-            if (!['admin', 'maintain', 'write'].includes(level.permission)) throw new Error('Approval actor lacks write permission.');
-            const { data: reviews } = await github.rest.pulls.listReviews({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber, per_page: 100 });
-            const latest = new Map();
-            for (const review of reviews) latest.set(review.user.login, review.state);
-            if ([...latest.values()].includes('CHANGES_REQUESTED')) throw new Error('Requested-changes review exists.');
-            const { data: files } = await github.rest.pulls.listFiles({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber, per_page: 100 });
-            const forbidden = files.filter(f => f.filename.startsWith('.github/') || f.filename === 'vercel.json');
-            if (forbidden.length) throw new Error(`Forbidden worker files: ${forbidden.map(f => f.filename).join(', ')}`);
-            const migrations = files.filter(f => f.filename.startsWith('prisma/migrations/'));
+            const { data: actorLevel } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: actor });
+            if (!['admin', 'maintain', 'write'].includes(actorLevel.permission)) throw new Error('Integration actor lacks write permission.');
+
+            const { data: reviews } = await github.rest.pulls.listReviews({ owner, repo, pull_number: prNumber, per_page: 100 });
+            const latestReviews = new Map();
+            for (const review of reviews) latestReviews.set(review.user.login, review.state);
+            if ([...latestReviews.values()].includes('CHANGES_REQUESTED')) throw new Error('Requested-changes review exists.');
+
+            const { data: files } = await github.rest.pulls.listFiles({ owner, repo, pull_number: prNumber, per_page: 100 });
+            const forbidden = files.filter(file => file.filename.startsWith('.github/') || file.filename === 'vercel.json');
+            if (forbidden.length) throw new Error(`Forbidden worker files: ${forbidden.map(file => file.filename).join(', ')}`);
+            const migrations = files.filter(file => file.filename.startsWith('prisma/migrations/'));
             if (migrations.length && !/MIGRATION_DECLARED:\s*YES/i.test(pr.body || '')) throw new Error('Migration not declared.');
-            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({ owner: context.repo.owner, repo: context.repo.repo, ref: pr.head.sha });
-            const { data: suites } = await github.rest.checks.listSuitesForRef({ owner: context.repo.owner, repo: context.repo.repo, ref: pr.head.sha });
-            if (combined.state !== 'success' || suites.check_suites.some(s => s.status !== 'completed' || s.conclusion !== 'success')) throw new Error('Exact-head checks are not all green.');
-            const marker = `APPROVED_HEAD_SHA: ${pr.head.sha}`;
-            if (!(pr.body || '').includes(marker)) throw new Error(`Missing immutable approval marker: ${marker}`);
+
+            const marker = `ACCEPTED_HEAD_SHA: ${pr.head.sha}`;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+            let acceptedBy = null;
+            for (const comment of [...comments].reverse()) {
+              if (comment.user?.type === 'Bot' || !(comment.body || '').split(/\r?\n/).some(line => line.trim() === marker)) continue;
+              try {
+                const { data: level } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login });
+                if (['admin', 'maintain', 'write'].includes(level.permission)) {
+                  acceptedBy = comment.user.login;
+                  break;
+                }
+              } catch {
+                // Ignore comments from actors who are no longer collaborators.
+              }
+            }
+            if (!acceptedBy) throw new Error(`Missing authorized exact-head acceptance comment: ${marker}`);
+
+            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: pr.head.sha });
+            if (combined.state !== 'success') throw new Error('Exact-head commit status is not successful.');
+
+            const { data: currentRun } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId });
+            const currentSuiteId = currentRun.check_suite_id;
+            const { data: suites } = await github.rest.checks.listSuitesForRef({ owner, repo, ref: pr.head.sha });
+            const externalSuites = suites.check_suites.filter(suite => suite.id !== currentSuiteId);
+            if (externalSuites.length === 0) throw new Error('No external exact-head check suites were found.');
+            if (externalSuites.some(suite => suite.status !== 'completed' || suite.conclusion !== 'success')) {
+              throw new Error('External exact-head checks are not all green.');
+            }
+
+            const currentHead = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data.head.sha;
+            if (currentHead !== pr.head.sha) throw new Error('PR head moved during preflight.');
+
+            core.notice(`Accepted by @${acceptedBy} for exact head ${pr.head.sha}`);
             core.setOutput('pr_number', String(prNumber));
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('integration_branch', 'integration/controlled-recovery');
@@ -82,7 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ needs.preflight.outputs.pr_number }}
-          APPROVED_HEAD: ${{ needs.preflight.outputs.head_sha }}
+          ACCEPTED_HEAD: ${{ needs.preflight.outputs.head_sha }}
           INTEGRATION_BRANCH: ${{ needs.preflight.outputs.integration_branch }}
         shell: bash
         run: |
@@ -90,19 +124,28 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           START_SHA=$(git rev-parse HEAD)
-          test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$APPROVED_HEAD"
-          git fetch origin "$APPROVED_HEAD"
+          test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$ACCEPTED_HEAD"
+          git fetch origin "$ACCEPTED_HEAD"
           git switch -c "candidate-${GITHUB_RUN_ID}" "$START_SHA"
           for sha in $(gh pr view "$PR_NUMBER" --json commits --jq '.commits[].oid'); do
-            git cherry-pick "$sha" || { git cherry-pick --abort || true; git reset --hard "$START_SHA"; exit 1; }
+            git cherry-pick "$sha" || {
+              git cherry-pick --abort || true
+              git reset --hard "$START_SHA"
+              exit 1
+            }
           done
-          test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$APPROVED_HEAD"
+          test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$ACCEPTED_HEAD"
           git push origin "HEAD:refs/heads/$INTEGRATION_BRANCH"
       - name: Record incorporation
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: Number('${{ needs.preflight.outputs.pr_number }}'), body: `INCORPORATED exact head \`${{ needs.preflight.outputs.head_sha }}\` into \`${{ needs.preflight.outputs.integration_branch }}\`. No merge to main or production deployment was performed.` });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ needs.preflight.outputs.pr_number }}'),
+              body: `INCORPORATED exact head \`${{ needs.preflight.outputs.head_sha }}\` into \`${{ needs.preflight.outputs.integration_branch }}\`. No merge to main or production deployment was performed.`
+            });
 
   release-gate:
     if: >-
