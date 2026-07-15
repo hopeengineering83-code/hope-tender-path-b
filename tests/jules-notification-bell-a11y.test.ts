@@ -85,7 +85,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     });
   });
 
-  it("provides meaningful accessible label for '✕' button on unread notification", async () => {
+  it("provides specific meaningful accessible label for '✕' button on unread notification", async () => {
     const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
     const button = container.querySelector("button");
     assert.ok(button);
@@ -94,10 +94,16 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
 
     await waitFor(() => {
       const closeButtons = container.querySelectorAll("#notification-popup button");
-      // Find the cross buttons (there should be '✕' close buttons with aria-label)
-      const markReadBtn = Array.from(closeButtons).find((btn) => btn.getAttribute("aria-label") === "Mark as read");
-      assert.ok(markReadBtn);
-      assert.equal(markReadBtn.textContent?.trim(), "✕");
+      // Find the cross buttons (there should be '✕' close buttons with a specific aria-label)
+      const markReadBtn1 = Array.from(closeButtons).find(
+        (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+      );
+      const markReadBtn2 = Array.from(closeButtons).find(
+        (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Proposal Generated" as read'
+      );
+      assert.ok(markReadBtn1);
+      assert.ok(markReadBtn2);
+      assert.equal(markReadBtn1.textContent?.trim(), "✕");
     });
   });
 
@@ -154,7 +160,9 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     });
 
     const closeButtons = container.querySelectorAll("#notification-popup button");
-    const markReadBtn = Array.from(closeButtons).find((btn) => btn.getAttribute("aria-label") === "Mark as read") as HTMLButtonElement;
+    const markReadBtn = Array.from(closeButtons).find(
+      (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+    ) as HTMLButtonElement;
     assert.ok(markReadBtn);
 
     // Click mark read
@@ -192,7 +200,9 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     });
 
     const closeButtons = container.querySelectorAll("#notification-popup button");
-    const markReadBtn = Array.from(closeButtons).find((btn) => btn.getAttribute("aria-label") === "Mark as read") as HTMLButtonElement;
+    const markReadBtn = Array.from(closeButtons).find(
+      (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+    ) as HTMLButtonElement;
     assert.ok(markReadBtn);
 
     // Click mark read
@@ -211,5 +221,66 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     // No error alert should be surfaced in the popup
     const alertDiv = container.querySelector("[role='alert']");
     assert.ok(!alertDiv);
+  });
+
+  it("disables markRead close button and ignores duplicate rapid clicks to prevent race conditions", async () => {
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const closeButtons = container.querySelectorAll("#notification-popup button");
+    const markReadBtn = Array.from(closeButtons).find(
+      (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+    ) as HTMLButtonElement;
+    assert.ok(markReadBtn);
+
+    // Click mark read rapidly twice
+    fireEvent.click(markReadBtn);
+    fireEvent.click(markReadBtn);
+
+    // Only one fetch call should be recorded, and the button should be disabled
+    assert.equal(markReadBtn.disabled, true);
+
+    await waitFor(() => {
+      const patchCalls = calls.filter((c) => c.method === "PATCH");
+      assert.equal(patchCalls.length, 1);
+    });
+  });
+
+  it("disables markAllRead button and ignores duplicate rapid clicks to prevent race conditions", async () => {
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const markAllBtn = Array.from(container.querySelectorAll("#notification-popup button")).find(
+      (btn) => btn.textContent?.trim() === "Mark all read"
+    ) as HTMLButtonElement;
+    assert.ok(markAllBtn);
+
+    // Click mark all read rapidly twice
+    fireEvent.click(markAllBtn);
+    fireEvent.click(markAllBtn);
+
+    // Only one fetch call should be recorded, and the button should be disabled
+    assert.equal(markAllBtn.disabled, true);
+
+    await waitFor(() => {
+      const patchCalls = calls.filter((c) => c.method === "PATCH");
+      assert.equal(patchCalls.length, 1);
+    });
   });
 });

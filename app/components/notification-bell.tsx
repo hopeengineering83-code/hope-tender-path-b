@@ -39,6 +39,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [markingReadIds, setMarkingReadIds] = useState<Record<string, boolean>>({});
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,6 +71,9 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
   }
 
   async function markAllRead() {
+    if (markingAllRead) return;
+    setMarkingAllRead(true);
+    setError(null);
     try {
       const res = await fetch("/api/notifications", {
         method: "PATCH",
@@ -84,10 +89,15 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
       }
     } catch (err) {
       setError("Failed to mark notifications as read.");
+    } finally {
+      setMarkingAllRead(false);
     }
   }
 
   async function markRead(id: string) {
+    if (markingReadIds[id]) return;
+    setMarkingReadIds((prev) => ({ ...prev, [id]: true }));
+    setError(null);
     try {
       const res = await fetch("/api/notifications", {
         method: "PATCH",
@@ -103,6 +113,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
       }
     } catch (err) {
       setError("Failed to mark notification as read.");
+    } finally {
+      setMarkingReadIds((prev) => ({ ...prev, [id]: false }));
     }
   }
 
@@ -138,7 +150,11 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
           <div className="flex items-center justify-between border-b px-4 py-3">
             <p className="text-sm font-semibold text-slate-900">Notifications</p>
             {unread > 0 && (
-              <button onClick={() => void markAllRead()} className="text-xs text-blue-600 hover:text-blue-800">
+              <button
+                onClick={() => void markAllRead()}
+                disabled={markingAllRead}
+                className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50"
+              >
                 Mark all read
               </button>
             )}
@@ -163,7 +179,18 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                 <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? "🔔"}</span>
                 <div className="flex-1 min-w-0">
                   {n.link ? (
-                    <Link href={n.link} onClick={() => { void markRead(n.id); setOpen(false); }} className="block text-sm font-medium text-slate-900 hover:text-blue-700 truncate">
+                    <Link
+                      href={n.link}
+                      onClick={(e) => {
+                        if (markingReadIds[n.id]) {
+                          e.preventDefault();
+                          return;
+                        }
+                        void markRead(n.id);
+                        setOpen(false);
+                      }}
+                      className="block text-sm font-medium text-slate-900 hover:text-blue-700 truncate"
+                    >
                       {n.title}
                     </Link>
                   ) : (
@@ -175,8 +202,9 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                 {!n.readAt && (
                   <button
                     onClick={() => void markRead(n.id)}
-                    className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600"
-                    aria-label="Mark as read"
+                    disabled={markingReadIds[n.id]}
+                    className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                    aria-label={`Mark "${n.title}" as read`}
                   >
                     ✕
                   </button>
