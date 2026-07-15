@@ -44,8 +44,10 @@ test.describe("anonymous access — desktop and tablet", () => {
     }
   });
 
-  test("protected tender APIs never return anonymous success", async ({ request }) => {
-    const endpoints: Array<["get" | "post", string]> = [
+  test("protected APIs never return anonymous success", async ({ request }) => {
+    const endpoints: Array<["get" | "post" | "put", string]> = [
+      ["get", "/api/settings"],
+      ["put", "/api/settings"],
       ["post", "/api/tenders/upload-first"],
       ["post", "/api/tenders/fake-id/ai-analyze"],
       ["post", "/api/tenders/fake-id/generate"],
@@ -53,7 +55,11 @@ test.describe("anonymous access — desktop and tablet", () => {
       ["get", "/api/tenders/fake-id/extraction-quality"],
     ];
     for (const [method, endpoint] of endpoints) {
-      const response = method === "get" ? await request.get(endpoint) : await request.post(endpoint);
+      const response = method === "get"
+        ? await request.get(endpoint)
+        : method === "put"
+          ? await request.put(endpoint, { data: { pageNumbering: false } })
+          : await request.post(endpoint);
       expect(response.status(), `${method.toUpperCase()} ${endpoint}`).not.toBeLessThan(300);
     }
   });
