@@ -18,6 +18,7 @@ import {
   redactVaultText,
   safeVaultFileLabel,
   sourceByteIntegrityIsVerified,
+  VAULT_REVIEW_CONSUMER_SELECT,
 } from "../../../../../lib/vault-review-provenance";
 
 export const maxDuration = 60;
@@ -96,31 +97,11 @@ async function buildDiagnostics(
     }),
     prisma.expert.findMany({
       where: { companyId, deletedAt: null },
-      select: {
-        companyId: true,
-        trustLevel: true,
-        reviewedBy: true,
-        reviewedAt: true,
-        reviewNotes: true,
-        sourceDocumentId: true,
-        sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
-        },
-      },
+      select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
     }),
     prisma.project.findMany({
       where: { companyId, deletedAt: null },
-      select: {
-        companyId: true,
-        trustLevel: true,
-        reviewedBy: true,
-        reviewedAt: true,
-        reviewNotes: true,
-        sourceDocumentId: true,
-        sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
-        },
-      },
+      select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
     }),
     prisma.expert.findMany({
       where: { companyId, deletedAt: null },

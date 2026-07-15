@@ -206,6 +206,12 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
       where: { id: ownedExpert.id },
       select: {
         companyId: true,
+        fullName: true,
+        title: true,
+        yearsExperience: true,
+        disciplines: true,
+        sectors: true,
+        certifications: true,
         trustLevel: true,
         reviewedBy: true,
         reviewedAt: true,

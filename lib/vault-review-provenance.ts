@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const REVIEW_PROVENANCE_PREFIX = "vault-review-provenance:v1:";
+export const REVIEW_PROVENANCE_PREFIX = "vault-review-provenance:v2:";
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_REVIEW_FIELDS = 32;
 
@@ -18,7 +18,7 @@ export type ReviewSourceDocument = {
   integrityStatus?: string | null;
 };
 
-export const VAULT_REVIEW_CONSUMER_SELECT = {
+const VAULT_REVIEW_AUTHORITY_SELECT = {
   companyId: true,
   trustLevel: true,
   reviewedBy: true,
@@ -37,7 +37,29 @@ export const VAULT_REVIEW_CONSUMER_SELECT = {
   },
 } as const;
 
-export type VaultReviewConsumerRecord = {
+export const VAULT_REVIEW_CONSUMER_SELECT = {
+  EXPERT: {
+    ...VAULT_REVIEW_AUTHORITY_SELECT,
+    fullName: true,
+    title: true,
+    yearsExperience: true,
+    disciplines: true,
+    sectors: true,
+    certifications: true,
+  },
+  PROJECT: {
+    ...VAULT_REVIEW_AUTHORITY_SELECT,
+    name: true,
+    clientName: true,
+    country: true,
+    sector: true,
+    serviceAreas: true,
+    contractValue: true,
+    currency: true,
+  },
+} as const;
+
+type VaultReviewAuthorityRecord = {
   companyId: string;
   trustLevel?: string | null;
   reviewedBy?: string | null;
@@ -47,7 +69,32 @@ export type VaultReviewConsumerRecord = {
   sourceDocument?: (ReviewSourceDocument & { companyId: string }) | null;
 };
 
+export type VaultExpertReviewConsumerRecord = VaultReviewAuthorityRecord & {
+  fullName: string;
+  title?: string | null;
+  yearsExperience?: number | null;
+  disciplines?: unknown;
+  sectors?: unknown;
+  certifications?: unknown;
+};
+
+export type VaultProjectReviewConsumerRecord = VaultReviewAuthorityRecord & {
+  name: string;
+  clientName?: string | null;
+  country?: string | null;
+  sector?: string | null;
+  serviceAreas?: unknown;
+  contractValue?: number | null;
+  currency?: string | null;
+};
+
+export type VaultReviewConsumerRecord =
+  | VaultExpertReviewConsumerRecord
+  | VaultProjectReviewConsumerRecord;
+
 export type ReviewRecordState = VaultReviewConsumerRecord;
+
+export type ReviewRecordType = "EXPERT" | "PROJECT";
 
 export type DurableReviewEvidence = {
   field: string;
@@ -78,7 +125,8 @@ export type ReviewEvidenceAssessment =
 type ReviewEvidenceFailure = Extract<ReviewEvidenceAssessment, { ok: false }>;
 
 type StoredReviewProvenance = {
-  version: 1;
+  version: 2;
+  recordType: ReviewRecordType;
   sourceDocumentId: string;
   sourceContentHash: string;
   sourceByteLength: number;
@@ -96,6 +144,17 @@ function normalizedValue(value: ReviewEvidenceField["value"]): string {
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizedEvidenceFields(fields: ReviewEvidenceField[]) {
+  return fields
+    .map((item) => ({ field: item.field.trim(), value: normalizedValue(item.value) }))
+    .filter((item) => item.field.length > 0 && item.value.length > 0)
+    .slice(0, MAX_REVIEW_FIELDS);
+}
+
+function evidenceValueHash(value: string): string {
+  return sha256(value.toLocaleLowerCase("en-US"));
 }
 
 function escapeRegExp(value: string): string {
@@ -141,10 +200,7 @@ function collectEvidence(
   if (!sourceByteIntegrityIsVerified(sourceDocument)) {
     return { ok: false, code: "PROVENANCE_REQUIRED", missingFields: [] };
   }
-  const normalizedFields = fields
-    .map((item) => ({ field: item.field.trim(), value: normalizedValue(item.value) }))
-    .filter((item) => item.field.length > 0 && item.value.length > 0)
-    .slice(0, MAX_REVIEW_FIELDS);
+  const normalizedFields = normalizedEvidenceFields(fields);
 
   const missingFields: string[] = [];
   const evidence: DurableReviewEvidence[] = [];
@@ -160,7 +216,7 @@ function collectEvidence(
     const quote = normalizedQuote(text.slice(start, end));
     evidence.push({
       field: item.field,
-      valueHash: sha256(item.value.toLocaleLowerCase("en-US")),
+      valueHash: evidenceValueHash(item.value),
       quoteHash: sha256(quote),
       start,
       end,
@@ -196,6 +252,7 @@ export function assessReviewEvidence(
 }
 
 export function buildReviewProvenance(input: {
+  recordType: ReviewRecordType;
   sourceDocument: ReviewSourceDocument | null | undefined;
   fields: ReviewEvidenceField[];
   reviewerId: string;
@@ -218,7 +275,8 @@ export function buildReviewProvenance(input: {
   if (!assessment.ok) return assessment;
 
   const provenance: StoredReviewProvenance = {
-    version: 1,
+    version: 2,
+    recordType: input.recordType,
     sourceDocumentId: input.sourceDocument!.id,
     sourceContentHash: assessment.sourceContentHash,
     sourceByteLength: assessment.sourceByteLength,
@@ -243,7 +301,8 @@ function parseStoredProvenance(reviewNotes: string | null | undefined): StoredRe
   try {
     const parsed = JSON.parse(reviewNotes.slice(REVIEW_PROVENANCE_PREFIX.length)) as Partial<StoredReviewProvenance>;
     if (
-      parsed.version !== 1 ||
+      parsed.version !== 2 ||
+      (parsed.recordType !== "EXPERT" && parsed.recordType !== "PROJECT") ||
       typeof parsed.sourceDocumentId !== "string" ||
       !HASH_PATTERN.test(parsed.sourceContentHash ?? "") ||
       !Number.isInteger(parsed.sourceByteLength) ||
@@ -276,6 +335,36 @@ function parseStoredProvenance(reviewNotes: string | null | undefined): StoredRe
   }
 }
 
+function currentRecordEvidenceFields(
+  record: ReviewRecordState,
+  recordType: ReviewRecordType,
+): ReturnType<typeof normalizedEvidenceFields> | null {
+  if (recordType === "EXPERT") {
+    const expert = record as Partial<VaultExpertReviewConsumerRecord>;
+    if (typeof expert.fullName !== "string" || expert.fullName.trim().length === 0) return null;
+    return normalizedEvidenceFields(expertReviewFields({
+      fullName: expert.fullName,
+      title: expert.title,
+      yearsExperience: expert.yearsExperience,
+      disciplines: expert.disciplines,
+      sectors: expert.sectors,
+      certifications: expert.certifications,
+    }));
+  }
+
+  const project = record as Partial<VaultProjectReviewConsumerRecord>;
+  if (typeof project.name !== "string" || project.name.trim().length === 0) return null;
+  return normalizedEvidenceFields(projectReviewFields({
+    name: project.name,
+    clientName: project.clientName,
+    country: project.country,
+    sector: project.sector,
+    serviceAreas: project.serviceAreas,
+    contractValue: project.contractValue,
+    currency: project.currency,
+  }));
+}
+
 export function isDurablyReviewed(record: ReviewRecordState): boolean {
   if (record.trustLevel !== "REVIEWED") return false;
   const provenance = parseStoredProvenance(record.reviewNotes);
@@ -305,6 +394,19 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
   ) {
     return false;
   }
+
+  const currentFields = currentRecordEvidenceFields(record, provenance.recordType);
+  if (!currentFields || currentFields.length !== provenance.evidence.length) return false;
+  const currentValueHashes = new Map(
+    currentFields.map((item) => [item.field, evidenceValueHash(item.value)]),
+  );
+  if (
+    currentValueHashes.size !== currentFields.length ||
+    !provenance.evidence.every((item) => currentValueHashes.get(item.field) === item.valueHash)
+  ) {
+    return false;
+  }
+
   const evidenceMatchesCurrentText = provenance.evidence.every((item) =>
     item.end <= record.sourceDocument!.extractedText!.length &&
     sha256(normalizedQuote(record.sourceDocument!.extractedText!.slice(item.start, item.end))) === item.quoteHash

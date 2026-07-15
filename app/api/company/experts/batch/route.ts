@@ -92,6 +92,7 @@ export async function PATCH(req: Request) {
     }
     const ownedSource = record.sourceDocument?.companyId === company.id ? record.sourceDocument : null;
     const provenance = buildReviewProvenance({
+      recordType: "EXPERT",
       sourceDocument: ownedSource,
       fields: expertReviewFields(record),
       reviewerId: actor.id,

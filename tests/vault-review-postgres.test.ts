@@ -8,6 +8,7 @@ import {
   expertReviewFields,
   isDurablyReviewed,
   projectReviewFields,
+  VAULT_REVIEW_CONSUMER_SELECT,
 } from "../lib/vault-review-provenance";
 
 const runPostgres = process.env.CI === "true";
@@ -107,11 +108,11 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
     const [expert, project] = await Promise.all([
       prisma.expert.findUniqueOrThrow({
         where: { id: expertId },
-        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
       prisma.project.findUniqueOrThrow({
         where: { id: projectId },
-        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
     ]);
 
@@ -133,6 +134,7 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
       integrityStatus: "VERIFIED",
     };
     const expertProvenance = buildReviewProvenance({
+      recordType: "EXPERT",
       sourceDocument,
       fields: expertReviewFields({
         fullName: "Hana Provenance",
@@ -146,6 +148,7 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
       reviewedAt,
     });
     const projectProvenance = buildReviewProvenance({
+      recordType: "PROJECT",
       sourceDocument,
       fields: projectReviewFields({
         name: "Project Alpha",
@@ -171,14 +174,33 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
     const [expert, project] = await Promise.all([
       prisma.expert.findUniqueOrThrow({
         where: { id: expertId },
-        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
       prisma.project.findUniqueOrThrow({
         where: { id: projectId },
-        select: { companyId: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
+        select: { companyId: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true, trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true, sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } } },
       }),
     ]);
     assert.equal(isDurablyReviewed(expert), true);
     assert.equal(isDurablyReviewed(project), true);
+
+    await prisma.$transaction([
+      prisma.expert.update({ where: { id: expertId }, data: { yearsExperience: 21 } }),
+      prisma.project.update({ where: { id: projectId }, data: { currency: "USD" } }),
+    ]);
+    const [mutatedExpert, mutatedProject] = await Promise.all([
+      prisma.expert.findUniqueOrThrow({
+        where: { id: expertId },
+        select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
+      }),
+      prisma.project.findUniqueOrThrow({
+        where: { id: projectId },
+        select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
+      }),
+    ]);
+    assert.equal(isDurablyReviewed(mutatedExpert), false);
+    assert.equal(isDurablyReviewed(mutatedProject), false);
+    assert.equal(canUseVaultRecord(mutatedExpert, "MATCHING"), false);
+    assert.equal(canUseVaultRecord(mutatedProject, "EXPORT"), false);
   });
 });

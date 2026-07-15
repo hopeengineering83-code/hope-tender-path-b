@@ -40,14 +40,25 @@ describe("company review privacy and pagination contracts", () => {
     assert.match(reviewPage, /Blocked — provenance required/);
   });
 
-  it("exports one fail-closed consumer record and query contract", () => {
+  it("exports record-type-aware fail-closed consumer query contracts", () => {
     assert.match(provenanceSource, /VAULT_REVIEW_CONSUMER_SELECT/);
+    assert.match(provenanceSource, /EXPERT:/);
+    assert.match(provenanceSource, /PROJECT:/);
+    assert.match(provenanceSource, /fullName: true/);
+    assert.match(provenanceSource, /certifications: true/);
+    assert.match(provenanceSource, /name: true/);
+    assert.match(provenanceSource, /contractValue: true/);
     assert.match(provenanceSource, /companyId: true/);
     assert.match(provenanceSource, /reviewNotes: true/);
     assert.match(provenanceSource, /contentSha256: true/);
     assert.match(provenanceSource, /contentByteLength: true/);
     assert.match(provenanceSource, /integrityStatus: true/);
     assert.match(provenanceSource, /record\.sourceDocument\.companyId !== record\.companyId/);
+    assert.match(provenanceSource, /currentRecordEvidenceFields/);
+    assert.match(provenanceSource, /currentValueHashes/);
+    assert.match(provenanceSource, /currentValueHashes\.get\(item\.field\) === item\.valueHash/);
+    assert.match(repairRoute, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
+    assert.match(repairRoute, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
   });
 
   it("pins company-document integrity from uploaded bytes before persistence", () => {
@@ -71,6 +82,7 @@ describe("batch review ownership, audit, and partial-failure contracts", () => {
       assert.match(source, /companyId: company\.id/);
       assert.match(source, /record\.sourceDocument\?\.companyId === company\.id/);
       assert.match(source, /buildReviewProvenance/);
+      assert.match(source, new RegExp(`recordType: "${kind === "expert" ? "EXPERT" : "PROJECT"}"`));
       assert.match(source, /NOT_FOUND_OR_NOT_OWNED/);
       assert.match(source, /FIELD_EVIDENCE_REQUIRED/);
       assert.match(source, /PROVENANCE_REQUIRED/);
