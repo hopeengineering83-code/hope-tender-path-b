@@ -1,387 +1,186 @@
-# Integration Controller
-#
-# Event-driven: manages the single draft integration PR. Triggered when a PR
-# is labeled `integration-approved` (cherry-pick) and when the integration PR
-# itself is updated (re-run release-gate suite).
-#
-# Enforces single-writer discipline via concurrency + lock file.
-#
-# This workflow MUST NOT:
-#   - merge to main
-#   - deploy
-#   - modify application runtime code directly (only cherry-picks from approved PRs)
-#   - auto-approve a PR
-#   - allow multiple agents to write to the integration branch simultaneously
-
 name: Integration Controller
 
 on:
   pull_request:
-    types: [labeled, synchronize, closed]
+    types: [labeled, synchronize, reopened]
     branches:
+      - integration/controlled-recovery
       - main
-      - 'integration/**'
-  issue_comment:
-    types: [created]
-  schedule:
-    # Backup: check for stale integration locks
-    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
-      action:
-        description: "Action to perform."
+      pr_number:
+        description: Worker PR number to validate and integrate
         required: true
-        type: choice
-        default: status
-        options:
-          - status
-          - cherry-pick
-          - release-lock
-          - run-release-gate
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
-  actions: write
+  checks: read
+  actions: read
 
 concurrency:
-  # Single-writer: only one integration-controller run at a time.
-  group: integration-writer
+  group: integration-controlled-recovery
   cancel-in-progress: false
 
 jobs:
-  read-integration-state:
-    name: Read Integration State
+  preflight:
+    if: >-
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'integration-approved') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
     outputs:
-      active: ${{ steps.state.outputs.active }}
-      branch: ${{ steps.state.outputs.branch }}
-      pr_number: ${{ steps.state.outputs.pr_number }}
-      lock_holder: ${{ steps.state.outputs.lock_holder }}
-      lock_stale: ${{ steps.state.outputs.lock_stale }}
-
+      pr_number: ${{ steps.validate.outputs.pr_number }}
+      head_sha: ${{ steps.validate.outputs.head_sha }}
+      integration_branch: ${{ steps.validate.outputs.integration_branch }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Read integration state
-        id: state
-        shell: bash
-        run: |
-          # Read the active integration branch
-          if [ -f .github/release-control/integration-branch.txt ]; then
-            BRANCH=$(cat .github/release-control/integration-branch.txt | tr -d '[:space:]')
-            if [ -n "$BRANCH" ]; then
-              echo "active=true" >> $GITHUB_OUTPUT
-              echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-            else
-              echo "active=false" >> $GITHUB_OUTPUT
-              echo "branch=" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "active=false" >> $GITHUB_OUTPUT
-            echo "branch=" >> $GITHUB_OUTPUT
-          fi
-
-          # Check for integration PR (look for open PR with base=main and head=integration/*)
-          # This is done in the next step via github-script
-
-          # Check lock file
-          if [ -f .github/release-control/integration.lock ]; then
-            LOCK_CONTENT=$(cat .github/release-control/integration.lock)
-            LOCK_HOLDER=$(echo "$LOCK_CONTENT" | grep -oP '"run_id":\s*"\K[^"]+' || echo "")
-            LOCK_TS=$(echo "$LOCK_CONTENT" | grep -oP '"timestamp":\s*"\K[^"]+' || echo "")
-
-            if [ -n "$LOCK_TS" ]; then
-              LOCK_AGE_MIN=$(( ( $(date -u +%s) - $(date -u -d "$LOCK_TS" +%s) ) / 60 ))
-              if [ "$LOCK_AGE_MIN" -gt 30 ]; then
-                echo "lock_stale=true" >> $GITHUB_OUTPUT
-                echo "Lock is stale ($LOCK_AGE_MIN min old). Can be released."
-              else
-                echo "lock_stale=false" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "lock_stale=true" >> $GITHUB_OUTPUT
-            fi
-            echo "lock_holder=$LOCK_HOLDER" >> $GITHUB_OUTPUT
-          else
-            echo "lock_holder=" >> $GITHUB_OUTPUT
-            echo "lock_stale=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Find integration PR
-        if: steps.state.outputs.active == 'true'
+      - name: Validate immutable approved PR
+        id: validate
         uses: actions/github-script@v7
+        env:
+          INPUT_PR: ${{ inputs.pr_number }}
         with:
           script: |
-            const branch = '${{ steps.state.outputs.branch }}';
-            const { data: prs } = await github.rest.pulls.list({
+            const prNumber = context.eventName === 'pull_request'
+              ? context.payload.pull_request.number
+              : Number(process.env.INPUT_PR);
+            const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              state: 'open',
-              head: `${context.repo.owner}:${branch}`,
-              base: 'main',
-              per_page: 5
+              pull_number: prNumber
             });
-
-            if (prs.length > 0) {
-              core.setOutput('pr_number', prs[0].number.toString());
-              core.setOutput('pr_draft', prs[0].draft.toString());
-              console.log(`Integration PR: #${prs[0].number} (draft: ${prs[0].draft})`);
-
-              if (!prs[0].draft) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prs[0].number,
-                  body: '⚠️ **Integration PR is not draft.** Per integrator-contract.md, the integration PR must remain draft until the release manager marks it ready. Reverting to draft.'
-                });
-                // Note: GitHub API does not allow reverting to draft via REST.
-                // This requires the release manager to manually mark it draft.
-              }
-            } else {
-              core.setOutput('pr_number', '');
-              console.log('No integration PR found.');
+            if (pr.state !== 'open') throw new Error('PR is not open.');
+            if (pr.base.ref !== 'integration/controlled-recovery') {
+              throw new Error('Worker PR must target integration/controlled-recovery.');
+            }
+            if (pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo) {
+              throw new Error('Fork PRs are not eligible for automated integration.');
             }
 
-  cherry-pick-approved:
-    name: Cherry-pick integration-approved PR
+            const actor = context.eventName === 'pull_request'
+              ? context.payload.sender.login
+              : context.actor;
+            const { data: level } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: actor
+            });
+            if (!['admin', 'maintain', 'write'].includes(level.permission)) {
+              throw new Error('Approval actor lacks write permission.');
+            }
+
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+            const latest = new Map();
+            for (const review of reviews) latest.set(review.user.login, review.state);
+            if ([...latest.values()].includes('CHANGES_REQUESTED')) {
+              throw new Error('Unresolved requested-changes review exists.');
+            }
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+            const forbidden = files.filter(f =>
+              f.filename.startsWith('.github/workflows/') ||
+              f.filename.startsWith('.github/agents/') ||
+              f.filename.startsWith('.github/release-control/') ||
+              f.filename === 'vercel.json'
+            );
+            if (forbidden.length) throw new Error(`Forbidden worker files: ${forbidden.map(f => f.filename).join(', ')}`);
+            const migrations = files.filter(f => f.filename.startsWith('prisma/migrations/'));
+            const declaredMigration = /MIGRATION_DECLARED:\s*YES/i.test(pr.body || '');
+            if (migrations.length && !declaredMigration) throw new Error('Migration is not explicitly declared in PR body.');
+
+            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha
+            });
+            const { data: suites } = await github.rest.checks.listSuitesForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha
+            });
+            const suiteFailure = suites.check_suites.some(s => s.status !== 'completed' || s.conclusion !== 'success');
+            if (combined.state !== 'success' || suiteFailure) {
+              throw new Error('Exact-head required checks are not all green.');
+            }
+
+            const marker = `APPROVED_HEAD_SHA: ${pr.head.sha}`;
+            if (!(pr.body || '').includes(marker)) {
+              throw new Error(`PR body must contain immutable approval marker: ${marker}`);
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('integration_branch', 'integration/controlled-recovery');
+
+  integrate-atomically:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: read-integration-state
-    if: |
-      github.event_name == 'pull_request' &&
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'integration-approved' &&
-      needs.read-integration-state.outputs.active == 'true'
-
     steps:
-      - name: Verify lock is free
-        shell: bash
-        run: |
-          if [ "${{ needs.read-integration-state.outputs.lock_stale }}" = "false" ]; then
-            echo "::error::Integration lock is held by run ${{ needs.read-integration-state.outputs.lock_holder }} and is not stale."
-            exit 1
-          fi
-          echo "Lock is free or stale. Proceeding."
-
       - name: Checkout integration branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.read-integration-state.outputs.branch }}
+          ref: ${{ needs.preflight.outputs.integration_branch }}
           fetch-depth: 0
 
-      - name: Acquire lock
-        shell: bash
-        run: |
-          mkdir -p .github/release-control
-          cat > .github/release-control/integration.lock << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "holder": "integration-controller",
-            "action": "cherry-pick"
-          }
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .github/release-control/integration.lock
-          git commit -m "chore: acquire integration lock (run ${{ github.run_id }})"
-          git push origin ${{ needs.read-integration-state.outputs.branch }}
-
-      - name: Cherry-pick the approved PR's commits
-        id: cherry-pick
-        shell: bash
+      - name: Build candidate and fast-forward atomically
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          INTEGRATION_BRANCH=${{ needs.read-integration-state.outputs.branch }}
-
-          echo "Cherry-picking PR #$PR_NUMBER commits into $INTEGRATION_BRANCH..."
-
-          # Get the commits in the PR
-          COMMITS=$(gh pr view $PR_NUMBER --json commits --jq '.commits[].oid')
-
-          CHERRY_PICK_COUNT=0
-          CONFLICT_COUNT=0
-
-          for commit_sha in $COMMITS; do
-            echo "Cherry-picking $commit_sha..."
-            if git cherry-pick "$commit_sha"; then
-              CHERRY_PICK_COUNT=$((CHERRY_PICK_COUNT + 1))
-              echo "  ✓ Success"
-            else
-              CONFLICT_COUNT=$((CONFLICT_COUNT + 1))
-              echo "  ✗ Conflict"
-
-              # Check if conflict is mechanical (lockfile, import order)
-              CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
-              MECHANICAL=true
-              for f in $CONFLICTED_FILES; do
-                case "$f" in
-                  package-lock.json|bun.lock|.eslintrc.json|tsconfig.json)
-                    # Mechanical — accept theirs
-                    ;;
-                  *)
-                    MECHANICAL=false
-                    break
-                    ;;
-                esac
-              done
-
-              if [ "$MECHANICAL" = "true" ]; then
-                echo "  Resolving mechanical conflict in: $CONFLICTED_FILES"
-                git checkout --theirs $CONFLICTED_FILES
-                git add $CONFLICTED_FILES
-                git cherry-pick --continue --no-edit
-                CHERRY_PICK_COUNT=$((CHERRY_PICK_COUNT + 1))
-              else
-                echo "  Semantic conflict — aborting."
-                git cherry-pick --abort
-                echo "conflict=true" >> $GITHUB_OUTPUT
-                echo "conflict_files=$CONFLICTED_FILES" >> $GITHUB_OUTPUT
-
-                # Create a finding for the conflict
-                TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
-                mkdir -p .github/release-control/findings
-                cat > ".github/release-control/findings/FINDING-${TIMESTAMP}-integration-conflict-pr-${PR_NUMBER}.json" << FEOF
-          {
-            "id": "FINDING-${TIMESTAMP}-integration-conflict-pr-${PR_NUMBER}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "severity": "high",
-            "category": "integration",
-            "source": "integration-controller",
-            "title": "Semantic conflict cherry-picking PR #${PR_NUMBER}",
-            "description": "PR #${PR_NUMBER} could not be cherry-picked into $INTEGRATION_BRANCH due to a semantic conflict in: $CONFLICTED_FILES. Human decision required.",
-            "file": null,
-            "line": null,
-            "agent": "none",
-            "status": "open",
-            "github_issue": null,
-            "github_pr": ${PR_NUMBER},
-            "evidence": {
-              "command": "git cherry-pick",
-              "exit_code": 1,
-              "stdout_excerpt": "Conflicted files: $CONFLICTED_FILES",
-              "stderr_excerpt": null,
-              "sha": "$commit_sha"
-            },
-            "labels": ["agent:none", "severity:high", "category:integration"]
-          }
-          FEOF
-                break
-              fi
-            fi
-          done
-
-          echo "cherry_pick_count=$CHERRY_PICK_COUNT" >> $GITHUB_OUTPUT
-          echo "conflict_count=$CONFLICT_COUNT" >> $GITHUB_OUTPUT
-
-          if [ "${{ steps.cherry-pick.outputs.conflict }}" != "true" ]; then
-            git push origin $INTEGRATION_BRANCH
-          fi
-
-      - name: Release lock
-        if: always()
+          PR_NUMBER: ${{ needs.preflight.outputs.pr_number }}
+          APPROVED_HEAD: ${{ needs.preflight.outputs.head_sha }}
+          INTEGRATION_BRANCH: ${{ needs.preflight.outputs.integration_branch }}
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/release-control/integration.lock 2>/dev/null || true
-          git commit -m "chore: release integration lock (run ${{ github.run_id }})" 2>/dev/null || true
-          git push origin ${{ needs.read-integration-state.outputs.branch }} 2>/dev/null || true
-
-      - name: Comment on source PR
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = ${{ github.event.pull_request.number }};
-            const conflict = '${{ steps.cherry-pick.outputs.conflict }}' === 'true';
-            const count = '${{ steps.cherry-pick.outputs.cherry_pick_count }}';
-
-            if (conflict) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `❌ **Cherry-pick failed — semantic conflict.**\n\n${count} commit(s) cherry-picked before conflict. A finding has been created. The \`integration-approved\` label has been removed. Human decision required.`
-              });
-
-              // Remove the integration-approved label
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  name: 'integration-approved'
-                });
-              } catch (e) { /* ignore */ }
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `✅ **Cherry-picked into integration.**\n\n${count} commit(s) cherry-picked into \`${{ needs.read-integration-state.outputs.branch }}\`. Release-gate suite will run automatically.`
-              });
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          START_SHA=$(git rev-parse HEAD)
+          CURRENT_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)
+          test "$CURRENT_HEAD" = "$APPROVED_HEAD" || { echo 'PR head moved after approval'; exit 1; }
+          git fetch origin "$APPROVED_HEAD"
+          git switch -c "candidate-${GITHUB_RUN_ID}" "$START_SHA"
+          COMMITS=$(gh pr view "$PR_NUMBER" --json commits --jq '.commits[].oid')
+          for sha in $COMMITS; do
+            git cherry-pick "$sha" || {
+              git cherry-pick --abort || true
+              git reset --hard "$START_SHA"
+              echo 'Atomic integration aborted; no source commit was pushed.'
+              exit 1
             }
+          done
+          FINAL_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)
+          test "$FINAL_HEAD" = "$APPROVED_HEAD" || { git reset --hard "$START_SHA"; echo 'PR head moved during integration'; exit 1; }
+          git push origin "HEAD:refs/heads/$INTEGRATION_BRANCH"
 
-  run-release-gate:
-    name: Run Release Gate on Integration PR
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: read-integration-state
-    if: |
-      needs.read-integration-state.outputs.active == 'true' &&
-      needs.read-integration-state.outputs.pr_number != '' &&
-      (
-        (github.event_name == 'pull_request' && github.event.action == 'synchronize' && startsWith(github.event.pull_request.head.ref, 'integration/')) ||
-        github.event_name == 'workflow_dispatch'
-      )
-
-    steps:
-      - name: Invoke release-gate suite
-        uses: ./.github/workflows/release-gate.yml
-        with:
-          ref: ${{ needs.read-integration-state.outputs.branch }}
-          integration-mode: true
-
-      - name: Comment on integration PR
-        if: always()
+      - name: Record incorporation
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = parseInt('${{ needs.read-integration-state.outputs.pr_number }}');
-            const result = '${{ job.status }}';
-
-            const body = result === 'success'
-              ? '✅ **Release-gate suite passed.** Integration PR is ready for release-manager review.'
-              : `❌ **Release-gate suite failed.** Result: ${result}. Integration PR is blocked.`;
-
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: prNumber,
-              body
+              issue_number: Number('${{ needs.preflight.outputs.pr_number }}'),
+              body: `INCORPORATED exact head \`${{ needs.preflight.outputs.head_sha }}\` into \`${{ needs.preflight.outputs.integration_branch }}\`. No merge to main or production deployment was performed.`
             });
 
-            if (result === 'success') {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: ['release-gate-passed']
-              });
-            } else {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: ['release-gate-failed']
-              });
-            }
+  release-gate:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'synchronize' &&
+      github.event.pull_request.head.ref == 'integration/controlled-recovery' &&
+      github.event.pull_request.base.ref == 'main'
+    uses: ./.github/workflows/release-gate.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      integration-mode: true
+    secrets: inherit
