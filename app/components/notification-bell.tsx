@@ -43,6 +43,9 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
   const [markingReadIds, setMarkingReadIds] = useState<Record<string, boolean>>({});
   const ref = useRef<HTMLDivElement>(null);
 
+  // Derived state to check if any individual markRead request is currently in flight
+  const isAnyMarkingRead = Object.values(markingReadIds).some(Boolean);
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -70,8 +73,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
     }
   }
 
-  async function markAllRead() {
-    if (markingAllRead) return;
+  async function markAllRead(): Promise<boolean> {
+    if (markingAllRead || isAnyMarkingRead) return false;
     setMarkingAllRead(true);
     setError(null);
     try {
@@ -84,18 +87,21 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
         setUnread(0);
         setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt ?? new Date().toISOString() })));
         setError(null);
+        return true;
       } else {
         setError("Failed to mark notifications as read.");
+        return false;
       }
     } catch (err) {
       setError("Failed to mark notifications as read.");
+      return false;
     } finally {
       setMarkingAllRead(false);
     }
   }
 
-  async function markRead(id: string) {
-    if (markingReadIds[id]) return;
+  async function markRead(id: string): Promise<boolean> {
+    if (markingAllRead || markingReadIds[id]) return false;
     setMarkingReadIds((prev) => ({ ...prev, [id]: true }));
     setError(null);
     try {
@@ -108,11 +114,14 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
         setUnread((c) => Math.max(0, c - 1));
         setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, readAt: new Date().toISOString() } : n));
         setError(null);
+        return true;
       } else {
         setError("Failed to mark notification as read.");
+        return false;
       }
     } catch (err) {
       setError("Failed to mark notification as read.");
+      return false;
     } finally {
       setMarkingReadIds((prev) => ({ ...prev, [id]: false }));
     }
@@ -152,7 +161,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
             {unread > 0 && (
               <button
                 onClick={() => void markAllRead()}
-                disabled={markingAllRead}
+                disabled={markingAllRead || isAnyMarkingRead}
                 className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50"
               >
                 Mark all read
@@ -181,15 +190,18 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                   {n.link ? (
                     <Link
                       href={n.link}
-                      onClick={(e) => {
-                        if (markingReadIds[n.id]) {
-                          e.preventDefault();
-                          return;
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        if (markingAllRead || markingReadIds[n.id]) return;
+                        const success = await markRead(n.id);
+                        if (success) {
+                          setOpen(false);
+                          window.location.href = n.link!;
                         }
-                        void markRead(n.id);
-                        setOpen(false);
                       }}
-                      className="block text-sm font-medium text-slate-900 hover:text-blue-700 truncate"
+                      className={`block text-sm font-medium text-slate-900 hover:text-blue-700 truncate ${
+                        markingAllRead || markingReadIds[n.id] ? "pointer-events-none opacity-50" : ""
+                      }`}
                     >
                       {n.title}
                     </Link>
@@ -202,7 +214,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                 {!n.readAt && (
                   <button
                     onClick={() => void markRead(n.id)}
-                    disabled={markingReadIds[n.id]}
+                    disabled={markingAllRead || markingReadIds[n.id]}
                     className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
                     aria-label={`Mark "${n.title}" as read`}
                   >
