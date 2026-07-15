@@ -48,6 +48,7 @@ Never claim a fix is complete unless the stated tests passed.
 | GLM (Super Z) | `fix/buildplan-document-generation-pipeline` (PR #1030) | Backend pipeline: bulk-review gates, validate fail-closed, DOCX visible-text extraction, OUTSIDE_PLAN_DOCUMENTS blocker | bulk-review, validate, export-readiness.ts, document-quality-validator.ts, final-submission-readiness.ts, download route | Open, CI green | Await Hope's review |
 | Codex | `codex/add-route-driven-verification-tests` (PR #1031) | Normalize panel readiness payloads with shared public envelope | lib/engine/public-readiness-envelope.ts, lifecycle/readiness-score/generation-readiness/export-readiness/workflow-status routes | Open | Await Hope's review |
 | GLM (Super Z) | `fix/main-app-gaps-dead-code-contradictions` (this PR) | Real bugs: orchestrator metadata branch, dead code, format-policy fallback, document-output-state regex, stale docs | tender-lifecycle-orchestrator.ts, download route, export-format-policy.ts, document-output-state.ts, runtime-readiness-facts.ts, generation-readiness-gate.ts, CLAUDE.md, AGENTS.md | Open | Await Hope's review |
+| Jules | `worker/jules-notification-a11y-006` | Accessibility and non-optimistic server state for notification bell (Issue #1143) | app/components/notification-bell.tsx, tests/jules-notification-bell-a11y.test.ts | Draft PR pending | CI / verification pending |
 
 ### Lock rules
 
@@ -73,6 +74,22 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
+
+### 2026-07-15 UTC — JULES-T1 (Jules)
+
+- **Mode:** Accessibility (a11y) and non-optimistic server-confirmed notification-bell state (Issue #1143).
+- **Branch / PR:** `worker/jules-notification-a11y-006` / Draft PR pending.
+- **Scope:**
+  - **`app/components/notification-bell.tsx`**: Add `aria-expanded`, `aria-controls`, and stable popover ID `"notification-popup"` to the trigger button and popup container. Make the button trigger's `aria-label` dynamic to include the unread count when nonzero. Add `aria-hidden="true"` to the unread count visual badge. Add `aria-label="Mark as read"` to individual unread notifications' close button (`✕`). Prevent optimistic local updates of unread count and notification list on `markRead(id)` and `markAllRead()` if the network request fails, and render an accessible error container (`role="alert"`) with proper feedback on failure.
+  - **`tests/jules-notification-bell-a11y.test.ts`**: Create a full suite of component behavioral tests matching these requirements.
+- **Files changed:** `app/components/notification-bell.tsx` and `tests/jules-notification-bell-a11y.test.ts`.
+- **Tests actually run:**
+  - `npx tsx --test tests/jules-notification-bell-a11y.test.ts` — 6/6 PASS
+  - `npm run typecheck` — PASS (tsc clean)
+  - `npm run lint` — PASS (0 errors)
+- **Known risks / assumptions:** None. All tests isolated and fully passing.
+- **Next action:** Create a draft PR targeting `integration/controlled-recovery`.
+- **Merge status:** not reviewed — do not merge.
 
 ### 2026-07-15 UTC (follow-up) — GLM (Super Z)
 
