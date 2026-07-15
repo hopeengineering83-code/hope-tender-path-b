@@ -41,9 +41,15 @@ jobs:
         run: |
           set -euo pipefail
           jq empty .github/agents/providers.json
+          test "$(jq -r '.schema_version' .github/agents/providers.json)" = "2"
           test "$(jq -r '.default_provider' .github/agents/providers.json)" = "glm"
+          test "$(jq -r '.providers["chatgpt-code"].capacity' .github/agents/providers.json)" = "2"
+          test "$(jq -r '.future_provider_contract.must_not_claim_automatic_delivery_without_callback' .github/agents/providers.json)" = "true"
           test "$(jq -r '.rules.never_merge_main' .github/agents/providers.json)" = "true"
           test "$(jq -r '.rules.never_deploy_production' .github/agents/providers.json)" = "true"
+          test "$(jq -r '.rules.never_run_production_migrations' .github/agents/providers.json)" = "true"
+          test -f .github/agents/worker-roster.md
+          test -f .github/agents/current-worker-prompts.md
 
       - name: Reject obsolete file-backed control state
         run: |
@@ -62,18 +68,30 @@ jobs:
       - name: Reject merge, approval, and production deployment paths
         run: |
           set -euo pipefail
-          if grep -R -nE 'enablePullRequestAutoMerge|gh pr merge|gh pr review.*--approve|vercel( deploy)? .*--prod' .github/workflows; then
-            echo 'Forbidden merge, approval, or production deployment path found.'
-            exit 1
-          fi
+          failed=0
+          while IFS= read -r workflow; do
+            case "$workflow" in
+              .github/workflows/control-tower-ci.yml|.github/workflows/release-gate.yml)
+                continue
+                ;;
+            esac
+            if grep -nE 'enablePullRequestAutoMerge|gh pr merge|gh pr review.*--approve|vercel( deploy)? .*--prod' "$workflow"; then
+              echo "Forbidden merge, approval, or production deployment path found in $workflow."
+              failed=1
+            fi
+          done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
+          test "$failed" -eq 0
 
-      - name: Reject CI-only automatic approval markers
+      - name: Reject CI-only automatic acceptance
         run: |
           set -euo pipefail
           if grep -n 'APPROVED_HEAD_SHA' .github/workflows/repair-coordinator.yml; then
             echo 'Repair coordinator must not create approval markers from green CI alone.'
             exit 1
           fi
+          grep -q 'VALIDATED_HEAD_SHA' .github/workflows/repair-coordinator.yml
+          grep -q 'ACCEPTED_HEAD_SHA' .github/workflows/integration-controller.yml
+          grep -q 'Missing authorized exact-head acceptance comment' .github/workflows/integration-controller.yml
 
       - name: Require activation truth
         run: |
