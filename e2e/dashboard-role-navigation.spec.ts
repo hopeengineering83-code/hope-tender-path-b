@@ -3,6 +3,12 @@ import type { APIRequestContext, Browser, BrowserContext, Page, Request as Playw
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 
+// Team/company tenancy is intentionally not asserted here. The repository's
+// current user/company model creates personal workspaces and global users;
+// Issue #1151 owns the schema/auth/API architecture needed for company-scoped
+// team membership and minimum-data read contracts.
+const TENANCY_DEPENDENCY = "#1151";
+
 type Role = "ADMIN" | "PROPOSAL_MANAGER" | "REVIEWER" | "VIEWER";
 
 type CreatedUser = {
@@ -79,9 +85,9 @@ async function createRoleUsers(
 ): Promise<void> {
   const nonce = `${Date.now()}-${test.info().workerIndex}`;
   for (const role of ROLES) {
-    const email = `role-isolation-${role.toLowerCase()}-${nonce}@example.test`;
+    const email = `role-contract-${role.toLowerCase()}-${nonce}@example.test`;
     const response = await adminRequest.post("/api/users", {
-      data: { name: `${role} isolated user`, email, password, role },
+      data: { name: `${role} route-contract user`, email, password, role },
     });
     expect(response.status(), `primary seeded account must create the ${role} user`).toBe(201);
     users.push((await response.json()).user as CreatedUser);
@@ -118,23 +124,13 @@ async function assertForbiddenRouteDoesNotRenderOrFetch(
   ).toHaveCount(1);
 }
 
-async function assertDirectApiPolicy(identity: LoggedInIdentity, primaryCompanyId: string): Promise<string> {
+async function assertDirectApiRolePolicy(identity: LoggedInIdentity): Promise<void> {
   const { context, role } = identity;
   const canManageKnowledge = role === "ADMIN" || role === "PROPOSAL_MANAGER";
 
-  const companyRead = await context.request.get("/api/company");
-  expect(companyRead.status(), `${role} can read only its own company workspace`).toBe(200);
-  const company = await companyRead.json() as { id?: string; experts?: unknown[]; projects?: unknown[] };
-  expect(company.id, `${role} company id`).toBeTruthy();
-  expect(company.id, `${role} must not receive the seeded administrator company`).not.toBe(primaryCompanyId);
-  expect(company.experts ?? [], `${role} must not inherit another tenant's experts`).toEqual([]);
-  expect(company.projects ?? [], `${role} must not inherit another tenant's projects`).toEqual([]);
-
-  const assetRead = await context.request.get("/api/company/assets");
-  expect(assetRead.status(), `${role} asset read remains authenticated and tenant-scoped`).toBe(200);
-  const assetPayload = await assetRead.json() as { assets?: unknown[] };
-  expect(assetPayload.assets ?? [], `${role} must not inherit another tenant's assets`).toEqual([]);
-
+  // These checks prove only role gates for the APIs used by the four owned
+  // restricted pages. They do not claim company/team tenancy or minimum-data
+  // isolation; those policies are external dependency #1151.
   const assetMutation = await context.request.post("/api/company/assets", { multipart: { assetType: "LOGO" } });
   expect(assetMutation.status(), `${role} asset mutation role policy`).toBe(canManageKnowledge ? 400 : 403);
 
@@ -148,24 +144,22 @@ async function assertDirectApiPolicy(identity: LoggedInIdentity, primaryCompanyI
   expect(settingsMutation.status(), `${role} settings mutation role policy`).toBe(canManageKnowledge ? 400 : 403);
 
   const usersRead = await context.request.get("/api/users");
-  expect(usersRead.status(), `${role} users API role policy`).toBe(role === "ADMIN" ? 200 : 403);
-
-  return company.id!;
+  expect(usersRead.status(), `${role} users API role gate`).toBe(role === "ADMIN" ? 200 : 403);
 }
 
 test.describe("dashboard role navigation and direct-route authorization", () => {
-  test("isolated role sessions enforce owned navigation, pre-render redirects, API roles, and tenant boundaries", async ({ page, browser }) => {
+  test("isolated role sessions enforce owned navigation, pre-render redirects, and API role gates", async ({ page, browser }) => {
     test.setTimeout(120_000);
+    test.info().annotations.push({
+      type: "external-dependency",
+      description: `Company-scoped team membership and minimum-data API reads are tracked in Issue ${TENANCY_DEPENDENCY}.`,
+    });
+
     const password = "RoleIsolation12345";
     const createdUsers: CreatedUser[] = [];
     const identities: LoggedInIdentity[] = [];
 
     try {
-      const primaryCompanyResponse = await page.request.get("/api/company");
-      expect(primaryCompanyResponse.status(), "seeded administrator company must be readable").toBe(200);
-      const primaryCompany = await primaryCompanyResponse.json() as { id?: string };
-      expect(primaryCompany.id).toBeTruthy();
-
       await createRoleUsers(page.request, password, createdUsers);
 
       for (const user of createdUsers) {
@@ -178,7 +172,6 @@ test.describe("dashboard role navigation and direct-route authorization", () => 
         "every role must use a distinct session cookie and browser context",
       ).toBe(ROLES.length);
 
-      const companyIds: string[] = [];
       for (const identity of identities) {
         const { role, page: rolePage } = identity;
         await rolePage.goto("/dashboard", { waitUntil: "domcontentloaded" });
@@ -213,10 +206,8 @@ test.describe("dashboard role navigation and direct-route authorization", () => 
         const deadAdminRoot = await rolePage.goto("/dashboard/admin", { waitUntil: "domcontentloaded" });
         expect(deadAdminRoot?.status(), `${role} admin root remains unimplemented and unadvertised`).toBe(404);
 
-        companyIds.push(await assertDirectApiPolicy(identity, primaryCompany.id!));
+        await assertDirectApiRolePolicy(identity);
       }
-
-      expect(new Set(companyIds).size, "each isolated role user must receive a distinct company tenant").toBe(ROLES.length);
     } finally {
       for (const identity of identities) await identity.context.close();
       for (const user of createdUsers) {
