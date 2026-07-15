@@ -100,18 +100,32 @@ jobs:
           grep -q 'workflows exist on the default branch' .github/agents/integrator-contract.md
 
       - name: Run control-plane simulations
+        id: simulations
+        shell: bash
         run: |
-          set -euo pipefail
-          for area in activation dispatch gates; do
-            dir=".github/release-control/tests/$area"
-            test -d "$dir" || { echo "Missing simulation directory: $dir"; exit 1; }
-            mapfile -t tests < <(find "$dir" -maxdepth 1 -type f -name '*.sh' | sort)
-            test "${#tests[@]}" -gt 0 || { echo "No executable simulations in $dir"; exit 1; }
-            for test_file in "${tests[@]}"; do
-              echo "Running $test_file"
-              bash "$test_file"
+          set -o pipefail
+          {
+            set -euo pipefail
+            for area in activation dispatch gates; do
+              dir=".github/release-control/tests/$area"
+              test -d "$dir" || { echo "Missing simulation directory: $dir"; exit 1; }
+              mapfile -t tests < <(find "$dir" -maxdepth 1 -type f -name '*.sh' | sort)
+              test "${#tests[@]}" -gt 0 || { echo "No executable simulations in $dir"; exit 1; }
+              for test_file in "${tests[@]}"; do
+                echo "Running $test_file"
+                bash -x "$test_file"
+              done
             done
-          done
+          } 2>&1 | tee control-tower-simulations.log
+
+      - name: Upload simulation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-tower-simulations-${{ github.run_id }}
+          path: control-tower-simulations.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Prove bootstrap cannot target main
         run: |
