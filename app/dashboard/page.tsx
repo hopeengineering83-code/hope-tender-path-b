@@ -63,10 +63,13 @@ export default async function DashboardPage() {
     ? Math.round((wonCount / tendersWithOutcome.length) * 100)
     : null;
 
+  // Only aggregate budgets that have both a valid amount AND a currency.
+  // Hardcoding '$' for all tenders misrepresents non-USD budgets.
   const activeBudgets = tenders
-    .map((t) => t.budget as number | null)
-    .filter((b): b is number => b !== null && b > 0);
-  const pipelineValue = activeBudgets.reduce((a, b) => a + b, 0);
+    .filter((t) => t.budget && t.budget > 0 && t.currency)
+    .map((t) => ({ amount: t.budget as number, currency: t.currency as string }));
+  const pipelineValue = activeBudgets.reduce((a, b) => a + b.amount, 0);
+  const pipelineCurrency = activeBudgets.length > 0 ? activeBudgets[0].currency : null;
 
   const scoredTenders = tenders.filter((t) => t.readinessScore !== null);
   const avgReadiness = scoredTenders.length > 0
@@ -170,10 +173,10 @@ export default async function DashboardPage() {
               <p className="text-sm text-slate-500 font-medium">Pipeline Value</p>
               <p className="mt-1 text-2xl font-bold text-blue-600">
                 {pipelineValue >= 1_000_000
-                  ? `$${(pipelineValue / 1_000_000).toFixed(1)}M`
+                  ? `${pipelineCurrency ?? ""}${(pipelineValue / 1_000_000).toFixed(1)}M`
                   : pipelineValue >= 1_000
-                  ? `$${(pipelineValue / 1_000).toFixed(0)}K`
-                  : `$${pipelineValue.toLocaleString()}`}
+                  ? `${pipelineCurrency ?? ""}${(pipelineValue / 1_000).toFixed(0)}K`
+                  : `${pipelineCurrency ?? ""}${pipelineValue.toLocaleString()}`}
               </p>
               <p className="mt-1 text-xs text-slate-400">{activeBudgets.length} with budget</p>
             </div>
