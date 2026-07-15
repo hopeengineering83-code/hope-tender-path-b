@@ -1,6 +1,7 @@
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import { exactSelectionLimit } from "./scope-policy";
 import { deriveRequirementConstraintProfile } from "./requirement-constraints";
+import { enforceMatchingEligibility } from "./matching-eligibility";
 
 // Per-record lexical interpretation cycles. For each candidate expert /
 // project, the matcher runs MATCHING_CYCLES different tokenization
@@ -840,7 +841,17 @@ export function buildMatches(
       // not reach the 0.75 auto-select threshold on pure lexical similarity alone.
       const capCeiling = effectiveCap < 0.15 ? 0.58 : 1.0;
       const computedScore = Math.max(0, Math.min(capCeiling, seniorScore({ cosine: bestScore, capability: effectiveCap, sector, trust, experience, valueOrRecency: 0, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
-      const score = isHardExcluded ? 0 : computedScore;
+      const rawScore = isHardExcluded ? 0 : computedScore;
+      // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
+      // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
+      // reviewedBy, or reviewedAt) scores zero and cannot be selected.
+      const score = enforceMatchingEligibility(rawScore, {
+        id: expert.id,
+        trustLevel,
+        sourceDocumentId: (expert as { sourceDocumentId?: string | null }).sourceDocumentId ?? null,
+        reviewedBy: (expert as { reviewedBy?: string | null }).reviewedBy ?? null,
+        reviewedAt: (expert as { reviewedAt?: Date | string | null }).reviewedAt ?? null,
+      });
       const evidence = [expert.title, ...parseArr(expert.disciplines), ...parseArr(expert.sectors)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
@@ -901,7 +912,17 @@ export function buildMatches(
       // not reach the 0.75 auto-select threshold on pure lexical similarity alone.
       const capCeiling = effectiveCap < 0.15 ? 0.58 : 1.0;
       const computedScore = Math.max(0, Math.min(capCeiling, seniorScore({ cosine: bestScore, capability: effectiveCap, sector, trust, experience: 0, valueOrRecency: recency, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
-      const score = isHardExcluded ? 0 : computedScore;
+      const rawScore = isHardExcluded ? 0 : computedScore;
+      // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
+      // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
+      // reviewedBy, or reviewedAt) scores zero and cannot be selected.
+      const score = enforceMatchingEligibility(rawScore, {
+        id: project.id,
+        trustLevel,
+        sourceDocumentId: (project as { sourceDocumentId?: string | null }).sourceDocumentId ?? null,
+        reviewedBy: (project as { reviewedBy?: string | null }).reviewedBy ?? null,
+        reviewedAt: (project as { reviewedAt?: Date | string | null }).reviewedAt ?? null,
+      });
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;

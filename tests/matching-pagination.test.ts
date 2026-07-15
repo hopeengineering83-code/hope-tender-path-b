@@ -14,8 +14,8 @@ describe("Issue #1135 Gap #5 — matching dashboard pagination", () => {
     assert.match(src, /skip/);
     // Must have take with bounded value (not unlimited)
     assert.match(src, /take:\s*TENDERS_PER_PAGE/);
-    // Must have MATCHES_PER_TYPE for bounded match loading
-    assert.match(src, /MATCHES_PER_TYPE/);
+    // Must have MATCH_PAGE_SIZE for bounded match loading (Revision #3: shared with GET)
+    assert.match(src, /MATCH_PAGE_SIZE/);
     // Must NOT load all matches (no unbounded include)
     assert.ok(
       !src.includes("take: undefined") && !src.includes("take: -1"),
@@ -61,15 +61,36 @@ describe("Issue #1135 Gap #5 — matching dashboard pagination", () => {
     );
   });
 
-  it("page.tsx limits matches per type to 10 (bounded query)", () => {
+  it("page.tsx uses MATCH_PAGE_SIZE (shared with GET endpoint, Revision #3)", () => {
     const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
-    const match = src.match(/MATCHES_PER_TYPE\s*=\s*(\d+)/);
-    assert.ok(match, "MATCHES_PER_TYPE must be defined");
+    assert.match(src, /MATCH_PAGE_SIZE/);
+    const match = src.match(/MATCH_PAGE_SIZE\s*=\s*(\d+)/);
+    assert.ok(match, "MATCH_PAGE_SIZE must be defined");
     const perType = parseInt(match[1], 10);
     assert.ok(
-      perType <= 20,
-      `MATCHES_PER_TYPE must be bounded (<= 20), got ${perType}`,
+      perType >= 10 && perType <= 30,
+      `MATCH_PAGE_SIZE must be 10-30, got ${perType}`,
     );
+  });
+
+  it("GET endpoint uses the SAME MATCH_PAGE_SIZE (Revision #3)", () => {
+    const pageSrc = readFileSync("app/dashboard/matching/page.tsx", "utf8");
+    const getSrc = readFileSync("app/api/tenders/[id]/matches/route.ts", "utf8");
+    const pageMatch = pageSrc.match(/MATCH_PAGE_SIZE\s*=\s*(\d+)/);
+    const getMatch = getSrc.match(/MATCH_PAGE_SIZE\s*=\s*(\d+)/);
+    assert.ok(pageMatch, "page.tsx must define MATCH_PAGE_SIZE");
+    assert.ok(getMatch, "route.ts must define MATCH_PAGE_SIZE");
+    assert.equal(
+      pageMatch[1],
+      getMatch[1],
+      "SSR and GET must use the same MATCH_PAGE_SIZE",
+    );
+  });
+
+  it("page.tsx sorts selected-first to prevent truncation hiding (Revision #2)", () => {
+    const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
+    assert.match(src, /sortSelectedFirst/);
+    assert.match(src, /isSelected.*-1.*1/);
   });
 });
 

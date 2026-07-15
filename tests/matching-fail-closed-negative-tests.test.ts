@@ -9,6 +9,11 @@ import {
   capabilityFamilies,
   detectDominantFamily,
 } from "../lib/engine/matching";
+import {
+  isEligibleForMatching,
+  enforceMatchingEligibility,
+  isDurablyReviewedAdapter,
+} from "../lib/engine/matching-eligibility";
 
 // ─── Healthcare tender query text ──────────────────────────────────────────
 const HEALTHCARE_QUERY = `
@@ -120,9 +125,9 @@ describe("Issue #1135 Gap #2 — fail-closed: no relevant candidates = empty sel
   });
 });
 
-// ─── Gap #3: Reviewed-but-ungrounded records cannot contribute ──────────────
+// ─── Gap #3: Reviewed-but-ungrounded records cannot contribute (Revision #1) ─
 
-describe("Issue #1135 Gap #3 — reviewed-but-ungrounded records", () => {
+describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records", () => {
   it("record with no capability families scores 0", () => {
     const score = capabilityScore(HEALTHCARE_QUERY, "generic consultant with no specific keywords", "expert");
     assert.equal(
@@ -138,6 +143,148 @@ describe("Issue #1135 Gap #3 — reviewed-but-ungrounded records", () => {
     assert.ok(
       score < 0.75,
       `Record with unknown fields must score below threshold, got ${score}`,
+    );
+  });
+
+  // GLM-A2 Issue #1135 Revision #1: Durable provenance enforcement.
+  // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
+  // reviewedBy, or reviewedAt) must score zero, remain unselected, and
+  // cannot unlock generation.
+
+  it("REVIEWED record with no sourceDocumentId is NOT eligible for matching", () => {
+    const record = {
+      id: "expert-1",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: null,
+      reviewedBy: "user-1",
+      reviewedAt: new Date("2026-01-01"),
+    };
+    assert.equal(
+      isEligibleForMatching(record),
+      false,
+      "REVIEWED record with no sourceDocumentId must NOT be eligible",
+    );
+  });
+
+  it("REVIEWED record with no reviewedBy is NOT eligible for matching", () => {
+    const record = {
+      id: "expert-2",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: "doc-1",
+      reviewedBy: null,
+      reviewedAt: new Date("2026-01-01"),
+    };
+    assert.equal(
+      isEligibleForMatching(record),
+      false,
+      "REVIEWED record with no reviewedBy must NOT be eligible",
+    );
+  });
+
+  it("REVIEWED record with no reviewedAt is NOT eligible for matching", () => {
+    const record = {
+      id: "expert-3",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: "doc-1",
+      reviewedBy: "user-1",
+      reviewedAt: null,
+    };
+    assert.equal(
+      isEligibleForMatching(record),
+      false,
+      "REVIEWED record with no reviewedAt must NOT be eligible",
+    );
+  });
+
+  it("AI_DRAFT record is NOT eligible for matching regardless of provenance", () => {
+    const record = {
+      id: "expert-4",
+      trustLevel: "AI_DRAFT",
+      sourceDocumentId: "doc-1",
+      reviewedBy: "user-1",
+      reviewedAt: new Date("2026-01-01"),
+    };
+    assert.equal(
+      isEligibleForMatching(record),
+      false,
+      "AI_DRAFT record must NOT be eligible",
+    );
+  });
+
+  it("REGEX_DRAFT record is NOT eligible for matching", () => {
+    const record = {
+      id: "expert-5",
+      trustLevel: "REGEX_DRAFT",
+      sourceDocumentId: "doc-1",
+      reviewedBy: "user-1",
+      reviewedAt: new Date("2026-01-01"),
+    };
+    assert.equal(
+      isEligibleForMatching(record),
+      false,
+      "REGEX_DRAFT record must NOT be eligible",
+    );
+  });
+
+  it("fully-grounded REVIEWED record IS eligible for matching", () => {
+    const record = {
+      id: "expert-6",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: "doc-1",
+      reviewedBy: "user-1",
+      reviewedAt: new Date("2026-01-01"),
+    };
+    assert.equal(
+      isEligibleForMatching(record),
+      true,
+      "Fully-grounded REVIEWED record must be eligible",
+    );
+  });
+
+  it("enforceMatchingEligibility zeros out ineligible record score", () => {
+    const record = {
+      id: "expert-7",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: null, // ungrounded
+      reviewedBy: "user-1",
+      reviewedAt: new Date("2026-01-01"),
+    };
+    const score = enforceMatchingEligibility(0.95, record);
+    assert.equal(
+      score,
+      0,
+      "Ineligible record must score 0 after enforcement, got " + score,
+    );
+  });
+
+  it("enforceMatchingEligibility preserves eligible record score", () => {
+    const record = {
+      id: "expert-8",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: "doc-1",
+      reviewedBy: "user-1",
+      reviewedAt: new Date("2026-01-01"),
+    };
+    const score = enforceMatchingEligibility(0.85, record);
+    assert.equal(
+      score,
+      0.85,
+      "Eligible record score must be preserved, got " + score,
+    );
+  });
+
+  it("isDurablyReviewedAdapter returns false for ungrounded record", () => {
+    const record = {
+      id: "expert-9",
+      trustLevel: "REVIEWED",
+      sourceDocumentId: null,
+      reviewedBy: null,
+      reviewedAt: null,
+    };
+    assert.equal(
+      isDurablyReviewedAdapter(record),
+      false,
+      "isDurablyReviewedAdapter must return false for ungrounded record",
     );
   });
 });

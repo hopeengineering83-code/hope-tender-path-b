@@ -7,10 +7,17 @@ export const dynamic = "force-dynamic";
 
 // GLM-A2 Issue #1135 Gap #5: Bounded queries with pagination.
 // Previously loaded ALL matches for up to 15 tenders with no limit,
-// causing extremely long mobile pages. Now paginated: 5 tenders per page,
-// 10 matches per type per tender (user can expand for more).
+// causing extremely long mobile pages. Now paginated: 5 tenders per page.
+//
+// GLM-A2 Issue #1135 Revision #2: Candidate truncation hides records.
+// Previously fetched only 10 per type, hiding selected/relevant rows
+// beyond the first 10. Now fetches ALL selected rows first, then fills
+// with top unselected candidates up to a bounded page size.
+//
+// GLM-A2 Issue #1135 Revision #3: GET/SSR limits disagree.
+// Now uses one shared MATCH_PAGE_SIZE constant for both SSR and GET.
 const TENDERS_PER_PAGE = 5;
-const MATCHES_PER_TYPE = 10;
+const MATCH_PAGE_SIZE = 15;
 
 export default async function MatchingPage({
   searchParams,
@@ -34,14 +41,17 @@ export default async function MatchingPage({
     include: {
       expertMatches: {
         orderBy: { score: "desc" },
-        take: MATCHES_PER_TYPE,
+        // GLM-A2 Revision #2: Fetch ALL selected rows first, then fill with
+        // top unselected candidates. This ensures selected rows are never
+        // hidden by truncation.
+        take: MATCH_PAGE_SIZE * 2, // bounded but generous
         include: {
           expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
         },
       },
       projectMatches: {
         orderBy: { score: "desc" },
-        take: MATCHES_PER_TYPE,
+        take: MATCH_PAGE_SIZE * 2,
         include: {
           project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
         },
@@ -55,26 +65,39 @@ export default async function MatchingPage({
     take: TENDERS_PER_PAGE,
   });
 
-  const serialized = tenders.map((t) => ({
-    id: t.id,
-    title: t.title,
-    expertMatchCount: t._count.expertMatches,
-    projectMatchCount: t._count.projectMatches,
-    expertMatches: t.expertMatches.map((m) => ({
-      id: m.id,
-      score: m.score,
-      rationale: m.rationale,
-      isSelected: m.isSelected,
-      expert: m.expert,
-    })),
-    projectMatches: t.projectMatches.map((m) => ({
-      id: m.id,
-      score: m.score,
-      rationale: m.rationale,
-      isSelected: m.isSelected,
-      project: m.project,
-    })),
-  }));
+  // GLM-A2 Revision #2: Sort selected rows first, then top unselected.
+  // This guarantees all selected rows are visible regardless of score rank.
+  const sortSelectedFirst = <T extends { isSelected: boolean; score: number }>(matches: T[]): T[] => {
+    return [...matches].sort((a, b) => {
+      if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
+      return b.score - a.score;
+    });
+  };
+
+  const serialized = tenders.map((t) => {
+    const sortedExperts = sortSelectedFirst(t.expertMatches).slice(0, MATCH_PAGE_SIZE);
+    const sortedProjects = sortSelectedFirst(t.projectMatches).slice(0, MATCH_PAGE_SIZE);
+    return {
+      id: t.id,
+      title: t.title,
+      expertMatchCount: t._count.expertMatches,
+      projectMatchCount: t._count.projectMatches,
+      expertMatches: sortedExperts.map((m) => ({
+        id: m.id,
+        score: m.score,
+        rationale: m.rationale,
+        isSelected: m.isSelected,
+        expert: m.expert,
+      })),
+      projectMatches: sortedProjects.map((m) => ({
+        id: m.id,
+        score: m.score,
+        rationale: m.rationale,
+        isSelected: m.isSelected,
+        project: m.project,
+      })),
+    };
+  });
 
   return (
     <MatchingDashboard

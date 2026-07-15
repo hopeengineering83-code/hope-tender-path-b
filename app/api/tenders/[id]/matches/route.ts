@@ -5,6 +5,10 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
+// GLM-A2 Issue #1135 Revision #3: Use the SAME page size as SSR (page.tsx)
+// so re-fetch after failure returns the same visible set.
+const MATCH_PAGE_SIZE = 15;
+
 // GLM-A2 Issue #1135 Gap #6: GET endpoint for re-fetching authoritative
 // match state after a PUT rejection. The dashboard calls this to revert
 // stale optimistic state.
@@ -23,11 +27,13 @@ export async function GET(
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const [expertMatches, projectMatches] = await Promise.all([
+  // GLM-A2 Revision #2: Fetch a generous set, then sort selected-first
+  // and slice to MATCH_PAGE_SIZE — same logic as SSR page.tsx.
+  const [expertMatchesAll, projectMatchesAll] = await Promise.all([
     prisma.tenderExpertMatch.findMany({
       where: { tenderId },
       orderBy: { score: "desc" },
-      take: 20,
+      take: MATCH_PAGE_SIZE * 2,
       include: {
         expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
       },
@@ -35,12 +41,23 @@ export async function GET(
     prisma.tenderProjectMatch.findMany({
       where: { tenderId },
       orderBy: { score: "desc" },
-      take: 20,
+      take: MATCH_PAGE_SIZE * 2,
       include: {
         project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
       },
     }),
   ]);
+
+  // Sort selected-first, then by score — same as SSR
+  const sortSelectedFirst = <T extends { isSelected: boolean; score: number }>(matches: T[]): T[] => {
+    return [...matches].sort((a, b) => {
+      if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
+      return b.score - a.score;
+    });
+  };
+
+  const expertMatches = sortSelectedFirst(expertMatchesAll).slice(0, MATCH_PAGE_SIZE);
+  const projectMatches = sortSelectedFirst(projectMatchesAll).slice(0, MATCH_PAGE_SIZE);
 
   return NextResponse.json({
     expertMatches: expertMatches.map((m) => ({
