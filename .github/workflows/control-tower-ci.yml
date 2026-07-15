@@ -1,0 +1,93 @@
+name: Control Tower CI
+
+on:
+  pull_request:
+    branches:
+      - automation/control-plane
+      - fix/github-control-tower
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-tower-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  validate-control-plane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate workflow syntax with actionlint
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+
+      - name: Validate provider registry
+        run: |
+          set -euo pipefail
+          jq empty .github/agents/providers.json
+          test "$(jq -r '.default_provider' .github/agents/providers.json)" = "glm"
+          test "$(jq -r '.rules.never_merge_main' .github/agents/providers.json)" = "true"
+          test "$(jq -r '.rules.never_deploy_production' .github/agents/providers.json)" = "true"
+
+      - name: Reject obsolete file-backed control state
+        run: |
+          set -euo pipefail
+          test ! -e .github/release-control/integration-branch.txt
+          if [ -d .github/release-control/findings ] && find .github/release-control/findings -type f -name '*.json' -print -quit | grep -q .; then
+            echo 'File-backed findings are obsolete; use durable GitHub Issues.'
+            exit 1
+          fi
+          if grep -R -nE 'release-control/findings/|integration-branch\.txt' \
+            .github/agents .github/release-control/README.md; then
+            echo 'Contracts still reference obsolete file-backed authority.'
+            exit 1
+          fi
+
+      - name: Reject merge, approval, and production deployment paths
+        run: |
+          set -euo pipefail
+          if grep -R -nE 'enablePullRequestAutoMerge|gh pr merge|gh pr review.*--approve|vercel( deploy)? .*--prod' .github/workflows; then
+            echo 'Forbidden merge, approval, or production deployment path found.'
+            exit 1
+          fi
+
+      - name: Reject CI-only automatic approval markers
+        run: |
+          set -euo pipefail
+          if grep -n 'APPROVED_HEAD_SHA' .github/workflows/repair-coordinator.yml; then
+            echo 'Repair coordinator must not create approval markers from green CI alone.'
+            exit 1
+          fi
+
+      - name: Require activation truth
+        run: |
+          set -euo pipefail
+          grep -q 'not an active autonomous control plane' .github/release-control/README.md
+          grep -q 'workflows exist on the default branch' .github/agents/integrator-contract.md
+
+      - name: Run control-plane simulations
+        run: |
+          set -euo pipefail
+          for area in activation dispatch gates; do
+            dir=".github/release-control/tests/$area"
+            test -d "$dir" || { echo "Missing simulation directory: $dir"; exit 1; }
+            mapfile -t tests < <(find "$dir" -maxdepth 1 -type f -name '*.sh' | sort)
+            test "${#tests[@]}" -gt 0 || { echo "No executable simulations in $dir"; exit 1; }
+            for test_file in "${tests[@]}"; do
+              echo "Running $test_file"
+              bash "$test_file"
+            done
+          done
+
+      - name: Prove bootstrap cannot target main
+        run: |
+          set -euo pipefail
+          test "${{ github.base_ref }}" != 'main' || {
+            echo 'Control Tower bootstrap PR must not target main.'
+            exit 1
+          }
