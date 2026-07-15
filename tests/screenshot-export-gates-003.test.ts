@@ -44,7 +44,7 @@ describe("[SCREENSHOT-EXPORT-003] Gap 1 — Tender.currency nullable", () => {
     assert.match(migrationSql, /ALTER COLUMN "currency" DROP NOT NULL/i, "migration must drop NOT NULL constraint");
   });
 
-  it("migration backfill clears USD only for provably default-contaminated rows", () => {
+  it("migration does NOT clear any existing currency values (status is not proof of contamination)", () => {
     const migrationDir = resolve("prisma/migrations");
     const fs = require("node:fs");
     const dirs = fs.readdirSync(migrationDir).filter((d: string) => d.includes("tender_currency_nullable"));
@@ -52,19 +52,24 @@ describe("[SCREENSHOT-EXPORT-003] Gap 1 — Tender.currency nullable", () => {
       resolve(migrationDir, dirs[0], "migration.sql"),
       "utf8",
     );
-    // The backfill UPDATE must be conditional on status — never clear all USD.
-    // The SQL spans multiple lines, so normalize whitespace for the regex.
-    const normalized = migrationSql.replace(/\s+/g, " ");
-    assert.match(
-      normalized,
-      /UPDATE "Tender" SET "currency" = NULL WHERE "currency" = 'USD' AND "status" IN \(/i,
-      "backfill must be conditional on status — never clear all USD",
+    // Per REVISION_REQUIRED item 2: status is NOT proof that currency was
+    // default-contaminated. The migration must NOT contain any UPDATE that
+    // clears currency values. Legacy values are preserved; only the schema
+    // default is removed for new writes.
+    assert.doesNotMatch(
+      migrationSql,
+      /UPDATE "Tender" SET "currency" = NULL/i,
+      "migration must NOT clear any existing currency values — status is not proof of contamination. Use a separate audited cleanup command for legacy data.",
     );
-    // Must mention EXTRACTION_CORRUPTED_AI_SKIPPED (the screenshot gap)
     assert.match(
       migrationSql,
-      /EXTRACTION_CORRUPTED_AI_SKIPPED/,
-      "backfill must include EXTRACTION_CORRUPTED_AI_SKIPPED status (screenshot gap)",
+      /ALTER COLUMN "currency" DROP DEFAULT/i,
+      "migration must drop the USD default for new writes",
+    );
+    assert.match(
+      migrationSql,
+      /ALTER COLUMN "currency" DROP NOT NULL/i,
+      "migration must drop NOT NULL constraint so NULL is valid",
     );
   });
 });

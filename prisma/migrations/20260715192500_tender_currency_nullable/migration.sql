@@ -1,4 +1,5 @@
 -- AlterTable: make Tender.currency nullable and drop the USD default
+--
 -- Previously: currency String @default("USD") (NOT NULL with default)
 -- Now: currency String? (nullable, no default)
 --
@@ -7,25 +8,28 @@
 -- all other extracted fields were null. The USD default was a schema
 -- artifact, not a sourced value.
 --
--- Conservative backfill: clear currency ONLY for rows where the tender
--- status proves the currency was never sourced from the document text.
--- Genuinely sourced currency (any tender with a non-corrupted status)
--- is preserved.
+-- BACKFILL POLICY (per CHATGPT-M1 REVISION_REQUIRED item 2):
+-- Status is NOT proof that currency was default-contaminated. A corrupted
+-- or weak tender may still have had its currency genuinely sourced from
+-- the document text before extraction degraded. Clearing every USD value
+-- for selected statuses would erase genuinely sourced USD.
+--
+-- Therefore: this migration does NOT clear any existing currency values.
+-- It only:
+--   1. Drops the DEFAULT 'USD' so new tenders get NULL (not USD) when
+--      the extractor finds no currency.
+--   2. Drops the NOT NULL constraint so NULL is a valid value.
+--
+-- Legacy tenders with currency = 'USD' retain that value. The report
+-- page renders 'Not extracted' only when currency IS NULL, so legacy
+-- USD values still display as 'USD'. New tenders (post-migration) with
+-- no extracted currency will correctly show 'Not extracted'.
+--
+-- A separate audited cleanup command (scripts/audit-currency-provenance.mjs)
+-- can be run manually by an operator who has verified which tenders have
+-- genuinely sourced USD vs. default-contaminated USD. That script is NOT
+-- part of this migration — it requires human review per row.
 
 -- Step 1: Drop the default and NOT NULL constraint
 ALTER TABLE "Tender" ALTER COLUMN "currency" DROP DEFAULT;
 ALTER TABLE "Tender" ALTER COLUMN "currency" DROP NOT NULL;
-
--- Step 2: Conservative backfill — clear USD only where the tender
--- status proves extraction was corrupted/skipped (currency was never
--- sourced from the document text; it was the schema default).
--- Statuses that prove currency was never sourced:
---   EXTRACTION_CORRUPTED_AI_SKIPPED — extraction failed, AI skipped
---   OCR_REQUIRED — extraction too weak for AI
---   EXTRACTION_WEAK_REVIEW_REQUIRED — extraction below AI threshold
--- Any other status (DRAFT, ACTIVE, ANALYZED, etc.) preserves the
--- currency value because it may have been sourced or manually set.
-UPDATE "Tender"
-SET "currency" = NULL
-WHERE "currency" = 'USD'
-  AND "status" IN ('EXTRACTION_CORRUPTED_AI_SKIPPED', 'OCR_REQUIRED', 'EXTRACTION_WEAK_REVIEW_REQUIRED');
