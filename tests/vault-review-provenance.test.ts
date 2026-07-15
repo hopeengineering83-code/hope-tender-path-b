@@ -7,6 +7,7 @@ import {
   expertReviewFields,
   isDurablyReviewed,
   redactVaultText,
+  REVIEW_PROVENANCE_PREFIX,
   safeVaultFileLabel,
 } from "../lib/vault-review-provenance";
 
@@ -98,6 +99,17 @@ describe("durable per-field vault review provenance", () => {
     };
     assert.equal(isDurablyReviewed(changedSource), false);
     assert.equal(canUseVaultRecord(changedSource, "EXPORT"), false);
+
+    const tamperedPayload = JSON.parse(
+      result.serialized.slice(REVIEW_PROVENANCE_PREFIX.length),
+    ) as { evidence: Array<{ quoteHash: string }> };
+    tamperedPayload.evidence[0].quoteHash = "0".repeat(64);
+    const tamperedQuote = {
+      ...record,
+      reviewNotes: REVIEW_PROVENANCE_PREFIX + JSON.stringify(tamperedPayload),
+    };
+    assert.equal(isDurablyReviewed(tamperedQuote), false);
+    assert.equal(canUseVaultRecord(tamperedQuote, "GENERATION"), false);
   });
 
   it("fails closed when reviewer, timestamp, source, or provenance is missing", () => {

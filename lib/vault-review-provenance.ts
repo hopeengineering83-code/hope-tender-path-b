@@ -75,6 +75,10 @@ function evidencePattern(value: string): RegExp {
   return new RegExp(value.split(/\s+/).map(escapeRegExp).join("\\s+"), "i");
 }
 
+function normalizedQuote(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function sourceTextIsUsable(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length >= 100;
 }
@@ -107,7 +111,7 @@ function collectEvidence(
     }
     const start = Math.max(0, match.index - 80);
     const end = Math.min(text.length, match.index + match[0].length + 80);
-    const quote = text.slice(start, end).replace(/\s+/g, " ").trim();
+    const quote = normalizedQuote(text.slice(start, end));
     evidence.push({
       field: item.field,
       valueHash: sha256(item.value.toLocaleLowerCase("en-US")),
@@ -197,13 +201,15 @@ function parseStoredProvenance(reviewNotes: string | null | undefined): StoredRe
       typeof parsed.reviewerId !== "string" ||
       typeof parsed.reviewedAt !== "string" ||
       !Array.isArray(parsed.evidence) ||
-      parsed.evidence.length === 0
+      parsed.evidence.length === 0 ||
+      parsed.evidence.length > MAX_REVIEW_FIELDS
     ) {
       return null;
     }
     const evidenceValid = parsed.evidence.every((item) =>
       item &&
       typeof item.field === "string" &&
+      item.field.trim().length > 0 &&
       HASH_PATTERN.test(item.valueHash) &&
       HASH_PATTERN.test(item.quoteHash) &&
       Number.isInteger(item.start) &&
@@ -211,7 +217,9 @@ function parseStoredProvenance(reviewNotes: string | null | undefined): StoredRe
       item.start >= 0 &&
       item.end > item.start,
     );
-    return evidenceValid ? parsed as StoredReviewProvenance : null;
+    const evidenceFields = parsed.evidence.map((item) => item.field);
+    const fieldsAreUnique = new Set(evidenceFields).size === evidenceFields.length;
+    return evidenceValid && fieldsAreUnique ? parsed as StoredReviewProvenance : null;
   } catch {
     return null;
   }
@@ -243,6 +251,11 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
   ) {
     return false;
   }
+  const evidenceMatchesCurrentText = provenance.evidence.every((item) =>
+    item.end <= record.sourceDocument!.extractedText!.length &&
+    sha256(normalizedQuote(record.sourceDocument!.extractedText!.slice(item.start, item.end))) === item.quoteHash
+  );
+  if (!evidenceMatchesCurrentText) return false;
 
   const persistedReviewTime = new Date(record.reviewedAt).getTime();
   const provenanceReviewTime = new Date(provenance.reviewedAt).getTime();
