@@ -54,7 +54,7 @@ function validateSettings(body: Record<string, unknown>): { data: Record<string,
       errors.push({ field: "exportFormat", message: "Must be a string (DOCX or PDF)." });
     } else {
       const upper = rawFormat.trim().toUpperCase();
-      if (upper !== "ZIP" && !VALID_EXPORT_FORMATS.has(upper)) {
+      if (!VALID_EXPORT_FORMATS.has(upper)) {
         errors.push({ field: "exportFormat", message: "Must be DOCX or PDF. ZIP is a package-download mode, not a document format." });
       }
     }
@@ -81,8 +81,7 @@ function validateSettings(body: Record<string, unknown>): { data: Record<string,
     data.defaultCurrency = (body.defaultCurrency as string).trim().toUpperCase();
   }
   if (body.exportFormat !== undefined) {
-    const upper = (body.exportFormat as string).trim().toUpperCase();
-    data.exportFormat = upper === "ZIP" ? "DOCX" : upper;
+    data.exportFormat = (body.exportFormat as string).trim().toUpperCase();
   }
   if (body.language !== undefined) {
     data.language = (body.language as string).trim();
