@@ -106,7 +106,7 @@ jobs:
           test -f "$wf"
           # Safe trigger: pull_request (never pull_request_target) for the worker base.
           grep -qE '^[[:space:]]*pull_request:' "$wf"
-          ! grep -q 'pull_request_target' "$wf"
+          if grep -qE 'pull_request_target[[:space:]]*:' "$wf"; then echo 'worker validation must not use the pull_request_target trigger.'; exit 1; fi
           grep -q 'integration/controlled-recovery' "$wf"
           # Disposable PostgreSQL with RUN_DB_INTEGRATION and fail-closed classification.
           grep -q 'image: postgres:16' "$wf"
@@ -123,11 +123,11 @@ jobs:
           grep -q 'npm run build' "$wf"
           # Least privilege: only the narrowly justified checks:write, no other write.
           grep -q 'checks: write' "$wf"
-          ! grep -qE 'pull-requests:[[:space:]]*write|issues:[[:space:]]*write|contents:[[:space:]]*write' "$wf"
+          if grep -qE 'pull-requests:[[:space:]]*write|issues:[[:space:]]*write|contents:[[:space:]]*write' "$wf"; then echo 'worker validation must not request write scopes beyond checks:write.'; exit 1; fi
           # Exact-head invalidation and no production database secret / deploy / merge.
           grep -q 'head moved during validation' "$wf"
-          ! grep -qE 'secrets\.[A-Z_]*DATABASE' "$wf"
-          ! grep -qE 'gh pr merge|gh pr review.*--approve|vercel .*--prod' "$wf"
+          if grep -qE 'secrets\.[A-Z_]*DATABASE' "$wf"; then echo 'worker validation must not reference a production database secret.'; exit 1; fi
+          if grep -qE 'gh pr merge|gh pr review.*--approve|vercel .*--prod' "$wf"; then echo 'worker validation must not merge, approve, or deploy.'; exit 1; fi
 
       - name: Require activation truth
         run: |

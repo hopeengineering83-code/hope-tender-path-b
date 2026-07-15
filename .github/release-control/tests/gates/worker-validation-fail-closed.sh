@@ -11,8 +11,10 @@ WF=.github/workflows/worker-validation.yml
 test -f "$WF"
 
 # Safe trigger: pull_request (never pull_request_target) for the worker base.
+# Negative assertions use explicit `if` blocks so they fail closed under `set -e`
+# (a bare `! grep` would not abort when the forbidden pattern is present).
 grep -qE '^[[:space:]]*pull_request:' "$WF"
-! grep -qF 'pull_request_target' "$WF"
+if grep -qE 'pull_request_target[[:space:]]*:' "$WF"; then echo 'must not use the pull_request_target trigger'; exit 1; fi
 grep -qF 'integration/controlled-recovery' "$WF"
 
 # Disposable PostgreSQL + RUN_DB_INTEGRATION + fail-closed classification tokens.
@@ -33,8 +35,8 @@ grep -qF 'npm run build' "$WF"
 # Least privilege: only the narrowly justified checks:write, no other write scope,
 # and no production database secret is referenced.
 grep -qF 'checks: write' "$WF"
-! grep -qE 'pull-requests:[[:space:]]*write|issues:[[:space:]]*write|contents:[[:space:]]*write' "$WF"
-! grep -qE 'secrets\.[A-Z_]*(DATABASE|POSTGRES|NEON)' "$WF"
+if grep -qE 'pull-requests:[[:space:]]*write|issues:[[:space:]]*write|contents:[[:space:]]*write' "$WF"; then echo 'must not request write scopes beyond checks:write'; exit 1; fi
+if grep -qE 'secrets\.[A-Z_]*(DATABASE|POSTGRES|NEON)' "$WF"; then echo 'must not reference a production database secret'; exit 1; fi
 
 # Exact-head invalidation guard.
 grep -qF 'head moved during validation' "$WF"

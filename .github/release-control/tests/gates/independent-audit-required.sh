@@ -21,10 +21,11 @@ grep -qF 'worker-exact-head-validation' "$CONTROLLER"            # exact-head ev
 grep -qF 'Green CI alone is not approval' "$CONTROLLER"
 
 # Green CI alone must not approve: the coordinator only marks awaiting-independent-audit
-# and never mints approval or integration authority.
+# and never mints approval or integration authority. Use explicit `if` blocks so the
+# negative assertions actually fail closed under `set -e` (a bare `! grep` would not).
 grep -qF 'awaiting-independent-audit' "$COORDINATOR"
-! grep -qF 'APPROVED_HEAD_SHA' "$COORDINATOR"
-! grep -qF 'ready-for-integrator' "$COORDINATOR"
+if grep -qF 'APPROVED_HEAD_SHA' "$COORDINATOR"; then echo 'coordinator must not mint APPROVED_HEAD_SHA'; exit 1; fi
+if grep -qF 'ready-for-integrator' "$COORDINATOR"; then echo 'coordinator must not mint ready-for-integrator'; exit 1; fi
 
 # --- Deterministic simulation of the audit-acceptance rule ---
 HEAD="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
