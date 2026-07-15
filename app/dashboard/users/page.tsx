@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type User = {
   id: string;
@@ -9,6 +9,8 @@ type User = {
   role: string;
   createdAt: string;
 };
+
+type UsersResponse = { users?: User[]; error?: string };
 
 const ROLES = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER", "VIEWER"] as const;
 type Role = (typeof ROLES)[number];
@@ -20,256 +22,252 @@ const ROLE_COLORS: Record<Role, string> = {
   VIEWER: "bg-slate-100 text-slate-600",
 };
 
+function roleLabel(role: string) {
+  return role.replaceAll("_", " ");
+}
+
+async function readResponse(response: Response): Promise<UsersResponse> {
+  return response.json().catch(() => ({})) as Promise<UsersResponse>;
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  // create form
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "PROPOSAL_MANAGER" });
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  // edit inline
+  const [formError, setFormError] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
-  const [editRole, setEditRole] = useState<string>("");
-  const [editName, setEditName] = useState<string>("");
+  const [editRole, setEditRole] = useState("");
+  const [editName, setEditName] = useState("");
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/users");
-      if (!res.ok) {
-        setError(res.status === 403 ? "Access denied" : "Failed to load users");
-        return;
-      }
-      const data = await res.json() as { users: User[] };
-      setUsers(data.users);
-    } catch {
-      setError("Network error");
-    } finally {
-      setLoading(false);
+  const load = useCallback(async () => {
+    const response = await fetch("/api/users", { cache: "no-store" });
+    const data = await readResponse(response);
+    if (!response.ok) {
+      throw new Error(response.status === 403 ? "Access denied." : data.error ?? `Users could not be loaded (HTTP ${response.status}).`);
     }
-  }
+    setUsers(data.users ?? []);
+    return data.users ?? [];
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    setError(null);
+    void load()
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Users could not be loaded."))
+      .finally(() => setLoading(false));
+  }, [load]);
 
   async function createUser() {
-    setFormError("");
-    if (!form.email || !form.password) {
-      setFormError("Email and password required");
+    setFormError(null);
+    setError(null);
+    setStatus(null);
+    if (!form.email.trim() || !form.password) {
+      setFormError("Email and password are required.");
       return;
     }
+
     setSaving(true);
     try {
-      const res = await fetch("/api/users", {
+      const response = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, email: form.email.trim() }),
       });
-      const data = await res.json() as { error?: string };
-      if (!res.ok) { setFormError(data.error ?? "Failed to create user"); return; }
+      const data = await readResponse(response);
+      if (!response.ok) throw new Error(data.error ?? `User could not be created (HTTP ${response.status}).`);
+      await load();
       setForm({ name: "", email: "", password: "", role: "PROPOSAL_MANAGER" });
       setShowCreate(false);
-      await load();
+      setStatus("User created and confirmed in the refreshed user list.");
+    } catch (reason) {
+      setFormError(reason instanceof Error ? reason.message : "User could not be created.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function saveEdit(id: string) {
-    const res = await fetch(`/api/users/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: editName, role: editRole }),
-    });
-    if (res.ok) { setEditId(null); await load(); }
-  }
-
-  async function deleteUser(id: string, email: string) {
-    if (!confirm(`Delete user ${email}? This cannot be undone.`)) return;
-    await fetch(`/api/users/${id}`, { method: "DELETE" });
-    await load();
-  }
-
   function startEdit(user: User) {
+    setError(null);
+    setStatus(null);
     setEditId(user.id);
     setEditRole(user.role);
     setEditName(user.name ?? "");
   }
 
-  if (loading) return <div className="p-8 text-slate-500">Loading users…</div>;
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  async function saveEdit(user: User) {
+    setError(null);
+    setStatus(null);
+    setUpdatingId(user.id);
+    try {
+      const response = await fetch(`/api/users/${user.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName, role: editRole }),
+      });
+      const data = await readResponse(response);
+      if (!response.ok) throw new Error(data.error ?? `User could not be updated (HTTP ${response.status}).`);
+      await load();
+      setEditId(null);
+      setStatus(`${user.email} updated and confirmed in the refreshed user list.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "User could not be updated.");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function deleteUser(user: User) {
+    if (!window.confirm(`Delete user ${user.email}? This cannot be undone.`)) return;
+    setError(null);
+    setStatus(null);
+    setDeletingId(user.id);
+    try {
+      const response = await fetch(`/api/users/${user.id}`, { method: "DELETE" });
+      const data = await readResponse(response);
+      if (!response.ok) throw new Error(data.error ?? `User could not be deleted (HTTP ${response.status}).`);
+      await load();
+      if (editId === user.id) setEditId(null);
+      setStatus(`${user.email} deleted and the user list was refreshed.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "User could not be deleted.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function UserActions({ user }: { user: User }) {
+    const editing = editId === user.id;
+    const updating = updatingId === user.id;
+    const deleting = deletingId === user.id;
+    const busy = updating || deleting;
+
+    if (editing) {
+      return (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button type="button" onClick={() => void saveEdit(user)} disabled={busy} className="min-h-11 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
+            {updating ? "Saving…" : "Save"}
+          </button>
+          <button type="button" onClick={() => setEditId(null)} disabled={busy} className="min-h-11 rounded-lg border px-3 py-2 text-xs font-medium disabled:opacity-60">Cancel</button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-2 sm:grid-cols-2">
+        <button type="button" onClick={() => startEdit(user)} disabled={busy} className="min-h-11 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-slate-100 disabled:opacity-60">Edit</button>
+        <button type="button" onClick={() => void deleteUser(user)} disabled={busy} className="min-h-11 rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60">
+          {deleting ? "Deleting…" : "Delete"}
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) return <div role="status" className="p-8 text-slate-500">Loading users…</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="min-w-0 space-y-6">
+      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900">User Management</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Manage team access. Admins can create users and assign roles.
-          </p>
+          <p className="mt-1 text-sm text-slate-500">Manage team access. Server confirmation is required before any action is reported as complete.</p>
         </div>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          + Invite User
+        <button type="button" onClick={() => { setShowCreate((value) => !value); setFormError(null); }} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 sm:w-auto">
+          {showCreate ? "Close form" : "Invite user"}
         </button>
       </div>
 
+      {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {status && <div role="status" aria-live="polite" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{status}</div>}
+
       {showCreate && (
-        <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-slate-800">New User</h2>
-          {formError && <p className="mb-3 text-sm text-red-600">{formError}</p>}
+        <section className="rounded-2xl border bg-white p-5 shadow-sm" aria-busy={saving}>
+          <h2 className="mb-4 font-semibold text-slate-800">New user</h2>
+          {formError && <p role="alert" className="mb-3 text-sm text-red-600">{formError}</p>}
           <div className="grid gap-3 sm:grid-cols-2">
-            <input
-              className="rounded-lg border px-3 py-2 text-sm"
-              placeholder="Full name (optional)"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-            <input
-              className="rounded-lg border px-3 py-2 text-sm"
-              placeholder="Email address *"
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-            />
-            <input
-              className="rounded-lg border px-3 py-2 text-sm"
-              placeholder="Password (min 8 chars) *"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-            />
-            <select
-              className="rounded-lg border px-3 py-2 text-sm"
-              value={form.role}
-              onChange={(e) => setForm({ ...form, role: e.target.value })}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>{r.replaceAll("_", " ")}</option>
-              ))}
+            <input className="min-h-11 min-w-0 rounded-lg border px-3 py-2 text-sm" placeholder="Full name (optional)" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+            <input className="min-h-11 min-w-0 rounded-lg border px-3 py-2 text-sm" placeholder="Email address" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+            <input className="min-h-11 min-w-0 rounded-lg border px-3 py-2 text-sm" placeholder="Password (minimum 8 characters)" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+            <select aria-label="Role" className="min-h-11 min-w-0 rounded-lg border bg-white px-3 py-2 text-sm" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
+              {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
             </select>
           </div>
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={createUser}
-              disabled={saving}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              {saving ? "Creating…" : "Create User"}
-            </button>
-            <button
-              onClick={() => { setShowCreate(false); setFormError(""); }}
-              className="rounded-lg border px-4 py-2 text-sm"
-            >
-              Cancel
-            </button>
+          <div className="mt-4 grid gap-2 sm:flex">
+            <button type="button" onClick={() => void createUser()} disabled={saving} className="min-h-11 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">{saving ? "Creating…" : "Create user"}</button>
+            <button type="button" onClick={() => { setShowCreate(false); setFormError(null); }} disabled={saving} className="min-h-11 rounded-lg border px-4 py-2 text-sm disabled:opacity-60">Cancel</button>
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-500">
-            <tr>
-              <th className="px-4 py-3 font-medium">User</th>
-              <th className="px-4 py-3 font-medium">Role</th>
-              <th className="px-4 py-3 font-medium hidden sm:table-cell">Joined</th>
-              <th className="px-4 py-3 font-medium text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {users.map((user) => (
-              <tr key={user.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3">
-                  {editId === user.id ? (
-                    <input
-                      className="rounded border px-2 py-1 text-sm w-full max-w-[200px]"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      placeholder="Display name"
-                    />
-                  ) : (
-                    <div>
-                      <p className="font-medium text-slate-900">{user.name || "(no name)"}</p>
-                      <p className="text-xs text-slate-500">{user.email}</p>
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {editId === user.id ? (
-                    <select
-                      className="rounded border px-2 py-1 text-xs"
-                      value={editRole}
-                      onChange={(e) => setEditRole(e.target.value)}
-                    >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>{r.replaceAll("_", " ")}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${ROLE_COLORS[user.role as Role] ?? "bg-slate-100 text-slate-600"}`}>
-                      {user.role.replaceAll("_", " ")}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-slate-500 hidden sm:table-cell">
-                  {new Date(user.createdAt).toLocaleDateString()}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {editId === user.id ? (
-                    <div className="flex gap-1.5 justify-end">
-                      <button
-                        onClick={() => saveEdit(user.id)}
-                        className="rounded bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setEditId(null)}
-                        className="rounded border px-2.5 py-1 text-xs"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex gap-1.5 justify-end">
-                      <button
-                        onClick={() => startEdit(user)}
-                        className="rounded border px-2.5 py-1 text-xs hover:bg-slate-100"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => deleteUser(user.id, user.email)}
-                        className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {users.length === 0 && (
-          <div className="py-12 text-center text-slate-400">No users found</div>
-        )}
+      <div className="space-y-3 md:hidden">
+        {users.map((user) => {
+          const editing = editId === user.id;
+          return (
+            <article key={user.id} className="min-w-0 rounded-2xl border bg-white p-4 shadow-sm" aria-busy={updatingId === user.id || deletingId === user.id}>
+              <div className="min-w-0">
+                {editing ? (
+                  <input aria-label={`Display name for ${user.email}`} className="min-h-11 w-full rounded-lg border px-3 py-2 text-sm" value={editName} onChange={(event) => setEditName(event.target.value)} placeholder="Display name" />
+                ) : (
+                  <h2 className="break-words font-medium text-slate-900">{user.name || "(no name)"}</h2>
+                )}
+                <p className="mt-1 break-all text-xs text-slate-500">{user.email}</p>
+              </div>
+              <div className="mt-3">
+                {editing ? (
+                  <select aria-label={`Role for ${user.email}`} className="min-h-11 w-full rounded-lg border bg-white px-3 py-2 text-sm" value={editRole} onChange={(event) => setEditRole(event.target.value)}>
+                    {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
+                  </select>
+                ) : (
+                  <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-medium ${ROLE_COLORS[user.role as Role] ?? "bg-slate-100 text-slate-600"}`}>{roleLabel(user.role)}</span>
+                )}
+              </div>
+              <p className="mt-3 text-xs text-slate-500">Joined {new Date(user.createdAt).toLocaleDateString()}</p>
+              <div className="mt-4"><UserActions user={user} /></div>
+            </article>
+          );
+        })}
       </div>
 
-      <div className="rounded-xl bg-slate-50 border p-4 text-xs text-slate-500">
-        <p className="font-semibold text-slate-700 mb-1">Role permissions</p>
-        <ul className="space-y-0.5">
-          <li><span className="font-medium text-red-700">ADMIN</span> — full access: manage users, company, tenders, generate, export</li>
-          <li><span className="font-medium text-blue-700">PROPOSAL MANAGER</span> — manage tenders, run analysis, generate documents, export</li>
-          <li><span className="font-medium text-amber-700">REVIEWER</span> — view all, approve/reject generated documents, add comments</li>
-          <li><span className="font-medium text-slate-600">VIEWER</span> — read-only access to tenders and documents</li>
+      <div className="hidden overflow-hidden rounded-2xl border bg-white shadow-sm md:block">
+        <div className="max-w-full overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="bg-slate-50 text-left text-slate-500">
+              <tr><th className="px-4 py-3 font-medium">User</th><th className="px-4 py-3 font-medium">Role</th><th className="px-4 py-3 font-medium">Joined</th><th className="px-4 py-3 font-medium">Actions</th></tr>
+            </thead>
+            <tbody className="divide-y">
+              {users.map((user) => {
+                const editing = editId === user.id;
+                return (
+                  <tr key={user.id} className="align-top hover:bg-slate-50" aria-busy={updatingId === user.id || deletingId === user.id}>
+                    <td className="px-4 py-3">
+                      {editing ? <input className="min-h-11 w-full max-w-xs rounded border px-3 py-2 text-sm" value={editName} onChange={(event) => setEditName(event.target.value)} placeholder="Display name" /> : <div><p className="font-medium text-slate-900">{user.name || "(no name)"}</p><p className="break-all text-xs text-slate-500">{user.email}</p></div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {editing ? <select className="min-h-11 rounded border bg-white px-3 py-2 text-sm" value={editRole} onChange={(event) => setEditRole(event.target.value)}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select> : <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-medium ${ROLE_COLORS[user.role as Role] ?? "bg-slate-100 text-slate-600"}`}>{roleLabel(user.role)}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">{new Date(user.createdAt).toLocaleDateString()}</td>
+                    <td className="px-4 py-3"><UserActions user={user} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {users.length === 0 && <div className="rounded-2xl border bg-white py-12 text-center text-slate-500">No users found.</div>}
+
+      <div className="rounded-xl border bg-slate-50 p-4 text-xs text-slate-600">
+        <h2 className="mb-1 font-semibold text-slate-700">Role permissions</h2>
+        <ul className="space-y-1">
+          <li><span className="font-medium text-red-700">ADMIN</span> — full access, including user administration.</li>
+          <li><span className="font-medium text-blue-700">PROPOSAL MANAGER</span> — manages tenders, analysis, generation, and export.</li>
+          <li><span className="font-medium text-amber-700">REVIEWER</span> — reviews documents and adds comments.</li>
+          <li><span className="font-medium text-slate-700">VIEWER</span> — read-only access.</li>
         </ul>
       </div>
     </div>
