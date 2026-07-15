@@ -53,6 +53,7 @@ import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
+import { resolveCurrencyAuthority } from "./currency-authority";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
@@ -1213,6 +1214,22 @@ export async function getFinalSubmissionReadiness(
       return null;
     })(),
   };
+
+  // ── Currency authority (shared canonical helper) ──────────────────
+  // Per REVISION_REQUIRED (recheck 7): integrate the currency authority
+  // helper into the canonical server readiness object so every page/API
+  // that calls getFinalSubmissionReadiness inherits the CURRENCY_UNVERIFIED
+  // blocker automatically. This ensures the report page, export page,
+  // documents page, download API, and export-readiness API all see the
+  // same blocker — no local reimplementation.
+  const currencyAuthority = await resolveCurrencyAuthority(
+    client,
+    opts.tenderId,
+    tender.currency,
+  ).catch(() => null);
+  if (currencyAuthority?.isUnverified && currencyAuthority.blocker) {
+    tenderLevelBlockers.push(currencyAuthority.blocker);
+  }
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
   const message = buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });

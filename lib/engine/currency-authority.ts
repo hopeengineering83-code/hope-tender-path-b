@@ -1,38 +1,32 @@
 // Shared canonical currency authority helper.
 //
-// Per CHATGPT-M1 REVISION_REQUIRED (recheck 6): the value-bound currency
-// decision must live in ONE shared server helper, not reimplemented in each
-// UI page. Every consumer (report page, export page, documents page, download
-// API, export-readiness API) must call this helper and get the same
-// CURRENCY_UNVERIFIED code.
+// Per CHATGPT-M1 REVISION_REQUIRED (recheck 7): this helper must be
+// integrated into getFinalSubmissionReadiness so every page/API consumes
+// the same CURRENCY_UNVERIFIED blocker from the canonical server readiness
+// object — not just the report page.
 //
-// The helper:
-//   1. Resolves the LATEST field decision for currency (override + ledger).
-//      A newer cleared/revoked/superseding decision takes precedence over an
-//      older qualifying row. Fails closed when the latest decision is no
-//      longer current (per item 2).
-//   2. Binds the authority value to the current tender.currency (value-bound,
-//      per item 1 of recheck 5). A stale EUR authority cannot verify a later
-//      USD value.
-//   3. Accepts only SOURCE_GROUNDED_CONFIRMED and HUMAN_CONFIRMED_OPERATIONAL
-//      (per item 2 of recheck 5). Bare SOURCE_GROUNDED is NOT enough.
-//   4. Returns a canonical CurrencyAuthorityResult with a CURRENCY_UNVERIFIED
-//      blocker code that all surfaces consume.
+// Decision precedence (item 2): the LATEST decision across BOTH sources
+// (override + ledger) wins. A newer non-authoritative decision invalidates
+// an older authoritative one. We compare by updatedAt timestamp.
+//
+// fieldState (item 3): the override's fieldState is evaluated. Only
+// USER_EDITED and USER_CONFIRMED are current; MISSING, NOT_APPLICABLE,
+// IGNORED_WITH_REASON, and REJECTED are non-current and fail closed.
+//
+// Comment accuracy (item 4): this helper is consumed by
+// getFinalSubmissionReadiness (the canonical server readiness object).
+// Individual pages/APIs that call getFinalSubmissionReadiness inherit
+// the currency blocker automatically — they do NOT call this helper
+// directly.
 
 import type { PrismaClient } from "@prisma/client";
 
 export type CurrencyAuthorityResult = {
-  /** True when the tender.currency is null (not extracted) — not a blocker. */
   isNull: boolean;
-  /** True when the currency is non-null AND has a value-bound confirmed authority. */
   isVerified: boolean;
-  /** True when the currency is non-null but lacks value-bound confirmed authority. */
   isUnverified: boolean;
-  /** The display string for the currency field. */
   display: string;
-  /** The canonical blocker code, if unverified. Null when verified or null. */
   blockerCode: string | null;
-  /** The canonical blocker object, if unverified. Null when verified or null. */
   blocker: {
     category: string;
     severity: string;
@@ -49,24 +43,45 @@ const CURRENCY_BLOCKER = {
     "Confirm the currency via the metadata override panel with a source quote, or clear it to 'Not extracted'.",
 };
 
+// Only these fieldState values represent a CURRENT override decision.
+// MISSING, NOT_APPLICABLE, IGNORED_WITH_REASON, and REJECTED are non-current.
+const CURRENT_FIELD_STATES = new Set(["USER_EDITED", "USER_CONFIRMED"]);
+
+// Only these authority classes/states represent confirmed authority.
+const QUALIFYING_OVERRIDE_CLASSES = new Set([
+  "SOURCE_GROUNDED_CONFIRMED",
+  "HUMAN_CONFIRMED_OPERATIONAL",
+]);
+const QUALIFYING_LEDGER_STATES = new Set([
+  "SOURCE_GROUNDED_CONFIRMED",
+  "HUMAN_CONFIRMED_OPERATIONAL",
+]);
+
+type DecisionSource = "override" | "ledger";
+
+type ResolvedDecision = {
+  source: DecisionSource;
+  updatedAt: Date;
+  qualifies: boolean;
+  valueMatches: boolean;
+} | null;
+
 /**
  * Resolve the canonical currency authority for a tender.
  *
- * This is the SINGLE source of truth for whether a tender's currency is
- * verified, unverified, or not-extracted. All UI pages and API routes
- * must call this helper — do NOT reimplement the logic locally.
+ * Decision precedence: the LATEST decision across BOTH sources (override
+ * + ledger) wins. A newer non-qualifying decision (e.g., REJECTED_CANDIDATE)
+ * invalidates an older qualifying one — fail closed for currentness.
  *
- * @param prisma - Prisma client
- * @param tenderId - Tender ID
- * @param currency - The current tender.currency value (null = not extracted)
- * @returns CurrencyAuthorityResult
+ * This helper is consumed by getFinalSubmissionReadiness. Pages and APIs
+ * that call getFinalSubmissionReadiness inherit the currency blocker
+ * automatically.
  */
 export async function resolveCurrencyAuthority(
   prisma: PrismaClient,
   tenderId: string,
   currency: string | null | undefined,
 ): Promise<CurrencyAuthorityResult> {
-  // Null currency → "Not extracted" — not a blocker, not unverified.
   if (!currency) {
     return {
       isNull: true,
@@ -78,11 +93,11 @@ export async function resolveCurrencyAuthority(
     };
   }
 
-  // ── Resolve the LATEST override decision (item 2: currentness) ──────
-  // Query ALL overrides for field='currency' ordered by updatedAt desc.
-  // The LATEST row wins. If the latest row has a non-qualifying
-  // authorityClass (e.g., REJECTED_CANDIDATE, NOT_STATED_IN_SOURCE),
-  // the currency is unverified — even if an older qualifying row exists.
+  const upperCurrency = currency.toUpperCase().trim();
+
+  // ── Resolve the LATEST override decision ──────────────────────────
+  // Query ALL overrides (not just qualifying ones) so the latest
+  // non-qualifying decision takes precedence over older qualifying ones.
   const latestOverride = await prisma.tenderMetadataOverride.findFirst({
     where: { tenderId, field: "currency" },
     select: {
@@ -94,10 +109,7 @@ export async function resolveCurrencyAuthority(
     orderBy: { updatedAt: "desc" },
   }).catch(() => null);
 
-  // ── Resolve the LATEST ledger fact (item 3: ledger currentness) ─────
-  // Query ALL ledger facts for semanticKey='currency' ordered by updatedAt desc.
-  // The LATEST active fact wins. If the latest fact has a non-qualifying
-  // authorityState, the currency is unverified.
+  // ── Resolve the LATEST ledger decision ────────────────────────────
   const latestLedgerFact = await prisma.tenderFactsLedger.findFirst({
     where: { tenderId, semanticKey: "currency" },
     select: {
@@ -109,49 +121,75 @@ export async function resolveCurrencyAuthority(
     orderBy: { updatedAt: "desc" },
   }).catch(() => null);
 
-  // ── Determine which (if any) latest decision qualifies ──────────────
-  // Only SOURCE_GROUNDED_CONFIRMED and HUMAN_CONFIRMED_OPERATIONAL are
-  // accepted (per recheck 5 item 2). Bare SOURCE_GROUNDED is NOT enough.
-  const QUALIFYING_OVERRIDE_CLASSES = new Set([
-    "SOURCE_GROUNDED_CONFIRMED",
-    "HUMAN_CONFIRMED_OPERATIONAL",
-  ]);
-  const QUALIFYING_LEDGER_STATES = new Set([
-    "SOURCE_GROUNDED_CONFIRMED",
-    "HUMAN_CONFIRMED_OPERATIONAL",
-  ]);
-
-  const overrideQualifies =
-    latestOverride !== null &&
-    latestOverride.authorityClass !== null &&
-    QUALIFYING_OVERRIDE_CLASSES.has(latestOverride.authorityClass);
-
-  const ledgerQualifies =
-    latestLedgerFact !== null &&
-    latestLedgerFact.sourceStatus === "active" &&
-    latestLedgerFact.authorityState !== null &&
-    QUALIFYING_LEDGER_STATES.has(latestLedgerFact.authorityState);
-
-  // ── Value-bound check (item 1 of recheck 5) ────────────────────────
-  // The authority value must match the current tender.currency.
-  // A stale EUR authority cannot verify a later USD value.
-  const upperCurrency = currency.toUpperCase().trim();
-
-  const overrideValueMatches = (() => {
-    if (!overrideQualifies) return false;
-    if (!latestOverride?.overrideValue) return false;
-    return latestOverride.overrideValue.toUpperCase().trim() === upperCurrency;
+  // ── Evaluate override decision (item 3: fieldState) ──────────────
+  // The override qualifies ONLY when:
+  //   - authorityClass is in QUALIFYING_OVERRIDE_CLASSES
+  //   - fieldState is in CURRENT_FIELD_STATES (not cleared/revoked/superseded)
+  //   - overrideValue matches tender.currency (value-bound)
+  const overrideDecision: ResolvedDecision = (() => {
+    if (!latestOverride) return null;
+    const authorityOk =
+      latestOverride.authorityClass !== null &&
+      QUALIFYING_OVERRIDE_CLASSES.has(latestOverride.authorityClass);
+    const fieldStateOk =
+      latestOverride.fieldState !== null &&
+      CURRENT_FIELD_STATES.has(latestOverride.fieldState);
+    const valueOk =
+      latestOverride.overrideValue !== null &&
+      latestOverride.overrideValue.toUpperCase().trim() === upperCurrency;
+    return {
+      source: "override" as DecisionSource,
+      updatedAt: latestOverride.updatedAt,
+      qualifies: authorityOk && fieldStateOk && valueOk,
+      valueMatches: valueOk,
+    };
   })();
 
-  const ledgerValueMatches = (() => {
-    if (!ledgerQualifies) return false;
-    if (!latestLedgerFact?.normalizedValue) return false;
-    return latestLedgerFact.normalizedValue.toUpperCase().trim() === upperCurrency;
+  // ── Evaluate ledger decision ──────────────────────────────────────
+  const ledgerDecision: ResolvedDecision = (() => {
+    if (!latestLedgerFact) return null;
+    const authorityOk =
+      latestLedgerFact.authorityState !== null &&
+      QUALIFYING_LEDGER_STATES.has(latestLedgerFact.authorityState);
+    const sourceActive = latestLedgerFact.sourceStatus === "active";
+    const valueOk =
+      latestLedgerFact.normalizedValue !== null &&
+      latestLedgerFact.normalizedValue.toUpperCase().trim() === upperCurrency;
+    return {
+      source: "ledger" as DecisionSource,
+      updatedAt: latestLedgerFact.updatedAt,
+      qualifies: authorityOk && sourceActive && valueOk,
+      valueMatches: valueOk,
+    };
   })();
 
-  const isVerified = overrideValueMatches || ledgerValueMatches;
+  // ── Cross-source precedence (item 2) ──────────────────────────────
+  // The LATEST decision across both sources wins. A newer non-qualifying
+  // decision invalidates an older qualifying one.
+  const allDecisions = [overrideDecision, ledgerDecision].filter(
+    (d): d is NonNullable<typeof d> => d !== null,
+  );
 
-  if (isVerified) {
+  if (allDecisions.length === 0) {
+    // No decisions at all → unverified
+    return {
+      isNull: false,
+      isVerified: false,
+      isUnverified: true,
+      display: "Unverified legacy value",
+      blockerCode: CURRENCY_BLOCKER.category,
+      blocker: CURRENCY_BLOCKER,
+    };
+  }
+
+  // Sort by updatedAt desc — latest decision first
+  allDecisions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  const latestDecision = allDecisions[0];
+
+  // The latest decision determines authority. If the latest is qualifying,
+  // currency is verified. If the latest is non-qualifying (even if an older
+  // decision was qualifying), currency is unverified — fail closed.
+  if (latestDecision.qualifies) {
     return {
       isNull: false,
       isVerified: true,
@@ -162,7 +200,6 @@ export async function resolveCurrencyAuthority(
     };
   }
 
-  // Unverified: non-null currency without a value-bound confirmed authority.
   return {
     isNull: false,
     isVerified: false,
@@ -173,8 +210,4 @@ export async function resolveCurrencyAuthority(
   };
 }
 
-/**
- * The canonical CURRENCY_UNVERIFIED blocker object.
- * Consumers should use this directly when adding the blocker to a list.
- */
 export const CURRENCY_UNVERIFIED_BLOCKER = CURRENCY_BLOCKER;
