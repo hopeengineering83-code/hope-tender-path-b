@@ -6,7 +6,15 @@ import {
   getCanonicalProviderEntries,
 } from "../lib/ai-provider-registry";
 import { CANONICAL_PROVIDER_CHAIN } from "../lib/ai";
-import { CANONICAL_AI_PROVIDER_CHAIN } from "../lib/ai-provider-policy";
+import {
+  CANONICAL_AI_PROVIDER_CHAIN,
+  CANONICAL_AI_PROVIDER_ENV_LIST,
+  CANONICAL_AI_PROVIDER_ENV_NAMES,
+} from "../lib/ai-provider-policy";
+import {
+  CANONICAL_AI_PROVIDER_ENV_LIST as ENV_LIST_FROM_ENV_MODULE,
+  CANONICAL_AI_PROVIDER_ENV_NAMES as ENV_NAMES_FROM_ENV_MODULE,
+} from "../lib/ai-provider-env";
 
 // The required canonical automatic provider order — the single source of truth
 // is lib/ai-provider-registry.ts. This array is duplicated here ONLY so the
@@ -117,5 +125,52 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
     for (let i = 1; i < positions.length; i++) {
       assert.ok(positions[i] > positions[i - 1], `${order[i]} must appear after ${order[i - 1]} in readiness`);
     }
+  });
+});
+
+describe("browser-safe provider env-name list", () => {
+  // The browser-safe env-name list is derived from the single literal provider
+  // order in lib/ai-provider-catalog.cjs. It must never re-declare the order
+  // and must never read process.env at import time (so it can be bundled into
+  // client code). These tests pin both guarantees.
+
+  const REQUIRED_ENV_NAMES = [
+    "ZAI_API_KEY",
+    "CEREBRAS_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "TOGETHER_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "ANTHROPIC_API_KEY",
+  ] as const;
+
+  it("CANONICAL_AI_PROVIDER_ENV_NAMES is exactly the required env-name order (Z.ai first, Anthropic last)", () => {
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ENV_NAMES], [...REQUIRED_ENV_NAMES]);
+  });
+
+  it("CANONICAL_AI_PROVIDER_ENV_LIST is the comma-joined display form of the env-name list", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ENV_LIST, REQUIRED_ENV_NAMES.join(", "));
+  });
+
+  it("re-export from ai-provider-policy matches the direct export from ai-provider-env", () => {
+    // The re-export path (ai-provider-policy) and the direct path
+    // (ai-provider-env) must reference the same values — no drift.
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ENV_NAMES], [...ENV_NAMES_FROM_ENV_MODULE]);
+    assert.equal(CANONICAL_AI_PROVIDER_ENV_LIST, ENV_LIST_FROM_ENV_MODULE);
+  });
+
+  it("lib/ai-provider-env.ts does not read process.env at module top level (browser-safe)", () => {
+    const src = readFileSync("lib/ai-provider-env.ts", "utf8");
+    assert.ok(
+      !/^\s*process\.env/m.test(src),
+      "lib/ai-provider-env.ts must not read process.env at module top level — it must remain browser-safe",
+    );
+    assert.ok(
+      src.includes("AI_PROVIDER_API_KEY_ENVS"),
+      "lib/ai-provider-env.ts must derive the list from ai-provider-catalog.cjs, not re-declare the order",
+    );
   });
 });
