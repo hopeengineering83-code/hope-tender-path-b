@@ -11,7 +11,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
-  checks: read
+  checks: write
   actions: read
 
 concurrency:
@@ -28,55 +28,26 @@ jobs:
           FREEZE_MODE: ${{ vars.FREEZE_MODE || 'true' }}
         with:
           script: |
-            if (process.env.FREEZE_MODE !== 'true') {
-              core.notice('FREEZE_MODE is disabled.');
-              return;
-            }
+            if (process.env.FREEZE_MODE !== 'true') return;
             if (context.eventName === 'push') {
-              const actor = context.actor;
-              const message = `Direct or merged update reached main during FREEZE_MODE. SHA: ${context.sha}; actor: ${actor}. Production release remains blocked.`;
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `[FREEZE VIOLATION] main changed at ${context.sha.slice(0, 12)}`,
-                body: message,
-                labels: ['risk:critical', 'freeze-violation', 'agent:none']
-              });
+              const message = `Main changed during FREEZE_MODE. SHA: ${context.sha}; actor: ${context.actor}.`;
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title: `[FREEZE VIOLATION] main changed at ${context.sha.slice(0, 12)}`, body: message, labels: ['risk:critical', 'freeze-violation', 'agent:none'] });
               core.setFailed(message);
               return;
             }
-
             const pr = context.payload.pull_request;
-            const runtimePrefixes = ['app/', 'lib/', 'components/', 'prisma/', 'scripts/', 'tests/', 'e2e/'];
-            const infraPrefixes = ['.github/'];
-            const { data: files } = await github.rest.pulls.listFiles({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              per_page: 100
-            });
+            const { data: files } = await github.rest.pulls.listFiles({ owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number, per_page: 100 });
             const names = files.map(f => f.filename);
-            const hasRuntime = names.some(name => runtimePrefixes.some(prefix => name.startsWith(prefix)));
-            const hasInfra = names.some(name => infraPrefixes.some(prefix => name.startsWith(prefix)));
-
+            const hasRuntime = names.some(name => ['app/', 'lib/', 'components/', 'prisma/', 'scripts/', 'tests/', 'e2e/'].some(prefix => name.startsWith(prefix)));
+            const hasInfra = names.some(name => name.startsWith('.github/'));
             let allowed = false;
             if (pr.head.ref === 'integration/controlled-recovery' && pr.base.ref === 'main' && pr.draft) allowed = true;
             if (hasRuntime && pr.base.ref === 'integration/controlled-recovery') allowed = true;
             if (!hasRuntime && hasInfra && pr.base.ref === 'automation/control-plane') allowed = true;
             if (!allowed) {
-              const reason = `FREEZE_MODE routing violation. Runtime worker PRs must target integration/controlled-recovery; infrastructure PRs must target automation/control-plane; only the draft integration PR may target main.`;
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: ['freeze-blocked']
-              });
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                body: reason
-              });
+              const reason = 'FREEZE_MODE routing violation. Runtime worker PRs must target integration/controlled-recovery; infrastructure PRs must target automation/control-plane; only the draft integration PR may target main.';
+              await github.rest.issues.addLabels({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, labels: ['freeze-blocked'] });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, body: reason });
               core.setFailed(reason);
             }
 
