@@ -23,6 +23,11 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function isSafeInternalLink(link: string): boolean {
+  // Must start with '/' and not start with '//' or any backslashes (which some browsers treat as directory separators/redirects)
+  return link.startsWith("/") && !link.startsWith("//") && !link.startsWith("\\\\");
+}
+
 const TYPE_ICON: Record<string, string> = {
   TENDER_ANALYZED: "🔎",
   TENDER_GENERATED: "📄",
@@ -187,49 +192,52 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
             {!loading && notifications.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-slate-400">No notifications yet.</p>
             )}
-            {!loading && notifications.map((n) => (
-              <div
-                key={n.id}
-                className={`flex gap-3 border-b px-4 py-3 last:border-b-0 ${n.readAt ? "bg-white" : "bg-blue-50"}`}
-              >
-                <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? "🔔"}</span>
-                <div className="flex-1 min-w-0">
-                  {n.link ? (
-                    <Link
-                      href={n.link}
-                      onClick={async (e) => {
-                        e.preventDefault();
-                        if (isMarkingRef.current || markingAllRead || markingReadIds[n.id]) return;
-                        const success = await markRead(n.id);
-                        if (success) {
-                          setOpen(false);
-                          window.location.href = n.link!;
-                        }
-                      }}
-                      className={`block text-sm font-medium text-slate-900 hover:text-blue-700 truncate ${
-                        markingAllRead || markingReadIds[n.id] ? "pointer-events-none opacity-50" : ""
-                      }`}
+            {!loading && notifications.map((n) => {
+              const isLinkSafe = n.link && isSafeInternalLink(n.link);
+              return (
+                <div
+                  key={n.id}
+                  className={`flex gap-3 border-b px-4 py-3 last:border-b-0 ${n.readAt ? "bg-white" : "bg-blue-50"}`}
+                >
+                  <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? "🔔"}</span>
+                  <div className="flex-1 min-w-0">
+                    {n.link && isLinkSafe ? (
+                      <Link
+                        href={n.link}
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          if (isMarkingRef.current || markingAllRead || markingReadIds[n.id]) return;
+                          const success = await markRead(n.id);
+                          if (success) {
+                            setOpen(false);
+                            window.location.href = n.link!;
+                          }
+                        }}
+                        className={`block text-sm font-medium text-slate-900 hover:text-blue-700 truncate ${
+                          markingAllRead || markingReadIds[n.id] ? "pointer-events-none opacity-50" : ""
+                        }`}
+                      >
+                        {n.title}
+                      </Link>
+                    ) : (
+                      <p className="text-sm font-medium text-slate-900 truncate">{n.title}</p>
+                    )}
+                    {n.body && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{n.body}</p>}
+                    <p className="mt-1 text-[10px] text-slate-400">{timeAgo(n.createdAt)}</p>
+                  </div>
+                  {!n.readAt && (
+                    <button
+                      onClick={() => void markRead(n.id)}
+                      disabled={markingAllRead || markingReadIds[n.id]}
+                      className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                      aria-label={`Mark "${n.title}" as read`}
                     >
-                      {n.title}
-                    </Link>
-                  ) : (
-                    <p className="text-sm font-medium text-slate-900 truncate">{n.title}</p>
+                      ✕
+                    </button>
                   )}
-                  {n.body && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{n.body}</p>}
-                  <p className="mt-1 text-[10px] text-slate-400">{timeAgo(n.createdAt)}</p>
                 </div>
-                {!n.readAt && (
-                  <button
-                    onClick={() => void markRead(n.id)}
-                    disabled={markingAllRead || markingReadIds[n.id]}
-                    className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
-                    aria-label={`Mark "${n.title}" as read`}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

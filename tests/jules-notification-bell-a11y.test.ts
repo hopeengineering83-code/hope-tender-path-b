@@ -618,4 +618,73 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
     });
   });
+
+  it("blocks rendering of external, protocol-relative, and javascript: links to prevent open redirect and XSS", async () => {
+    // Redefine fetch mock with unsafe links
+    cleanup();
+    calls = installFetchMock([
+      {
+        match: "/api/notifications?limit=20",
+        method: "GET",
+        json: {
+          unreadCount: 3,
+          notifications: [
+            {
+              id: "u1",
+              type: "SYSTEM",
+              title: "External Link",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "https://evil.com/phish",
+              readAt: null,
+            },
+            {
+              id: "u2",
+              type: "SYSTEM",
+              title: "Protocol Relative",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "//evil.com/phish",
+              readAt: null,
+            },
+            {
+              id: "u3",
+              type: "SYSTEM",
+              title: "XSS Javascript",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "javascript:alert(1)",
+              readAt: null,
+            },
+          ],
+        },
+      },
+      {
+        match: "/api/notifications",
+        method: "PATCH",
+        json: { success: true },
+      },
+    ]);
+
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 3 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const links = container.querySelectorAll("#notification-popup a");
+    // All 3 unsafe links should be filtered out and not rendered as anchor <a> tags at all!
+    assert.equal(links.length, 0);
+
+    // Instead, they should be rendered as plain text elements
+    const texts = container.querySelectorAll("#notification-popup p");
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("External Link")));
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("Protocol Relative")));
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("XSS Javascript")));
+  });
 });
