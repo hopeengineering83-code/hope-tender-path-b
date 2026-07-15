@@ -3,9 +3,19 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
-import { logAction } from "../../../../../lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import {
+  buildReviewProvenance,
+  expertReviewFields,
+  publicVaultIdentifier,
+} from "../../../../../lib/vault-review-provenance";
+
+type RejectedReview = {
+  id: string;
+  code: "NOT_FOUND_OR_NOT_OWNED" | "SOURCE_DOCUMENT_REQUIRED" | "SOURCE_TEXT_REQUIRED" | "FIELD_EVIDENCE_REQUIRED" | "CONCURRENT_UPDATE";
+  missingEvidenceFields?: string[];
+};
 
 export async function PATCH(req: Request) {
   let actor;
@@ -29,21 +39,15 @@ export async function PATCH(req: Request) {
 
   await prismaReady;
   const body = await req.json().catch(() => null) as Record<string, unknown> | null;
-  if (!body) {
-    return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
-  }
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
 
   const ids = Array.from(new Set(
     Array.isArray(body.ids)
       ? body.ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())
       : [],
   ));
-  if (ids.length === 0) {
-    return NextResponse.json({ error: "ids array is required and must not be empty" }, { status: 400 });
-  }
-  if (ids.length > 200) {
-    return NextResponse.json({ error: "Maximum 200 unique ids per batch" }, { status: 400 });
-  }
+  if (ids.length === 0) return NextResponse.json({ error: "ids array is required and must not be empty" }, { status: 400 });
+  if (ids.length > 100) return NextResponse.json({ error: "Maximum 100 unique ids per batch" }, { status: 400 });
   if (body.trustLevel !== "REVIEWED") {
     return NextResponse.json(
       { error: "trustLevel must be explicitly set to REVIEWED", code: "INVALID_TRUST_LEVEL" },
@@ -52,29 +56,115 @@ export async function PATCH(req: Request) {
   }
 
   const company = await ensureCompanyForUser(prisma, actor.id);
-  const result = await prisma.expert.updateMany({
+  const records = await prisma.expert.findMany({
     where: { id: { in: ids }, companyId: company.id, deletedAt: null },
-    data: {
-      trustLevel: "REVIEWED",
-      reviewedBy: actor.id,
-      reviewedAt: new Date(),
-      reviewNotes: "Batch approved by an authorized reviewer.",
+    select: {
+      id: true,
+      fullName: true,
+      title: true,
+      yearsExperience: true,
+      disciplines: true,
+      sectors: true,
+      certifications: true,
+      sourceDocumentId: true,
+      sourceDocument: {
+        select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+      },
     },
   });
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const reviewedAt = new Date();
+  const rejected: RejectedReview[] = [];
+  const candidates: Array<{
+    id: string;
+    serialized: string;
+    sourceContentHash: string;
+    evidenceFields: string[];
+  }> = [];
 
-  void logAction({
-    userId: actor.id,
-    action: "UPDATE",
-    entityType: "Expert",
-    description: `Batch approved ${result.count} expert(s) as REVIEWED`,
-    metadata: { ids, trustLevel: "REVIEWED", updated: result.count },
-    requestId,
-  }).catch((error) => {
-    logger.warn("expert batch-review audit persistence failed", {
+  for (const id of ids) {
+    const record = byId.get(id);
+    if (!record) {
+      rejected.push({ id, code: "NOT_FOUND_OR_NOT_OWNED" });
+      continue;
+    }
+    const ownedSource = record.sourceDocument?.companyId === company.id ? record.sourceDocument : null;
+    const provenance = buildReviewProvenance({
+      sourceDocument: ownedSource,
+      fields: expertReviewFields(record),
+      reviewerId: actor.id,
+      reviewedAt,
+    });
+    if (!provenance.ok) {
+      rejected.push({
+        id,
+        code: provenance.code,
+        ...(provenance.missingFields.length ? { missingEvidenceFields: provenance.missingFields.slice(0, 8) } : {}),
+      });
+      continue;
+    }
+    candidates.push({ id, ...provenance });
+  }
+
+  try {
+    const updatedIds = await prisma.$transaction(async (tx) => {
+      const completed: string[] = [];
+      for (const candidate of candidates) {
+        const updated = await tx.expert.updateMany({
+          where: {
+            id: candidate.id,
+            companyId: company.id,
+            deletedAt: null,
+          },
+          data: {
+            trustLevel: "REVIEWED",
+            reviewedBy: actor.id,
+            reviewedAt,
+            reviewNotes: candidate.serialized,
+          },
+        });
+        if (updated.count !== 1) {
+          rejected.push({ id: candidate.id, code: "CONCURRENT_UPDATE" });
+          continue;
+        }
+
+        await tx.auditLog.create({
+          data: {
+            userId: actor.id,
+            action: "EXPERT_REVIEW",
+            entityType: "Expert",
+            entityId: candidate.id,
+            description: "Expert record reviewed with durable source evidence.",
+            metadata: JSON.stringify({
+              requestId,
+              recordRef: publicVaultIdentifier(candidate.id),
+              sourceContentHash: candidate.sourceContentHash,
+              evidenceFields: candidate.evidenceFields,
+              reviewedAt: reviewedAt.toISOString(),
+            }),
+          },
+        });
+        completed.push(candidate.id);
+      }
+      return completed;
+    });
+
+    const response = {
+      success: rejected.length === 0,
+      updated: updatedIds.length,
+      accepted: updatedIds.map((id) => ({ id, status: "REVIEWED" as const })),
+      rejected,
+      requestId,
+    };
+    return NextResponse.json(response, { status: updatedIds.length > 0 ? 200 : 422 });
+  } catch (error) {
+    logger.error("expert batch review failed", {
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
-  });
-
-  return NextResponse.json({ success: true, updated: result.count });
+    return NextResponse.json(
+      { error: "Expert review failed. Retry with the request ID.", code: "EXPERT_REVIEW_FAILED", requestId },
+      { status: 500 },
+    );
+  }
 }

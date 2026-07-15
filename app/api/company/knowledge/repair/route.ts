@@ -7,13 +7,25 @@ import { logAction } from "../../../../../lib/audit";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import {
+  assessReviewEvidence,
+  effectiveReviewTrustLevel,
+  expertReviewFields,
+  isDurablyReviewed,
+  parseStoredStringList,
+  projectReviewFields,
+  publicVaultIdentifier,
+  redactVaultText,
+  safeVaultFileLabel,
+} from "../../../../../lib/vault-review-provenance";
 
-// Vercel route timeout — knowledge repair runs the configured AI provider chain
-// across uploaded documents. 60 = Hobby max.
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+const RECORD_PAGE_SIZE = 10;
+
 type Gap = { severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; title: string; detail: string };
+type Pagination = { expertPage: number; projectPage: number };
 
 async function getCompany(userId: string) {
   return prisma.company.findUnique({ where: { userId }, select: { id: true, name: true } });
@@ -48,22 +60,110 @@ function expectedProjectCount(text: string | null | undefined) {
   return direct ? Number(direct) : null;
 }
 
-async function buildDiagnostics(companyId: string) {
-  const [docs, experts, projects] = await Promise.all([
+function requestedPage(searchParams: URLSearchParams, key: string): number {
+  const parsed = Number.parseInt(searchParams.get(key) ?? "1", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function pageInfo(page: number, total: number) {
+  return {
+    page,
+    pageSize: RECORD_PAGE_SIZE,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / RECORD_PAGE_SIZE)),
+  };
+}
+
+async function buildDiagnostics(
+  companyId: string,
+  pagination: Pagination = { expertPage: 1, projectPage: 1 },
+) {
+  const [docs, expertStates, projectStates, expertPageItems, projectPageItems] = await Promise.all([
     prisma.companyDocument.findMany({
       where: { companyId },
-      select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
+      select: {
+        id: true,
+        originalFileName: true,
+        category: true,
+        extractedText: true,
+        aiExtractionStatus: true,
+      },
       orderBy: { createdAt: "desc" },
     }),
-    prisma.expert.findMany({ where: { companyId }, select: { trustLevel: true } }),
-    prisma.project.findMany({ where: { companyId }, select: { trustLevel: true } }),
+    prisma.expert.findMany({
+      where: { companyId, deletedAt: null },
+      select: {
+        trustLevel: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
+        sourceDocumentId: true,
+      },
+    }),
+    prisma.project.findMany({
+      where: { companyId, deletedAt: null },
+      select: {
+        trustLevel: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
+        sourceDocumentId: true,
+      },
+    }),
+    prisma.expert.findMany({
+      where: { companyId, deletedAt: null },
+      select: {
+        id: true,
+        fullName: true,
+        title: true,
+        yearsExperience: true,
+        disciplines: true,
+        sectors: true,
+        certifications: true,
+        trustLevel: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
+        sourceDocumentId: true,
+        sourceDocument: {
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+        },
+      },
+      orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+      skip: (pagination.expertPage - 1) * RECORD_PAGE_SIZE,
+      take: RECORD_PAGE_SIZE,
+    }),
+    prisma.project.findMany({
+      where: { companyId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        clientName: true,
+        country: true,
+        sector: true,
+        serviceAreas: true,
+        contractValue: true,
+        currency: true,
+        trustLevel: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
+        sourceDocumentId: true,
+        sourceDocument: {
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+        },
+      },
+      orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+      skip: (pagination.projectPage - 1) * RECORD_PAGE_SIZE,
+      take: RECORD_PAGE_SIZE,
+    }),
   ]);
 
-  const documentDiagnostics = docs.map((doc) => {
+  const documentDiagnostics = docs.map((doc, index) => {
     const extractedChars = doc.extractedText?.length ?? 0;
     return {
-      id: doc.id,
-      fileName: doc.originalFileName,
+      id: publicVaultIdentifier(doc.id),
+      fileName: safeVaultFileLabel(doc.category, index),
       category: doc.category,
       extractedChars,
       status: usableText(doc.extractedText) ? "EXTRACTED" : extractedChars > 0 ? "WARNING" : "EMPTY",
@@ -76,48 +176,70 @@ async function buildDiagnostics(companyId: string) {
   const expertSourceDocuments = documentDiagnostics.filter((document) => document.isExpertSource).length;
   const projectSourceDocuments = documentDiagnostics.filter((document) => document.isProjectSource).length;
   const extractedDocuments = documentDiagnostics.filter((document) => document.status === "EXTRACTED").length;
-  const reviewedExperts = experts.filter((expert) => expert.trustLevel === "REVIEWED").length;
-  const aiDraftExperts = experts.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
-  const regexDraftExperts = experts.filter((expert) => !expert.trustLevel || expert.trustLevel === "REGEX_DRAFT").length;
-  const reviewedProjects = projects.filter((project) => project.trustLevel === "REVIEWED").length;
-  const aiDraftProjects = projects.filter((project) => project.trustLevel === "AI_DRAFT").length;
-  const regexDraftProjects = projects.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
+  const reviewedExperts = expertStates.filter(isDurablyReviewed).length;
+  const unsupportedReviewedExperts = expertStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const aiDraftExperts = expertStates.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
+  const regexDraftExperts = expertStates.filter((expert) => !expert.trustLevel || expert.trustLevel === "REGEX_DRAFT").length;
+  const reviewedProjects = projectStates.filter(isDurablyReviewed).length;
+  const unsupportedReviewedProjects = projectStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const aiDraftProjects = projectStates.filter((project) => project.trustLevel === "AI_DRAFT").length;
+  const regexDraftProjects = projectStates.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
   const expectedExperts = docs.map((document) => expectedExpertCount(document.extractedText)).find((count) => count && count > 0) ?? null;
   const expectedProjects = docs.map((document) => expectedProjectCount(document.extractedText)).find((count) => count && count > 0) ?? null;
 
   const gaps: Gap[] = [];
-  if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company profile, CVs, project references, legal records, and evidence documents." });
-  if (docs.length > 0 && extractedDocuments === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text. Re-upload text PDFs or add OCR/document-intelligence support." });
-  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "Configure at least one AI provider: ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY. All 10 providers are automatic. Claude/Anthropic is emergency-only last resort." });
+  if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company evidence, CVs, and project references." });
+  if (docs.length > 0 && extractedDocuments === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text." });
+  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "Configure an approved AI provider before automated extraction." });
+  if (unsupportedReviewedExperts > 0) gaps.push({ severity: "CRITICAL", title: "Expert reviews lack durable provenance", detail: `${unsupportedReviewedExperts} expert record(s) are blocked until source evidence and reviewer audit are recorded.` });
+  if (unsupportedReviewedProjects > 0) gaps.push({ severity: "CRITICAL", title: "Project reviews lack durable provenance", detail: `${unsupportedReviewedProjects} project record(s) are blocked until source evidence and reviewer audit are recorded.` });
+  if (expertSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Expert records cannot become usable without an owned CV/staff source document and field evidence." });
+  if (projectSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Project records cannot become usable without an owned project-reference source document and field evidence." });
+  if (expertStates.length > 0 && reviewedExperts === 0) gaps.push({ severity: "HIGH", title: "No provenance-verified experts", detail: `${expertStates.length} expert record(s) exist, but none has a valid durable review.` });
+  if (projectStates.length > 0 && reviewedProjects === 0) gaps.push({ severity: "HIGH", title: "No provenance-verified projects", detail: `${projectStates.length} project record(s) exist, but none has a valid durable review.` });
+  if (expectedExperts && expertStates.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Fewer experts than expected", detail: `Expected about ${expectedExperts} experts, but ${expertStates.length} records exist.` });
+  if (expectedProjects && projectStates.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Fewer projects than expected", detail: `Expected about ${expectedProjects} projects, but ${projectStates.length} records exist.` });
 
-  if (expertSourceDocuments === 0 && reviewedExperts === 0) {
-    gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload or categorize CV/staff documents so expert extraction can run." });
-  } else if (expertSourceDocuments === 0 && reviewedExperts > 0) {
-    gaps.push({ severity: "LOW", title: "No dedicated expert source documents detected", detail: `Reviewed records available; dedicated source docs optional. ${reviewedExperts} reviewed expert record(s) are available for tender matching. Upload/categorize CV files later only if you need to rebuild expert records from source documents.` });
-  }
+  const experts = expertPageItems.map((expert) => {
+    const sourceDocument = expert.sourceDocument?.companyId === companyId ? expert.sourceDocument : null;
+    const evidence = assessReviewEvidence(sourceDocument, expertReviewFields(expert));
+    return {
+      id: expert.id,
+      fullName: redactVaultText(expert.fullName, 120),
+      secondary: redactVaultText(expert.title ?? "Title not recorded", 140),
+      tags: parseStoredStringList(expert.disciplines).slice(0, 4).map((value) => redactVaultText(value, 60)),
+      trustLevel: effectiveReviewTrustLevel(expert),
+      canReview: evidence.ok,
+      missingEvidenceFields: evidence.ok ? [] : evidence.missingFields.slice(0, 6),
+    };
+  });
 
-  if (projectSourceDocuments === 0 && reviewedProjects === 0) {
-    gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Upload or categorize project references, portfolios, contracts, or experience sheets." });
-  } else if (projectSourceDocuments === 0 && reviewedProjects > 0) {
-    gaps.push({ severity: "LOW", title: "No dedicated project source documents detected", detail: `Reviewed records available; dedicated source docs optional. ${reviewedProjects} reviewed project record(s) are available for tender matching. Upload/categorize project-reference files later only if you need to rebuild project records from source documents.` });
-  }
-
-  if (experts.length > 0 && reviewedExperts === 0) gaps.push({ severity: "HIGH", title: "Experts are not reviewed", detail: `${experts.length} expert records exist, but none are marked REVIEWED. Review records before final generation.` });
-  if (projects.length > 0 && reviewedProjects === 0) gaps.push({ severity: "HIGH", title: "Projects are not reviewed", detail: `${projects.length} project records exist, but none are marked REVIEWED. Review records before final generation.` });
-  if (expectedExperts && experts.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Fewer experts than expected", detail: `Detected expectation around ${expectedExperts} experts, but only ${experts.length} records exist.` });
-  if (expectedProjects && projects.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Fewer projects than expected", detail: `Detected expectation around ${expectedProjects} projects, but only ${projects.length} records exist.` });
+  const projects = projectPageItems.map((project) => {
+    const sourceDocument = project.sourceDocument?.companyId === companyId ? project.sourceDocument : null;
+    const evidence = assessReviewEvidence(sourceDocument, projectReviewFields(project));
+    const clientAndCountry = [project.clientName, project.country].filter(Boolean).join(" · ") || "Client/location not recorded";
+    return {
+      id: project.id,
+      name: redactVaultText(project.name, 140),
+      secondary: redactVaultText(clientAndCountry, 160),
+      tags: parseStoredStringList(project.serviceAreas).slice(0, 4).map((value) => redactVaultText(value, 60)),
+      trustLevel: effectiveReviewTrustLevel(project),
+      canReview: evidence.ok,
+      missingEvidenceFields: evidence.ok ? [] : evidence.missingFields.slice(0, 6),
+    };
+  });
 
   return {
-    importVersion: "knowledge-import-v-current",
-    fingerprint: `${docs.length}:${extractedDocuments}:${experts.length}:${projects.length}`,
+    importVersion: "knowledge-import-v-provenance-1",
+    fingerprint: `${docs.length}:${extractedDocuments}:${expertStates.length}:${projectStates.length}`,
     documents: documentDiagnostics,
     totals: {
       documents: docs.length,
       extractedDocuments,
       expertSourceDocuments,
       projectSourceDocuments,
-      currentExperts: experts.length,
-      currentProjects: projects.length,
+      currentExperts: expertStates.length,
+      currentProjects: projectStates.length,
       autoImportedExperts: aiDraftExperts + regexDraftExperts,
       autoImportedProjects: aiDraftProjects + regexDraftProjects,
       parsedExpertDrafts: aiDraftExperts + regexDraftExperts,
@@ -126,6 +248,8 @@ async function buildDiagnostics(companyId: string) {
       expectedProjects,
       reviewedExperts,
       reviewedProjects,
+      unsupportedReviewedExperts,
+      unsupportedReviewedProjects,
       aiDraftExperts,
       aiDraftProjects,
       regexDraftExperts,
@@ -133,10 +257,14 @@ async function buildDiagnostics(companyId: string) {
       aiEnabled: isCompanyKnowledgeAIEnabled(),
     },
     gaps,
+    records: {
+      experts: { items: experts, ...pageInfo(pagination.expertPage, expertStates.length) },
+      projects: { items: projects, ...pageInfo(pagination.projectPage, projectStates.length) },
+    },
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
@@ -144,7 +272,11 @@ export async function GET() {
   const company = await getCompany(userId);
   if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-  const diagnostics = await buildDiagnostics(company.id);
+  const { searchParams } = new URL(req.url);
+  const diagnostics = await buildDiagnostics(company.id, {
+    expertPage: requestedPage(searchParams, "expertPage"),
+    projectPage: requestedPage(searchParams, "projectPage"),
+  });
   return NextResponse.json({ diagnostics });
 }
 
@@ -173,11 +305,6 @@ export async function POST(req: Request) {
     const company = await getCompany(actor.id);
     if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-    // The importer signature is importCompanyKnowledgeFromDocuments(companyId).
-    // There is no force parameter — the importer always re-derives from the
-    // current document set. Do not extract or audit a force flag that has no
-    // effect on the runtime; that would mislead operators into thinking they
-    // can control re-import behavior via the request body.
     const result = await importCompanyKnowledgeFromDocuments(company.id);
     const diagnostics = await buildDiagnostics(company.id);
 
@@ -186,13 +313,11 @@ export async function POST(req: Request) {
       action: "COMPANY_KNOWLEDGE_REPAIR",
       entityType: "Company",
       entityId: company.id,
-      description: `Ran company knowledge repair for ${company.name}: ${result.expertsCreated} experts and ${result.projectsCreated} projects created`,
+      description: "Company knowledge repair completed.",
       metadata: {
         expertsCreated: result.expertsCreated,
         projectsCreated: result.projectsCreated,
-        aiUsed: result.aiUsed,
-        aiFailures: result.aiFailures,
-        diagnostics: diagnostics.totals,
+        aiUsed: Boolean(result.aiUsed),
       },
       requestId,
     }).catch((error) => {
