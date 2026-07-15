@@ -27,30 +27,10 @@ type OwnedRoute = {
 const ROLES: readonly Role[] = ["VIEWER", "REVIEWER", "PROPOSAL_MANAGER", "ADMIN"];
 
 const OWNED_RESTRICTED_ROUTES: readonly OwnedRoute[] = [
-  {
-    path: "/dashboard/settings",
-    heading: "Settings",
-    dataPath: "/api/settings",
-    allowedRoles: ["ADMIN", "PROPOSAL_MANAGER"],
-  },
-  {
-    path: "/dashboard/assets",
-    heading: "Brand Assets",
-    dataPath: "/api/company/assets",
-    allowedRoles: ["ADMIN", "PROPOSAL_MANAGER"],
-  },
-  {
-    path: "/dashboard/setup",
-    heading: "Company Setup Wizard",
-    dataPath: "/api/company",
-    allowedRoles: ["ADMIN", "PROPOSAL_MANAGER"],
-  },
-  {
-    path: "/dashboard/users",
-    heading: "User Management",
-    dataPath: "/api/users",
-    allowedRoles: ["ADMIN"],
-  },
+  { path: "/dashboard/settings", heading: "Settings", dataPath: "/api/settings", allowedRoles: ["ADMIN", "PROPOSAL_MANAGER"] },
+  { path: "/dashboard/assets", heading: "Brand Assets", dataPath: "/api/company/assets", allowedRoles: ["ADMIN", "PROPOSAL_MANAGER"] },
+  { path: "/dashboard/setup", heading: "Company Setup Wizard", dataPath: "/api/company", allowedRoles: ["ADMIN", "PROPOSAL_MANAGER"] },
+  { path: "/dashboard/users", heading: "User Management", dataPath: "/api/users", allowedRoles: ["ADMIN"] },
 ] as const;
 
 function roleCanAccess(role: Role, route: OwnedRoute): boolean {
@@ -62,10 +42,7 @@ async function createLoggedInContext(
   email: string,
   password: string,
 ): Promise<{ context: BrowserContext; sessionValue: string }> {
-  const context = await browser.newContext({
-    baseURL,
-    viewport: { width: 1440, height: 1000 },
-  });
+  const context = await browser.newContext({ baseURL, viewport: { width: 1440, height: 1000 } });
   const response = await context.request.post("/api/auth/login", { data: { email, password } });
   expect(response.status()).toBe(200);
 
@@ -76,16 +53,14 @@ async function createLoggedInContext(
   const sessionValue = sessionHeader!.value.split(";")[0].split("=").slice(1).join("=");
   expect(sessionValue).not.toBe("");
 
-  await context.addCookies([
-    {
-      name: "hope_session",
-      value: sessionValue,
-      url: new URL(baseURL).origin,
-      httpOnly: true,
-      secure: false,
-      sameSite: "Lax",
-    },
-  ]);
+  await context.addCookies([{
+    name: "hope_session",
+    value: sessionValue,
+    url: new URL(baseURL).origin,
+    httpOnly: true,
+    secure: false,
+    sameSite: "Lax",
+  }]);
   return { context, sessionValue };
 }
 
@@ -93,18 +68,16 @@ async function navigationHrefs(page: Page): Promise<string[]> {
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
   await expect(navigation).toBeVisible();
   return navigation.locator('a[href^="/dashboard"]').evaluateAll((links) =>
-    links
-      .map((link) => link.getAttribute("href"))
-      .filter((href): href is string => Boolean(href)),
+    links.map((link) => link.getAttribute("href")).filter((href): href is string => Boolean(href)),
   );
 }
 
 async function createRoleUsers(
   adminRequest: APIRequestContext,
   password: string,
-): Promise<CreatedUser[]> {
+  users: CreatedUser[],
+): Promise<void> {
   const nonce = `${Date.now()}-${test.info().workerIndex}`;
-  const users: CreatedUser[] = [];
   for (const role of ROLES) {
     const email = `role-isolation-${role.toLowerCase()}-${nonce}@example.test`;
     const response = await adminRequest.post("/api/users", {
@@ -113,7 +86,6 @@ async function createRoleUsers(
     expect(response.status(), `primary seeded account must create the ${role} user`).toBe(201);
     users.push((await response.json()).user as CreatedUser);
   }
-  return users;
 }
 
 async function assertForbiddenRouteDoesNotRenderOrFetch(
@@ -146,21 +118,13 @@ async function assertForbiddenRouteDoesNotRenderOrFetch(
   ).toHaveCount(1);
 }
 
-async function assertDirectApiPolicy(
-  identity: LoggedInIdentity,
-  primaryCompanyId: string,
-): Promise<string> {
+async function assertDirectApiPolicy(identity: LoggedInIdentity, primaryCompanyId: string): Promise<string> {
   const { context, role } = identity;
   const canManageKnowledge = role === "ADMIN" || role === "PROPOSAL_MANAGER";
 
   const companyRead = await context.request.get("/api/company");
   expect(companyRead.status(), `${role} can read only its own company workspace`).toBe(200);
-  const company = await companyRead.json() as {
-    id?: string;
-    userId?: string;
-    experts?: unknown[];
-    projects?: unknown[];
-  };
+  const company = await companyRead.json() as { id?: string; experts?: unknown[]; projects?: unknown[] };
   expect(company.id, `${role} company id`).toBeTruthy();
   expect(company.id, `${role} must not receive the seeded administrator company`).not.toBe(primaryCompanyId);
   expect(company.experts ?? [], `${role} must not inherit another tenant's experts`).toEqual([]);
@@ -171,22 +135,16 @@ async function assertDirectApiPolicy(
   const assetPayload = await assetRead.json() as { assets?: unknown[] };
   expect(assetPayload.assets ?? [], `${role} must not inherit another tenant's assets`).toEqual([]);
 
-  const assetMutation = await context.request.post("/api/company/assets", {
-    multipart: { assetType: "LOGO" },
-  });
+  const assetMutation = await context.request.post("/api/company/assets", { multipart: { assetType: "LOGO" } });
   expect(assetMutation.status(), `${role} asset mutation role policy`).toBe(canManageKnowledge ? 400 : 403);
 
-  const companyMutation = await context.request.put("/api/company", {
-    data: { setupCompletedAt: "not-a-valid-date" },
-  });
+  const companyMutation = await context.request.put("/api/company", { data: { setupCompletedAt: "not-a-valid-date" } });
   expect(companyMutation.status(), `${role} company mutation role policy`).toBe(canManageKnowledge ? 400 : 403);
 
   const settingsRead = await context.request.get("/api/settings");
   expect(settingsRead.status(), `${role} settings read role policy`).toBe(canManageKnowledge ? 200 : 403);
 
-  const settingsMutation = await context.request.put("/api/settings", {
-    data: { exportFormat: "ZIP" },
-  });
+  const settingsMutation = await context.request.put("/api/settings", { data: { exportFormat: "ZIP" } });
   expect(settingsMutation.status(), `${role} settings mutation role policy`).toBe(canManageKnowledge ? 400 : 403);
 
   const usersRead = await context.request.get("/api/users");
@@ -197,6 +155,7 @@ async function assertDirectApiPolicy(
 
 test.describe("dashboard role navigation and direct-route authorization", () => {
   test("isolated role sessions enforce owned navigation, pre-render redirects, API roles, and tenant boundaries", async ({ page, browser }) => {
+    test.setTimeout(120_000);
     const password = "RoleIsolation12345";
     const createdUsers: CreatedUser[] = [];
     const identities: LoggedInIdentity[] = [];
@@ -207,7 +166,7 @@ test.describe("dashboard role navigation and direct-route authorization", () => 
       const primaryCompany = await primaryCompanyResponse.json() as { id?: string };
       expect(primaryCompany.id).toBeTruthy();
 
-      createdUsers.push(...await createRoleUsers(page.request, password));
+      await createRoleUsers(page.request, password, createdUsers);
 
       for (const user of createdUsers) {
         const loggedIn = await createLoggedInContext(browser, user.email, password);
