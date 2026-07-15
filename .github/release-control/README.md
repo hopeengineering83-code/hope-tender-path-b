@@ -1,75 +1,66 @@
 # Release Control
 
-This directory contains the GitHub Control Tower automation infrastructure.
+This directory contains the Control Tower contracts, schemas, tests, and evidence conventions.
 
-## Structure
+## Current phase
 
-```
-.github/release-control/
-├── README.md                    # This file
-├── findings.schema.json         # JSON schema for all finding files
-├── integration-branch.txt       # Declares the active integration branch (empty = no active integration)
-├── integration.lock             # Lock file for single-writer discipline (auto-managed)
-├── agent-log.md                 # Chronological log of agent dispatches
-├── findings/                    # One JSON file per finding (conforms to findings.schema.json)
-└── evidence/                    # Release-gate evidence per run SHA
-    └── <sha>/
-        ├── typecheck.log
-        ├── lint.log
-        ├── test.log
-        └── ...
-```
+PR #1130 is a **bootstrap package**, not an active autonomous control plane. GitHub repository events and schedules use workflow definitions from the default branch. Until the reviewed Control Tower workflows are promoted to the default branch, they can be checked in PR CI and explicit simulations only.
+
+## Durable authority
+
+- One GitHub Issue per finding.
+- Machine-readable finding JSON is embedded in the issue body.
+- Issue labels and comments carry state.
+- The linked draft PR carries branch, exact head SHA, changed files, and test evidence.
+- Repository-generated finding files, mutable lock files, and `integration-branch.txt` are not authoritative.
+
+## Branch model
+
+### Bootstrap construction
+
+- `fix/github-control-tower` contains the combined Control Tower changes.
+- Specialist bootstrap PRs start from and target `fix/github-control-tower`.
+- PR #1130 targets `automation/control-plane` and remains draft.
+
+### Runtime repair after activation
+
+- Worker PRs start from and target `integration/controlled-recovery`.
+- Only the integrator writes the integration branch.
+- The final PR from `integration/controlled-recovery` to `main` remains draft until explicit release authorization.
 
 ## Workflows
 
-| Workflow | Trigger | Purpose |
-|---|---|---|
-| `change-monitor.yml` | push to main, PR events, 5-min schedule (backup) | Detects changes, classifies them, creates findings |
-| `release-auditor.yml` | push to main, PR events, 5-min schedule (backup) | Audits release-readiness, runs release-gate suite on main |
-| `agent-dispatcher.yml` | issue/PR labels, `/dispatch` comments, 5-min schedule (backup) | Routes work to the appropriate agent |
-| `integration-controller.yml` | PR labeled `integration-approved`, integration PR updates | Cherry-picks approved PRs into integration branch, runs release-gate |
-| `release-gate.yml` | `workflow_call` only | The authoritative release-acceptance suite |
+- `change-monitor.yml`: identifies changed runtime or control surfaces and creates durable issue-backed findings.
+- `agent-dispatcher.yml`: validates authorized dispatch requests and records honest worker state.
+- `repair-coordinator.yml`: enforces capacity, ownership, attempts, exact heads, and revision cycles.
+- `integration-controller.yml`: validates and atomically incorporates accepted worker commits.
+- `release-auditor.yml`: enforces freeze routing and invokes release validation for the integration candidate.
+- `release-gate.yml`: executes the fail-closed release acceptance suite.
+- `control-plane-bootstrap.yml`: creates controlled branches and one draft integration PR only after activation.
 
-## Agent Contracts
+## Safety boundaries
 
-- [`.github/agents/app-contract.md`](../agents/app-contract.md) — fixes application defects
-- [`.github/agents/worker-contract.md`](../agents/worker-contract.md) — mechanical/cleanup work
-- [`.github/agents/integrator-contract.md`](../agents/integrator-contract.md) — owns the integration PR
+The Control Tower never:
 
-## What This Automation Does NOT Do
+- merges or approves a PR;
+- deploys production;
+- runs production migrations;
+- force-pushes;
+- treats skipped tests as passing;
+- accepts a moved PR head;
+- permits more than one worker to own the same finding or function;
+- weakens tender, evidence, generation, ownership, PDF, or ZIP gates.
 
-- **Merge to main** — only the release manager (a human) merges.
-- **Deploy to production** — no Vercel deploy commands in any workflow.
-- **Modify application runtime code** — the automation itself only touches `.github/`, `docs/`, findings, and evidence.
-- **Auto-approve a PR** — no `gh pr review --approve` anywhere.
-- **Allow multiple agents to write to the integration branch** — enforced by concurrency group + lock file.
-- **Treat green CI as sufficient** — the release-gate suite is required in addition to CI.
+## Validation before worker start
 
-## Findings Lifecycle
+Before coding workers begin:
 
-1. `change-monitor` or `release-auditor` creates a finding JSON in `findings/`.
-2. `agent-dispatcher` picks up the finding, posts a dispatch comment on the issue, and updates the finding's `dispatch_history`.
-3. The dispatched agent (app/worker/integrator) reads the finding, does the work, and reports back in `agent-log.md`.
-4. When the work is resolved, the finding's `status` is updated to `resolved` and `github_pr` is recorded.
+1. PR #1130 exact-head workflow syntax checks must pass.
+2. Worker issues must name `fix/github-control-tower` as both starting point and PR target during bootstrap.
+3. File ownership between workers must not overlap.
+4. Each issue must define executable acceptance tests.
+5. A harmless simulation must prove no merge or deployment path exists.
 
-## Integration Branch
+## Activation
 
-To activate an integration cycle:
-
-1. Create the integration branch: `git checkout -b integration/<name> main`
-2. Write the branch name to `integration-branch.txt`: `echo "integration/<name>" > .github/release-control/integration-branch.txt`
-3. Open a draft PR from `integration/<name>` → `main`.
-4. Label PRs that should be cherry-picked with `integration-approved`.
-5. The `integration-controller` will cherry-pick them and run the release-gate suite.
-6. When the release-gate suite passes, the release manager reviews and merges.
-
-## 5-Minute Schedule (Backup Only)
-
-All workflows have a 5-minute `schedule` trigger as backup. The primary triggers are event-driven (push, pull_request, issues, issue_comment). The schedule catches:
-
-- Findings created by a cancelled event-driven run.
-- PRs whose CI went green but whose release-gate suite hasn't run.
-- Stale integration locks older than 30 minutes.
-- Issues labeled `agent-dispatch-needed` that haven't been dispatched.
-
-The schedule does NOT perform any write operations itself — it only creates findings or issues that the event-driven workflows then process.
+After the bootstrap package is reviewed and intentionally promoted to the default branch, set `FREEZE_MODE=true`, run the bootstrap workflow, and validate one harmless end-to-end cycle. Production release remains separately protected.
