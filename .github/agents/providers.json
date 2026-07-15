@@ -1,42 +1,62 @@
 {
+  "schema_version": 2,
   "default_provider": "glm",
-  "max_concurrent_workers": 6,
+  "max_concurrent_workers": 8,
   "providers": {
     "glm": {
       "mode": "github-issue-worker",
       "priority": 1,
       "capacity": 6,
+      "manual_session_activation_required": true,
       "specialties": ["ai", "generation", "security", "database", "export", "deployment", "ui", "audit"],
       "labels": ["agent:glm"]
     },
-    "jules": {
+    "chatgpt-code": {
       "mode": "github-issue-worker",
       "priority": 2,
+      "capacity": 2,
+      "manual_session_activation_required": true,
+      "specialties": ["privacy", "provenance", "responsive-ui", "routing", "api-ui-contracts", "tests"],
+      "labels": ["agent:chatgpt-code"]
+    },
+    "jules": {
+      "mode": "github-issue-worker",
+      "priority": 3,
       "capacity": 3,
+      "manual_session_activation_required": true,
       "specialties": ["tests", "security", "export", "ui", "repository-scan"],
       "labels": ["agent:jules"]
     },
     "codex": {
       "mode": "limited-burst",
-      "priority": 3,
+      "priority": 4,
       "capacity": 1,
+      "manual_session_activation_required": true,
       "specialties": ["transactions", "race-conditions", "background-workers", "complex-backend"],
       "labels": ["agent:codex"]
     },
     "claude-code": {
       "mode": "limited-integrator",
-      "priority": 4,
+      "priority": 5,
       "capacity": 1,
+      "manual_session_activation_required": true,
       "specialties": ["integration", "conflicts", "cross-file-architecture"],
       "labels": ["agent:claude-code"]
     },
     "chatgpt-review": {
       "mode": "review-only",
-      "priority": 5,
+      "priority": 6,
       "capacity": 1,
+      "manual_session_activation_required": true,
       "specialties": ["independent-review", "pr-comparison"],
       "labels": ["agent:chatgpt-review"]
     }
+  },
+  "future_provider_contract": {
+    "required_fields": ["mode", "priority", "capacity", "manual_session_activation_required", "specialties", "labels"],
+    "required_states": ["QUEUED", "WAITING_FOR_TOOL", "WORKING", "PR_OPENED", "REVISION_REQUIRED", "ACCEPTED", "BLOCKED"],
+    "must_not_claim_automatic_delivery_without_callback": true,
+    "must_use_issue_and_linked_pr_as_task_authority": true
   },
   "rules": {
     "one_provider_per_finding": true,
@@ -45,6 +65,9 @@
     "workers_target": "integration/controlled-recovery",
     "integrator_only_writes_integration": true,
     "never_merge_main": true,
-    "never_deploy_production": true
+    "never_deploy_production": true,
+    "never_run_production_migrations": true,
+    "same_pr_for_revisions": true,
+    "exact_head_review_required": true
   }
 }
