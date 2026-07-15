@@ -29,14 +29,21 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const allowedAgents = new Set(['glm','jules','codex','claude-code','chatgpt-review']);
+            const allowedAgents = new Set([
+              'glm',
+              'chatgpt-code',
+              'jules',
+              'codex',
+              'claude-code',
+              'chatgpt-review'
+            ]);
             let issueNumber;
             let agent;
             let actor = context.actor;
 
             if (context.eventName === 'issue_comment') {
               if (context.payload.comment.user.type === 'Bot') throw new Error('Bot dispatch commands are rejected.');
-              const match = context.payload.comment.body.match(/^\/dispatch\s+(glm|jules|codex|claude-code|chatgpt-review)\s*$/);
+              const match = context.payload.comment.body.match(/^\/dispatch\s+(glm|chatgpt-code|jules|codex|claude-code|chatgpt-review)\s*$/);
               if (!match) throw new Error('Unsupported dispatch command.');
               issueNumber = context.payload.issue.number;
               agent = match[1];
@@ -52,25 +59,34 @@ jobs:
             }
 
             if (!Number.isInteger(issueNumber) || !allowedAgents.has(agent)) throw new Error('Invalid dispatch target.');
-            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner: context.repo.owner, repo: context.repo.repo, username: actor });
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: actor
+            });
             if (!['admin','maintain','write'].includes(permission.permission)) throw new Error(`@${actor} is not authorized.`);
 
             const marker = `<!-- control-tower-dispatch:${issueNumber}:${agent} -->`;
-            const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, per_page: 100 });
-            if (comments.some(c => c.body?.includes(marker) && /WORKING|PR_OPENED|WAITING_FOR_TOOL/.test(c.body))) {
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100
+            });
+            if (comments.some(c => c.body?.includes(marker) && /WORKING|PR_OPENED|WAITING_FOR_TOOL|WAITING_FOR_[A-Z_]+/.test(c.body))) {
               core.notice('Existing active dispatch found.');
               return;
             }
 
-            const state = agent === 'glm'
-              ? 'WAITING_FOR_GLM_CHAT'
-              : agent === 'jules'
-                ? 'WAITING_FOR_JULES'
-                : agent === 'codex'
-                  ? 'WAITING_FOR_CODEX_LIMIT_RESET'
-                  : agent === 'claude-code'
-                    ? 'WAITING_FOR_CLAUDE_LIMIT_RESET'
-                    : 'WAITING_FOR_REVIEW_CHAT';
+            const states = {
+              glm: 'WAITING_FOR_GLM_CHAT',
+              'chatgpt-code': 'WAITING_FOR_CHATGPT_CODE_CHAT',
+              jules: 'WAITING_FOR_JULES',
+              codex: 'WAITING_FOR_CODEX_LIMIT_RESET',
+              'claude-code': 'WAITING_FOR_CLAUDE_LIMIT_RESET',
+              'chatgpt-review': 'WAITING_FOR_REVIEW_CHAT'
+            };
+            const state = states[agent] || 'WAITING_FOR_TOOL';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -82,7 +98,8 @@ jobs:
                 `Assigned tool: ${agent}`,
                 `Target branch: integration/controlled-recovery`,
                 `Instruction authority: this issue and its linked PR comments`,
-                `Do not create a replacement PR, merge, approve, or deploy.`,
+                `Browser-session activation may require opening the assigned chat once.`,
+                `Do not create a replacement PR, merge, approve, deploy, or run production migrations.`,
                 `Update this issue with WORKING, PR_OPENED, REVISION_REQUIRED, ACCEPTED, or BLOCKED.`
               ].join('\n')
             });
