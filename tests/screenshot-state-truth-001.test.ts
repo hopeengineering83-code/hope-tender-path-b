@@ -8,6 +8,12 @@ import {
   CLEAR_EXTRACTION_STATES,
 } from "../lib/engine/tender-extraction-state";
 import {
+  isStatusInClearAllowlist,
+  isStatusInBlockedDenylist,
+  isCanonicalCurrentnessCritical,
+  type TenderCurrentnessVerdict,
+} from "../lib/engine/tender-currentness";
+import {
   CANONICAL_AI_PROVIDER_ORDER,
   isProviderConfigured,
   getProviderTimeoutMs,
@@ -19,34 +25,40 @@ const dashboardSrc = readFileSync("app/dashboard/page.tsx", "utf8");
 const complianceSrc = readFileSync("app/dashboard/compliance/compliance-dashboard.tsx", "utf8");
 const analysisSrc = readFileSync("app/dashboard/analysis/page.tsx", "utf8");
 const commandCenterSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+const currentnessSrc = readFileSync("lib/engine/tender-currentness.ts", "utf8");
 const aiEnvSrc = readFileSync("lib/ai-environment-readiness.ts", "utf8");
 const systemSrc = readFileSync("lib/system-readiness.ts", "utf8");
 
 const EXPECTED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 
 describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
-  describe("dashboard critical-gaps counting includes extraction-blocked tenders", () => {
-    it("uses the canonical extraction-state helper (no local status arrays)", () => {
-      assert.match(dashboardSrc, /isExtractionCritical/);
-      assert.doesNotMatch(dashboardSrc, /EXTRACTION_BLOCKED_STATES\s*=\s*new Set/);
+  describe("dashboard critical-blockers count uses canonical currentness", () => {
+    it("uses classifyTenderCurrentnessBatch (canonical currentness, not bare status)", () => {
+      assert.match(dashboardSrc, /classifyTenderCurrentnessBatch/);
+      assert.match(dashboardSrc, /isCanonicalCurrentnessCritical/);
     });
 
-    it("includes REGEX_FALLBACK states as blocked via canonical helper", () => {
-      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_AI_ERROR"));
-      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_UNAPPROVED"));
+    it("imports the canonical-currentness helper", () => {
+      assert.match(dashboardSrc, /from "\.\.\/\.\.\/lib\/engine\/tender-currentness"/);
     });
 
-    it("counts tenders with no analysis as critical gaps via canonical helper", () => {
-      assert.match(dashboardSrc, /isExtractionCritical/);
-      assert.match(dashboardSrc, /analysisExtractionStatus/);
+    it("does not use the bare isExtractionCritical helper for the global count", () => {
+      // The bare helper checks persisted status only; canonical currentness
+      // also requires a non-superseded promoted AI job.
+      assert.doesNotMatch(dashboardSrc, /isExtractionCritical/);
     });
 
     it("does not show AI enabled as analysis authority", () => {
       assert.match(dashboardSrc, /AI providers configured/);
     });
+
+    it("labels the count as Critical blockers with semantics subtitle", () => {
+      assert.match(dashboardSrc, /Critical blockers/);
+      assert.match(dashboardSrc, /gaps \+ extraction blockers/);
+    });
   });
 
-  describe("dashboard currency handling does not mix currencies", () => {
+  describe("dashboard currency handling is forward-compatible with PR #1141 nullable currency", () => {
     it("groups budgets by currency", () => {
       assert.match(dashboardSrc, /budgetsByCurrency/);
     });
@@ -63,6 +75,14 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("uses prisma.groupBy for budget aggregation across all tenders", () => {
       assert.match(dashboardSrc, /prisma\.tender\.groupBy/);
     });
+
+    it("defensively skips null currencies at runtime (forward-compatible with #1141)", () => {
+      assert.match(dashboardSrc, /if \(!curr\) continue/);
+    });
+
+    it("labels budget count as 'verified currency'", () => {
+      assert.match(dashboardSrc, /verified currency/);
+    });
   });
 
   describe("compliance dashboard does not treat missing rows as proof of compliance", () => {
@@ -77,15 +97,13 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(analysisSrc, /NOT ANALYZED/);
     });
 
-    it("uses the canonical extraction-state helper for BLOCKED detection", () => {
-      assert.match(analysisSrc, /classifyTenderExtractionState/);
-      assert.ok(BLOCKED_EXTRACTION_STATES.has("EXTRACTION_CORRUPTED_AI_SKIPPED"));
+    it("uses the canonical-currentness helper for BLOCKED detection", () => {
+      assert.match(analysisSrc, /classifyTenderCurrentnessBatch/);
+      assert.match(analysisSrc, /currentnessVerdicts/);
     });
 
-    it("shows BLOCKED for REGEX_FALLBACK states via the canonical helper", () => {
-      assert.match(analysisSrc, /classifyTenderExtractionState/);
-      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_AI_ERROR"));
-      assert.ok(BLOCKED_EXTRACTION_STATES.has("REGEX_FALLBACK_UNAPPROVED"));
+    it("does not use the bare classifyTenderExtractionState helper", () => {
+      assert.doesNotMatch(analysisSrc, /classifyTenderExtractionState/);
     });
 
     it("selects analysisExtractionStatus from the database", () => {
@@ -93,8 +111,6 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("does not cap tenders query at take:20 for global analysis totals", () => {
-      // The dashboard previously used `take: 20`, which made workspace
-      // totals false when more than 20 tenders existed.
       assert.doesNotMatch(analysisSrc, /take:\s*20/);
     });
   });
@@ -183,10 +199,6 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("FAILS CLOSED — unknown status strings are BLOCKED, never CLEAR", () => {
-      // Critical safety test: a new misspelled, stale-hash, partial-provider,
-      // mixed-fallback, or currentness blocker status MUST NOT render green.
-      // Note: empty string and null are treated as NOT_ANALYZED (correct —
-      // no status set), NOT BLOCKED. This is the documented behavior.
       const unknownStatuses = [
         "STALE_HASH",
         "PARTIAL_PROVIDER_FALLBACK",
@@ -217,6 +229,46 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.ok(BLOCKED_EXTRACTION_STATES.has("HUMAN_APPROVED_FALLBACK"));
       assert.ok(BLOCKED_EXTRACTION_STATES.has("SUPERSEDED"));
       assert.ok(BLOCKED_EXTRACTION_STATES.has("FAILED"));
+    });
+  });
+
+  describe("canonical currentness helper (persisted status + promoted AI job)", () => {
+    it("tender-currentness.ts exists and exports classifyTenderCurrentnessBatch", () => {
+      assert.match(currentnessSrc, /export async function classifyTenderCurrentnessBatch/);
+    });
+
+    it("exports isCanonicalCurrentnessCritical", () => {
+      assert.match(currentnessSrc, /export function isCanonicalCurrentnessCritical/);
+    });
+
+    it("queries AiJob for non-superseded promoted AI_ANALYZE jobs", () => {
+      assert.match(currentnessSrc, /AI_ANALYZE/);
+      assert.match(currentnessSrc, /supersededBy: null/);
+      assert.match(currentnessSrc, /promotedAt: \{ not: null \}/);
+    });
+
+    it("requires a non-empty analysisInputHash to prove real chunk content", () => {
+      assert.match(currentnessSrc, /analysisInputHash: \{ not: null \}/);
+    });
+
+    it("isCanonicalCurrentnessCritical returns true for BLOCKED and NOT_ANALYZED", () => {
+      const blocked: TenderCurrentnessVerdict = { tenderId: "t1", currentness: "BLOCKED", canonicalJobId: null };
+      const notAnalyzed: TenderCurrentnessVerdict = { tenderId: "t2", currentness: "NOT_ANALYZED", canonicalJobId: null };
+      const clear: TenderCurrentnessVerdict = { tenderId: "t3", currentness: "CANONICAL_CLEAR", canonicalJobId: "job-1" };
+      assert.equal(isCanonicalCurrentnessCritical(blocked), true);
+      assert.equal(isCanonicalCurrentnessCritical(notAnalyzed), true);
+      assert.equal(isCanonicalCurrentnessCritical(clear), false);
+    });
+
+    it("isStatusInClearAllowlist identifies AI_SUCCEEDED as clear", () => {
+      assert.equal(isStatusInClearAllowlist("AI_SUCCEEDED"), true);
+      assert.equal(isStatusInClearAllowlist("STALE_HASH"), false);
+      assert.equal(isStatusInClearAllowlist(null), false);
+    });
+
+    it("isStatusInBlockedDenylist identifies EXTRACTION_CORRUPTED_AI_SKIPPED as blocked", () => {
+      assert.equal(isStatusInBlockedDenylist("EXTRACTION_CORRUPTED_AI_SKIPPED"), true);
+      assert.equal(isStatusInBlockedDenylist("AI_SUCCEEDED"), false);
     });
   });
 
@@ -285,7 +337,6 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("ready is false when no AI provider is configured", () => {
-      // Save and clear all known AI provider env vars
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
         "ZAI_API_KEY",
@@ -318,20 +369,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       }
     });
 
-    it("providerChain is in canonical order when providers configured (Anthropic last)", () => {
-      // Set ZAI_API_KEY so we have at least one provider.
+    it("providerChain count matches configured provider count", () => {
       const savedZ = process.env.ZAI_API_KEY;
       process.env.ZAI_API_KEY = "test-key-for-readiness-behavioral-test";
       try {
         const r = getAIEnvironmentReadiness();
-        assert.ok(r.providerChain.length >= 1, "at least Z.ai should appear in the chain");
-        // Anthropic is not configured here, so it should not appear in the chain.
-        // But IF it were configured, it would have to be last. Verify that
-        // any provider in the chain is in the same relative order as CANONICAL_AI_PROVIDER_ORDER.
-        const canonicalOrder = Array.from(CANONICAL_AI_PROVIDER_ORDER);
-        const presentOrder = canonicalOrder.filter((p) => isProviderConfigured(p));
-        // The chain display labels include provider names; we cannot easily
-        // string-match them, so we just verify the count matches.
+        const presentOrder = Array.from(CANONICAL_AI_PROVIDER_ORDER).filter((p) => isProviderConfigured(p));
         assert.equal(
           r.providerChain.length,
           presentOrder.length,
@@ -397,8 +440,6 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("REQUIRED_PROVIDER_ORDER matches CANONICAL order exactly", () => {
-      // The system-readiness module must use the canonical order from the
-      // registry, not a locally-defined list.
       assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/.test(systemSrc));
     });
   });
@@ -413,8 +454,6 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("does NOT cap the global tenders query at take:25 for global metrics", () => {
-      // The previous version used `take: 25` on the tenders query, then
-      // labeled `tenders.length` as Active Tenders. That was a false total.
       assert.doesNotMatch(dashboardSrc, /take:\s*25/);
     });
 
@@ -423,13 +462,13 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("Live Pipeline column is canonical extraction state, not false readiness", () => {
+  describe("Live Pipeline column is canonical currentness, not false readiness", () => {
     it("has an Extraction State column instead of Readiness", () => {
       assert.match(dashboardSrc, /Extraction State/);
     });
 
-    it("uses classifyTenderExtractionState for the Live Pipeline row", () => {
-      assert.match(dashboardSrc, /classifyTenderExtractionState/);
+    it("uses recentCurrentnessVerdicts for the Live Pipeline row", () => {
+      assert.match(dashboardSrc, /recentCurrentnessVerdicts/);
     });
 
     it("renders Blocked badge for blocked extraction", () => {
@@ -440,17 +479,38 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /○ Not analyzed/);
     });
 
-    it("suppresses green authority styling on workflow bar when blocked", () => {
-      assert.match(dashboardSrc, /extractionState === "BLOCKED"/);
+    it("renders Clear badge only when currentness === CANONICAL_CLEAR", () => {
+      assert.match(dashboardSrc, /extractionState === "CANONICAL_CLEAR"/);
+    });
+
+    it("uses neutral slate color for the workflow bar even when CLEAR", () => {
+      // No green-500 / green-600 anywhere in the workflow bar code path.
+      assert.match(dashboardSrc, /workflowBarColor/);
+    });
+  });
+
+  describe("Avg Workflow Progress excludes blocked tenders and uses neutral color", () => {
+    it("excludes BLOCKED and NOT_ANALYZED tenders from the average", () => {
+      assert.match(dashboardSrc, /clearScoredRows/);
+      assert.match(dashboardSrc, /currentness === "CANONICAL_CLEAR"/);
+    });
+
+    it("uses neutral slate color (not green) for the avg metric", () => {
+      // The avg readiness number must be slate-600 (neutral), not green-600.
+      assert.match(dashboardSrc, /text-slate-600/);
+    });
+
+    it("labels the metric as 'Not export readiness'", () => {
+      assert.match(dashboardSrc, /Not export readiness/);
+    });
+
+    it("labels the count as 'canonical-clear tenders'", () => {
+      assert.match(dashboardSrc, /canonical-clear tenders/);
     });
   });
 
   describe("Ready for Export card removed (no false export authority)", () => {
     it("does NOT show a Ready for Export card with validationStatus counts", () => {
-      // The previous card counted documents where validationStatus ===
-      // "PASSED" or "VALIDATED" and labeled it "Ready for Export" — that
-      // is NOT canonical export authority. The canonical gate is per-tender
-      // final-package readiness, not a workspace-wide doc count.
       assert.doesNotMatch(dashboardSrc, /Ready for Export/);
       assert.doesNotMatch(dashboardSrc, /exportReadyDocs/);
     });

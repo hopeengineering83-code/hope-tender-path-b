@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
-import { classifyTenderExtractionState } from "../../../lib/engine/tender-extraction-state";
+import { classifyTenderCurrentnessBatch } from "../../../lib/engine/tender-currentness";
 import { StatusBadge } from "../../../components/status-badge";
 import { formatDate } from "../../../lib/tender-workflow";
 
@@ -35,6 +35,18 @@ export default async function AnalysisPage() {
   const totalFiles = tenders.reduce((s,t) => s+t.files.length, 0);
   const totalGaps = tenders.reduce((s,t) => s+t.complianceGaps.filter(g=>!g.isResolved).length, 0);
   const analyzed = tenders.filter(t => t.requirements.length>0).length;
+
+  // Canonical currentness batch — replaces bare analysisExtractionStatus
+  // string checks. A persisted AI_SUCCEEDED is only rendered Clear when the
+  // tender also has a non-superseded promoted AI job.
+  const currentnessVerdicts = await classifyTenderCurrentnessBatch(
+    prisma,
+    tenders.map((t) => ({
+      tenderId: t.id,
+      analysisExtractionStatus: t.analysisExtractionStatus,
+      requirementsCount: t.requirements.length,
+    })),
+  );
 
   const reqByType: Record<string,number> = {};
   const reqByPriority: Record<string,number> = {};
@@ -168,7 +180,8 @@ export default async function AnalysisPage() {
                       {gaps>0
                         ? <span className={`text-xs font-medium ${critGaps>0?"text-red-600":"text-amber-600"}`}>{gaps} open</span>
                         : (() => {
-                            const state = classifyTenderExtractionState(tender.analysisExtractionStatus, tender.requirements.length);
+                            const verdict = currentnessVerdicts.get(tender.id);
+                            const state = verdict?.currentness ?? "BLOCKED";
                             if (state === "NOT_ANALYZED") return <span className="text-xs font-medium text-slate-500">NOT ANALYZED</span>;
                             if (state === "BLOCKED") return <span className="text-xs font-medium text-red-600">BLOCKED</span>;
                             return <span className="text-xs text-green-600">✓ Clear</span>;

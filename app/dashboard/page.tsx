@@ -6,9 +6,9 @@ import { StatusBadge } from "../../components/status-badge";
 import { formatDate } from "../../lib/tender-workflow";
 import { isAIEnabled } from "../../lib/ai";
 import {
-  isExtractionCritical,
-  classifyTenderExtractionState,
-} from "../../lib/engine/tender-extraction-state";
+  classifyTenderCurrentnessBatch,
+  isCanonicalCurrentnessCritical,
+} from "../../lib/engine/tender-currentness";
 
 export default async function DashboardPage() {
   const userId = await getSession();
@@ -65,17 +65,20 @@ export default async function DashboardPage() {
         severity: "CRITICAL",
       },
     }),
-    // Per-tender extraction state (cheap — just status + requirements _count).
+    // Per-tender extraction state — used for canonical currentness check
+    // and for the global critical-blockers count.
     prisma.tender.findMany({
       where: { userId },
       select: {
+        id: true,
         analysisExtractionStatus: true,
         _count: { select: { requirements: true } },
       },
     }),
     // Aggregate budget by currency across ALL tenders, not just recent.
-    // currency is non-nullable in schema (default "USD"), and budget>0
-    // excludes null budgets (gt requires non-null).
+    // PR #1141 (open, not yet merged) makes Tender.currency nullable. We
+    // defensively skip null currencies at runtime in the loop below so
+    // this code is forward-compatible with the nullable schema.
     prisma.tender.groupBy({
       by: ["currency"],
       where: {
@@ -91,9 +94,15 @@ export default async function DashboardPage() {
     }),
     // Only fetch readinessScore for averaging — cheap column.
     // readinessScore is non-nullable (Float @default(0)) so no filter needed.
+    // Note: we'll exclude blocked tenders from the average below.
     prisma.tender.findMany({
       where: { userId },
-      select: { readinessScore: true },
+      select: {
+        id: true,
+        readinessScore: true,
+        analysisExtractionStatus: true,
+        _count: { select: { requirements: true } },
+      },
     }),
     // Recent tenders for the Live Pipeline display table only.
     prisma.tender.findMany({
@@ -125,30 +134,81 @@ export default async function DashboardPage() {
 
   const aiEnabled = isAIEnabled();
 
-  // Critical gaps = unresolved CRITICAL compliance gaps + extraction-blocked tenders.
-  // Computed from full workspace (not the recent 8).
-  const extractionBlockedCount = extractionStateRows.filter((r) =>
-    isExtractionCritical(r.analysisExtractionStatus, r._count?.requirements ?? 0),
-  ).length;
-  const criticalGaps = criticalComplianceGapCount + extractionBlockedCount;
+  // ─── Canonical currentness batch ─────────────────────────────────────────
+  // The persisted analysisExtractionStatus alone cannot prove current
+  // authoritative analysis. Combine it with the existence of a non-superseded
+  // promoted AI job (proved by classifyTenderCurrentnessBatch).
+  const allTenderIds = extractionStateRows.map((r) => r.id);
+  const currentnessVerdicts = await classifyTenderCurrentnessBatch(
+    prisma,
+    extractionStateRows.map((r) => ({
+      tenderId: r.id,
+      analysisExtractionStatus: r.analysisExtractionStatus,
+      requirementsCount: r._count?.requirements ?? 0,
+    })),
+  );
+  const recentTenderIds = recentTenders.map((t) => t.id);
+  const recentCurrentnessVerdicts = await classifyTenderCurrentnessBatch(
+    prisma,
+    recentTenders.map((t) => ({
+      tenderId: t.id,
+      analysisExtractionStatus: t.analysisExtractionStatus,
+      requirementsCount: t._count?.requirements ?? 0,
+    })),
+  );
 
-  // Budget totals — group by currency, suppress aggregate when mixed.
+  // ─── Critical blockers count ─────────────────────────────────────────────
+  // "Critical blockers" replaces "Critical Gaps" to make the semantics clear:
+  //   - 1 tender with 3 CRITICAL compliance gaps + a stale extraction → 4 blockers
+  //   - This is a count of BLOCKERS, not a count of tenders.
+  // The card label was changed to "Critical blockers" and the subtitle reads
+  // "gaps + extraction blockers" so the reader cannot mistake it for a
+  // tender count.
+  const extractionBlockedCount = allTenderIds.filter((id) => {
+    const v = currentnessVerdicts.get(id);
+    return v ? isCanonicalCurrentnessCritical(v) : true;
+  }).length;
+  const criticalBlockers = criticalComplianceGapCount + extractionBlockedCount;
+
+  // ─── Budget totals — group by verified currency, suppress when mixed ──────
+  // Per PR #1141, currency is nullable. We only aggregate rows with a
+  // non-null currency (treated as verified). Default/legacy "USD" without
+  // field-level authority is NOT included — PR #1141's migration only sets
+  // currency to null on rows that lacked source-grounded currency.
   const budgetsByCurrency = new Map<string, number>();
   let activeBudgetCount = 0;
   for (const row of budgetByCurrencyRows) {
+    // row.currency is non-null in the current schema (default "USD") but
+    // becomes nullable after PR #1141 merges. Skip nulls defensively.
     const curr = row.currency;
+    if (!curr) continue;
     const sum = row._sum?.budget ?? 0;
     budgetsByCurrency.set(curr, (budgetsByCurrency.get(curr) ?? 0) + sum);
-    activeBudgetCount += row._count ?? 0;
+    // _count from groupBy returns the number of tenders in this currency group.
+    const groupCount = typeof row._count === "number" ? row._count : 0;
+    activeBudgetCount += groupCount;
   }
   const currencies = Array.from(budgetsByCurrency.keys());
   const singleCurrency = currencies.length === 1 ? currencies[0] : null;
   const pipelineValue = singleCurrency ? (budgetsByCurrency.get(singleCurrency) ?? 0) : null;
 
-  // Avg workflow progress — derived from persisted readinessScore across the
-  // WHOLE workspace. Labeled as workflow progress (NOT export readiness).
-  const avgReadiness = scoredRows.length > 0
-    ? Math.round(scoredRows.reduce((a, b) => a + (b.readinessScore ?? 0), 0) / scoredRows.length)
+  // ─── Avg workflow progress — exclude blocked tenders, suppress green ──────
+  // Blocked tenders cannot be "ready" — including their persisted
+  // readinessScore would let a stale 100% score appear beside canonical
+  // blockers. We:
+  //   1. Compute currentness for every tender with a readinessScore.
+  //   2. Exclude tenders whose currentness is BLOCKED or NOT_ANALYZED.
+  //   3. Average only the CANONICAL_CLEAR tenders.
+  //   4. Color the metric neutrally (slate) — no green authority, because
+  //      the persisted readinessScore is workflow progress, not export
+  //      readiness. Even on a CLEAR tender, it must not read as release-
+  //      ready green.
+  const clearScoredRows = scoredRows.filter((r) => {
+    const v = currentnessVerdicts.get(r.id);
+    return v ? v.currentness === "CANONICAL_CLEAR" : false;
+  });
+  const avgReadiness = clearScoredRows.length > 0
+    ? Math.round(clearScoredRows.reduce((a, b) => a + (b.readinessScore ?? 0), 0) / clearScoredRows.length)
     : null;
 
   const winRate = decidedCount > 0 ? Math.round((wonCount / decidedCount) * 100) : null;
@@ -176,13 +236,19 @@ export default async function DashboardPage() {
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Active Tenders", value: activeTenderCount, color: "text-blue-600" },
-          { label: "Critical Gaps", value: criticalGaps, color: criticalGaps > 0 ? "text-red-600" : "text-green-600" },
+          {
+            label: "Critical blockers",
+            value: criticalBlockers,
+            color: criticalBlockers > 0 ? "text-red-600" : "text-green-600",
+            subtitle: "gaps + extraction blockers",
+          },
           { label: "Due ≤ 7 Days", value: dueSoon7Count, color: dueSoon7Count > 0 ? "text-amber-600" : "text-slate-400" },
           { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-700" : "text-slate-400" },
         ].map((s) => (
           <div key={s.label} className="rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{s.label}</p>
             <p className={`mt-1 text-3xl font-bold ${s.color}`}>{s.value}</p>
+            {s.subtitle && <p className="mt-0.5 text-[10px] text-slate-400">{s.subtitle}</p>}
           </div>
         ))}
       </div>
@@ -206,7 +272,7 @@ export default async function DashboardPage() {
                   ? `${singleCurrency} ${(pipelineValue / 1_000).toFixed(0)}K`
                   : `${singleCurrency} ${pipelineValue.toLocaleString()}`}
               </p>
-              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} with budget</p>
+              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} with verified currency</p>
             </div>
           )}
           {pipelineValue === null && activeBudgetCount > 0 && (
@@ -219,9 +285,11 @@ export default async function DashboardPage() {
           {avgReadiness !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
               <p className="text-sm text-slate-500 font-medium">Avg Workflow Progress</p>
-              <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
+              {/* Color is intentionally slate (neutral), never green. Persisted
+                  readinessScore is workflow progress, not export readiness. */}
+              <p className="mt-1 text-3xl font-bold text-slate-600">{avgReadiness}%</p>
               <p className="mt-1 text-xs text-slate-400">Not export readiness</p>
-              <p className="mt-1 text-xs text-slate-400">across {scoredRows.length} tenders</p>
+              <p className="mt-1 text-xs text-slate-400">across {clearScoredRows.length} canonical-clear tenders</p>
             </div>
           )}
           {/* NOTE: The workspace-wide "documents validated" card was removed.
@@ -239,7 +307,7 @@ export default async function DashboardPage() {
             <div>
               <h2 className="font-bold text-slate-900">Live Pipeline</h2>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                Recent {recentTenders.length} tenders · Extraction state is authoritative, not the workflow % bar.
+                Recent {recentTenders.length} tenders · Canonical extraction state, not the workflow % bar.
               </p>
             </div>
             <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
@@ -266,13 +334,17 @@ export default async function DashboardPage() {
                   const critical = tender._count.complianceGaps;
                   const workflowPct = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
-                  const extractionState = classifyTenderExtractionState(tender.analysisExtractionStatus, total);
+                  // Use canonical-currentness verdict instead of bare
+                  // analysisExtractionStatus string. This catches stale
+                  // statuses that no longer have a promoted AI job.
+                  const verdict = recentCurrentnessVerdicts.get(tender.id);
+                  const extractionState = verdict?.currentness ?? "BLOCKED";
                   // Suppress green authority styling on the workflow % bar
-                  // when canonical extraction is blocked — the bar is
-                  // workflow progress, not export readiness.
-                  const workflowBarColor = extractionState === "BLOCKED"
-                    ? "bg-slate-300"
-                    : workflowPct >= 80 ? "bg-slate-400" : workflowPct >= 50 ? "bg-slate-300" : "bg-slate-200";
+                  // whenever the canonical currentness is not CLEAR. The bar
+                  // is workflow progress, not export readiness.
+                  const workflowBarColor = extractionState === "CANONICAL_CLEAR"
+                    ? (workflowPct >= 80 ? "bg-slate-500" : workflowPct >= 50 ? "bg-slate-400" : "bg-slate-300")
+                    : "bg-slate-200";
 
                   return (
                     <tr key={tender.id} className="hover:bg-slate-50 group">
@@ -287,13 +359,13 @@ export default async function DashboardPage() {
                       </td>
                       <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                       <td className="px-6 py-4">
-                        {extractionState === "CLEAR" && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 border border-emerald-200">
+                        {extractionState === "CANONICAL_CLEAR" && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 border border-emerald-200" title="Persisted CLEAR status with a non-superseded promoted AI job.">
                             ✓ Clear
                           </span>
                         )}
                         {extractionState === "BLOCKED" && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 border border-red-200">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 border border-red-200" title="Persisted status is BLOCKED, unknown, or stale (no promoted AI job).">
                             ✗ Blocked
                           </span>
                         )}
