@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 type Notification = {
   id: string;
@@ -24,8 +25,48 @@ function timeAgo(iso: string): string {
 }
 
 function isSafeInternalLink(link: string): boolean {
-  // Must start with '/' and not start with '//' or any backslashes (which some browsers treat as directory separators/redirects)
-  return link.startsWith("/") && !link.startsWith("//") && !link.startsWith("\\\\");
+  try {
+    // Basic prefix checks
+    if (!link.startsWith("/") || link.startsWith("//") || link.startsWith("/\\")) {
+      return false;
+    }
+
+    // Reject backslashes and control characters (ASCII 0-31 and 127)
+    if (/[\\\x00-\x1F\x7F]/.test(link)) {
+      return false;
+    }
+
+    // Reject encoded backslashes, slashes, and CR/LF/control characters to prevent bypasses
+    const lowerLink = link.toLowerCase();
+    if (
+      lowerLink.includes("%5c") ||
+      lowerLink.includes("%2f") ||
+      lowerLink.includes("%0d") ||
+      lowerLink.includes("%0a")
+    ) {
+      return false;
+    }
+
+    // Native URL parser check against a secure dummy origin
+    const parsed = new URL(link, "http://localhost");
+    if (parsed.origin !== "http://localhost") {
+      return false;
+    }
+
+    // Recheck the parsed pathname to ensure no normalization tricks occurred
+    if (
+      !parsed.pathname.startsWith("/") ||
+      parsed.pathname.startsWith("//") ||
+      parsed.pathname.startsWith("/\\") ||
+      parsed.pathname.includes("\\")
+    ) {
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    return false;
+  }
 }
 
 const TYPE_ICON: Record<string, string> = {
@@ -47,6 +88,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
   const [markingAllRead, setMarkingAllRead] = useState(false);
   const [markingReadIds, setMarkingReadIds] = useState<Record<string, boolean>>({});
   const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   // Synchronous mutex lock to protect against same-tick race conditions
   const isMarkingRef = useRef(false);
@@ -210,7 +252,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                           const success = await markRead(n.id);
                           if (success) {
                             setOpen(false);
-                            window.location.href = n.link!;
+                            router.push(n.link!);
                           }
                         }}
                         className={`block text-sm font-medium text-slate-900 hover:text-blue-700 truncate ${

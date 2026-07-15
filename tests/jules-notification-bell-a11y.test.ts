@@ -12,6 +12,7 @@ import {
   fireEvent,
   waitFor,
   cleanup,
+  fakeRouter,
   type FetchCall,
 } from "./helpers/rtl-env";
 import { NotificationBell } from "../app/components/notification-bell";
@@ -22,8 +23,8 @@ let calls: FetchCall[];
 
 describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
   beforeEach(() => {
-    // Reset window location href to initial
-    globalThis.window.location.href = "http://localhost/dashboard/tenders/test-tender";
+    // Reset fakeRouter push tracker
+    (fakeRouter as any).push = () => {};
 
     // Basic setup: initial list of notifications
     calls = installFetchMock([
@@ -369,6 +370,12 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
   });
 
   it("prevents linked notification navigation and waits until server-confirmation success", async () => {
+    // Spy on fakeRouter.push
+    let pushedPath = "";
+    (fakeRouter as any).push = (path: string) => {
+      pushedPath = path;
+    };
+
     const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
     const button = container.querySelector("button");
     assert.ok(button);
@@ -386,17 +393,17 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
 
     // Click the link - should block immediate navigation
     fireEvent.click(linkEl);
-    assert.equal(globalThis.window.location.href, "http://localhost/dashboard/tenders/test-tender"); // No immediate navigation
+    assert.equal(pushedPath, ""); // No immediate navigation
 
     // Verify that PATCH request is dispatched
     await waitFor(() => {
       assert.ok(calls.some((c) => c.method === "PATCH"));
     });
 
-    // Once the PATCH succeeds, unread count is decremented, popup closed, and window.location.href updated
+    // Once the PATCH succeeds, unread count is decremented, popup closed, and router.push is executed
     await waitFor(() => {
       assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
-      assert.ok(globalThis.window.location.href.includes("/tenders/t1"));
+      assert.equal(pushedPath, "/tenders/t1");
       assert.ok(!container.querySelector("#notification-popup")); // Popup closed
     });
   });
@@ -431,6 +438,12 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       },
     ]);
 
+    // Spy on fakeRouter.push
+    let pushedPath = "";
+    (fakeRouter as any).push = (path: string) => {
+      pushedPath = path;
+    };
+
     const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
     const button = container.querySelector("button");
     assert.ok(button);
@@ -454,11 +467,11 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       assert.ok(calls.some((c) => c.method === "PATCH"));
     });
 
-    // Wait a moment and assert that unread is unchanged, location.href is unchanged,
+    // Wait a moment and assert that unread is unchanged, router.push is NOT executed,
     // the popup is still visible, and error alert is shown!
     await waitFor(() => {
       assert.equal(button.getAttribute("aria-label"), "Notifications (2 unread)");
-      assert.equal(globalThis.window.location.href, "http://localhost/dashboard/tenders/test-tender"); // No navigation
+      assert.equal(pushedPath, ""); // No navigation
       const popup = container.querySelector("#notification-popup");
       assert.ok(popup); // Popup still visible
       const alertDiv = container.querySelector("[role='alert']");
@@ -627,7 +640,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
         match: "/api/notifications?limit=20",
         method: "GET",
         json: {
-          unreadCount: 3,
+          unreadCount: 7,
           notifications: [
             {
               id: "u1",
@@ -656,6 +669,42 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
               link: "javascript:alert(1)",
               readAt: null,
             },
+            {
+              id: "u4",
+              type: "SYSTEM",
+              title: "Normalized Backslash Path",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "/\\evil.example/path",
+              readAt: null,
+            },
+            {
+              id: "u5",
+              type: "SYSTEM",
+              title: "Encoded Backslash Path",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "/%5C%5Cevil.example",
+              readAt: null,
+            },
+            {
+              id: "u6",
+              type: "SYSTEM",
+              title: "Encoded Slashes Path",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "/%2F%2Fevil.example",
+              readAt: null,
+            },
+            {
+              id: "u7",
+              type: "SYSTEM",
+              title: "CR LF Injection Path",
+              body: "Unsafe",
+              createdAt: new Date().toISOString(),
+              link: "/path\r\n/evil.example",
+              readAt: null,
+            },
           ],
         },
       },
@@ -666,7 +715,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       },
     ]);
 
-    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 3 }));
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 7 }));
     const button = container.querySelector("button");
     assert.ok(button);
 
@@ -678,7 +727,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     });
 
     const links = container.querySelectorAll("#notification-popup a");
-    // All 3 unsafe links should be filtered out and not rendered as anchor <a> tags at all!
+    // All 7 unsafe links should be filtered out and not rendered as anchor <a> tags at all!
     assert.equal(links.length, 0);
 
     // Instead, they should be rendered as plain text elements
@@ -686,5 +735,9 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     assert.ok(Array.from(texts).some(p => p.textContent?.includes("External Link")));
     assert.ok(Array.from(texts).some(p => p.textContent?.includes("Protocol Relative")));
     assert.ok(Array.from(texts).some(p => p.textContent?.includes("XSS Javascript")));
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("Normalized Backslash Path")));
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("Encoded Backslash Path")));
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("Encoded Slashes Path")));
+    assert.ok(Array.from(texts).some(p => p.textContent?.includes("CR LF Injection Path")));
   });
 });
