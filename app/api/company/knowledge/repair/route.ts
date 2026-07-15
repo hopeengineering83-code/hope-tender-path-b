@@ -17,6 +17,7 @@ import {
   publicVaultIdentifier,
   redactVaultText,
   safeVaultFileLabel,
+  sourceByteIntegrityIsVerified,
 } from "../../../../../lib/vault-review-provenance";
 
 export const maxDuration = 60;
@@ -87,6 +88,9 @@ async function buildDiagnostics(
         category: true,
         extractedText: true,
         aiExtractionStatus: true,
+        contentSha256: true,
+        contentByteLength: true,
+        integrityStatus: true,
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -99,7 +103,7 @@ async function buildDiagnostics(
         reviewNotes: true,
         sourceDocumentId: true,
         sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
         },
       },
     }),
@@ -112,7 +116,7 @@ async function buildDiagnostics(
         reviewNotes: true,
         sourceDocumentId: true,
         sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
         },
       },
     }),
@@ -132,7 +136,7 @@ async function buildDiagnostics(
         reviewNotes: true,
         sourceDocumentId: true,
         sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
         },
       },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
@@ -156,7 +160,7 @@ async function buildDiagnostics(
         reviewNotes: true,
         sourceDocumentId: true,
         sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
         },
       },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
@@ -176,14 +180,15 @@ async function buildDiagnostics(
 
   const documentDiagnostics = docs.map((doc, index) => {
     const extractedChars = doc.extractedText?.length ?? 0;
+    const byteIntegrityVerified = sourceByteIntegrityIsVerified(doc);
     return {
       id: publicVaultIdentifier(doc.id),
       fileName: safeVaultFileLabel(doc.category, index),
       category: doc.category,
       extractedChars,
-      status: usableText(doc.extractedText) ? "EXTRACTED" : extractedChars > 0 ? "WARNING" : "EMPTY",
-      isExpertSource: isExpertSource(doc.originalFileName, doc.category, doc.extractedText),
-      isProjectSource: isProjectSource(doc.originalFileName, doc.category, doc.extractedText),
+      status: !byteIntegrityVerified ? "UNVERIFIED" : usableText(doc.extractedText) ? "EXTRACTED" : extractedChars > 0 ? "WARNING" : "EMPTY",
+      isExpertSource: byteIntegrityVerified && isExpertSource(doc.originalFileName, doc.category, doc.extractedText),
+      isProjectSource: byteIntegrityVerified && isProjectSource(doc.originalFileName, doc.category, doc.extractedText),
       aiExtractionStatus: doc.aiExtractionStatus,
     };
   });
@@ -191,6 +196,8 @@ async function buildDiagnostics(
   const expertSourceDocuments = documentDiagnostics.filter((document) => document.isExpertSource).length;
   const projectSourceDocuments = documentDiagnostics.filter((document) => document.isProjectSource).length;
   const extractedDocuments = documentDiagnostics.filter((document) => document.status === "EXTRACTED").length;
+  const documentsWithUsableText = docs.filter((document) => usableText(document.extractedText)).length;
+  const unverifiedDocuments = documentDiagnostics.filter((document) => document.status === "UNVERIFIED").length;
   const reviewedExperts = expertReviewStates.filter(isDurablyReviewed).length;
   const unsupportedReviewedExperts = expertReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
   const aiDraftExperts = expertStates.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
@@ -204,7 +211,8 @@ async function buildDiagnostics(
 
   const gaps: Gap[] = [];
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company evidence, CVs, and project references." });
-  if (docs.length > 0 && extractedDocuments === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text." });
+  if (docs.length > 0 && documentsWithUsableText === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text." });
+  if (unverifiedDocuments > 0) gaps.push({ severity: "CRITICAL", title: "Source byte integrity is unverified", detail: `${unverifiedDocuments} document(s) cannot support reviewed evidence until their stored bytes have a verified SHA-256 digest.` });
   if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "Configure an approved AI provider before automated extraction." });
   if (unsupportedReviewedExperts > 0) gaps.push({ severity: "CRITICAL", title: "Expert reviews lack durable provenance", detail: `${unsupportedReviewedExperts} expert record(s) are blocked until source evidence and reviewer audit are recorded.` });
   if (unsupportedReviewedProjects > 0) gaps.push({ severity: "CRITICAL", title: "Project reviews lack durable provenance", detail: `${unsupportedReviewedProjects} project record(s) are blocked until source evidence and reviewer audit are recorded.` });

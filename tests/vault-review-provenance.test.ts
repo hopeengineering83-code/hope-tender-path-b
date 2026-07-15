@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import {
   buildReviewProvenance,
   canUseVaultRecord,
@@ -49,10 +50,13 @@ describe("durable per-field vault review provenance", () => {
     "Professional certification PMP is confirmed by the source document.",
     "This paragraph makes the extracted source safely longer than one hundred characters.",
   ].join(" ");
+  const sourceHash = createHash("sha256").update(sourceText, "utf8").digest("hex");
   const sourceDocument = {
     id: "source-doc-1",
     extractedText: sourceText,
-    contentSha256: null,
+    contentSha256: sourceHash,
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
   };
   const expert = {
     fullName: "Hana Example",
@@ -125,6 +129,23 @@ describe("durable per-field vault review provenance", () => {
     assert.equal(canUseVaultRecord(unsupported, "MATCHING"), false);
     assert.equal(canUseVaultRecord(unsupported, "GENERATION"), false);
     assert.equal(canUseVaultRecord(unsupported, "EXPORT"), false);
+  });
+
+  it("rejects extracted text when verified source-byte integrity is missing", () => {
+    for (const source of [
+      { ...sourceDocument, contentSha256: null },
+      { ...sourceDocument, contentByteLength: null },
+      { ...sourceDocument, integrityStatus: "UNKNOWN" },
+    ]) {
+      const result = buildReviewProvenance({
+        sourceDocument: source,
+        fields: expertReviewFields(expert),
+        reviewerId: "reviewer-1",
+        reviewedAt: new Date(),
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.code, "PROVENANCE_REQUIRED");
+    }
   });
 
   it("rejects a review when any represented field lacks source evidence", () => {

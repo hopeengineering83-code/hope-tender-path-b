@@ -45,6 +45,9 @@ describe("batch review ownership, audit, and partial-failure contracts", () => {
       assert.match(source, /buildReviewProvenance/);
       assert.match(source, /NOT_FOUND_OR_NOT_OWNED/);
       assert.match(source, /FIELD_EVIDENCE_REQUIRED/);
+      assert.match(source, /PROVENANCE_REQUIRED/);
+      assert.match(source, /contentByteLength: true/);
+      assert.match(source, /integrityStatus: true/);
     });
 
     it(`${kind} review persists record state and audit identity in one transaction`, () => {
@@ -54,6 +57,7 @@ describe("batch review ownership, audit, and partial-failure contracts", () => {
       assert.match(source, /reviewNotes: candidate\.serialized/);
       assert.match(source, /await tx\.auditLog\.create/);
       assert.match(source, /sourceContentHash/);
+      assert.match(source, /sourceByteLength/);
       assert.match(source, /evidenceFields/);
     });
 

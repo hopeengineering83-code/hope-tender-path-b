@@ -13,7 +13,7 @@ import {
 
 type RejectedReview = {
   id: string;
-  code: "NOT_FOUND_OR_NOT_OWNED" | "SOURCE_DOCUMENT_REQUIRED" | "SOURCE_TEXT_REQUIRED" | "FIELD_EVIDENCE_REQUIRED" | "CONCURRENT_UPDATE";
+  code: "NOT_FOUND_OR_NOT_OWNED" | "SOURCE_DOCUMENT_REQUIRED" | "SOURCE_TEXT_REQUIRED" | "PROVENANCE_REQUIRED" | "FIELD_EVIDENCE_REQUIRED" | "CONCURRENT_UPDATE";
   missingEvidenceFields?: string[];
 };
 
@@ -47,7 +47,7 @@ export async function PATCH(req: Request) {
       : [],
   ));
   if (ids.length === 0) return NextResponse.json({ error: "ids array is required and must not be empty" }, { status: 400 });
-  if (ids.length > 100) return NextResponse.json({ error: "Maximum 100 unique ids per batch" }, { status: 400 });
+  if (ids.length > 200) return NextResponse.json({ error: "Maximum 200 unique ids per batch" }, { status: 400 });
   if (body.trustLevel !== "REVIEWED") {
     return NextResponse.json(
       { error: "trustLevel must be explicitly set to REVIEWED", code: "INVALID_TRUST_LEVEL" },
@@ -69,7 +69,7 @@ export async function PATCH(req: Request) {
       currency: true,
       sourceDocumentId: true,
       sourceDocument: {
-        select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+        select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
       },
     },
   });
@@ -80,6 +80,7 @@ export async function PATCH(req: Request) {
     id: string;
     serialized: string;
     sourceContentHash: string;
+    sourceByteLength: number;
     sourceTextHash: string;
     evidenceFields: string[];
   }> = [];
@@ -141,6 +142,7 @@ export async function PATCH(req: Request) {
               requestId,
               recordRef: publicVaultIdentifier(candidate.id),
               sourceContentHash: candidate.sourceContentHash,
+              sourceByteLength: candidate.sourceByteLength,
               sourceTextHash: candidate.sourceTextHash,
               evidenceFields: candidate.evidenceFields,
               reviewedAt: reviewedAt.toISOString(),
