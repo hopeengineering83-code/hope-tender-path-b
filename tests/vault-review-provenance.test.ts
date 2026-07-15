@@ -84,12 +84,20 @@ describe("durable per-field vault review provenance", () => {
       reviewedAt,
       reviewNotes: result.serialized,
       sourceDocumentId: "source-doc-1",
+      sourceDocument,
     };
     assert.equal(isDurablyReviewed(record), true);
     assert.equal(effectiveReviewTrustLevel(record), "REVIEWED");
     assert.equal(canUseVaultRecord(record, "MATCHING"), true);
     assert.equal(canUseVaultRecord(record, "GENERATION"), true);
     assert.equal(canUseVaultRecord(record, "EXPORT"), true);
+
+    const changedSource = {
+      ...record,
+      sourceDocument: { ...sourceDocument, extractedText: sourceText + " changed" },
+    };
+    assert.equal(isDurablyReviewed(changedSource), false);
+    assert.equal(canUseVaultRecord(changedSource, "EXPORT"), false);
   });
 
   it("fails closed when reviewer, timestamp, source, or provenance is missing", () => {

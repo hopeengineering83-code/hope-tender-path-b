@@ -21,6 +21,7 @@ export type ReviewRecordState = {
   reviewedAt?: Date | string | null;
   reviewNotes?: string | null;
   sourceDocumentId?: string | null;
+  sourceDocument?: ReviewSourceDocument | null;
 };
 
 export type DurableReviewEvidence = {
@@ -35,6 +36,7 @@ export type ReviewEvidenceAssessment =
   | {
       ok: true;
       sourceContentHash: string;
+      sourceTextHash: string;
       evidence: DurableReviewEvidence[];
     }
   | {
@@ -49,6 +51,7 @@ type StoredReviewProvenance = {
   version: 1;
   sourceDocumentId: string;
   sourceContentHash: string;
+  sourceTextHash: string;
   reviewerId: string;
   reviewedAt: string;
   evidence: DurableReviewEvidence[];
@@ -123,9 +126,11 @@ function collectEvidence(
   }
 
   const persistedHash = sourceDocument.contentSha256?.toLowerCase() ?? "";
+  const sourceTextHash = sha256(text);
   return {
     ok: true,
-    sourceContentHash: HASH_PATTERN.test(persistedHash) ? persistedHash : sha256(text),
+    sourceContentHash: HASH_PATTERN.test(persistedHash) ? persistedHash : sourceTextHash,
+    sourceTextHash,
     evidence,
   };
 }
@@ -150,6 +155,7 @@ export function buildReviewProvenance(input: {
       ok: true;
       serialized: string;
       sourceContentHash: string;
+      sourceTextHash: string;
       evidenceFields: string[];
     }
   | {
@@ -164,6 +170,7 @@ export function buildReviewProvenance(input: {
     version: 1,
     sourceDocumentId: input.sourceDocument!.id,
     sourceContentHash: assessment.sourceContentHash,
+    sourceTextHash: assessment.sourceTextHash,
     reviewerId: input.reviewerId,
     reviewedAt: input.reviewedAt.toISOString(),
     evidence: assessment.evidence,
@@ -173,6 +180,7 @@ export function buildReviewProvenance(input: {
     ok: true,
     serialized: REVIEW_PROVENANCE_PREFIX + JSON.stringify(provenance),
     sourceContentHash: assessment.sourceContentHash,
+    sourceTextHash: assessment.sourceTextHash,
     evidenceFields: assessment.evidence.map((item) => item.field),
   };
 }
@@ -185,6 +193,7 @@ function parseStoredProvenance(reviewNotes: string | null | undefined): StoredRe
       parsed.version !== 1 ||
       typeof parsed.sourceDocumentId !== "string" ||
       !HASH_PATTERN.test(parsed.sourceContentHash ?? "") ||
+      !HASH_PATTERN.test(parsed.sourceTextHash ?? "") ||
       typeof parsed.reviewerId !== "string" ||
       typeof parsed.reviewedAt !== "string" ||
       !Array.isArray(parsed.evidence) ||
@@ -215,9 +224,22 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
   if (
     !record.sourceDocumentId ||
     provenance.sourceDocumentId !== record.sourceDocumentId ||
+    !record.sourceDocument ||
+    record.sourceDocument.id !== record.sourceDocumentId ||
+    !sourceTextIsUsable(record.sourceDocument.extractedText) ||
     !record.reviewedBy ||
     provenance.reviewerId !== record.reviewedBy ||
     !record.reviewedAt
+  ) {
+    return false;
+  }
+
+  const currentTextHash = sha256(record.sourceDocument.extractedText);
+  const currentPersistedHash = record.sourceDocument.contentSha256?.toLowerCase() ?? "";
+  const currentContentHash = HASH_PATTERN.test(currentPersistedHash) ? currentPersistedHash : currentTextHash;
+  if (
+    currentContentHash !== provenance.sourceContentHash ||
+    currentTextHash !== provenance.sourceTextHash
   ) {
     return false;
   }
@@ -309,7 +331,7 @@ export function redactVaultText(value: string | null | undefined, maxLength = 22
   const boundedLength = Math.max(40, Math.min(maxLength, 280));
   let redacted = value
     .replace(/\s+/g, " ")
-    .replace(/\b(?:date\s+of\s+birth|dob)\s*[:#-]?\s*[^,;|]{1,48}/gi, "[redacted birth detail]")
+    .replace(/\b(?:date\s+of\s+birth|dob)\s*[:#-]?\s*[^;|]{1,48}/gi, "[redacted birth detail]")
     .replace(/\bnationality\s*[:#-]?\s*[^,;|]{1,36}/gi, "[redacted nationality]")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted email]")
     .replace(/(?:\+?\d[\d ()-]{7,}\d)/g, "[redacted phone]")

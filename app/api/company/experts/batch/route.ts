@@ -79,6 +79,7 @@ export async function PATCH(req: Request) {
     id: string;
     serialized: string;
     sourceContentHash: string;
+    sourceTextHash: string;
     evidenceFields: string[];
   }> = [];
 
@@ -139,6 +140,7 @@ export async function PATCH(req: Request) {
               requestId,
               recordRef: publicVaultIdentifier(candidate.id),
               sourceContentHash: candidate.sourceContentHash,
+              sourceTextHash: candidate.sourceTextHash,
               evidenceFields: candidate.evidenceFields,
               reviewedAt: reviewedAt.toISOString(),
             }),

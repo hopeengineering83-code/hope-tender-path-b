@@ -98,6 +98,9 @@ async function buildDiagnostics(
         reviewedAt: true,
         reviewNotes: true,
         sourceDocumentId: true,
+        sourceDocument: {
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+        },
       },
     }),
     prisma.project.findMany({
@@ -108,6 +111,9 @@ async function buildDiagnostics(
         reviewedAt: true,
         reviewNotes: true,
         sourceDocumentId: true,
+        sourceDocument: {
+          select: { id: true, companyId: true, extractedText: true, contentSha256: true },
+        },
       },
     }),
     prisma.expert.findMany({
@@ -159,6 +165,15 @@ async function buildDiagnostics(
     }),
   ]);
 
+  const expertReviewStates = expertStates.map((record) => ({
+    ...record,
+    sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
+  }));
+  const projectReviewStates = projectStates.map((record) => ({
+    ...record,
+    sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
+  }));
+
   const documentDiagnostics = docs.map((doc, index) => {
     const extractedChars = doc.extractedText?.length ?? 0;
     return {
@@ -176,12 +191,12 @@ async function buildDiagnostics(
   const expertSourceDocuments = documentDiagnostics.filter((document) => document.isExpertSource).length;
   const projectSourceDocuments = documentDiagnostics.filter((document) => document.isProjectSource).length;
   const extractedDocuments = documentDiagnostics.filter((document) => document.status === "EXTRACTED").length;
-  const reviewedExperts = expertStates.filter(isDurablyReviewed).length;
-  const unsupportedReviewedExperts = expertStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const reviewedExperts = expertReviewStates.filter(isDurablyReviewed).length;
+  const unsupportedReviewedExperts = expertReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
   const aiDraftExperts = expertStates.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
   const regexDraftExperts = expertStates.filter((expert) => !expert.trustLevel || expert.trustLevel === "REGEX_DRAFT").length;
-  const reviewedProjects = projectStates.filter(isDurablyReviewed).length;
-  const unsupportedReviewedProjects = projectStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const reviewedProjects = projectReviewStates.filter(isDurablyReviewed).length;
+  const unsupportedReviewedProjects = projectReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
   const aiDraftProjects = projectStates.filter((project) => project.trustLevel === "AI_DRAFT").length;
   const regexDraftProjects = projectStates.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
   const expectedExperts = docs.map((document) => expectedExpertCount(document.extractedText)).find((count) => count && count > 0) ?? null;
@@ -208,7 +223,7 @@ async function buildDiagnostics(
       fullName: redactVaultText(expert.fullName, 120),
       secondary: redactVaultText(expert.title ?? "Title not recorded", 140),
       tags: parseStoredStringList(expert.disciplines).slice(0, 4).map((value) => redactVaultText(value, 60)),
-      trustLevel: effectiveReviewTrustLevel(expert),
+      trustLevel: effectiveReviewTrustLevel({ ...expert, sourceDocument }),
       canReview: evidence.ok,
       missingEvidenceFields: evidence.ok ? [] : evidence.missingFields.slice(0, 6),
     };
@@ -223,7 +238,7 @@ async function buildDiagnostics(
       name: redactVaultText(project.name, 140),
       secondary: redactVaultText(clientAndCountry, 160),
       tags: parseStoredStringList(project.serviceAreas).slice(0, 4).map((value) => redactVaultText(value, 60)),
-      trustLevel: effectiveReviewTrustLevel(project),
+      trustLevel: effectiveReviewTrustLevel({ ...project, sourceDocument }),
       canReview: evidence.ok,
       missingEvidenceFields: evidence.ok ? [] : evidence.missingFields.slice(0, 6),
     };
