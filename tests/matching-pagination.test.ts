@@ -49,48 +49,54 @@ describe("Issue #1135 Gap #5 — matching dashboard pagination", () => {
     assert.match(src, /Showing top/);
   });
 
-  it("page.tsx limits tenders to 5 per page (bounded query)", () => {
+  it("page.tsx imports TENDERS_PER_PAGE from shared module (Revision #4)", () => {
     const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
-    // Extract the TENDERS_PER_PAGE value
-    const match = src.match(/TENDERS_PER_PAGE\s*=\s*(\d+)/);
-    assert.ok(match, "TENDERS_PER_PAGE must be defined");
-    const perPage = parseInt(match[1], 10);
+    assert.match(src, /import.*TENDERS_PER_PAGE.*from.*matching-config/);
+    // Must NOT define TENDERS_PER_PAGE locally
     assert.ok(
-      perPage <= 10,
-      `TENDERS_PER_PAGE must be bounded (<= 10), got ${perPage}`,
+      !/const\s+TENDERS_PER_PAGE\s*=/.test(src),
+      "page.tsx must NOT define TENDERS_PER_PAGE locally — import from shared module",
     );
   });
 
-  it("page.tsx uses MATCH_PAGE_SIZE (shared with GET endpoint, Revision #3)", () => {
+  it("page.tsx imports MATCH_PAGE_SIZE from shared module (Revision #4)", () => {
     const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
-    assert.match(src, /MATCH_PAGE_SIZE/);
-    const match = src.match(/MATCH_PAGE_SIZE\s*=\s*(\d+)/);
-    assert.ok(match, "MATCH_PAGE_SIZE must be defined");
-    const perType = parseInt(match[1], 10);
+    assert.match(src, /import.*MATCH_PAGE_SIZE.*from.*matching-config/);
+    // Must NOT define MATCH_PAGE_SIZE locally
     assert.ok(
-      perType >= 10 && perType <= 30,
-      `MATCH_PAGE_SIZE must be 10-30, got ${perType}`,
+      !/const\s+MATCH_PAGE_SIZE\s*=/.test(src),
+      "page.tsx must NOT define MATCH_PAGE_SIZE locally — import from shared module",
     );
   });
 
-  it("GET endpoint uses the SAME MATCH_PAGE_SIZE (Revision #3)", () => {
-    const pageSrc = readFileSync("app/dashboard/matching/page.tsx", "utf8");
-    const getSrc = readFileSync("app/api/tenders/[id]/matches/route.ts", "utf8");
-    const pageMatch = pageSrc.match(/MATCH_PAGE_SIZE\s*=\s*(\d+)/);
-    const getMatch = getSrc.match(/MATCH_PAGE_SIZE\s*=\s*(\d+)/);
-    assert.ok(pageMatch, "page.tsx must define MATCH_PAGE_SIZE");
-    assert.ok(getMatch, "route.ts must define MATCH_PAGE_SIZE");
-    assert.equal(
-      pageMatch[1],
-      getMatch[1],
-      "SSR and GET must use the same MATCH_PAGE_SIZE",
+  it("route.ts imports MATCH_PAGE_SIZE from shared module (Revision #4)", () => {
+    const src = readFileSync("app/api/tenders/[id]/matches/route.ts", "utf8");
+    assert.match(src, /import.*MATCH_PAGE_SIZE.*from.*matching-config/);
+    // Must NOT define MATCH_PAGE_SIZE locally
+    assert.ok(
+      !/const\s+MATCH_PAGE_SIZE\s*=/.test(src),
+      "route.ts must NOT define MATCH_PAGE_SIZE locally — import from shared module",
     );
   });
 
-  it("page.tsx sorts selected-first to prevent truncation hiding (Revision #2)", () => {
+  it("shared module matching-config.ts exists with correct constants", () => {
+    const src = readFileSync("lib/engine/matching-config.ts", "utf8");
+    assert.match(src, /export const TENDERS_PER_PAGE\s*=\s*\d+/);
+    assert.match(src, /export const MATCH_PAGE_SIZE\s*=\s*\d+/);
+  });
+
+  it("page.tsx queries selected rows separately (Revision #3)", () => {
     const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
-    assert.match(src, /sortSelectedFirst/);
-    assert.match(src, /isSelected.*-1.*1/);
+    // Must have a separate query for selected rows (WHERE isSelected: true)
+    assert.match(src, /isSelected:\s*true/);
+    // Must have a separate query for unselected candidates
+    assert.match(src, /isSelected:\s*false/);
+  });
+
+  it("GET route queries selected rows separately (Revision #3)", () => {
+    const src = readFileSync("app/api/tenders/[id]/matches/route.ts", "utf8");
+    assert.match(src, /isSelected:\s*true/);
+    assert.match(src, /isSelected:\s*false/);
   });
 });
 

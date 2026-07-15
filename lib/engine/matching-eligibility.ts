@@ -1,33 +1,52 @@
-// GLM-A2 Issue #1135 — Matching evidence eligibility adapter.
+// GLM-A2 Issue #1135 — Matching evidence eligibility gate.
 //
-// This module enforces that only durably-provenanced, reviewed records
-// are eligible for matching selection and proposal evidence use.
+// This module defines the EXPLICIT contract for vault record eligibility
+// in the matching engine. It is NOT a delegation adapter — it does not
+// use dynamic imports to call the shared provenance module
+// (which belongs to PR #1146 / Issue #1137 and is not yet on main).
 //
-// It is a NON-OVERLAPPING adapter: it does NOT edit the vault-review
-// or company-review files owned by CHATGPT-C1 / Issue #1137 / PR #1146.
-// Instead, it provides a matching-specific eligibility check that:
-//   1. Requires trustLevel === "REVIEWED" (existing behavior)
-//   2. Requires sourceDocumentId to be set (provenance link)
-//   3. When PR #1146's isDurablyReviewed() is available on main, this
-//      adapter will delegate to it. Until then, it uses a local
-//      implementation that checks the same invariants: trustLevel +
-//      sourceDocumentId + reviewedBy + reviewedAt.
+// Instead, this module defines its own structural eligibility check that
+// is the authority for matching selection. When PR #1146 is merged, the
+// matching engine should be updated to call the shared isDurablyReviewed()
+// directly with the FULL record shape
+// (including sourceDocument, reviewNotes, evidence hashes). Until then,
+// this structural check is the matching engine's gate.
 //
-// This ensures a reviewed-but-ungrounded record (REVIEWED but no
-// sourceDocumentId, or REVIEWED but no reviewedBy/reviewedAt) scores
-// zero, remains unselected, and cannot unlock generation.
+// GLM-A2 Issue #1135 Revision #1+2: The previous version used a dynamic
+// fallback that could flip behavior incorrectly when #1146 is integrated
+// (passing incomplete fields to isDurablyReviewed would reject everything).
+// That fallback has been removed. This module is self-contained.
 
 /**
- * A vault record (Expert or Project) as seen by the matching engine.
- * Only the fields needed for eligibility checking are required.
+ * Full record shape required for matching eligibility.
+ *
+ * This is the COMPLETE set of fields the matching engine needs to make
+ * an eligibility decision. When PR #1146's isDurablyReviewed() is
+ * available, this shape should be widened to include sourceDocument,
+ * reviewNotes, and evidence — and the matching engine should pass the
+ * full Prisma record instead of casting.
  */
-export type VaultRecordForEligibility = {
+export type MatchingEligibilityRecord = {
   id: string;
-  trustLevel?: string | null;
-  sourceDocumentId?: string | null;
-  reviewedBy?: string | null;
-  reviewedAt?: Date | string | null;
+  trustLevel: string | null | undefined;
+  sourceDocumentId: string | null | undefined;
+  reviewedBy: string | null | undefined;
+  reviewedAt: Date | string | null | undefined;
 };
+
+/**
+ * Result of an eligibility check — explicit about WHY a record was
+ * rejected so callers can surface the reason to the user.
+ */
+export type EligibilityResult =
+  | { eligible: true }
+  | { eligible: false; reason: EligibilityRejectionCode; detail: string };
+
+export type EligibilityRejectionCode =
+  | "NOT_REVIEWED"
+  | "NO_SOURCE_DOCUMENT"
+  | "NO_REVIEWER"
+  | "NO_REVIEW_TIMESTAMP";
 
 /**
  * Check if a vault record is eligible for matching selection.
@@ -38,60 +57,72 @@ export type VaultRecordForEligibility = {
  *   3. reviewedBy is set (a human reviewed it)
  *   4. reviewedAt is set (review timestamp exists)
  *
- * This is the fail-closed eligibility gate. Records that fail any check
- * score zero, remain unselected, and cannot unlock generation.
+ * LIMITATION (Revision #1): This is a STRUCTURAL check, not a durable
+ * provenance check. It does NOT validate:
+ *   - source document bytes/text hash
+ *   - evidence offsets/quotes
+ *   - stored provenance record
+ *   - reviewer/timestamp binding to the source document
  *
- * When PR #1146 (lib/vault-review-provenance.ts) is merged into main,
- * this function will delegate to isDurablyReviewed() from that module.
- * Until then, it uses this local implementation that checks the same
- * structural invariants.
+ * Those checks are owned by PR #1146 (the shared provenance module).
+ * When #1146 is merged, replace this function with a direct call to
+ * isDurablyReviewed() passing the full record shape.
+ *
+ * Until then, this structural check prevents the most common failure
+ * mode: a REVIEWED record with no sourceDocumentId (manually entered
+ * without provenance) from being selected as proposal evidence.
  */
-export function isEligibleForMatching(record: VaultRecordForEligibility): boolean {
-  // 1. Must be REVIEWED
-  if (record.trustLevel !== "REVIEWED") return false;
+export function checkMatchingEligibility(
+  record: MatchingEligibilityRecord,
+): EligibilityResult {
+  if (record.trustLevel !== "REVIEWED") {
+    return {
+      eligible: false,
+      reason: "NOT_REVIEWED",
+      detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED"`,
+    };
+  }
 
-  // 2. Must have a provenance link to a source document
   if (!record.sourceDocumentId || record.sourceDocumentId.trim().length === 0) {
-    return false;
+    return {
+      eligible: false,
+      reason: "NO_SOURCE_DOCUMENT",
+      detail: "sourceDocumentId is missing — record has no provenance link to a source document",
+    };
   }
 
-  // 3. Must have been reviewed by a real user
   if (!record.reviewedBy || record.reviewedBy.trim().length === 0) {
-    return false;
+    return {
+      eligible: false,
+      reason: "NO_REVIEWER",
+      detail: "reviewedBy is missing — no human reviewer recorded",
+    };
   }
 
-  // 4. Must have a review timestamp
-  if (!record.reviewedAt) return false;
+  if (!record.reviewedAt) {
+    return {
+      eligible: false,
+      reason: "NO_REVIEW_TIMESTAMP",
+      detail: "reviewedAt is missing — no review timestamp recorded",
+    };
+  }
+
   if (typeof record.reviewedAt === "string" && record.reviewedAt.trim().length === 0) {
-    return false;
+    return {
+      eligible: false,
+      reason: "NO_REVIEW_TIMESTAMP",
+      detail: "reviewedAt is an empty string",
+    };
   }
 
-  return true;
+  return { eligible: true };
 }
 
 /**
- * Check if a vault record is durably reviewed.
- *
- * This is the adapter point: when PR #1146's isDurablyReviewed() is
- * available on main, this function will import and delegate to it.
- * Until then, it delegates to isEligibleForMatching() which checks
- * the same structural invariants.
+ * Convenience boolean wrapper around checkMatchingEligibility.
  */
-export function isDurablyReviewedAdapter(record: VaultRecordForEligibility): boolean {
-  // Try to use the shared authority from lib/vault-review-provenance.ts
-  // if it exists (post-#1146 merge). This is a dynamic import check
-  // that fails gracefully when the module doesn't exist yet.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const sharedModule = require("../vault-review-provenance");
-    if (sharedModule && typeof sharedModule.isDurablyReviewed === "function") {
-      return sharedModule.isDurablyReviewed(record);
-    }
-  } catch {
-    // Module not yet available — fall through to local check
-  }
-
-  return isEligibleForMatching(record);
+export function isEligibleForMatching(record: MatchingEligibilityRecord): boolean {
+  return checkMatchingEligibility(record).eligible;
 }
 
 /**
@@ -104,8 +135,18 @@ export function isDurablyReviewedAdapter(record: VaultRecordForEligibility): boo
  */
 export function enforceMatchingEligibility(
   score: number,
-  record: VaultRecordForEligibility,
+  record: MatchingEligibilityRecord,
 ): number {
-  if (!isDurablyReviewedAdapter(record)) return 0;
+  const result = checkMatchingEligibility(record);
+  if (!result.eligible) return 0;
   return score;
+}
+
+/**
+ * Get a human-readable eligibility label for UI display.
+ */
+export function eligibilityLabel(record: MatchingEligibilityRecord): string {
+  const result = checkMatchingEligibility(record);
+  if (result.eligible) return "✓ Eligible (reviewed + grounded)";
+  return `✗ Ineligible: ${result.detail}`;
 }

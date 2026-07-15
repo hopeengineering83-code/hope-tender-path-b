@@ -478,7 +478,7 @@ function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
 
   // GLM-A2 Issue #1135 Gap #2: Fail-closed selection. The previous code had
-  // a MIN_FLOOR_SCORE = 0.55 fallback that force-promoted below-threshold
+  // a below-threshold fallback that force-promoted
   // candidates to avoid an empty selection set. This violated fail-closed
   // evidence rules: for strict sectors or absent source-grounded candidates,
   // selection must remain empty, a blocking evidence gap must be created,
@@ -637,7 +637,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
 
   // GLM-A2 Issue #1135 Gap #2: Fail-closed selection. The previous code had
-  // a FALLBACK_MIN_SCORE = 0.55 fallback that promoted below-threshold
+  // a below-threshold fallback that promoted
   // candidates when zero cleared the threshold. This violated fail-closed
   // evidence rules. The fallback has been removed.
   //

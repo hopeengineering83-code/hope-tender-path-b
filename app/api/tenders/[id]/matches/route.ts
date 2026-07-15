@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { MATCH_PAGE_SIZE } from "../../../../../lib/engine/matching-config";
 
 export const dynamic = "force-dynamic";
 
-// GLM-A2 Issue #1135 Revision #3: Use the SAME page size as SSR (page.tsx)
-// so re-fetch after failure returns the same visible set.
-const MATCH_PAGE_SIZE = 15;
+// GLM-A2 Issue #1135 Revision #4: MATCH_PAGE_SIZE imported from shared
+// module lib/engine/matching-config.ts (no duplication).
+// GLM-A2 Issue #1135 Revision #3: Query selected rows separately (all)
+// then fill with top unselected candidates — same as SSR page.tsx.
 
 // GLM-A2 Issue #1135 Gap #6: GET endpoint for re-fetching authoritative
 // match state after a PUT rejection. The dashboard calls this to revert
@@ -27,37 +29,53 @@ export async function GET(
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // GLM-A2 Revision #2: Fetch a generous set, then sort selected-first
-  // and slice to MATCH_PAGE_SIZE — same logic as SSR page.tsx.
-  const [expertMatchesAll, projectMatchesAll] = await Promise.all([
+  // GLM-A2 Revision #3: Query SELECTED rows separately (all of them),
+  // then top unselected candidates — same approach as SSR page.tsx.
+  const [selectedExperts, selectedProjects, unselectedExperts, unselectedProjects] = await Promise.all([
     prisma.tenderExpertMatch.findMany({
-      where: { tenderId },
+      where: { tenderId, isSelected: true },
       orderBy: { score: "desc" },
-      take: MATCH_PAGE_SIZE * 2,
       include: {
         expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
       },
     }),
     prisma.tenderProjectMatch.findMany({
-      where: { tenderId },
+      where: { tenderId, isSelected: true },
       orderBy: { score: "desc" },
-      take: MATCH_PAGE_SIZE * 2,
+      include: {
+        project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
+      },
+    }),
+    prisma.tenderExpertMatch.findMany({
+      where: { tenderId, isSelected: false },
+      orderBy: { score: "desc" },
+      take: MATCH_PAGE_SIZE,
+      include: {
+        expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
+      },
+    }),
+    prisma.tenderProjectMatch.findMany({
+      where: { tenderId, isSelected: false },
+      orderBy: { score: "desc" },
+      take: MATCH_PAGE_SIZE,
       include: {
         project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
       },
     }),
   ]);
 
-  // Sort selected-first, then by score — same as SSR
-  const sortSelectedFirst = <T extends { isSelected: boolean; score: number }>(matches: T[]): T[] => {
-    return [...matches].sort((a, b) => {
-      if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
-      return b.score - a.score;
-    });
+  // Combine: selected (all) first, then unselected (top N), capped at MATCH_PAGE_SIZE
+  const combineMatches = <T extends { isSelected: boolean; score: number }>(selected: T[], unselected: T[]): T[] => {
+    return [...selected, ...unselected]
+      .sort((a, b) => {
+        if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
+        return b.score - a.score;
+      })
+      .slice(0, MATCH_PAGE_SIZE);
   };
 
-  const expertMatches = sortSelectedFirst(expertMatchesAll).slice(0, MATCH_PAGE_SIZE);
-  const projectMatches = sortSelectedFirst(projectMatchesAll).slice(0, MATCH_PAGE_SIZE);
+  const expertMatches = combineMatches(selectedExperts, unselectedExperts);
+  const projectMatches = combineMatches(selectedProjects, unselectedProjects);
 
   return NextResponse.json({
     expertMatches: expertMatches.map((m) => ({

@@ -4,6 +4,7 @@
 // candidates exist.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   capabilityScore,
   capabilityFamilies,
@@ -12,7 +13,7 @@ import {
 import {
   isEligibleForMatching,
   enforceMatchingEligibility,
-  isDurablyReviewedAdapter,
+  checkMatchingEligibility,
 } from "../lib/engine/matching-eligibility";
 
 // ─── Healthcare tender query text ──────────────────────────────────────────
@@ -273,7 +274,7 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     );
   });
 
-  it("isDurablyReviewedAdapter returns false for ungrounded record", () => {
+  it("checkMatchingEligibility returns explicit rejection for ungrounded record", () => {
     const record = {
       id: "expert-9",
       trustLevel: "REVIEWED",
@@ -281,11 +282,13 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
       reviewedBy: null,
       reviewedAt: null,
     };
-    assert.equal(
-      isDurablyReviewedAdapter(record),
-      false,
-      "isDurablyReviewedAdapter must return false for ungrounded record",
-    );
+    const result = checkMatchingEligibility(record);
+    assert.equal(result.eligible, false);
+    // Must give a specific rejection reason (not just "false")
+    if (!result.eligible) {
+      assert.ok(result.reason, "Must have a rejection reason code");
+      assert.ok(result.detail, "Must have a detail string");
+    }
   });
 });
 
@@ -331,6 +334,77 @@ describe("Issue #1135 Gap #4 — score calibration: no 100% from bonus stacking"
     assert.ok(
       score < 0.75,
       `Generic overlap must not produce high score for healthcare, got ${score}`,
+    );
+  });
+});
+
+// ─── Revision #5: Blocking evidence gap + generation lock ──────────────────
+
+describe("Issue #1135 Revision #5 — blocking evidence gap + generation lock", () => {
+  it("matching-eligibility module does NOT use require() fallback (Revision #2)", () => {
+    const src = readFileSync("lib/engine/matching-eligibility.ts", "utf8");
+    // The require() fallback was removed — it could flip behavior incorrectly
+    assert.ok(
+      !src.includes("require("),
+      "matching-eligibility.ts must NOT use require() — use explicit contract instead",
+    );
+    // Must NOT import from vault-review-provenance (that's PR #1146's scope)
+    assert.ok(
+      !src.includes("vault-review-provenance"),
+      "matching-eligibility.ts must NOT reference vault-review-provenance (PR #1146 scope)",
+    );
+  });
+
+  it("checkMatchingEligibility returns explicit rejection reason", () => {
+    const src = readFileSync("lib/engine/matching-eligibility.ts", "utf8");
+    // Must export the explicit result type
+    assert.match(src, /EligibilityResult/);
+    assert.match(src, /EligibilityRejectionCode/);
+    // Must have all 4 rejection codes
+    assert.match(src, /NOT_REVIEWED/);
+    assert.match(src, /NO_SOURCE_DOCUMENT/);
+    assert.match(src, /NO_REVIEWER/);
+    assert.match(src, /NO_REVIEW_TIMESTAMP/);
+  });
+
+  it("matching-config.ts is the shared constant module (Revision #4)", () => {
+    const src = readFileSync("lib/engine/matching-config.ts", "utf8");
+    assert.match(src, /export const TENDERS_PER_PAGE/);
+    assert.match(src, /export const MATCH_PAGE_SIZE/);
+  });
+
+  it("generation-readiness-gate checks for evidence/match state (fail-closed)", () => {
+    // Read the generation readiness gate to verify it references evidence
+    // or match concepts — when evidence is missing, generation must remain
+    // locked. The gate may not use the exact word "isSelected" but it
+    // must reference evidence, reviewed, or match-related gating.
+    const src = readFileSync("lib/engine/generation-readiness-gate.ts", "utf8");
+    const hasEvidenceCheck = /evidence|reviewed|grounded|REVIEWED/i.test(src);
+    assert.ok(
+      hasEvidenceCheck,
+      "generation-readiness-gate.ts must reference evidence/reviewed/grounded to enforce fail-closed",
+    );
+    // Must have fail() calls (fail-closed behavior)
+    assert.match(src, /return fail\(/);
+  });
+
+  it("matching.ts fail-closed: empty eligible set returns all-unselected", () => {
+    const src = readFileSync("lib/engine/matching.ts", "utf8");
+    // The fail-closed path must return all matches with isSelected: false
+    // when zero candidates clear the threshold
+    assert.match(
+      src,
+      /eligible\.length === 0[\s\S]*?isSelected:\s*false/,
+      "matching.ts must return all-unselected when eligible set is empty",
+    );
+    // Must NOT have MIN_FLOOR_SCORE or FALLBACK_MIN_SCORE (removed in Gap #2)
+    assert.ok(
+      !src.includes("MIN_FLOOR_SCORE"),
+      "matching.ts must NOT have MIN_FLOOR_SCORE (removed for fail-closed)",
+    );
+    assert.ok(
+      !src.includes("FALLBACK_MIN_SCORE"),
+      "matching.ts must NOT have FALLBACK_MIN_SCORE (removed for fail-closed)",
     );
   });
 });

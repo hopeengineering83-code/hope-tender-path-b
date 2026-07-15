@@ -2,22 +2,14 @@ import { redirect } from "next/navigation";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { MatchingDashboard } from "./matching-dashboard";
+import { TENDERS_PER_PAGE, MATCH_PAGE_SIZE } from "../../../lib/engine/matching-config";
 
 export const dynamic = "force-dynamic";
 
 // GLM-A2 Issue #1135 Gap #5: Bounded queries with pagination.
-// Previously loaded ALL matches for up to 15 tenders with no limit,
-// causing extremely long mobile pages. Now paginated: 5 tenders per page.
-//
-// GLM-A2 Issue #1135 Revision #2: Candidate truncation hides records.
-// Previously fetched only 10 per type, hiding selected/relevant rows
-// beyond the first 10. Now fetches ALL selected rows first, then fills
-// with top unselected candidates up to a bounded page size.
-//
-// GLM-A2 Issue #1135 Revision #3: GET/SSR limits disagree.
-// Now uses one shared MATCH_PAGE_SIZE constant for both SSR and GET.
-const TENDERS_PER_PAGE = 5;
-const MATCH_PAGE_SIZE = 15;
+// GLM-A2 Issue #1135 Revision #2: Selected rows fetched separately.
+// GLM-A2 Issue #1135 Revision #4: Page-size constants imported from
+// shared module lib/engine/matching-config.ts (no duplication).
 
 export default async function MatchingPage({
   searchParams,
@@ -39,19 +31,19 @@ export default async function MatchingPage({
   const tenders = await prisma.tender.findMany({
     where: { userId },
     include: {
+      // GLM-A2 Revision #3: Query SELECTED rows separately (all of them)
+      // so no selected row is ever hidden by score-rank truncation.
+      // Then fetch top unselected candidates to fill the page.
       expertMatches: {
         orderBy: { score: "desc" },
-        // GLM-A2 Revision #2: Fetch ALL selected rows first, then fill with
-        // top unselected candidates. This ensures selected rows are never
-        // hidden by truncation.
-        take: MATCH_PAGE_SIZE * 2, // bounded but generous
+        where: { isSelected: true },
         include: {
           expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
         },
       },
       projectMatches: {
         orderBy: { score: "desc" },
-        take: MATCH_PAGE_SIZE * 2,
+        where: { isSelected: true },
         include: {
           project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
         },
@@ -65,31 +57,82 @@ export default async function MatchingPage({
     take: TENDERS_PER_PAGE,
   });
 
-  // GLM-A2 Revision #2: Sort selected rows first, then top unselected.
-  // This guarantees all selected rows are visible regardless of score rank.
-  const sortSelectedFirst = <T extends { isSelected: boolean; score: number }>(matches: T[]): T[] => {
-    return [...matches].sort((a, b) => {
+  // GLM-A2 Revision #3: For each tender, also fetch top unselected
+  // candidates to fill the remaining page slots.
+  const tenderIds = tenders.map((t) => t.id);
+  const [unselectedExperts, unselectedProjects] = await Promise.all([
+    tenderIds.length > 0
+      ? prisma.tenderExpertMatch.findMany({
+          where: { tenderId: { in: tenderIds }, isSelected: false },
+          orderBy: { score: "desc" },
+          take: MATCH_PAGE_SIZE,
+          include: {
+            expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
+          },
+        })
+      : [],
+    tenderIds.length > 0
+      ? prisma.tenderProjectMatch.findMany({
+          where: { tenderId: { in: tenderIds }, isSelected: false },
+          orderBy: { score: "desc" },
+          take: MATCH_PAGE_SIZE,
+          include: {
+            project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
+          },
+        })
+      : [],
+  ]);
+
+  // Group unselected by tenderId
+  const unselectedExpertsByTender = new Map<string, typeof unselectedExperts>();
+  for (const m of unselectedExperts) {
+    const arr = unselectedExpertsByTender.get(m.tenderId) ?? [];
+    arr.push(m);
+    unselectedExpertsByTender.set(m.tenderId, arr);
+  }
+  const unselectedProjectsByTender = new Map<string, typeof unselectedProjects>();
+  for (const m of unselectedProjects) {
+    const arr = unselectedProjectsByTender.get(m.tenderId) ?? [];
+    arr.push(m);
+    unselectedProjectsByTender.set(m.tenderId, arr);
+  }
+
+  // GLM-A2 Revision #3: Combine selected (all) + unselected (top N),
+  // selected-first, capped at MATCH_PAGE_SIZE per type.
+  const combineMatches = <T extends { isSelected: boolean; score: number }>(
+    selected: T[],
+    unselected: T[],
+  ): T[] => {
+    const combined = [...selected, ...unselected];
+    // Selected-first, then by score desc
+    return combined.sort((a, b) => {
       if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
       return b.score - a.score;
-    });
+    }).slice(0, MATCH_PAGE_SIZE);
   };
 
   const serialized = tenders.map((t) => {
-    const sortedExperts = sortSelectedFirst(t.expertMatches).slice(0, MATCH_PAGE_SIZE);
-    const sortedProjects = sortSelectedFirst(t.projectMatches).slice(0, MATCH_PAGE_SIZE);
+    const selectedExperts = t.expertMatches;
+    const selectedProjects = t.projectMatches;
+    const unselectedExpertsForTender = unselectedExpertsByTender.get(t.id) ?? [];
+    const unselectedProjectsForTender = unselectedProjectsByTender.get(t.id) ?? [];
+
+    const combinedExperts = combineMatches(selectedExperts, unselectedExpertsForTender);
+    const combinedProjects = combineMatches(selectedProjects, unselectedProjectsForTender);
+
     return {
       id: t.id,
       title: t.title,
       expertMatchCount: t._count.expertMatches,
       projectMatchCount: t._count.projectMatches,
-      expertMatches: sortedExperts.map((m) => ({
+      expertMatches: combinedExperts.map((m) => ({
         id: m.id,
         score: m.score,
         rationale: m.rationale,
         isSelected: m.isSelected,
         expert: m.expert,
       })),
-      projectMatches: sortedProjects.map((m) => ({
+      projectMatches: combinedProjects.map((m) => ({
         id: m.id,
         score: m.score,
         rationale: m.rationale,
