@@ -1,252 +1,92 @@
-# Release Auditor
-#
-# Event-driven: runs the release-gate suite on push to main, and audits
-# open PRs for release-readiness. Creates findings for any PR that claims
-# readiness but has not passed the full release-gate suite.
-#
-# 5-minute schedule is BACKUP ONLY — it catches PRs whose CI went green
-# since the last event-driven run but whose release-gate suite has not run.
-#
-# This workflow MUST NOT:
-#   - merge to main
-#   - deploy
-#   - modify application runtime code
-#   - auto-approve a PR
-#   - treat green CI as sufficient (release-gate suite is required)
-
 name: Release Auditor
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
-    branches: [main]
-  schedule:
-    # Backup reconciliation every 5 minutes.
-    - cron: '*/5 * * * *'
   workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "PR number to audit (optional)."
-        required: false
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
-  actions: read
   checks: read
+  actions: read
 
 concurrency:
-  group: release-auditor-${{ github.event.pull_request.number || github.sha || github.event.schedule }}
-  cancel-in-progress: false
+  group: release-auditor-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
-  audit-release-readiness:
-    name: Audit Release Readiness
+  freeze-policy:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: github.event_name != 'schedule' || github.run_attempt == '1'
-
-    outputs:
-      blocked-prs: ${{ steps.audit-prs.outputs.blocked }}
-      findings-created: ${{ steps.create-findings.outputs.count }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Audit open PRs targeting main
-        id: audit-prs
+      - name: Enforce controlled branch routing
         uses: actions/github-script@v7
+        env:
+          FREEZE_MODE: ${{ vars.FREEZE_MODE || 'true' }}
         with:
           script: |
-            const prNumber = '${{ inputs.pr_number }}' || '${{ github.event.pull_request.number }}' || '';
-
-            let prsToAudit = [];
-            if (prNumber) {
-              const { data: pr } = await github.rest.pulls.get({
+            if (process.env.FREEZE_MODE !== 'true') {
+              core.notice('FREEZE_MODE is disabled.');
+              return;
+            }
+            if (context.eventName === 'push') {
+              const actor = context.actor;
+              const message = `Direct or merged update reached main during FREEZE_MODE. SHA: ${context.sha}; actor: ${actor}. Production release remains blocked.`;
+              await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                pull_number: parseInt(prNumber)
+                title: `[FREEZE VIOLATION] main changed at ${context.sha.slice(0, 12)}`,
+                body: message,
+                labels: ['risk:critical', 'freeze-violation', 'agent:none']
               });
-              prsToAudit = [pr];
-            } else {
-              // Get all open PRs targeting main
-              const { data: prs } = await github.rest.pulls.list({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: 'open',
-                base: 'main',
-                per_page: 100
-              });
-              prsToAudit = prs;
+              core.setFailed(message);
+              return;
             }
 
-            const blocked = [];
+            const pr = context.payload.pull_request;
+            const runtimePrefixes = ['app/', 'lib/', 'components/', 'prisma/', 'scripts/', 'tests/', 'e2e/'];
+            const infraPrefixes = ['.github/'];
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100
+            });
+            const names = files.map(f => f.filename);
+            const hasRuntime = names.some(name => runtimePrefixes.some(prefix => name.startsWith(prefix)));
+            const hasInfra = names.some(name => infraPrefixes.some(prefix => name.startsWith(prefix)));
 
-            for (const pr of prsToAudit) {
-              console.log(`Auditing PR #${pr.number}: ${pr.title}`);
-
-              // 1. Check if PR is draft — skip
-              if (pr.draft) {
-                console.log(`  Skip: draft PR.`);
-                continue;
-              }
-
-              // 2. Check CI check runs
-              const { data: checkRuns } = await github.rest.checks.listForRef({
+            let allowed = false;
+            if (pr.head.ref === 'integration/controlled-recovery' && pr.base.ref === 'main' && pr.draft) allowed = true;
+            if (hasRuntime && pr.base.ref === 'integration/controlled-recovery') allowed = true;
+            if (!hasRuntime && hasInfra && pr.base.ref === 'automation/control-plane') allowed = true;
+            if (!allowed) {
+              const reason = `FREEZE_MODE routing violation. Runtime worker PRs must target integration/controlled-recovery; infrastructure PRs must target automation/control-plane; only the draft integration PR may target main.`;
+              await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: pr.head.sha,
-                per_page: 100
+                issue_number: pr.number,
+                labels: ['freeze-blocked']
               });
-
-              const ciChecks = checkRuns.check_runs.filter(cr =>
-                cr.name.includes('Migrations') || cr.name === 'CI' || cr.name.includes('typecheck')
-              );
-              const ciGreen = ciChecks.length > 0 && ciChecks.every(cr => cr.conclusion === 'success');
-
-              // 3. Check release-gate suite (look for a completed release-gate run on this SHA)
-              const { data: gateRuns } = await github.rest.actions.listWorkflowRuns({
+              await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                workflow_id: 'release-gate.yml',
-                head_sha: pr.head.sha,
-                per_page: 5
+                issue_number: pr.number,
+                body: reason
               });
-
-              const gatePassed = gateRuns.workflow_runs.some(run =>
-                run.conclusion === 'success' && run.event === 'workflow_call'
-              );
-
-              // 4. Check for "ready for release" label or ready_for_review event
-              const readyForRelease = pr.labels.some(l => l.name === 'ready-for-release');
-
-              // 5. Determine verdict
-              let verdict = 'blocked';
-              let reason = '';
-
-              if (!ciGreen) {
-                reason = 'CI is not green.';
-              } else if (!gatePassed) {
-                reason = 'Release-gate suite has not passed. Green CI is NOT sufficient.';
-              } else if (readyForRelease) {
-                verdict = 'release-eligible';
-                reason = 'CI green + release-gate suite passed.';
-              } else {
-                verdict = 'ci-only';
-                reason = 'CI green but release-gate suite not run. PR is not release-eligible.';
-              }
-
-              console.log(`  Verdict: ${verdict} — ${reason}`);
-
-              // 6. Apply labels
-              const labelsToRemove = [];
-              const labelsToAdd = [];
-
-              if (verdict === 'release-eligible') {
-                labelsToAdd.push('release-eligible');
-                labelsToRemove.push('release-blocked', 'ci-only');
-              } else if (verdict === 'ci-only') {
-                labelsToAdd.push('ci-only');
-                labelsToRemove.push('release-eligible', 'release-blocked');
-              } else {
-                labelsToAdd.push('release-blocked');
-                labelsToRemove.push('release-eligible', 'ci-only');
-                blocked.push(pr.number);
-              }
-
-              for (const label of labelsToRemove) {
-                try {
-                  await github.rest.issues.removeLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: pr.number,
-                    name: label
-                  });
-                } catch (e) { /* label may not exist */ }
-              }
-
-              for (const label of labelsToAdd) {
-                try {
-                  await github.rest.issues.addLabels({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: pr.number,
-                    labels: [label]
-                  });
-                } catch (e) { /* ignore */ }
-              }
-
-              // 7. Comment on PR if blocked
-              if (verdict === 'blocked' && readyForRelease) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: pr.number,
-                  body: `⚠️ **Release audit blocked.**\n\nReason: ${reason}\n\nThe release-gate suite must pass before this PR can be merged. Green CI alone is not sufficient.`
-                });
-              }
+              core.setFailed(reason);
             }
 
-            core.setOutput('blocked', blocked.join(','));
-            core.setOutput('blocked_count', blocked.length.toString());
-            console.log(`Audit complete. Blocked PRs: ${blocked.length}`);
-
-      - name: Create findings for blocked PRs
-        id: create-findings
-        if: steps.audit-prs.outputs.blocked != ''
-        shell: bash
-        run: |
-          set -e
-          mkdir -p .github/release-control/findings
-          COUNT=0
-          TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
-          IFS=',' read -ra PRS <<< "${{ steps.audit-prs.outputs.blocked }}"
-          for pr in "${PRS[@]}"; do
-            [ -z "$pr" ] && continue
-            cat > ".github/release-control/findings/FINDING-${TIMESTAMP}-release-blocked-pr-${pr}.json" << EOF
-          {
-            "id": "FINDING-${TIMESTAMP}-release-blocked-pr-${pr}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "severity": "high",
-            "category": "infra",
-            "source": "release-auditor",
-            "title": "PR #${pr} is release-blocked — release-gate suite required",
-            "description": "PR #${pr} was labeled ready-for-release but has not passed the release-gate suite. Green CI alone is not sufficient for release.",
-            "file": null,
-            "line": null,
-            "agent": "none",
-            "status": "open",
-            "github_issue": null,
-            "github_pr": ${pr},
-            "evidence": {
-              "command": "release-auditor",
-              "exit_code": 0,
-              "stdout_excerpt": "PR #${pr} blocked — release-gate suite not passed",
-              "stderr_excerpt": null,
-              "sha": "${{ github.sha }}"
-            },
-            "labels": ["agent:none", "severity:high", "category:infra"]
-          }
-          EOF
-            COUNT=$((COUNT + 1))
-          done
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
-
-  run-release-gate-on-main:
-    name: Run Release Gate on main
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Invoke release-gate suite
-        uses: ./.github/workflows/release-gate.yml
-        with:
-          ref: ${{ github.sha }}
-          integration-mode: false
+  audit-integration-candidate:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.ref == 'integration/controlled-recovery' &&
+      github.event.pull_request.base.ref == 'main'
+    uses: ./.github/workflows/release-gate.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      integration-mode: true
+    secrets: inherit
