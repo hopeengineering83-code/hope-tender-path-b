@@ -34,6 +34,8 @@ describe("activity-log privacy presentation", () => {
       createdAt: "2026-07-15T19:00:00.000Z",
     });
     assert.equal(presented.description, "Audit event recorded.");
+    assert.equal(presented.action, "AUDIT_EVENT");
+    assert.notEqual(presented.action, "INTERNAL_REPAIR_WORKER_RETRY");
     assert.equal(presented.entityType, null);
     assert.doesNotMatch(JSON.stringify(presented), /filename|example\.com|UnknownInternalEntity/);
   });

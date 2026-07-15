@@ -18,6 +18,7 @@ export type PresentedAuditLog = {
 };
 
 const SAFE_DESCRIPTIONS: Record<string, string> = {
+  AUDIT_EVENT: "Audit event recorded.",
   LOGIN: "Signed in.",
   LOGOUT: "Signed out.",
   TENDER_FILE_UPLOAD: "Tender source file uploaded.",
@@ -42,6 +43,7 @@ const SAFE_DESCRIPTIONS: Record<string, string> = {
   TENDER_ENGINE_DOCUMENTS_SUPERSEDED: "Earlier generated documents were superseded.",
   AI_ANALYZE: "AI analysis queued.",
   AI_PROPOSAL: "AI proposal generation requested.",
+  ENGINE_RUN: "Tender processing event recorded.",
   VAULT_EVIDENCE_LINKED: "Vault evidence linked to a generated document.",
   EXPORT_PACKAGE_CREATE: "Export package prepared.",
   EXPORT_PACKAGE_DOWNLOAD: "Export package downloaded.",
@@ -69,6 +71,10 @@ function safeDescription(action: string): string {
   return SAFE_DESCRIPTIONS[action] ?? "Audit event recorded.";
 }
 
+export function isSafeAuditAction(action: string): boolean {
+  return Object.prototype.hasOwnProperty.call(SAFE_DESCRIPTIONS, action);
+}
+
 function safeEntityType(entityType: string | null): string | null {
   if (!entityType) return null;
   return SAFE_ENTITY_TYPES[entityType] ?? null;
@@ -76,11 +82,12 @@ function safeEntityType(entityType: string | null): string | null {
 
 export function presentAuditLog(row: RawAuditLog): PresentedAuditLog {
   const createdAt = new Date(row.createdAt);
+  const action = isSafeAuditAction(row.action) ? row.action : "AUDIT_EVENT";
   return {
     id: publicId(row.id),
-    action: row.action,
+    action,
     entityType: safeEntityType(row.entityType),
-    description: safeDescription(row.action),
+    description: safeDescription(action),
     createdAt: Number.isFinite(createdAt.getTime()) ? createdAt.toISOString() : new Date(0).toISOString(),
     count: 1,
   };

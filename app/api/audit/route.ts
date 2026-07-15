@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
-import { groupAuditLogs } from "../../../lib/audit-log-presentation";
+import { groupAuditLogs, isSafeAuditAction } from "../../../lib/audit-log-presentation";
 
 const INTERNAL_AUDIT_ENTITY_TYPE = "TenderStorageCleanup";
 
@@ -22,7 +22,11 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const page = positiveInteger(searchParams.get("page"), 1);
   const limit = Math.min(50, positiveInteger(searchParams.get("limit"), 30));
-  const action = searchParams.get("action")?.trim() || undefined;
+  const requestedAction = searchParams.get("action")?.trim() || undefined;
+  if (requestedAction && !isSafeAuditAction(requestedAction)) {
+    return NextResponse.json({ error: "Unsupported activity filter" }, { status: 400 });
+  }
+  const action = requestedAction;
   const entityType = searchParams.get("entityType")?.trim() || undefined;
 
   const where = {
