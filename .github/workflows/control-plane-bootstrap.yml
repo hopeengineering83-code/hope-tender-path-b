@@ -1,0 +1,78 @@
+name: Control Plane Bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: control-plane-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure controlled branches and draft integration PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const main = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            const mainSha = main.data.commit.sha;
+
+            async function ensureBranch(branch) {
+              try {
+                await github.rest.repos.getBranch({ owner, repo, branch });
+                return;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/heads/${branch}`,
+                sha: mainSha
+              });
+            }
+
+            await ensureBranch('automation/control-plane');
+            await ensureBranch('integration/controlled-recovery');
+
+            const { data: open } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:integration/controlled-recovery`,
+              base: 'main',
+              per_page: 10
+            });
+
+            if (open.length > 1) throw new Error('More than one controlled integration PR exists.');
+            if (open.length === 1) {
+              if (!open[0].draft) throw new Error('Controlled integration PR exists but is not draft.');
+              core.notice(`Existing integration PR #${open[0].number}`);
+              return;
+            }
+
+            const created = await github.rest.pulls.create({
+              owner,
+              repo,
+              title: 'release: controlled recovery integration',
+              head: 'integration/controlled-recovery',
+              base: 'main',
+              draft: true,
+              body: [
+                'Autonomous controlled-recovery integration PR.',
+                '',
+                '- Do not merge automatically.',
+                '- Do not deploy production.',
+                '- Only exact approved worker SHAs may be incorporated.',
+                '- Release gate must pass on one unchanged SHA.'
+              ].join('\n')
+            });
+            await github.rest.issues.addLabels({ owner, repo, issue_number: created.data.number, labels: ['controlled-integration', 'freeze-protected'] });
