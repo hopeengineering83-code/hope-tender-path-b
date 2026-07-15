@@ -210,7 +210,14 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     try {
       const result = await executeAnalysis(ctx.tenderId, ctx.userId, {
         force: ctx.input?.force === true,
-        deadlineMs: 55_000,
+        // 45s deadline — leaves 15s buffer within Vercel Hobby's 60s
+        // maxDuration for DB queries, Prisma warmup, and response
+        // serialization. The previous 55s deadline left only 5s of
+        // buffer, which caused HTTP 504 when loading company vault
+        // documents (PR #1126 removed the take:5 cap, so ALL documents
+        // with full extractedText are loaded — potentially 10MB+ for
+        // companies with many large documents).
+        deadlineMs: 45_000,
         onProgress: async (event) => {
           const msg = event.message || event.status || event.phase;
           void recordStep(ctx.jobId, { stepName: `analyze.${event.phase}`, message: msg, status: "RUNNING" }).catch(() => {});
