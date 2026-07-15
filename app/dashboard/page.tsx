@@ -170,11 +170,14 @@ export default async function DashboardPage() {
   }).length;
   const criticalBlockers = criticalComplianceGapCount + extractionBlockedCount;
 
-  // ─── Budget totals — group by verified currency, suppress when mixed ──────
-  // Per PR #1141, currency is nullable. We only aggregate rows with a
-  // non-null currency (treated as verified). Default/legacy "USD" without
-  // field-level authority is NOT included — PR #1141's migration only sets
-  // currency to null on rows that lacked source-grounded currency.
+  // ─── Budget totals — group by present currency, suppress when mixed ──────
+  // NOTE: This counts tenders by their persisted `currency` column. It does
+  // NOT prove field-level source/human authority on each currency value
+  // (that authority is being introduced by PR #1141, not yet merged). The
+  // label "with non-null currency" is intentionally honest — it does not
+  // claim "verified". When PR #1141 merges, default/legacy USD rows will
+  // have null currency and be excluded automatically; until then, this
+  // metric counts every tender with budget > 0 and a non-null currency.
   const budgetsByCurrency = new Map<string, number>();
   let activeBudgetCount = 0;
   for (const row of budgetByCurrencyRows) {
@@ -272,7 +275,7 @@ export default async function DashboardPage() {
                   ? `${singleCurrency} ${(pipelineValue / 1_000).toFixed(0)}K`
                   : `${singleCurrency} ${pipelineValue.toLocaleString()}`}
               </p>
-              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} with verified currency</p>
+              <p className="mt-1 text-xs text-slate-400">{activeBudgetCount} with non-null currency</p>
             </div>
           )}
           {pipelineValue === null && activeBudgetCount > 0 && (

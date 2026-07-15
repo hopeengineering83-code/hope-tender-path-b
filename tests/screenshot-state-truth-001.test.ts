@@ -80,8 +80,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /if \(!curr\) continue/);
     });
 
-    it("labels budget count as 'verified currency'", () => {
-      assert.match(dashboardSrc, /verified currency/);
+    it("labels budget count as 'non-null currency' (honest, not verified)", () => {
+      // The label is honest — it does NOT claim source-grounded "verified"
+      // authority (that requires PR #1141's currency-authority helper, not
+      // yet merged). It only claims the currency column is non-null.
+      assert.match(dashboardSrc, /non-null currency/);
+      assert.doesNotMatch(dashboardSrc, /verified currency/);
     });
   });
 
@@ -232,7 +236,7 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("canonical currentness helper (persisted status + promoted AI job)", () => {
+  describe("canonical currentness helper (mirrors deriveAnalysisStateDetail)", () => {
     it("tender-currentness.ts exists and exports classifyTenderCurrentnessBatch", () => {
       assert.match(currentnessSrc, /export async function classifyTenderCurrentnessBatch/);
     });
@@ -241,14 +245,44 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(currentnessSrc, /export function isCanonicalCurrentnessCritical/);
     });
 
-    it("queries AiJob for non-superseded promoted AI_ANALYZE jobs", () => {
+    it("queries AiJob for AI_ANALYZE jobs ordered by createdAt desc", () => {
       assert.match(currentnessSrc, /AI_ANALYZE/);
-      assert.match(currentnessSrc, /supersededBy: null/);
-      assert.match(currentnessSrc, /promotedAt: \{ not: null \}/);
+      assert.match(currentnessSrc, /orderBy:\s*\{\s*createdAt:\s*"desc"\s*\}/);
     });
 
-    it("requires a non-empty analysisInputHash to prove real chunk content", () => {
-      assert.match(currentnessSrc, /analysisInputHash: \{ not: null \}/);
+    it("takes the LATEST job per tender (first hit in desc order)", () => {
+      assert.match(currentnessSrc, /if \(latestPerTender\.has\(job\.tenderId\)\) continue/);
+    });
+
+    it("rejects superseded latest jobs (BLOCKED, state SUPERSEDED)", () => {
+      assert.match(currentnessSrc, /latestJob\.supersededBy/);
+    });
+
+    it("requires latest job status === SUCCEEDED (rejects PARTIAL/FAILED/QUEUED/RUNNING)", () => {
+      assert.match(currentnessSrc, /latestJob\.status !== "SUCCEEDED"/);
+    });
+
+    it("requires latest job promotedAt to be set (unpromoted SUCCEEDED → BLOCKED)", () => {
+      assert.match(currentnessSrc, /latestJob\.promotedAt/);
+    });
+
+    it("requires analysisInputHash to be non-empty (not just non-null)", () => {
+      // Trim + empty check — catches empty-string and whitespace hashes.
+      assert.match(currentnessSrc, /\(latestJob\.analysisInputHash \?\? ""\)\.trim\(\)/);
+      assert.match(currentnessSrc, /if \(!hash\)/);
+    });
+
+    it("populates canonicalJobId with the real job ID when CANONICAL_CLEAR", () => {
+      // The verdict field must NOT always be null — it must be set to
+      // latestJob.id when currentness === CANONICAL_CLEAR.
+      assert.match(currentnessSrc, /canonicalJobId:\s*latestJob\.id/);
+    });
+
+    it("sets canonicalJobId to null for NOT_ANALYZED and BLOCKED verdicts", () => {
+      // Count occurrences — there should be multiple `canonicalJobId: null`
+      // assignments (one per BLOCKED/NOT_ANALYZED branch).
+      const matches = currentnessSrc.match(/canonicalJobId:\s*null/g) ?? [];
+      assert.ok(matches.length >= 6, `expected at least 6 null assignments, got ${matches.length}`);
     });
 
     it("isCanonicalCurrentnessCritical returns true for BLOCKED and NOT_ANALYZED", () => {
