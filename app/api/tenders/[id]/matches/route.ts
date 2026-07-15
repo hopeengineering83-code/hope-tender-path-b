@@ -64,14 +64,15 @@ export async function GET(
     }),
   ]);
 
-  // Combine: selected (all) first, then unselected (top N), capped at MATCH_PAGE_SIZE
+  // Combine: selected (ALL, uncapped) first, then unselected (top N)
+  // GLM-A2 recheck 3 gap #3: NO .slice() — all selected rows must be visible
   const combineMatches = <T extends { isSelected: boolean; score: number }>(selected: T[], unselected: T[]): T[] => {
     return [...selected, ...unselected]
       .sort((a, b) => {
         if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
         return b.score - a.score;
-      })
-      .slice(0, MATCH_PAGE_SIZE);
+      });
+    // NO .slice() — all selected rows must be visible
   };
 
   const expertMatches = combineMatches(selectedExperts, unselectedExperts);

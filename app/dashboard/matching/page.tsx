@@ -57,63 +57,70 @@ export default async function MatchingPage({
     take: TENDERS_PER_PAGE,
   });
 
-  // GLM-A2 Revision #3: For each tender, also fetch top unselected
-  // candidates to fill the remaining page slots.
-  const tenderIds = tenders.map((t) => t.id);
-  const [unselectedExperts, unselectedProjects] = await Promise.all([
-    tenderIds.length > 0
-      ? prisma.tenderExpertMatch.findMany({
-          where: { tenderId: { in: tenderIds }, isSelected: false },
+  // GLM-A2 Revision #3 (recheck 3 gap #2): Query unselected candidates
+  // PER TENDER, not globally. The previous query used tenderId: { in: tenderIds }
+  // with take: MATCH_PAGE_SIZE, which returned at most 15 unselected experts
+  // across ALL tenders — later tenders got zero candidates. Now queries each
+  // tender separately so each gets its own MATCH_PAGE_SIZE candidates.
+
+  // Explicit types for match rows including the relation
+  type ExpertMatchRow = {
+    id: string; score: number; rationale: string | null; isSelected: boolean;
+    tenderId: string; expertId: string;
+    expert: { id: string; fullName: string; title: string | null; disciplines: string; sectors: string; trustLevel: string | null };
+  };
+  type ProjectMatchRow = {
+    id: string; score: number; rationale: string | null; isSelected: boolean;
+    tenderId: string; projectId: string;
+    project: { id: string; name: string; clientName: string | null; sector: string | null; contractValue: number | null; currency: string | null; trustLevel: string | null };
+  };
+
+  const unselectedExpertsByTender = new Map<string, ExpertMatchRow[]>();
+  const unselectedProjectsByTender = new Map<string, ProjectMatchRow[]>();
+
+  await Promise.all(
+    tenders.map(async (t) => {
+      const [experts, projects] = await Promise.all([
+        prisma.tenderExpertMatch.findMany({
+          where: { tenderId: t.id, isSelected: false },
           orderBy: { score: "desc" },
           take: MATCH_PAGE_SIZE,
           include: {
             expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
           },
-        })
-      : [],
-    tenderIds.length > 0
-      ? prisma.tenderProjectMatch.findMany({
-          where: { tenderId: { in: tenderIds }, isSelected: false },
+        }),
+        prisma.tenderProjectMatch.findMany({
+          where: { tenderId: t.id, isSelected: false },
           orderBy: { score: "desc" },
           take: MATCH_PAGE_SIZE,
           include: {
             project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
           },
-        })
-      : [],
-  ]);
+        }),
+      ]);
+      unselectedExpertsByTender.set(t.id, experts as unknown as ExpertMatchRow[]);
+      unselectedProjectsByTender.set(t.id, projects as unknown as ProjectMatchRow[]);
+    }),
+  );
 
-  // Group unselected by tenderId
-  const unselectedExpertsByTender = new Map<string, typeof unselectedExperts>();
-  for (const m of unselectedExperts) {
-    const arr = unselectedExpertsByTender.get(m.tenderId) ?? [];
-    arr.push(m);
-    unselectedExpertsByTender.set(m.tenderId, arr);
-  }
-  const unselectedProjectsByTender = new Map<string, typeof unselectedProjects>();
-  for (const m of unselectedProjects) {
-    const arr = unselectedProjectsByTender.get(m.tenderId) ?? [];
-    arr.push(m);
-    unselectedProjectsByTender.set(m.tenderId, arr);
-  }
-
-  // GLM-A2 Revision #3: Combine selected (all) + unselected (top N),
-  // selected-first, capped at MATCH_PAGE_SIZE per type.
+  // GLM-A2 Revision #3 (recheck 3 gap #3): Return ALL selected rows without
+  // truncation. Previously .slice(0, MATCH_PAGE_SIZE) hid selected rows
+  // beyond the first 15. Now: selected rows are ALL returned (uncapped),
+  // unselected candidates are bounded at MATCH_PAGE_SIZE.
   const combineMatches = <T extends { isSelected: boolean; score: number }>(
     selected: T[],
     unselected: T[],
   ): T[] => {
-    const combined = [...selected, ...unselected];
-    // Selected-first, then by score desc
-    return combined.sort((a, b) => {
+    return [...selected, ...unselected].sort((a, b) => {
       if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
       return b.score - a.score;
-    }).slice(0, MATCH_PAGE_SIZE);
+    });
+    // NO .slice() — all selected rows must be visible
   };
 
   const serialized = tenders.map((t) => {
-    const selectedExperts = t.expertMatches;
-    const selectedProjects = t.projectMatches;
+    const selectedExperts = t.expertMatches as unknown as ExpertMatchRow[];
+    const selectedProjects = t.projectMatches as unknown as ProjectMatchRow[];
     const unselectedExpertsForTender = unselectedExpertsByTender.get(t.id) ?? [];
     const unselectedProjectsForTender = unselectedProjectsByTender.get(t.id) ?? [];
 
