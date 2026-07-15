@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -88,6 +89,21 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   if (!tender) notFound();
 
+  // ── Canonical final-submission readiness ──────────────────────────────
+  // The report page must NOT expose authoritative Print/Save-as-PDF for
+  // corrupted, AI-skipped, stale, partial, fallback, or export-blocked
+  // tenders. The canonical server authority (getFinalSubmissionReadiness)
+  // is the single source of truth for whether this tender may produce an
+  // authoritative document. A non-authoritative preview is still shown
+  // (review-only), but it creates zero GeneratedDocument/PDF/ZIP rows.
+  const canonicalReadiness = await getFinalSubmissionReadiness(prisma, {
+    tenderId: id,
+    userId,
+  }).catch(() => null);
+  const isAuthoritative = canonicalReadiness?.ok === true && (canonicalReadiness.tenderLevelBlockers.length === 0);
+  const canonicalBlockers = canonicalReadiness?.tenderLevelBlockers ?? [];
+  const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
+
   // Sort requirements: MANDATORY first, then by priority order
   const sortedRequirements = [...tender.requirements].sort(
     (a, b) => priorityOrder(a.priority) - priorityOrder(b.priority),
@@ -105,8 +121,48 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       {/* Print controls — hidden in print */}
       <div className="print:hidden mb-6 flex items-center justify-between">
         <h1 className="text-lg font-bold text-slate-700">Tender Report Preview</h1>
-        <PrintButton />
+        {isAuthoritative ? (
+          <PrintButton />
+        ) : (
+          <div className="flex flex-col items-end gap-1">
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+              Non-authoritative preview
+            </span>
+            <span className="text-xs text-slate-400">
+              Print/Save-as-PDF disabled — {canonicalBlockers.length > 0
+                ? `${canonicalBlockers.length} canonical blocker(s)`
+                : "final-submission readiness not met"}
+            </span>
+          </div>
+        )}
       </div>
+
+      {/* Non-authoritative preview banner — visible only when not canonical-ready */}
+      {!isAuthoritative && (
+        <div className="print:hidden mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-semibold text-amber-800">
+            Non-authoritative review preview
+          </p>
+          <p className="mt-1 text-xs text-amber-700">
+            This report is for internal review only. It does not create a GeneratedDocument,
+            PDF, or ZIP row. Authoritative printing/export requires all canonical final-submission
+            gates to pass. Resolve the blockers below and re-run the engine.
+          </p>
+          {canonicalBlockers.length > 0 && (
+            <ul className="mt-2 list-inside list-disc text-xs text-amber-700">
+              {canonicalBlockers.slice(0, 5).map((b, i) => (
+                <li key={i}>
+                  <span className="font-mono font-semibold">{b.category}:</span> {b.title}
+                  {b.recommendedAction ? <span className="block pl-4 italic">→ {b.recommendedAction}</span> : null}
+                </li>
+              ))}
+              {canonicalBlockers.length > 5 && (
+                <li className="italic">…and {canonicalBlockers.length - 5} more</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* ── Report header ───────────────────────────────────────────── */}
       <header className="mb-8 border-b-2 border-slate-800 pb-4">
@@ -118,7 +174,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <span><span className="font-medium">Client:</span> {(tender.clientName || tender.procuringEntityName) ?? "—"}</span>
           <span><span className="font-medium">Country:</span> {tender.country ?? "—"}</span>
           <span><span className="font-medium">Deadline:</span> {fmt(tender.deadline)}</span>
-          <span><span className="font-medium">Currency:</span> {tender.currency ?? "—"}</span>
+          <span><span className="font-medium">Currency:</span> {tender.currency ?? "Not extracted"}</span>
           <span>
             <span className="font-medium">Status:</span>{" "}
             <span className="inline-block rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
