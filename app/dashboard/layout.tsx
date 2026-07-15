@@ -77,23 +77,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <div className="min-h-screen min-w-0 bg-slate-50 xl:flex">
-      <style>{`
-        #main-content { min-width: 0; max-width: 100%; }
-        #main-content :where(img, svg, canvas, video) { max-width: 100%; }
-        #main-content :where(pre) { max-width: 100%; overflow-x: auto; }
-        #main-content :where(p, a, td, th) { overflow-wrap: anywhere; }
-        @media (max-width: 1279px) {
-          #main-content :where(table) {
-            display: block;
-            width: 100%;
-            max-width: 100%;
-            overflow-x: auto;
-            overscroll-behavior-inline: contain;
-            -webkit-overflow-scrolling: touch;
-          }
-        }
-      `}</style>
-
       <a href="#main-content" className="skip-link">Skip to main content</a>
 
       <div className="flex min-w-0 items-center justify-between border-b bg-white px-4 py-3 xl:hidden">
@@ -133,11 +116,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         </div>
       </aside>
 
-      <main id="main-content" className="min-w-0 flex-1 overflow-x-hidden" tabIndex={-1}>
+      <main id="main-content" className="min-w-0 flex-1" tabIndex={-1}>
         <div className="sticky top-0 z-30 flex min-w-0 justify-end border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
           <NotificationBell initialUnread={unreadCount} />
         </div>
-        <div className="mx-auto w-full min-w-0 max-w-7xl overflow-x-hidden p-4 sm:p-6 xl:p-8">
+        <div className="mx-auto w-full min-w-0 max-w-7xl p-4 sm:p-6 xl:p-8">
           {children}
         </div>
       </main>
