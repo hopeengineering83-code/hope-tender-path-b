@@ -436,7 +436,7 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration verification (PostgreSQ
 
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────
 
-describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy authority)", () => {
+describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, value-bound authority)", () => {
   it("report page renders 'Unverified legacy value' for non-null currency without explicit confirmation", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
@@ -453,7 +453,7 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy a
     );
   });
 
-  it("report page uses TenderMetadataOverride as the currency authority (not analysisExtractionStatus proxy)", () => {
+  it("report page uses TenderMetadataOverride as currency authority (value-bound)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
       src.includes("tenderMetadataOverride.findFirst"),
@@ -463,13 +463,18 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy a
       src.includes('field: "currency"'),
       "report page must query for field='currency' override",
     );
+    // Must NOT accept bare SOURCE_GROUNDED — only confirmed states
     assert.ok(
-      /authorityClass.*SOURCE_GROUNDED|HUMAN_CONFIRMED_OPERATIONAL/.test(src),
-      "report page must check authorityClass is SOURCE_GROUNDED or HUMAN_CONFIRMED_OPERATIONAL",
+      src.includes("SOURCE_GROUNDED_CONFIRMED"),
+      "report page must accept SOURCE_GROUNDED_CONFIRMED",
+    );
+    assert.ok(
+      src.includes("HUMAN_CONFIRMED_OPERATIONAL"),
+      "report page must accept HUMAN_CONFIRMED_OPERATIONAL",
     );
   });
 
-  it("report page uses TenderFactsLedger as a second currency authority", () => {
+  it("report page uses TenderFactsLedger as a second currency authority (value-bound)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
       src.includes("tenderFactsLedger.findFirst"),
@@ -481,11 +486,48 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy a
     );
   });
 
+  it("report page binds authority value to current tender.currency (rejects stale authority)", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    // Per REVISION_REQUIRED (recheck 5) item 1: authority must be value-bound.
+    // The overrideValue / normalizedValue must equal the current tender.currency.
+    assert.ok(
+      /authorityValueMatchesTender/.test(src),
+      "report page must compute authorityValueMatchesTender (value-bound check)",
+    );
+    assert.ok(
+      /overrideValue.*toUpperCase.*===.*upperCurrency/.test(src.replace(/\s+/g, " ")),
+      "report page must compare overrideValue (normalized) to tender.currency (normalized)",
+    );
+    assert.ok(
+      /normalizedValue.*toUpperCase.*===.*upperCurrency/.test(src.replace(/\s+/g, " ")),
+      "report page must compare normalizedValue (normalized) to tender.currency (normalized)",
+    );
+  });
+
+  it("report page feeds currency verification into isAuthoritative", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    // Per REVISION_REQUIRED (recheck 5) item 3: unverified currency must
+    // block authoritative output.
+    assert.ok(
+      /hasUnverifiedCurrency/.test(src),
+      "report page must compute hasUnverifiedCurrency",
+    );
+    assert.ok(
+      /isAuthoritative.*hasUnverifiedCurrency|!hasUnverifiedCurrency.*isAuthoritative/.test(src.replace(/\s+/g, " ")),
+      "isAuthoritative must include !hasUnverifiedCurrency as a condition",
+    );
+  });
+
+  it("report page adds CURRENCY_UNVERIFIED blocker when currency is unverified", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    assert.ok(
+      src.includes("CURRENCY_UNVERIFIED"),
+      "report page must add a CURRENCY_UNVERIFIED blocker category when currency is unverified",
+    );
+  });
+
   it("report page does NOT use analysisExtractionStatus as a currency provenance proxy", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    // Per REVISION_REQUIRED (recheck 3): extraction status is NOT proof of
-    // currency provenance. The report page must NOT use CORRUPTED_STATUSES
-    // or analysisExtractionStatus as a proxy for currency authority.
     assert.ok(
       !src.includes("CORRUPTED_STATUSES"),
       "report page must NOT use CORRUPTED_STATUSES denylist (fails open for unlisted statuses)",
