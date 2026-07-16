@@ -19,9 +19,16 @@ test("every statically advertised dashboard route has a page", () => {
   }
 });
 
-test("dead dashboard admin root is neither advertised nor implemented", () => {
+test("dashboard admin root is implemented (ADMIN-gated) but intentionally not advertised in nav", () => {
+  // SCREENSHOT-R2 fixed the /dashboard/admin 404 (a documented critical
+  // screenshot gap): the route now resolves to a real ADMIN-gated landing
+  // page linking to its sub-pages, guarded by the same shared
+  // requireDashboardRole helper as settings/assets/setup/users. It remains
+  // deliberately absent from the main nav — it's reached directly or via
+  // its sub-pages' breadcrumbs, not as a top-level nav item.
   assert.equal(advertisedRoutes.includes("/dashboard/admin"), false);
-  assert.equal(existsSync("app/dashboard/admin/page.tsx"), false);
+  assert.equal(existsSync("app/dashboard/admin/page.tsx"), true);
+  assert.equal(existsSync("app/dashboard/admin/layout.tsx"), true, "admin root must use the shared role guard, not an inline check");
   assert.equal(existsSync("app/dashboard/admin/ai-readiness/page.tsx"), true, "authorized child admin route remains available");
 });
 

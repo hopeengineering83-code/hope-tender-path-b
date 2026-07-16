@@ -5,6 +5,15 @@ async function fulfillJson(route: Route, status: number, body: unknown) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
+async function expectAppAlert(page: Page, text: string) {
+  // Next.js renders its own empty role="alert" route announcer
+  // (#__next-route-announcer__) on every page, so a bare getByRole("alert")
+  // is ambiguous in Playwright's strict mode once the app also renders a
+  // real alert. Filtering by the expected text disambiguates to the app's
+  // own alert without matching the (always-empty) announcer.
+  await expect(page.getByRole("alert").filter({ hasText: text })).toBeVisible();
+}
+
 async function expectNoHorizontalScroll(page: Page) {
   const dimensions = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
@@ -258,18 +267,34 @@ test.describe("Tablet and responsive dashboard contracts", () => {
       await expect(page.getByRole("navigation", { name: "Primary navigation" }).locator('[aria-current="page"]'), href).toHaveCount(1);
     }
 
-    const deadRoot = await page.goto("/dashboard/admin", { waitUntil: "domcontentloaded" });
-    expect(deadRoot?.status()).toBe(404);
+    // /dashboard/admin is intentionally unadvertised but, since SCREENSHOT-R2,
+    // implemented and ADMIN-gated rather than a dead 404 (see the dedicated
+    // test below for the full contract).
+    const adminRoot = await page.goto("/dashboard/admin", { waitUntil: "domcontentloaded" });
+    expect(adminRoot?.status()).toBeLessThan(400);
   });
 
-  test("dashboard admin root remains an authenticated 404 and is not advertised", async ({ page }) => {
+  test("dashboard admin root is implemented (ADMIN-gated) but never advertised in nav", async ({ page }) => {
+    // SCREENSHOT-R2 fixed the /dashboard/admin 404 (documented critical
+    // screenshot gap): this fixture's seeded primary account is ADMIN, so
+    // the route now resolves (guarded by the shared requireDashboardRole
+    // layout, same as settings/assets/setup/users) instead of 404ing. It
+    // still stays deliberately out of the nav — reached directly or via
+    // its sub-pages, not as a top-level nav item.
     const response = await page.goto("/dashboard/admin", { waitUntil: "domcontentloaded" });
-    expect(response?.status()).toBe(404);
+    expect(response?.status()).toBeLessThan(400);
+    await expect(page.getByRole("heading", { name: "Admin", level: 1 })).toBeVisible();
     await page.goto("/dashboard");
     await page.setViewportSize({ width: 800, height: 1280 });
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await expect(page.locator('a[href="/dashboard/admin"]')).toHaveCount(0);
-    await expect(page.locator('a[href="/dashboard/admin/ai-readiness"]')).toHaveCount(1);
+    // The desktop "Primary navigation" landmark stays in the DOM (hidden via
+    // CSS, not removed) alongside the opened "Mobile primary navigation"
+    // drawer — two distinct accessible landmarks, by design. Scope to the
+    // one actually open to avoid double-counting the same link rendered in
+    // both.
+    const mobileNav = page.getByRole("navigation", { name: "Mobile primary navigation" });
+    await expect(mobileNav.locator('a[href="/dashboard/admin"]')).toHaveCount(0);
+    await expect(mobileNav.locator('a[href="/dashboard/admin/ai-readiness"]')).toHaveCount(1);
   });
 
   test("settings failure is visible and never claims success", async ({ page }) => {
@@ -282,7 +307,7 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     });
     await settleOwnedRoute(page, "/dashboard/settings");
     await page.getByRole("button", { name: "Save presentation defaults" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated settings failure");
+    await expectAppAlert(page, "simulated settings failure");
     await expect(page.getByText(/saved and confirmed by the server/i)).toHaveCount(0);
   });
 
@@ -314,11 +339,11 @@ test.describe("Tablet and responsive dashboard contracts", () => {
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       buffer: Buffer.from("test"),
     });
-    await expect(page.getByRole("alert")).toContainText("simulated asset upload failure");
+    await expectAppAlert(page, "simulated asset upload failure");
     await expect(page.getByText(/uploaded and confirmed by the server/i)).toHaveCount(0);
 
     await page.getByRole("button", { name: "Remove" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated asset removal failure");
+    await expectAppAlert(page, "simulated asset removal failure");
     await expect(page.getByText(/removed and the asset list was refreshed/i)).toHaveCount(0);
   });
 
@@ -345,10 +370,13 @@ test.describe("Tablet and responsive dashboard contracts", () => {
       buffer: Buffer.from("test"),
     });
     await expect(page.getByRole("status")).toContainText("uploaded and confirmed by the server");
-    await expect(page.getByText("letterhead.docx")).toBeVisible();
+    // exact: true — the success status message above also contains
+    // "letterhead.docx" as a substring, ambiguous against the actual
+    // filename list item without an exact match.
+    await expect(page.getByText("letterhead.docx", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Remove" }).click();
     await expect(page.getByRole("status")).toContainText("removed and the asset list was refreshed");
-    await expect(page.getByText("letterhead.docx")).toHaveCount(0);
+    await expect(page.getByText("letterhead.docx", { exact: true })).toHaveCount(0);
     expect(getCount).toBeGreaterThanOrEqual(3);
   });
 
@@ -364,28 +392,28 @@ test.describe("Tablet and responsive dashboard contracts", () => {
 
     await settleOwnedRoute(page, "/dashboard/setup");
     await page.getByRole("button", { name: "Save and continue" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated profile failure");
+    await expectAppAlert(page, "simulated profile failure");
     await expect(page.getByRole("heading", { name: "Company information" })).toBeVisible();
 
     await page.getByRole("button", { name: /Documents/ }).click();
     await page.locator('input[type="file"]').setInputFiles({ name: "profile.pdf", mimeType: "application/pdf", buffer: Buffer.from("test") });
-    await expect(page.getByRole("alert")).toContainText("1 document failed");
+    await expectAppAlert(page, "1 document failed");
     await expect(page.getByText("simulated document failure")).toBeVisible();
 
     await page.getByRole("button", { name: /Experts/ }).click();
     await page.getByLabel("Expert full name").fill("Failure Expert");
     await page.getByRole("button", { name: "Add expert" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated expert failure");
+    await expectAppAlert(page, "simulated expert failure");
 
     await page.getByRole("button", { name: /Projects/ }).click();
     await page.getByLabel("Project name").fill("Failure Project");
     await page.getByRole("button", { name: "Add project" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated project failure");
+    await expectAppAlert(page, "simulated project failure");
 
     companyFailure = "simulated completion failure";
     await page.getByRole("button", { name: /Complete/ }).click();
     await page.getByRole("button", { name: "Complete and open dashboard" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated completion failure");
+    await expectAppAlert(page, "simulated completion failure");
     await expect(page).toHaveURL(/\/dashboard\/setup/);
   });
 
@@ -399,7 +427,13 @@ test.describe("Tablet and responsive dashboard contracts", () => {
         return;
       }
       const body = JSON.parse(route.request().postData() ?? "{}") as Record<string, unknown>;
-      Object.assign(company, body);
+      // The real /api/company route stores serviceLines/sectors as arrays
+      // (toJsonArray on write, safeParseArr on read) even though the client
+      // sends/edits them as comma-separated strings — mirror that here so
+      // a second load doesn't try to .join() an already-joined string.
+      const toArray = (value: unknown): string[] =>
+        Array.isArray(value) ? value.map(String) : typeof value === "string" ? value.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      Object.assign(company, body, { serviceLines: toArray(body.serviceLines), sectors: toArray(body.sectors) });
       await fulfillJson(route, 200, company);
     });
     await page.route("**/api/upload", (route) => fulfillJson(route, 201, { ok: true }));
@@ -449,7 +483,7 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     await page.getByPlaceholder("Email address").fill("failure@example.invalid");
     await page.getByPlaceholder("Password (minimum 8 characters)").fill("not-a-real-secret");
     await page.getByRole("button", { name: "Create user" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated user failure");
+    await expectAppAlert(page, "simulated user failure");
     await expect(page.getByText(/created and confirmed/i)).toHaveCount(0);
   });
 
@@ -460,16 +494,21 @@ test.describe("Tablet and responsive dashboard contracts", () => {
       await fulfillJson(route, 500, { error: route.request().method() === "PUT" ? "simulated update failure" : "simulated delete failure" });
     });
     await settleOwnedRoute(page, "/dashboard/users");
-    const row = page.getByRole("row").filter({ hasText: user.email });
+    // Edit mode replaces the row's display-name/email cell with a bare
+    // "Display name" input (the email text disappears entirely), so a
+    // hasText: user.email row filter stops matching anything the moment
+    // editing starts. This fixture only ever seeds one user, so locate the
+    // single data row positionally instead of by transient text content.
+    const row = page.locator("tbody tr").first();
     await row.getByRole("button", { name: "Edit" }).click();
     await row.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated update failure");
+    await expectAppAlert(page, "simulated update failure");
     await expect(page.getByText(/updated and confirmed/i)).toHaveCount(0);
     await row.getByRole("button", { name: "Cancel" }).click();
 
     page.once("dialog", (dialog) => dialog.accept());
     await row.getByRole("button", { name: "Delete" }).click();
-    await expect(page.getByRole("alert")).toContainText("simulated delete failure");
+    await expectAppAlert(page, "simulated delete failure");
     await expect(page.getByText(/deleted and the user list was refreshed/i)).toHaveCount(0);
   });
 
@@ -506,18 +545,28 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     await page.getByRole("button", { name: "Create user" }).click();
     await expect(page.getByRole("status")).toContainText("created and confirmed");
 
-    let row = page.getByRole("row").filter({ hasText: "new@example.test" });
+    // Edit mode replaces the row's display-name/email cell with a bare
+    // "Display name" input (the email text disappears entirely), so a
+    // hasText: "new@example.test" row filter stops matching anything the
+    // moment editing starts. The new user is always appended last by the
+    // mock, so locate it positionally while editing instead.
+    let row = page.locator("tbody tr").last();
     await row.getByRole("button", { name: "Edit" }).click();
     await row.getByPlaceholder("Display name").fill("Updated User");
     await row.getByRole("button", { name: "Save" }).click();
     await expect(page.getByRole("status")).toContainText("updated and confirmed");
+    row = page.getByRole("row").filter({ hasText: "new@example.test" });
     await expect(row).toContainText("Updated User");
 
     page.once("dialog", (dialog) => dialog.accept());
     row = page.getByRole("row").filter({ hasText: "new@example.test" });
     await row.getByRole("button", { name: "Delete" }).click();
     await expect(page.getByRole("status")).toContainText("deleted and the user list was refreshed");
-    await expect(page.getByText("new@example.test")).toHaveCount(0);
+    // The success status banner itself reads "${email} deleted and the
+    // user list was refreshed", so a page-wide getByText("new@example.test")
+    // still finds one match there even after the row is really gone — scope
+    // the absence check to the table's rows, not the whole page.
+    await expect(page.getByRole("row").filter({ hasText: "new@example.test" })).toHaveCount(0);
     expect(getCount).toBeGreaterThanOrEqual(4);
   });
 
@@ -532,7 +581,7 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     await page.route("**/api/search?**", (route) => fulfillJson(route, 500, { error: "simulated search failure" }));
     await settleOwnedRoute(page, "/dashboard/search");
     await page.getByRole("searchbox").fill("hospital");
-    await expect(page.getByRole("alert")).toContainText("simulated search failure");
+    await expectAppAlert(page, "simulated search failure");
     await expect(page.getByRole("heading", { name: /Tenders \(|Experts \(|Projects \(/ })).toHaveCount(0);
   });
 });

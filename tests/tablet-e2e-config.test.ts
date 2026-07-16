@@ -54,8 +54,10 @@ describe("tablet E2E spec — exists and covers universal tender intelligence", 
   it("spec verifies 800x1280 viewport", () => {
     const src = read(specPath);
     assert.ok(src.includes("viewport is 800x1280"), "must verify the 800x1280 viewport");
-    assert.ok(src.includes("toBe(800)"), "must assert width === 800");
-    assert.ok(src.includes("toBe(1280)"), "must assert height === 1280");
+    assert.ok(
+      src.includes("toEqual({ width: 800, height: 1280 })"),
+      "must assert the viewport is exactly { width: 800, height: 1280 }",
+    );
   });
 
   it("spec checks horizontal scroll does not overflow", () => {
@@ -108,14 +110,33 @@ describe("tablet E2E spec — exists and covers universal tender intelligence", 
     assert.ok(src.includes("touch-tappable"), "must verify cards are touch-tappable");
   });
 
-  it("spec skips non-Chromium browsers (tablet project only)", () => {
+  it("scopes to the tablet project instead of a redundant per-file browser check", () => {
+    // The old per-file `browserName !== "chromium"` guard was redundant:
+    // the samsung-tablet-primary project (playwright.config.ts) already
+    // only runs Chromium (devices["Desktop Chrome"] base), and this spec
+    // additionally self-skips by viewport size (not 800x1280 => skip),
+    // which only the tablet project satisfies.
     const src = read(specPath);
-    assert.ok(src.includes("browserName !== \"chromium\""), "must skip non-Chromium browsers");
+    assert.ok(
+      src.includes("size.width !== 800 || size.height !== 1280"),
+      "must self-skip when the running project's viewport isn't 800x1280",
+    );
+    const config = read("playwright.config.ts");
+    assert.ok(config.includes('devices["Desktop Chrome"]'), "tablet project must be Chromium-based (see earlier test)");
   });
 
-  it("spec skips cleanly when credentials are missing", () => {
+  it("skips cleanly when credentials are missing via the shared auth fixture", () => {
+    // Credential-based skipping was centralized into the shared
+    // tabletPrimaryTest fixture (e2e/auth-helper.ts) instead of each spec
+    // file reimplementing its own SMOKE_TEST_EMAIL / test.skip guard.
     const src = read(specPath);
-    assert.ok(src.includes("SMOKE_TEST_EMAIL"), "must reference SMOKE_TEST_EMAIL");
-    assert.ok(src.includes("test.skip"), "must have test.skip for missing credentials");
+    assert.ok(src.includes('import { tabletPrimaryTest as test'), "must use the shared tabletPrimaryTest fixture");
+    const authHelperSrc = read("e2e/auth-helper.ts");
+    assert.ok(authHelperSrc.includes("tabletPrimaryTest"), "auth-helper must export tabletPrimaryTest");
+    assert.match(
+      authHelperSrc,
+      /E2E_TEST_EMAIL|E2E_TEST_PASSWORD/,
+      "the shared fixture's credential loading must be traceable to the documented E2E_TEST_EMAIL/PASSWORD env vars",
+    );
   });
 });

@@ -142,8 +142,10 @@ export async function PUT(req: Request) {
   });
   if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
 
-  const body = await req.json().catch(() => null) as Record<string, unknown> | null;
-  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const parsed: unknown = await req.json().catch(() => null);
+  const isPlainObject = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+  if (!isPlainObject) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const body = parsed as Record<string, unknown>;
 
   const { data, errors } = validateSettings(body);
   if (errors.length > 0) {

@@ -53,13 +53,26 @@ test.describe("settings API authorization, validation, ownership, and persistenc
     expect(beforeResponse.status()).toBe(200);
     const before = completeSettings((await readJson(beforeResponse)).settings);
 
-    const invalidJson = await page.request.fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      data: "{",
+    // page.request.fetch's `data` option JSON-encodes a plain string rather
+    // than sending it as a raw literal body (so "{" arrives server-side as
+    // the valid JSON string "{", not malformed JSON) — use the browser's
+    // native fetch via page.evaluate to send genuinely truncated JSON bytes,
+    // exactly as a real client/attacker would over the wire. This test never
+    // navigates (it's otherwise pure page.request API testing), so load a
+    // real same-origin page first — a blank page has no origin to fetch a
+    // relative /api/settings URL from, and the session cookie only attaches
+    // to same-origin requests.
+    await page.goto("/dashboard");
+    const invalidJson = await page.evaluate(async () => {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      });
+      return { status: res.status, body: await res.json() };
     });
-    expect(invalidJson.status()).toBe(400);
-    expect((await readJson(invalidJson)).error).toMatch(/valid JSON/i);
+    expect(invalidJson.status).toBe(400);
+    expect(invalidJson.body.error).toMatch(/valid JSON/i);
 
     for (const [field, value] of [
       ["tenderCurrency", "ETB"],

@@ -203,8 +203,21 @@ test.describe("dashboard role navigation and direct-route authorization", () => 
           ).toHaveCount(1);
         }
 
-        const deadAdminRoot = await rolePage.goto("/dashboard/admin", { waitUntil: "domcontentloaded" });
-        expect(deadAdminRoot?.status(), `${role} admin root remains unimplemented and unadvertised`).toBe(404);
+        // SCREENSHOT-R2 fixed the /dashboard/admin 404 (documented critical
+        // screenshot gap): it's now a real ADMIN-gated page, but — unlike
+        // OWNED_RESTRICTED_ROUTES — it stays deliberately absent from nav
+        // for every role, including ADMIN (reached directly / via its
+        // sub-pages, not as a top-level nav item), so it can't share that
+        // array's "advertised iff allowed" contract.
+        const adminRootResponse = await rolePage.goto("/dashboard/admin", { waitUntil: "domcontentloaded" });
+        if (role === "ADMIN") {
+          expect(adminRootResponse?.status(), `${role} admin root is implemented and accessible`).toBeLessThan(400);
+          await expect(rolePage, `${role} admin root resolves at its own path`).toHaveURL(/\/dashboard\/admin$/);
+          await expect(rolePage.getByRole("heading", { name: "Admin", level: 1 })).toBeVisible();
+        } else {
+          expect(adminRootResponse?.status(), `${role} admin root redirect`).toBeLessThan(400);
+          await expect(rolePage, `${role} admin root remains unadvertised and redirects away`).toHaveURL(/\/dashboard$/);
+        }
 
         await assertDirectApiRolePolicy(identity);
       }
