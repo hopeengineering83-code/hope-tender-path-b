@@ -24,7 +24,7 @@ let calls: FetchCall[];
 describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
   beforeEach(() => {
     // Reset fakeRouter push tracker
-    (fakeRouter as any).push = () => {};
+    fakeRouter.push = () => {};
 
     // Basic setup: initial list of notifications
     calls = installFetchMock([
@@ -197,14 +197,54 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
   });
 
   it("performs SUCCESSFUL unread/read state updates (updates after OK response)", async () => {
+    // Redefine mock so PATCH succeeds, and the follow-up GET returns 1 unread
+    cleanup();
+    let getCallCount = 0;
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
+      calls.push({ url, method, body: init?.body });
+
+      if (method === "PATCH") {
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      getCallCount++;
+      return new Response(
+        JSON.stringify({
+          unreadCount: getCallCount > 1 ? 1 : 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: getCallCount > 1 ? new Date().toISOString() : null,
+            },
+            {
+              id: "n2",
+              type: "TENDER_GENERATED",
+              title: "Tender Proposal Generated",
+              body: "Document is ready.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t2",
+              readAt: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    calls = [];
     const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
     const button = container.querySelector("button");
     assert.ok(button);
 
-    // Initial aria label has 2 unread
-    assert.equal(button.getAttribute("aria-label"), "Notifications (2 unread)");
-
-    // Open dropdown
+    // Open dropdown to trigger first GET
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -221,12 +261,14 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     // Click mark read
     fireEvent.click(markReadBtn);
 
-    // Check that fetch PATCH was dispatched
+    // Check that fetch PATCH was dispatched and then a second GET re-fetched authoritatively
     await waitFor(() => {
       assert.ok(calls.some((c) => c.method === "PATCH"));
+      const getCalls = calls.filter((c) => c.method === "GET" && c.url.includes("/api/notifications"));
+      assert.equal(getCalls.length, 2); // 1st on open, 2nd on success authoritative sync
     });
 
-    // Since PATCH succeeded (200), the unread count should be decremented.
+    // Since GET returned unreadCount = 1, aria-label of trigger should be decremented
     await waitFor(() => {
       assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
     });
@@ -376,6 +418,38 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       pushedPath = path;
     };
 
+    // Mock successful re-fetch response upon PATCH resolution
+    cleanup();
+    let getCallCount = 0;
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
+      calls.push({ url, method, body: init?.body });
+      if (method === "PATCH") {
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      getCallCount++;
+      return new Response(
+        JSON.stringify({
+          unreadCount: getCallCount > 1 ? 1 : 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: getCallCount > 1 ? new Date().toISOString() : null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    calls = [];
     const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
     const button = container.querySelector("button");
     assert.ok(button);
@@ -400,7 +474,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       assert.ok(calls.some((c) => c.method === "PATCH"));
     });
 
-    // Once the PATCH succeeds, unread count is decremented, popup closed, and router.push is executed
+    // Once the PATCH succeeds, unread count is decremented via re-fetch, popup closed, and router.push is executed
     await waitFor(() => {
       assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
       assert.equal(pushedPath, "/tenders/t1");
@@ -488,22 +562,26 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       resolvePatch = resolve;
     });
 
+    let getCallCount = 0;
     calls = [];
     const g = globalThis as any;
     g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
       calls.push({
-        url: typeof input === "string" ? input : input.url,
-        method: init?.method || "GET",
+        url,
+        method,
         body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
       });
-      if (init?.method === "PATCH") {
+      if (method === "PATCH") {
         await patchPromise;
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
+      getCallCount++;
       return new Response(
         JSON.stringify({
-          unreadCount: 2,
-          notifications: [
+          unreadCount: getCallCount > 1 ? 0 : 2,
+          notifications: getCallCount > 1 ? [] : [
             {
               id: "n1",
               type: "TENDER_DEADLINE_SOON",
@@ -549,7 +627,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     assert.equal(patchCalls.length, 1);
     assert.equal((patchCalls[0].body as any)?.markAll, true);
 
-    // Resolve deferred patch to finish clean
+    // Resolve deferred patch to finish clean and authoritatively load notifications
     resolvePatch();
     await waitFor(() => {
       assert.equal(button.getAttribute("aria-label"), "Notifications");
@@ -564,21 +642,25 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       resolvePatch = resolve;
     });
 
+    let getCallCount = 0;
     calls = [];
     const g = globalThis as any;
     g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
       calls.push({
-        url: typeof input === "string" ? input : input.url,
-        method: init?.method || "GET",
+        url,
+        method,
         body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
       });
-      if (init?.method === "PATCH") {
+      if (method === "PATCH") {
         await patchPromise;
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
+      getCallCount++;
       return new Response(
         JSON.stringify({
-          unreadCount: 2,
+          unreadCount: getCallCount > 1 ? 1 : 2,
           notifications: [
             {
               id: "n1",
@@ -587,7 +669,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
               body: "The tender is closing soon.",
               createdAt: new Date().toISOString(),
               link: "/tenders/t1",
-              readAt: null,
+              readAt: getCallCount > 1 ? new Date().toISOString() : null,
             },
           ],
         }),
@@ -739,5 +821,79 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     assert.ok(Array.from(texts).some(p => p.textContent?.includes("Encoded Backslash Path")));
     assert.ok(Array.from(texts).some(p => p.textContent?.includes("Encoded Slashes Path")));
     assert.ok(Array.from(texts).some(p => p.textContent?.includes("CR LF Injection Path")));
+  });
+
+  it("clicks on an already-read notification and navigates immediately without triggering a markRead PATCH request", async () => {
+    // Redefine fetch mock so n1 is unread and n2 is already read (readAt is set)
+    cleanup();
+    calls = installFetchMock([
+      {
+        match: "/api/notifications?limit=20",
+        method: "GET",
+        json: {
+          unreadCount: 1,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Unread Notification",
+              body: "Closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: null,
+            },
+            {
+              id: "n2",
+              type: "TENDER_GENERATED",
+              title: "Already Read Notification",
+              body: "Generated.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t2",
+              readAt: new Date().toISOString(),
+            },
+          ],
+        },
+      },
+      {
+        match: "/api/notifications",
+        method: "PATCH",
+        json: { success: true },
+      },
+    ]);
+
+    // Spy on fakeRouter.push
+    let pushedPath = "";
+    (fakeRouter as any).push = (path: string) => {
+      pushedPath = path;
+    };
+
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 1 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    // Open popup
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const links = container.querySelectorAll("#notification-popup a");
+    const readLinkEl = Array.from(links).find((link) => link.textContent?.trim() === "Already Read Notification") as HTMLAnchorElement;
+    assert.ok(readLinkEl);
+
+    // Click the already-read link
+    fireEvent.click(readLinkEl);
+
+    // Should navigate immediately with router.push
+    assert.equal(pushedPath, "/tenders/t2");
+
+    // But should make ZERO PATCH requests!
+    const patchCalls = calls.filter((c) => c.method === "PATCH");
+    assert.equal(patchCalls.length, 0);
+
+    // Unread count should remain exactly 1
+    assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
   });
 });

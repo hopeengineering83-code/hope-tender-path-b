@@ -135,8 +135,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
         body: JSON.stringify({ markAll: true }),
       });
       if (res.ok) {
-        setUnread(0);
-        setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt ?? new Date().toISOString() })));
+        // Authoritatively sync final read state from server (no optimistic client arithmetic)
+        await loadNotifications();
         setError(null);
         return true;
       } else {
@@ -164,8 +164,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
         body: JSON.stringify({ ids: [id] }),
       });
       if (res.ok) {
-        setUnread((c) => Math.max(0, c - 1));
-        setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, readAt: new Date().toISOString() } : n));
+        // Authoritatively sync final read state from server (no optimistic client arithmetic)
+        await loadNotifications();
         setError(null);
         return true;
       } else {
@@ -249,10 +249,18 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                         onClick={async (e) => {
                           e.preventDefault();
                           if (isMarkingRef.current || markingAllRead || markingReadIds[n.id]) return;
-                          const success = await markRead(n.id);
-                          if (success) {
+
+                          if (n.readAt !== null) {
+                            // Already read! Navigate directly without calling markRead() or making a PATCH request
                             setOpen(false);
                             router.push(n.link!);
+                          } else {
+                            // Unread! Call markRead and wait for it to succeed before navigating
+                            const success = await markRead(n.id);
+                            if (success) {
+                              setOpen(false);
+                              router.push(n.link!);
+                            }
                           }
                         }}
                         className={`block text-sm font-medium text-slate-900 hover:text-blue-700 truncate ${
