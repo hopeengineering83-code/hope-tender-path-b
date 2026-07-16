@@ -88,16 +88,13 @@ describe("SCREENSHOT-R2 Gap #4 — admin page 404 fix", () => {
   });
 
   it("admin page checks for ADMIN role", () => {
-    const src = readFileSync("app/dashboard/admin/page.tsx", "utf8");
+    // The role check now lives in the shared layout guard (consistent
+    // with settings/assets/setup/users) rather than inline in page.tsx.
+    const layoutSrc = readFileSync("app/dashboard/admin/layout.tsx", "utf8");
     assert.match(
-      src,
-      /ADMIN/,
-      "Admin page must check for ADMIN role before granting access",
-    );
-    assert.match(
-      src,
-      /redirect/,
-      "Admin page must redirect non-admin users",
+      layoutSrc,
+      /requireDashboardRole\(["']ADMIN["']\)/,
+      "Admin layout must check for ADMIN role before granting access",
     );
   });
 

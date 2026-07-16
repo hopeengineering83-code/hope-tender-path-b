@@ -13,26 +13,21 @@
 
 import { test, expect } from "@playwright/test";
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
-
 test.describe("anonymous access — desktop and tablet", () => {
   test("home page renders without a server error", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
-    // Should either render the home page or redirect to login — not a 500
     expect(page.url()).not.toMatch(/\/error/);
   });
 
   test("login page renders without a server error", async ({ page }) => {
     await page.goto("/login");
     await page.waitForLoadState("networkidle");
-    // Should render the login form, not redirect away or error
     await expect(page.locator("input[type=email], input[name=email]")).toBeVisible({ timeout: 10_000 });
   });
 
   test("unauthenticated dashboard access is blocked", async ({ page }) => {
     await page.goto("/dashboard");
-    // Should be redirected to /login (not shown the dashboard)
     await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
   });
 
@@ -41,8 +36,18 @@ test.describe("anonymous access — desktop and tablet", () => {
     await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
   });
 
-  test("protected tender APIs never return anonymous success", async ({ request }) => {
-    const endpoints: Array<["get" | "post", string]> = [
+  test("unauthenticated admin routes never expose admin UI", async ({ page }) => {
+    for (const route of ["/dashboard/admin", "/dashboard/admin/ai-readiness", "/dashboard/users"]) {
+      await page.goto(route, { waitUntil: "domcontentloaded" });
+      await expect(page, route).toHaveURL(/\/login/, { timeout: 10_000 });
+      await expect(page.getByRole("heading", { name: /AI Readiness|User Management/i })).toHaveCount(0);
+    }
+  });
+
+  test("protected APIs never return anonymous success", async ({ request }) => {
+    const endpoints: Array<["get" | "post" | "put", string]> = [
+      ["get", "/api/settings"],
+      ["put", "/api/settings"],
       ["post", "/api/tenders/upload-first"],
       ["post", "/api/tenders/fake-id/ai-analyze"],
       ["post", "/api/tenders/fake-id/generate"],
@@ -50,7 +55,11 @@ test.describe("anonymous access — desktop and tablet", () => {
       ["get", "/api/tenders/fake-id/extraction-quality"],
     ];
     for (const [method, endpoint] of endpoints) {
-      const response = method === "get" ? await request.get(endpoint) : await request.post(endpoint);
+      const response = method === "get"
+        ? await request.get(endpoint)
+        : method === "put"
+          ? await request.put(endpoint, { data: { pageNumbering: false } })
+          : await request.post(endpoint);
       expect(response.status(), `${method.toUpperCase()} ${endpoint}`).not.toBeLessThan(300);
     }
   });

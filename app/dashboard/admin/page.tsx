@@ -1,26 +1,14 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { getSession } from "../../../lib/auth";
 
 // SCREENSHOT-R2: Fix 404 on /dashboard/admin
 // The directory app/dashboard/admin/ existed with sub-pages (ai-readiness,
 // safety-center) but had NO index page.tsx, causing a 404 across all
 // viewports (desktop/tablet/mobile screenshots 020).
 // This page provides a simple admin landing with links to sub-pages.
+// Role gating lives in app/dashboard/admin/layout.tsx (shared
+// requireDashboardRole guard, consistent with settings/assets/setup/users).
 
 export default async function AdminIndexPage() {
-  const userId = await getSession();
-  if (!userId) redirect("/login");
-
-  // Only ADMIN role can access admin pages
-  const { prisma, prismaReady } = await import("../../../lib/prisma");
-  await prismaReady;
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { role: true },
-  });
-  if (!user || user.role !== "ADMIN") redirect("/dashboard");
-
   const adminLinks = [
     {
       href: "/dashboard/users",
