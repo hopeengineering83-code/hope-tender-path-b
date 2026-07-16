@@ -45,3 +45,11 @@ tool-results/
 # tmp/app-page-screenshot-capture for the CI-uploaded equivalent).
 .scratch-*
 artifacts/
+
+# CI's own generated diagnostics output (uploaded as workflow artifacts on
+# failure, never committed — see .github/workflows/ci.yml's
+# "Upload diagnostics on failure" step).
+test-results/
+build-results/
+playwright-report/
+test-results-e2e/
