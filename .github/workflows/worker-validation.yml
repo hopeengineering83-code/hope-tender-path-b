@@ -79,28 +79,54 @@ jobs:
               return;
             }
             // Pin ONE trusted-harness SHA (the default branch's current commit) and
-            // use it for the lane registry here AND for the runner/manifest/policy in
-            // the execute job, so a moving default branch cannot swap the harness
-            // mid-run. The pinned harness SHA is published beside the worker SHA.
-            // A recognized lane is REQUIRED — a missing or unrecognized lane is
-            // NOT_CONFIGURED, never a silent fallback to the default suite set.
+            // use it for the lane mapping + registry here AND for the runner/manifest/
+            // policy in the execute job, so a moving default branch cannot swap the
+            // harness mid-run. The pinned harness SHA is published beside the worker SHA.
             const defBranch = context.payload.repository?.default_branch || 'main';
-            let harnessSha, validLanes = [];
+            let harnessSha, laneMap, manifestLanes = [];
             try {
               const { data: br } = await github.rest.repos.getBranch({ owner, repo, branch: defBranch });
               harnessSha = br.commit.sha;
-              const { data: m } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/required-suites.json', ref: harnessSha });
-              validLanes = Object.keys(JSON.parse(Buffer.from(m.content, 'base64').toString('utf8')).lanes || {});
+              const readJson = async (path) => {
+                const { data } = await github.rest.repos.getContent({ owner, repo, path, ref: harnessSha });
+                return JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+              };
+              laneMap = await readJson('.github/release-control/lane-mapping.json');
+              manifestLanes = Object.keys((await readJson('.github/release-control/required-suites.json')).lanes || {});
             } catch (e) {
-              core.setFailed('NOT_CONFIGURED: the trusted lane registry (required-suites.json) could not be read from the pinned default-branch harness.');
+              core.setFailed('NOT_CONFIGURED: the trusted lane mapping/registry could not be read from the pinned default-branch harness.');
+              return;
+            }
+            // Derive the lane from the immutable ISSUE + exact BRANCH authority FIRST;
+            // a worker cannot select any recognized label. The PR's head branch must
+            // map to exactly one lane; if the body declares Closes #N it must equal that
+            // lane's issue; then the single lane:<NAME> label must equal the derived lane.
+            const lanes = laneMap.lanes || {};
+            const derived = Object.entries(lanes).filter(([, def]) => def.branch && def.branch === pr.head.ref);
+            if (derived.length !== 1) {
+              core.setFailed(`NOT_CONFIGURED: worker head branch '${pr.head.ref}' is not mapped to exactly one lane in the immutable lane mapping (found ${derived.length}). Read-only/dependency work has no mapped branch and cannot be validated as a coding lane.`);
+              return;
+            }
+            const [derivedLane, derivedDef] = derived[0];
+            if (derivedDef.requires_start_authorization) {
+              core.setFailed(`NOT_CONFIGURED: lane '${derivedLane}' is read-only until an exact-SHA START_AUTHORIZATION and cannot be validated as a coding lane.`);
+              return;
+            }
+            if (!manifestLanes.includes(derivedLane)) {
+              core.setFailed(`NOT_CONFIGURED: derived lane '${derivedLane}' has no focused required suite in the trusted manifest.`);
+              return;
+            }
+            const closes = (pr.body || '').match(/closes\s+#(\d+)/i);
+            if (closes && derivedDef.issue && Number(closes[1]) !== Number(derivedDef.issue)) {
+              core.setFailed(`NOT_CONFIGURED: PR declares Closes #${closes[1]} but branch '${pr.head.ref}' maps to lane '${derivedLane}' (issue #${derivedDef.issue}).`);
               return;
             }
             const laneLabels = (pr.labels || []).map(l => l.name).filter(n => n.startsWith('lane:')).map(n => n.slice('lane:'.length));
-            if (laneLabels.length !== 1 || !validLanes.includes(laneLabels[0])) {
-              core.setFailed(`NOT_CONFIGURED: the worker PR must carry exactly one recognized lane label (lane:<NAME>) from [${validLanes.join(', ')}]; found [${laneLabels.join(', ') || 'none'}].`);
+            if (laneLabels.length !== 1 || laneLabels[0] !== derivedLane) {
+              core.setFailed(`NOT_CONFIGURED: the worker PR must carry exactly one lane label matching its derived lane '${derivedLane}'; found [${laneLabels.join(', ') || 'none'}].`);
               return;
             }
-            core.setOutput('lane', laneLabels[0]);
+            core.setOutput('lane', derivedLane);
             core.setOutput('harness_sha', harnessSha);
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('pr_number', String(prNumber));

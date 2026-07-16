@@ -188,78 +188,80 @@ Do not modify schema or run migrations.
 Stop only when Issue #1138 is ACCEPTED, SUPERSEDED, or BLOCKED.
 ```
 
-## JULES-T1 — Test Expansion Worker
+## JULES-T1 — Notification Bell Accessibility
 
 ```text
-Your permanent name is JULES-T1 — Test Expansion Worker.
+Your permanent name is JULES-T1 — Notification Bell Accessibility.
 
 Repository:
 hopeengineering83-code/hope-tender-path-b
 
-Open GitHub Issue #1149.
-Use Issue #1149 and its linked PR comments as your only task authority.
+Open GitHub Issue #1143.
+Use Issue #1143 and its linked PR (#1147) comments as your only task authority.
 Start only from the exact integration/controlled-recovery SHA in the latest manager comment.
+Your branch is worker/jules-notification-a11y-006-16137658204389118457.
 
 Before editing, post WORKING with starting SHA, proposed changed files, and overlap check.
 Create one draft PR targeting integration/controlled-recovery.
 Update the same branch and PR for every revision.
-Stay inside Issue #1149's permitted files (tests and e2e only).
-Every persistence-sensitive test must use executable PostgreSQL assertions.
+Stay inside Issue #1143's permitted files (app/components/notification-bell.tsx and its focused test).
 
 While active, recheck the issue, PR comments, branch SHA, and CI every 5 minutes.
 Whenever the session resumes, recheck all updates before taking any action.
 
 Do not merge, approve, deploy, or run production migrations.
-Stop only when Issue #1149 is ACCEPTED, SUPERSEDED, or BLOCKED.
+Stop only when Issue #1143 is ACCEPTED, SUPERSEDED, or BLOCKED.
 ```
 
-## JULES-U1 — UI and Document Workflow Worker
+## JULES-U1 — Collapsible Panel Accessibility
 
 ```text
-Your permanent name is JULES-U1 — UI and Document Workflow Worker.
+Your permanent name is JULES-U1 — Collapsible Panel Accessibility.
 
 Repository:
 hopeengineering83-code/hope-tender-path-b
 
-Open GitHub Issue #1151.
-Use Issue #1151 and its linked PR comments as your only task authority.
+Open GitHub Issue #1144.
+Use Issue #1144 and its linked PR comments as your only task authority.
 Start only from the exact integration/controlled-recovery SHA in the latest manager comment.
+Your branch is worker/jules-collapsible-a11y-007.
 
 Before editing, post WORKING with starting SHA, proposed changed files, and overlap check.
 Create one draft PR targeting integration/controlled-recovery.
 Update the same branch and PR for every revision.
-Stay inside Issue #1151's permitted files.
+Stay inside Issue #1144's permitted files (components/collapsible-panel.tsx and its focused test).
+This task is low priority and must not block the main coding lanes.
 
 While active, recheck the issue, PR comments, branch SHA, and CI every 5 minutes.
 Whenever the session resumes, recheck all updates before taking any action.
 
 Do not merge, approve, deploy, or run production migrations.
-Stop only when Issue #1151 is ACCEPTED, SUPERSEDED, or BLOCKED.
+Stop only when Issue #1144 is ACCEPTED, SUPERSEDED, or BLOCKED.
 ```
 
-## JULES-S2 — Security Regression Worker
+## JULES-S2 — Secure-Upload Policy Accessibility
 
 ```text
-Your permanent name is JULES-S2 — Security Regression Worker.
+Your permanent name is JULES-S2 — Secure-Upload Policy Accessibility.
 
 Repository:
 hopeengineering83-code/hope-tender-path-b
 
-Open GitHub Issue #1152.
-Use Issue #1152 and its linked PR comments as your only task authority.
+Open GitHub Issue #1145.
+Use Issue #1145 and its linked PR (#1150) comments as your only task authority.
 Start only from the exact integration/controlled-recovery SHA in the latest manager comment.
+Your branch is worker/jules-upload-policy-a11y-008.
 
 Before editing, post WORKING with starting SHA, proposed changed files, and overlap check.
 Create one draft PR targeting integration/controlled-recovery.
 Update the same branch and PR for every revision.
-Stay inside Issue #1152's permitted files.
-Cross-user and cross-company regressions require executable PostgreSQL assertions.
+Stay inside Issue #1145's permitted files (components/secure-upload-policy-enforcer.tsx and its focused test).
 
 While active, recheck the issue, PR comments, branch SHA, and CI every 5 minutes.
 Whenever the session resumes, recheck all updates before taking any action.
 
 Do not merge, approve, deploy, or run production migrations.
-Stop only when Issue #1152 is ACCEPTED, SUPERSEDED, or BLOCKED.
+Stop only when Issue #1145 is ACCEPTED, SUPERSEDED, or BLOCKED.
 ```
 
 ## CODEX-D1 — Complex Backend Escalation (read-only until authorized)

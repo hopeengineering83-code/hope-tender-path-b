@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "description": "Required test suites for exact-head worker validation. Every suite marked required must EXECUTE and PASS on the exact worker head. Missing tooling, a missing test file, or a suite that produced no result is NOT_CONFIGURED (block). Any skipped required test is SKIPPED_BLOCKER (block). A non-zero run is EXECUTED_FAIL (block). Only EXECUTED_PASS satisfies a required suite. Each worker lane appends its OWN focused suites to the default set, so a worker head cannot pass while its assigned tests never execute. A worker cannot select a weaker recognized lane: the lane is derived from a manager-applied label and mapped fail-closed (see activation-plan.md).",
+  "schema_version": 3,
+  "description": "Required test suites for exact-head worker validation of the fixed coding pool. Every required suite must EXECUTE and PASS on the exact worker head. A missing tool, a missing test FILE, or a suite that produced no result is NOT_CONFIGURED (block). Any skipped required test is SKIPPED_BLOCKER (block). A non-zero run is EXECUTED_FAIL (block). Only EXECUTED_PASS satisfies a required suite. Each lane appends its OWN focused suites, and those suites name the finding's ACTUAL reviewed test files (not unrelated generic suites), so a worker head cannot pass while its assigned tests never execute. The lane is derived from the immutable issue/branch mapping (lane-mapping.json) and then the lane:<NAME> label must match it; a worker cannot select a weaker or unrelated recognized lane. CODEX-D1 is read-only and has no validated suite until an exact-SHA START_AUTHORIZATION; the cross-cutting critical findings (#1149/#1151/#1152/#1153/#1154/#1155) are dependencies, not lanes.",
   "classifications": ["EXECUTED_PASS", "EXECUTED_FAIL", "NOT_CONFIGURED", "SKIPPED_BLOCKER"],
   "default_required_suites": [
     { "id": "unit-and-db", "kind": "node-test", "command": "npm test", "required": true },
@@ -9,68 +9,52 @@
   ],
   "lanes": {
     "GLM-A1": {
+      "issue": 1134,
       "extra_required_suites": [
-        { "id": "glm-a1-state-readiness", "kind": "node-test", "command": "npx tsx --test tests/analysis-state-resolver.test.ts tests/ai-runtime-capability.test.ts tests/readiness.test.ts", "required": true }
+        { "id": "glm-a1-state-truth", "kind": "node-test", "command": "npx tsx --test tests/screenshot-state-truth-001.test.ts", "required": true }
       ]
     },
     "GLM-A2": {
+      "issue": 1135,
       "extra_required_suites": [
-        { "id": "glm-a2-matching", "kind": "node-test", "command": "npx tsx --test tests/matching-quality-state.test.ts tests/matching-relevance-gates.test.ts tests/matching-strict-domain.test.ts", "required": true }
+        { "id": "glm-a2-matching", "kind": "node-test", "command": "npx tsx --test tests/matching-fail-closed-negative-tests.test.ts tests/matching-pagination.test.ts", "required": true }
       ]
     },
     "GLM-X1": {
+      "issue": 1136,
       "extra_required_suites": [
-        { "id": "glm-x1-export", "kind": "node-test", "command": "npx tsx --test tests/export-approval-policy.test.ts tests/export-byte-readiness.test.ts tests/export-format-policy.test.ts", "required": true }
+        { "id": "glm-x1-export-gates", "kind": "node-test", "command": "npx tsx --test tests/screenshot-export-gates-003.test.ts tests/screenshot-export-gates-003-behavioral.test.ts tests/screenshot-export-gates-003-server.test.ts", "required": true }
       ]
     },
     "CHATGPT-C1": {
+      "issue": 1137,
       "extra_required_suites": [
-        { "id": "chatgpt-c1-vault-provenance", "kind": "node-test", "command": "npx tsx --test tests/evidence-provenance-boundary.test.ts tests/link-vault-evidence-auto.test.ts tests/traceability-leakage.test.ts", "required": true }
+        { "id": "chatgpt-c1-vault-provenance", "kind": "node-test", "command": "npx tsx --test tests/vault-review-provenance.test.ts tests/vault-review-contract.test.ts tests/vault-review-postgres.test.ts tests/vault-review-route-postgres.test.ts tests/company-batch-review-rbac-current.test.ts tests/audit-log-presentation.test.ts", "required": true }
       ]
     },
     "CHATGPT-C2": {
+      "issue": 1138,
       "extra_required_suites": [
-        { "id": "chatgpt-c2-responsive-matrix", "kind": "playwright", "command": "npx playwright test e2e/responsive-viewport-matrix.spec.ts", "required": true }
+        { "id": "chatgpt-c2-navigation-contract", "kind": "node-test", "command": "npx tsx --test tests/dashboard-navigation-contract.test.ts tests/dashboard-route-inventory.test.ts tests/owned-route-action-contract.test.ts tests/settings-presentation-contract.test.ts", "required": true },
+        { "id": "chatgpt-c2-responsive-e2e", "kind": "playwright", "command": "npx playwright test e2e/dashboard-role-navigation.spec.ts e2e/settings-api-contract.spec.ts e2e/tablet-universal-tender-intelligence.spec.ts e2e/anonymous/anonymous-access.spec.ts", "required": true }
       ]
     },
     "JULES-T1": {
+      "issue": 1143,
       "extra_required_suites": [
-        { "id": "jules-t1-test-expansion", "kind": "node-test", "command": "npx tsx --test tests/comprehensive-workflow-regression.test.ts", "required": true }
+        { "id": "jules-t1-notification-a11y", "kind": "node-test", "command": "npx tsx --test tests/jules-notification-bell-a11y.test.ts", "required": true }
       ]
     },
     "JULES-U1": {
+      "issue": 1144,
       "extra_required_suites": [
-        { "id": "jules-u1-ui-document", "kind": "node-test", "command": "npx tsx --test tests/dashboard-generated-documents.test.ts", "required": true }
+        { "id": "jules-u1-collapsible-a11y", "kind": "node-test", "command": "npx tsx --test tests/jules-collapsible-panel-a11y.test.ts", "required": true }
       ]
     },
     "JULES-S2": {
+      "issue": 1145,
       "extra_required_suites": [
-        { "id": "jules-s2-security", "kind": "node-test", "command": "npx tsx --test tests/security-hardening.test.ts tests/auth-rbac-isolation.test.ts tests/input-validation-hardening.test.ts", "required": true }
-      ]
-    },
-    "CODEX-D1": {
-      "extra_required_suites": [
-        { "id": "codex-d1-transactions", "kind": "node-test", "command": "npx tsx --test tests/database-safety-integration.test.ts tests/ai-job-concurrency.test.ts tests/neon-usage-safety.test.ts", "required": true }
-      ]
-    },
-    "AI-SAFETY": {
-      "extra_required_suites": [
-        { "id": "ai-safety-guards", "kind": "node-test", "command": "npx tsx --test tests/ai-system-prompt-scope-guard.test.ts tests/ai-tool-regression-guards.test.ts", "required": true }
-      ]
-    },
-    "AI-RUNTIME": {
-      "extra_required_suites": [
-        { "id": "ai-runtime-evidence", "kind": "node-test", "command": "npx tsx --test tests/ai-runtime-capability.test.ts tests/ai-provider-engine-runtime-evidence.test.ts", "required": true }
-      ]
-    },
-    "TENANCY": {
-      "extra_required_suites": [
-        { "id": "tenancy-isolation", "kind": "node-test", "command": "npx tsx --test tests/auth-rbac-isolation.test.ts tests/db-acceptance-scenario4-security.test.ts", "required": true }
-      ]
-    },
-    "OPERATIONS": {
-      "extra_required_suites": [
-        { "id": "operations-health", "kind": "node-test", "command": "npx tsx --test tests/production-smoke-hardening.test.ts tests/foundation-health-readiness.test.ts", "required": true }
+        { "id": "jules-s2-secure-upload-a11y", "kind": "node-test", "command": "npx tsx --test tests/jules-secure-upload-policy-a11y.test.ts", "required": true }
       ]
     }
   }

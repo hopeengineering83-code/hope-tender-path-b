@@ -30,67 +30,90 @@ fi
 # Missing trusted harness fails closed.
 grep -qF 'trusted required-suite runner is not present' "$WF"
 
-# --- Lane is required (blocker 3) ---
-# resolve-head reads the lane registry from the trusted default ref and fails
-# closed when the lane is missing or unrecognized.
-grep -qF 'the trusted lane registry (required-suites.json)' "$WF"
-grep -qF 'must carry exactly one recognized lane label' "$WF"
+# --- Lane derived from issue+branch, then label verified (point 4) ---
+# resolve-head reads the immutable lane mapping from the trusted pinned ref, derives
+# the lane from the exact head branch, and requires the single lane label to match;
+# a worker cannot select any recognized label.
+grep -qF 'lane-mapping.json' "$WF"
+grep -qF 'def.branch === pr.head.ref' "$WF"
+grep -qF 'matching its derived lane' "$WF"
+grep -qF 'read-only until an exact-SHA START_AUTHORIZATION' "$WF"
 grep -qF 'NOT_CONFIGURED' "$WF"
 
-# --- Every registered lane has its OWN focused required suite (blockers 1 + 3 + 8) ---
-# All 13 current lanes must be registered so an unrelated green suite can never
-# satisfy a matching, Vault, export, responsive, database, or AI-runtime finding.
+# --- Every coding lane has its OWN focused required suite naming the finding's
+#     actual reviewed test files (point 5) ---
 jq empty "$MANIFEST"
-ALL_LANES="GLM-A1 GLM-A2 GLM-X1 CHATGPT-C1 CHATGPT-C2 JULES-T1 JULES-U1 JULES-S2 CODEX-D1 AI-SAFETY AI-RUNTIME TENANCY OPERATIONS"
-for lane in $ALL_LANES; do
+CODING_LANES="GLM-A1 GLM-A2 GLM-X1 CHATGPT-C1 CHATGPT-C2 JULES-T1 JULES-U1 JULES-S2"
+for lane in $CODING_LANES; do
   n="$(jq -r --arg l "$lane" '.lanes[$l].extra_required_suites | length' "$MANIFEST")"
   test "${n:-0}" -ge 1 || { echo "lane $lane has no focused required suite"; exit 1; }
-  req="$(jq -r --arg l "$lane" '.lanes[$l].extra_required_suites[0].required' "$MANIFEST")"
-  test "$req" = "true" || { echo "lane $lane focused suite must be required"; exit 1; }
+  while IFS= read -r req; do
+    test "$req" = "true" || { echo "lane $lane focused suite must be required"; exit 1; }
+  done < <(jq -r --arg l "$lane" '.lanes[$l].extra_required_suites[].required' "$MANIFEST")
 done
-# CHATGPT-C2 responsive suite is distinct (not a duplicate of the default e2e) and
-# names the exact responsive spec/viewports.
-c2cmd="$(jq -r '.lanes["CHATGPT-C2"].extra_required_suites[0].command' "$MANIFEST")"
-test -n "$c2cmd"
-test "$c2cmd" != "npm run test:e2e"
-printf '%s' "$c2cmd" | grep -qE '390|1024|1440|responsive'
+# Focused suites name the finding's ACTUAL tests, not unrelated generic suites.
+jq -e '.lanes["GLM-A1"].extra_required_suites[0].command | test("tests/screenshot-state-truth-001")' "$MANIFEST" >/dev/null
+jq -e '.lanes["GLM-A2"].extra_required_suites[0].command | test("tests/matching-fail-closed-negative-tests")' "$MANIFEST" >/dev/null
+jq -e '.lanes["GLM-X1"].extra_required_suites[0].command | test("tests/screenshot-export-gates-003")' "$MANIFEST" >/dev/null
+jq -e '.lanes["CHATGPT-C1"].extra_required_suites[0].command | test("tests/vault-review-provenance")' "$MANIFEST" >/dev/null
+jq -e '.lanes["JULES-T1"].extra_required_suites[0].command | test("tests/jules-notification-bell-a11y")' "$MANIFEST" >/dev/null
+jq -e '.lanes["JULES-S2"].extra_required_suites[0].command | test("tests/jules-secure-upload-policy-a11y")' "$MANIFEST" >/dev/null
+# CHATGPT-C2 owns a responsive playwright suite that runs its real e2e specs (not
+# the generic default e2e) and its viewport-bearing tablet spec.
+c2play="$(jq -r '.lanes["CHATGPT-C2"].extra_required_suites[] | select(.kind=="playwright") | .command' "$MANIFEST")"
+test -n "$c2play"
+test "$c2play" != "npm run test:e2e"
+printf '%s' "$c2play" | grep -qF 'e2e/tablet-universal-tender-intelligence.spec.ts'
 
-# --- Immutable lane mapping (blocker 2 + master-prompt point 2 + point 8) ---
-# Lane authority is derived from an immutable finding->lane map (issue, branch
-# prefix, expected base, permitted paths), NOT a label alone. Every mapped lane
-# must also exist in the required-suite manifest, and the manifest must not carry
-# an unmapped lane, so the two authorities stay consistent.
+# --- Immutable lane mapping bound to the real fixed pool (points 1-3) ---
 MAP=.github/release-control/lane-mapping.json
 test -f "$MAP"
 jq empty "$MAP"
 test "$(jq -r '.expected_base' "$MAP")" = "integration/controlled-recovery"
-for lane in $ALL_LANES; do
+# Each coding lane: mapped to its exact issue, a real (non-null) branch, exact
+# permitted paths, and present in the suite manifest.
+declare -A LANE_ISSUE=( [GLM-A1]=1134 [GLM-A2]=1135 [GLM-X1]=1136 [CHATGPT-C1]=1137 [CHATGPT-C2]=1138 [JULES-T1]=1143 [JULES-U1]=1144 [JULES-S2]=1145 )
+for lane in $CODING_LANES; do
   test "$(jq -r --arg l "$lane" '.lanes | has($l)' "$MAP")" = "true" || { echo "lane $lane missing from immutable mapping"; exit 1; }
-  test "$(jq -r --arg l "$lane" '.lanes[$l].manifest_lane' "$MAP")" = "$lane" || { echo "lane $lane manifest_lane mismatch"; exit 1; }
+  test "$(jq -r --arg l "$lane" '.lanes[$l].issue' "$MAP")" = "${LANE_ISSUE[$lane]}" || { echo "lane $lane wrong issue"; exit 1; }
+  br="$(jq -r --arg l "$lane" '.lanes[$l].branch' "$MAP")"
+  test -n "$br" && test "$br" != "null" || { echo "lane $lane has no real branch"; exit 1; }
   pp="$(jq -r --arg l "$lane" '.lanes[$l].permitted_paths | length' "$MAP")"
   test "${pp:-0}" -ge 1 || { echo "lane $lane has no permitted_paths"; exit 1; }
-  bp="$(jq -r --arg l "$lane" '.lanes[$l].branch_prefix' "$MAP")"
-  test -n "$bp" && test "$bp" != "null" || { echo "lane $lane has no branch_prefix"; exit 1; }
+  test "$(jq -r --arg l "$lane" '.lanes | has($l)' "$MANIFEST")" = "true" || { echo "lane $lane not in suite manifest"; exit 1; }
 done
-# Every mapping lane is a real manifest lane (no phantom authority).
-while IFS= read -r l; do
-  test "$(jq -r --arg l "$l" '.lanes | has($l)' "$MANIFEST")" = "true" || { echo "mapped lane $l is not in the suite manifest"; exit 1; }
-done < <(jq -r '.lanes | keys[]' "$MAP")
-# The single Codex lane is read-only until an explicit exact-SHA START_AUTHORIZATION.
+# Real branch bindings match the current authorized PR branches exactly.
+test "$(jq -r '.lanes["GLM-A1"].branch' "$MAP")" = "worker/screenshot-state-truth-001"
+test "$(jq -r '.lanes["JULES-T1"].branch' "$MAP")" = "worker/jules-notification-a11y-006-16137658204389118457"
+test "$(jq -r '.lanes["JULES-S2"].branch' "$MAP")" = "worker/jules-upload-policy-a11y-008"
+# The single Codex chat is read-only: no branch, no manifest suite, needs authorization.
 test "$(jq -r '.lanes["CODEX-D1"].requires_start_authorization' "$MAP")" = "true"
-test "$(jq -r '[.lanes | to_entries[] | select(.value.branch_prefix | startswith("worker/codex")) ] | length' "$MAP")" = "1"
+test "$(jq -r '.lanes["CODEX-D1"].branch' "$MAP")" = "null"
+test "$(jq -r '.lanes | has("CODEX-D1")' "$MANIFEST")" = "false"
+# Cross-cutting critical findings are dependencies, never lanes.
+for dep in 1149 1151 1152 1153 1154 1155; do
+  test "$(jq -r --arg d "$dep" '.dependencies[$d].is_lane' "$MAP")" = "false" || { echo "dependency $dep must not be a lane"; exit 1; }
+done
+for notlane in AI-SAFETY AI-RUNTIME TENANCY OPERATIONS PRODUCT-TRUTH; do
+  test "$(jq -r --arg l "$notlane" '.lanes | has($l)' "$MAP")" = "false" || { echo "$notlane must not be a lane"; exit 1; }
+done
+# Every coding lane in the manifest is a real mapped coding lane (no phantom authority).
+while IFS= read -r l; do
+  test "$(jq -r --arg l "$l" '.lanes | has($l)' "$MAP")" = "true" || { echo "manifest lane $l is not mapped"; exit 1; }
+done < <(jq -r '.lanes | keys[]' "$MANIFEST")
 
-# --- Deterministic lane-requirement simulation (all registered lanes) ---
-valid_lanes="$(printf '%s' "$ALL_LANES" | tr ' ' ',')"
+# --- Deterministic lane-requirement simulation ---
+valid_lanes="$(printf '%s' "$CODING_LANES" | tr ' ' ',')"
 lane_ok() { # lane_ok <lane> -> OK|NOT_CONFIGURED
   local lane="$1"
   [ -n "$lane" ] || { echo NOT_CONFIGURED; return; }
   case ",$valid_lanes," in *",$lane,"*) echo OK ;; *) echo NOT_CONFIGURED ;; esac
 }
-test "$(lane_ok '')" = NOT_CONFIGURED           # missing lane blocks
-test "$(lane_ok 'UNKNOWN')" = NOT_CONFIGURED    # unknown lane blocks
-test "$(lane_ok 'CHATGPT-C2')" = OK             # recognized lane proceeds
-test "$(lane_ok 'CODEX-D1')" = OK               # newly-registered lane proceeds
-test "$(lane_ok 'OPERATIONS')" = OK             # newly-registered lane proceeds
+test "$(lane_ok '')" = NOT_CONFIGURED             # missing lane blocks
+test "$(lane_ok 'UNKNOWN')" = NOT_CONFIGURED      # unknown lane blocks
+test "$(lane_ok 'CHATGPT-C2')" = OK               # recognized coding lane proceeds
+test "$(lane_ok 'JULES-T1')" = OK                 # recognized coding lane proceeds
+test "$(lane_ok 'CODEX-D1')" = NOT_CONFIGURED     # read-only lane has no validated suite
+test "$(lane_ok 'AI-SAFETY')" = NOT_CONFIGURED    # a dependency is not a claimable lane
 
 echo "trusted-harness-and-lane simulation passed"

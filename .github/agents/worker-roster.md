@@ -26,12 +26,12 @@ This file assigns stable identities, coding scopes, and non-overlap rules to eve
 
 ## Current Jules coding workers
 
-- **JULES-T1 — Test Expansion Worker** (Issue #1149)
-  - Negative tests, PostgreSQL assertions, release-gate coverage.
-- **JULES-U1 — UI and Document Workflow Worker** (Issue #1151)
-  - Broad UI scans and slower presentation repairs.
-- **JULES-S2 — Security Regression Worker** (Issue #1152)
-  - Cross-user and cross-company regression suites.
+- **JULES-T1 — Notification Bell Accessibility** (Issue #1143, branch `worker/jules-notification-a11y-006-16137658204389118457`)
+  - Notification-bell a11y and server-confirmed read state.
+- **JULES-U1 — Collapsible Panel Accessibility** (Issue #1144, branch `worker/jules-collapsible-a11y-007`)
+  - Collapsible-panel a11y regression coverage (assigned; low priority).
+- **JULES-S2 — Secure-Upload Policy Accessibility** (Issue #1145, branch `worker/jules-upload-policy-a11y-008`)
+  - Clear stale secure-upload errors after a valid selection; blocking preserved.
 
 ## Current Codex coding worker
 
@@ -59,25 +59,28 @@ The pool is fixed at **10 chats**: 3 GLM + 2 ChatGPT + 1 Claude Code + 3 Jules +
 | ChatGPT #1 | CHATGPT-C1 | #1137 |
 | ChatGPT #2 | CHATGPT-C2 | #1138 |
 | Claude Code | CLAUDE-I1 | #1148 |
-| Jules #1 | JULES-T1 | #1149 |
-| Jules #2 | JULES-U1 | #1151 |
-| Jules #3 | JULES-S2 | #1152 |
-| Codex | CODEX-D1 | #1156 |
+| Jules #1 | JULES-T1 | #1143 |
+| Jules #2 | JULES-U1 | #1144 |
+| Jules #3 | JULES-S2 | #1145 |
+| Codex | CODEX-D1 | #1156 (read-only until START_AUTHORIZATION) |
 
 Independent review is a **role**, not an extra chat: any pool member (or CHATGPT-M1)
 may audit an exact diff it did not author. A reviewer never writes code on the
 finding it reviews.
 
-## Cross-cutting finding lanes
+## Manager-controlled dependencies (NOT lanes, NOT extra chats)
 
-Some findings span more than one screenshot lane. These are validated as their own
-required-suite lanes in `required-suites.json` and mapped in `lane-mapping.json`, and
-are owned by an existing pool chat (no new chat is created):
+These cross-cutting critical findings are manager-controlled and planned **through
+CODEX-D1 after an exact-SHA START_AUTHORIZATION**. They are tracked as dependencies
+in `lane-mapping.json` and are never assigned to a simple worker (Jules) or folded
+into a GLM/ChatGPT lane. No eleventh chat is created for them.
 
-- **AI-SAFETY** (Issue #1154) — AI system-prompt scope and tool regression guards.
-- **AI-RUNTIME** (owned via GLM-A1 #1134) — AI runtime capability and provider-engine evidence.
-- **TENANCY** (owned via CHATGPT-C1 #1137) — cross-user / cross-company isolation.
-- **OPERATIONS** (owned via GLM-X1 #1136) — health/readiness and production smoke hardening.
+- **#1149** — immutable evidence / provenance model.
+- **#1151** — company-scoped team membership / tenancy.
+- **#1152** — block mixed/fallback proposal persistence.
+- **#1153** — bounded deterministic Vault context / Vercel-safe analysis.
+- **#1154** — durable private storage / password-reset mail / recovery.
+- **#1155** — product-truth analytics/account and integrated screenshot regression (manager residual after core integration).
 
 ## Current five-lane ownership
 

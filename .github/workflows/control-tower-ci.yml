@@ -146,24 +146,52 @@ jobs:
           if grep -qE 'secrets\.[A-Z_]*DATABASE' "$wf"; then echo 'worker validation must not reference a production database secret.'; exit 1; fi
           if grep -qE 'gh pr merge|gh pr review.*--approve|vercel .*--prod' "$wf"; then echo 'worker validation must not merge, approve, or deploy.'; exit 1; fi
 
-      - name: Require immutable lane mapping and all registered lanes
+      - name: Require immutable lane mapping bound to the real fixed pool
         run: |
           set -euo pipefail
           map=.github/release-control/lane-mapping.json
           manifest=.github/release-control/required-suites.json
+          wf=.github/workflows/worker-validation.yml
+          ctrl=.github/workflows/integration-controller.yml
           test -f "$map"
           jq empty "$map"
           test "$(jq -r '.expected_base' "$map")" = 'integration/controlled-recovery'
-          # All 13 current lanes must be registered in BOTH the immutable mapping and
-          # the suite manifest, and the single Codex lane stays read-only until an
-          # explicit exact-SHA START_AUTHORIZATION.
-          for lane in GLM-A1 GLM-A2 GLM-X1 CHATGPT-C1 CHATGPT-C2 JULES-T1 JULES-U1 JULES-S2 CODEX-D1 AI-SAFETY AI-RUNTIME TENANCY OPERATIONS; do
+          # The 8 coding lanes must exist in BOTH the mapping and the suite manifest,
+          # each with a real (non-null) authorized branch mapped to its exact issue.
+          declare -A ISSUES=( [GLM-A1]=1134 [GLM-A2]=1135 [GLM-X1]=1136 [CHATGPT-C1]=1137 [CHATGPT-C2]=1138 [JULES-T1]=1143 [JULES-U1]=1144 [JULES-S2]=1145 )
+          for lane in "${!ISSUES[@]}"; do
             test "$(jq -r --arg l "$lane" '.lanes | has($l)' "$map")" = 'true'
             test "$(jq -r --arg l "$lane" '.lanes | has($l)' "$manifest")" = 'true'
+            test "$(jq -r --arg l "$lane" '.lanes[$l].issue' "$map")" = "${ISSUES[$lane]}"
+            br="$(jq -r --arg l "$lane" '.lanes[$l].branch' "$map")"
+            test -n "$br" && test "$br" != 'null'
           done
+          # CODEX-D1 is the single Codex chat: read-only, no branch, no manifest suite,
+          # until an exact-SHA START_AUTHORIZATION.
           test "$(jq -r '.lanes["CODEX-D1"].issue' "$map")" = '1156'
           test "$(jq -r '.lanes["CODEX-D1"].requires_start_authorization' "$map")" = 'true'
-          test "$(jq -r '[.lanes | to_entries[] | select(.value.branch_prefix | startswith("worker/codex"))] | length' "$map")" = '1'
+          test "$(jq -r '.lanes["CODEX-D1"].branch' "$map")" = 'null'
+          test "$(jq -r '.lanes["CODEX-D1"].status' "$map")" = 'read-only'
+          test "$(jq -r '.lanes | has("CODEX-D1")' "$manifest")" = 'false'
+          # The cross-cutting critical findings are DEPENDENCIES, not lanes, and must
+          # never be assigned to a simple worker lane.
+          for dep in 1149 1151 1152 1153 1154 1155; do
+            test "$(jq -r --arg d "$dep" '.dependencies | has($d)' "$map")" = 'true'
+            test "$(jq -r --arg d "$dep" '.dependencies[$d].is_lane' "$map")" = 'false'
+          done
+          for notlane in AI-SAFETY AI-RUNTIME TENANCY OPERATIONS PRODUCT-TRUTH; do
+            test "$(jq -r --arg l "$notlane" '.lanes | has($l)' "$map")" = 'false'
+            test "$(jq -r --arg l "$notlane" '.lanes | has($l)' "$manifest")" = 'false'
+          done
+          # Lane is derived from issue+branch, then the label is verified (both places).
+          grep -qF 'def.branch === pr.head.ref' "$wf"
+          grep -qF 'derived lane' "$wf"
+          grep -qF "def.branch === pr.head.ref" "$ctrl"
+          # Integration policy is bound to ONE pinned trusted control SHA (no mutable reload).
+          grep -qF 'controlSha = br.commit.sha' "$ctrl"
+          grep -qF "path: '.github/release-control/lane-mapping.json', ref: controlSha" "$ctrl"
+          grep -qF "path: '.github/release-control/independent-auditors.json', ref: controlSha" "$ctrl"
+          grep -qF "path: '.github/release-control/required-checks.json', ref: controlSha" "$ctrl"
 
       - name: Require activation truth
         run: |

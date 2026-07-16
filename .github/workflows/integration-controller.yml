@@ -52,6 +52,19 @@ jobs:
             if (pr.head.repo.full_name !== `${owner}/${repo}`) throw new Error('Fork PRs are not eligible.');
             const head = pr.head.sha;
 
+            // Pin ONE trusted control SHA (the default branch's current commit) for the
+            // ENTIRE preflight. The lane mapping, independent-auditor allow-list, and
+            // required-check allow-list are ALL read at this exact ref, so policy cannot
+            // change between validation, audit, and integration. The same SHA the worker
+            // validation harness pinned governs acceptance; a moving default branch after
+            // acceptance cannot silently reload weaker policy.
+            const defBranch = context.payload.repository?.default_branch || 'main';
+            let controlSha;
+            try {
+              const { data: br } = await github.rest.repos.getBranch({ owner, repo, branch: defBranch });
+              controlSha = br.commit.sha;
+            } catch (e) { throw new Error('Trusted control SHA (default branch commit) could not be resolved (fail closed).'); }
+
             const actor = context.eventName === 'pull_request' ? context.payload.sender.login : context.actor;
             const { data: actorLevel } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: actor });
             if (!['admin', 'maintain', 'write'].includes(actorLevel.permission)) throw new Error('Integration actor lacks write permission.');
@@ -90,13 +103,22 @@ jobs:
             // its lane or select a weaker one — the mapping is the authority.
             let laneMap;
             try {
-              const { data: lm } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/lane-mapping.json' });
+              const { data: lm } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/lane-mapping.json', ref: controlSha });
               laneMap = JSON.parse(Buffer.from(lm.content, 'base64').toString('utf8'));
-            } catch (e) { throw new Error('lane-mapping.json is missing/unreadable (fail closed).'); }
+            } catch (e) { throw new Error('lane-mapping.json is missing/unreadable at the trusted control SHA (fail closed).'); }
+            // Derive the lane from the immutable ISSUE + exact BRANCH authority FIRST,
+            // then require the label to match — identical to worker validation, so a
+            // worker cannot select a weaker/unrelated recognized lane at integration.
+            const mapLanes = laneMap.lanes || {};
+            const derived = Object.entries(mapLanes).filter(([, def]) => def.branch && def.branch === pr.head.ref);
+            if (derived.length !== 1) throw new Error(`Worker head branch '${pr.head.ref}' is not mapped to exactly one lane in the immutable mapping.`);
+            const [derivedLane, laneDef] = derived[0];
+            if (laneDef.requires_start_authorization) throw new Error(`Lane '${derivedLane}' is read-only and not eligible for integration without an exact-SHA START_AUTHORIZATION.`);
             const laneLabels = (pr.labels || []).map(l => l.name).filter(n => n.startsWith('lane:')).map(n => n.slice('lane:'.length));
             if (laneLabels.length !== 1) throw new Error('Worker PR must carry exactly one lane label.');
-            const laneDef = (laneMap.lanes || {})[laneLabels[0]];
-            if (!laneDef) throw new Error(`Unrecognized lane '${laneLabels[0]}' (not in the immutable lane mapping).`);
+            if (laneLabels[0] !== derivedLane) throw new Error(`Lane label '${laneLabels[0]}' does not match the branch-derived lane '${derivedLane}'.`);
+            const closes = (pr.body || '').match(/closes\s+#(\d+)/i);
+            if (closes && laneDef.issue && Number(closes[1]) !== Number(laneDef.issue)) throw new Error(`PR Closes #${closes[1]} but branch maps to lane '${derivedLane}' (issue #${laneDef.issue}).`);
             if (pr.base.ref !== (laneMap.expected_base || 'integration/controlled-recovery')) throw new Error('Worker PR base does not match the lane mapping expected base.');
             const permitted = laneDef.permitted_paths || [];
             const outside = files.filter(file => !permitted.some(p => file.filename.startsWith(p)));
@@ -107,7 +129,7 @@ jobs:
             // authorized until a genuinely independent identity is provisioned.
             let independentLogins = [], independentApps = [];
             try {
-              const { data: cfg } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/independent-auditors.json' });
+              const { data: cfg } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/independent-auditors.json', ref: controlSha });
               const parsed = JSON.parse(Buffer.from(cfg.content, 'base64').toString('utf8'));
               independentLogins = (parsed.independent_auditor_logins || []).map(s => String(s).toLowerCase());
               independentApps = (parsed.independent_auditor_app_slugs || []).map(s => String(s).toLowerCase());
@@ -165,7 +187,7 @@ jobs:
             // fails closed. Check runs are fully paginated.
             let requiredChecks = [];
             try {
-              const { data: rc } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/required-checks.json' });
+              const { data: rc } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/required-checks.json', ref: controlSha });
               requiredChecks = JSON.parse(Buffer.from(rc.content, 'base64').toString('utf8')).required_checks || [];
             } catch (e) {
               throw new Error('required-checks.json is missing/unreadable; the required-check policy cannot be established (fail closed).');
@@ -195,7 +217,7 @@ jobs:
             const currentHead = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data.head.sha;
             if (currentHead !== head) throw new Error('PR head moved during preflight.');
 
-            core.notice(`Independent audit by @${acceptedBy} accepted exact head ${head}`);
+            core.notice(`Independent audit by @${acceptedBy} accepted exact head ${head} for lane '${derivedLane}' under pinned trusted control SHA ${controlSha}`);
             core.setOutput('pr_number', String(prNumber));
             core.setOutput('head_sha', head);
             core.setOutput('integration_branch', 'integration/controlled-recovery');
