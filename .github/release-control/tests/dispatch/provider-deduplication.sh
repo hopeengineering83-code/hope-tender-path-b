@@ -16,7 +16,12 @@ test "$(jq -r '.rules.same_pr_for_revisions' "$REGISTRY")" = "true"
 grep -q "chatgpt-code" "$DISPATCHER"
 grep -q "WAITING_FOR_CHATGPT_CODE_CHAT" "$DISPATCHER"
 grep -q "WAITING_FOR_GLM_CHAT" "$DISPATCHER"
-! grep -q "APPROVED_HEAD_SHA" "$COORDINATOR"
+# Fail closed: a negated grep does NOT abort under `set -e` (SC2251), so assert
+# the forbidden marker's absence with an explicit exit.
+if grep -q "APPROVED_HEAD_SHA" "$COORDINATOR"; then
+  echo "coordinator must never mint APPROVED_HEAD_SHA from green CI"
+  exit 1
+fi
 grep -q "VALIDATED_HEAD_SHA" "$COORDINATOR"
 
 STATE=$(mktemp)

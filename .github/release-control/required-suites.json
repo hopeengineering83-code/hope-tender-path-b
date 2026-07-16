@@ -47,6 +47,31 @@
       "extra_required_suites": [
         { "id": "jules-s2-security", "kind": "node-test", "command": "npx tsx --test tests/security-hardening.test.ts tests/auth-rbac-isolation.test.ts tests/input-validation-hardening.test.ts", "required": true }
       ]
+    },
+    "CODEX-D1": {
+      "extra_required_suites": [
+        { "id": "codex-d1-transactions", "kind": "node-test", "command": "npx tsx --test tests/database-safety-integration.test.ts tests/ai-job-concurrency.test.ts tests/neon-usage-safety.test.ts", "required": true }
+      ]
+    },
+    "AI-SAFETY": {
+      "extra_required_suites": [
+        { "id": "ai-safety-guards", "kind": "node-test", "command": "npx tsx --test tests/ai-system-prompt-scope-guard.test.ts tests/ai-tool-regression-guards.test.ts", "required": true }
+      ]
+    },
+    "AI-RUNTIME": {
+      "extra_required_suites": [
+        { "id": "ai-runtime-evidence", "kind": "node-test", "command": "npx tsx --test tests/ai-runtime-capability.test.ts tests/ai-provider-engine-runtime-evidence.test.ts", "required": true }
+      ]
+    },
+    "TENANCY": {
+      "extra_required_suites": [
+        { "id": "tenancy-isolation", "kind": "node-test", "command": "npx tsx --test tests/auth-rbac-isolation.test.ts tests/db-acceptance-scenario4-security.test.ts", "required": true }
+      ]
+    },
+    "OPERATIONS": {
+      "extra_required_suites": [
+        { "id": "operations-health", "kind": "node-test", "command": "npx tsx --test tests/production-smoke-hardening.test.ts tests/foundation-health-readiness.test.ts", "required": true }
+      ]
     }
   }
 }

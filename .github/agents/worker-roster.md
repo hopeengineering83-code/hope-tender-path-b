@@ -24,20 +24,60 @@ This file assigns stable identities, coding scopes, and non-overlap rules to eve
 - **CHATGPT-C2 — Responsive Navigation and Contract Worker**
   - Responsive shell, route integrity, active navigation, settings/default separation, dead actions, API/UI state contracts.
 
-## Standby workers
+## Current Jules coding workers
 
-- **JULES-T1 — Test Expansion Worker**
+- **JULES-T1 — Test Expansion Worker** (Issue #1149)
   - Negative tests, PostgreSQL assertions, release-gate coverage.
-- **JULES-U1 — UI and Document Workflow Worker**
+- **JULES-U1 — UI and Document Workflow Worker** (Issue #1151)
   - Broad UI scans and slower presentation repairs.
-- **JULES-S2 — Security Regression Worker**
+- **JULES-S2 — Security Regression Worker** (Issue #1152)
   - Cross-user and cross-company regression suites.
-- **CODEX-C1 — Complex Backend Escalation**
+
+## Current Codex coding worker
+
+- **CODEX-D1 — Complex Backend Escalation** (Issue #1156)
   - Race conditions, transaction boundaries, difficult background workers, complex CI failures.
-- **CLAUDE-I1 — Integration and Conflict Resolution**
-  - Cross-file architecture, semantic conflicts, combined-branch regression repair.
-- **GLM-R1 / CHATGPT-R1 — Independent Review Workers**
-  - Review-only. Audit exact diffs and tests. They never write code on the reviewed finding.
+  - **Initial state: read-only architecture planning.** Coding requires a later
+    exact-SHA `START_AUTHORIZATION` from CHATGPT-M1. Exactly one Codex worker is
+    registered — never multiple Codex lanes.
+
+## Claude Code control worker
+
+- **CLAUDE-I1 — Integration and Control-Tower Worker** (Issue #1148)
+  - Release-control workflows and contracts under `.github/**` only. Never edits
+    application runtime, Prisma schema/migrations, Vercel config, or package files.
+
+## Fixed worker pool
+
+The pool is fixed at **10 chats**: 3 GLM + 2 ChatGPT + 1 Claude Code + 3 Jules + 1 Codex.
+
+| Chat | Worker | Issue |
+| --- | --- | --- |
+| GLM #1 | GLM-A1 | #1134 |
+| GLM #2 | GLM-A2 | #1135 |
+| GLM #3 | GLM-X1 | #1136 |
+| ChatGPT #1 | CHATGPT-C1 | #1137 |
+| ChatGPT #2 | CHATGPT-C2 | #1138 |
+| Claude Code | CLAUDE-I1 | #1148 |
+| Jules #1 | JULES-T1 | #1149 |
+| Jules #2 | JULES-U1 | #1151 |
+| Jules #3 | JULES-S2 | #1152 |
+| Codex | CODEX-D1 | #1156 |
+
+Independent review is a **role**, not an extra chat: any pool member (or CHATGPT-M1)
+may audit an exact diff it did not author. A reviewer never writes code on the
+finding it reviews.
+
+## Cross-cutting finding lanes
+
+Some findings span more than one screenshot lane. These are validated as their own
+required-suite lanes in `required-suites.json` and mapped in `lane-mapping.json`, and
+are owned by an existing pool chat (no new chat is created):
+
+- **AI-SAFETY** (Issue #1154) — AI system-prompt scope and tool regression guards.
+- **AI-RUNTIME** (owned via GLM-A1 #1134) — AI runtime capability and provider-engine evidence.
+- **TENANCY** (owned via CHATGPT-C1 #1137) — cross-user / cross-company isolation.
+- **OPERATIONS** (owned via GLM-X1 #1136) — health/readiness and production smoke hardening.
 
 ## Current five-lane ownership
 

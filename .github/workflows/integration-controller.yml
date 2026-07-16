@@ -84,6 +84,24 @@ jobs:
             const migrations = files.filter(file => file.filename.startsWith('prisma/migrations/'));
             if (migrations.length && !/MIGRATION_DECLARED:\s*YES/i.test(pr.body || '')) throw new Error('Migration not declared.');
 
+            // Immutable finding -> lane mapping. The PR's single lane label must be
+            // mapped; its base must equal the mapped expected_base; and every changed
+            // file must fall within the lane's permitted paths. A worker cannot widen
+            // its lane or select a weaker one — the mapping is the authority.
+            let laneMap;
+            try {
+              const { data: lm } = await github.rest.repos.getContent({ owner, repo, path: '.github/release-control/lane-mapping.json' });
+              laneMap = JSON.parse(Buffer.from(lm.content, 'base64').toString('utf8'));
+            } catch (e) { throw new Error('lane-mapping.json is missing/unreadable (fail closed).'); }
+            const laneLabels = (pr.labels || []).map(l => l.name).filter(n => n.startsWith('lane:')).map(n => n.slice('lane:'.length));
+            if (laneLabels.length !== 1) throw new Error('Worker PR must carry exactly one lane label.');
+            const laneDef = (laneMap.lanes || {})[laneLabels[0]];
+            if (!laneDef) throw new Error(`Unrecognized lane '${laneLabels[0]}' (not in the immutable lane mapping).`);
+            if (pr.base.ref !== (laneMap.expected_base || 'integration/controlled-recovery')) throw new Error('Worker PR base does not match the lane mapping expected base.');
+            const permitted = laneDef.permitted_paths || [];
+            const outside = files.filter(file => !permitted.some(p => file.filename.startsWith(p)));
+            if (outside.length) throw new Error(`Changed files outside lane '${laneLabels[0]}' permitted paths: ${outside.slice(0, 5).map(file => file.filename).join(', ')}`);
+
             // Independent-auditor allow-list, loaded from the trusted control-plane
             // config. A missing/empty list fails closed — no acceptance can be
             // authorized until a genuinely independent identity is provisioned.

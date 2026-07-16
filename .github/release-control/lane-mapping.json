@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "description": "Immutable finding/issue -> lane mapping. A worker's lane authority is derived from this mapping (owner issue, branch prefix, permitted file patterns, expected base, and manifest lane), NOT chosen by a label alone. Worker validation confirms the declared lane label matches a mapped lane; integration confirms the PR's base equals expected_base and its changed files fall within the lane's permitted_paths. A worker cannot select a different, weaker recognized lane, because the label must be consistent with the immutable mapping for its finding/branch.",
+  "expected_base": "integration/controlled-recovery",
+  "lanes": {
+    "GLM-A1": { "issue": 1134, "branch_prefix": "worker/glm-a1", "manifest_lane": "GLM-A1", "permitted_paths": ["app/dashboard/", "app/api/tenders/", "lib/engine/", "lib/", "components/", "tests/"] },
+    "GLM-A2": { "issue": 1135, "branch_prefix": "worker/glm-a2", "manifest_lane": "GLM-A2", "permitted_paths": ["lib/engine/", "app/api/tenders/", "components/", "tests/"] },
+    "GLM-X1": { "issue": 1136, "branch_prefix": "worker/glm-x1", "manifest_lane": "GLM-X1", "permitted_paths": ["lib/engine/", "lib/document-generation/", "app/api/tenders/", "prisma/migrations/", "components/", "tests/"] },
+    "CHATGPT-C1": { "issue": 1137, "branch_prefix": "worker/chatgpt-c1", "manifest_lane": "CHATGPT-C1", "permitted_paths": ["app/dashboard/company/", "lib/engine/", "components/", "tests/"] },
+    "CHATGPT-C2": { "issue": 1138, "branch_prefix": "worker/chatgpt-c2", "manifest_lane": "CHATGPT-C2", "permitted_paths": ["app/", "components/", "e2e/", "tests/"] },
+    "JULES-T1": { "issue": 1149, "branch_prefix": "worker/jules-t1", "manifest_lane": "JULES-T1", "permitted_paths": ["tests/", "e2e/"] },
+    "JULES-U1": { "issue": 1151, "branch_prefix": "worker/jules-u1", "manifest_lane": "JULES-U1", "permitted_paths": ["app/", "components/", "e2e/", "tests/"] },
+    "JULES-S2": { "issue": 1152, "branch_prefix": "worker/jules-s2", "manifest_lane": "JULES-S2", "permitted_paths": ["app/api/", "lib/", "tests/"] },
+    "CODEX-D1": { "issue": 1156, "branch_prefix": "worker/codex-d1", "manifest_lane": "CODEX-D1", "permitted_paths": ["lib/", "prisma/migrations/", "app/api/", "tests/"], "initial_state": "read-only-architecture-planning", "requires_start_authorization": true },
+    "AI-SAFETY": { "issue": 1154, "branch_prefix": "worker/ai-safety", "manifest_lane": "AI-SAFETY", "permitted_paths": ["lib/ai", "lib/engine/", "tests/"] },
+    "AI-RUNTIME": { "issue": 1134, "branch_prefix": "worker/ai-runtime", "manifest_lane": "AI-RUNTIME", "permitted_paths": ["lib/ai", "lib/engine/", "app/api/ai-jobs/", "tests/"] },
+    "TENANCY": { "issue": 1137, "branch_prefix": "worker/tenancy", "manifest_lane": "TENANCY", "permitted_paths": ["lib/auth", "app/api/", "prisma/", "tests/"] },
+    "OPERATIONS": { "issue": 1136, "branch_prefix": "worker/operations", "manifest_lane": "OPERATIONS", "permitted_paths": ["scripts/", "app/api/health", "app/api/cron/", "tests/"] }
+  }
+}
