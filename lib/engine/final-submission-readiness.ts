@@ -53,7 +53,6 @@ import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
-import { resolveCurrencyAuthority } from "./currency-authority";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
@@ -1215,42 +1214,22 @@ export async function getFinalSubmissionReadiness(
     })(),
   };
 
-  // ── Currency authority (shared canonical helper, fail-closed) ─────
-  // Per REVISION_REQUIRED (recheck 8): do NOT .catch(() => null) — that
-  // fails open. If the authority lookup throws, propagate the error so
-  // the readiness check fails closed. The helper itself catches per-query
-  // errors and returns CURRENCY_AUTHORITY_UNAVAILABLE.
-  let currencyAuthority: Awaited<ReturnType<typeof resolveCurrencyAuthority>>;
-  try {
-    currencyAuthority = await resolveCurrencyAuthority(
-      client,
-      opts.tenderId,
-      tender.currency,
-    );
-  } catch {
-    // If the helper itself throws (shouldn't happen — it catches internally),
-    // fail closed with CURRENCY_AUTHORITY_UNAVAILABLE.
-    currencyAuthority = {
-      isNull: false,
-      isVerified: false,
-      isUnverified: false,
-      isUnavailable: true,
-      display: "Authority unavailable",
-      blockerCode: "CURRENCY_AUTHORITY_UNAVAILABLE",
-      blocker: {
-        category: "CURRENCY_AUTHORITY_UNAVAILABLE",
-        severity: "CRITICAL",
-        title: "Currency authority lookup failed — cannot verify currency provenance",
-        recommendedAction: "The database query for currency override/ledger failed. Retry the operation or contact support if the error persists.",
-      },
-    };
-  }
-  if (currencyAuthority.isUnverified && currencyAuthority.blocker) {
-    tenderLevelBlockers.push(currencyAuthority.blocker);
-  }
-  if (currencyAuthority.isUnavailable && currencyAuthority.blocker) {
-    tenderLevelBlockers.push(currencyAuthority.blocker);
-  }
+  // ── Currency authority ─────────────────────────────────────────────
+  // Per REVISION_REQUIRED (exact-head recheck): do NOT maintain a second
+  // currency authority resolver. The canonical field resolver
+  // (resolveCanonicalFieldState, called above) already includes "currency"
+  // in its field list and resolves override + ledger + fieldState + evidence
+  // + active-file membership. canonicalExportState.hasExportBlocker already
+  // catches currency issues. The TENDER_FACTS_INVALID blocker (pushed above
+  // when hasExportBlocker is true) covers currency.
+  //
+  // The screenshot defect (USD default on corrupted tenders) is fixed by
+  // the migration (Tender.currency is now nullable, no default). New tenders
+  // get NULL when the extractor finds no currency. The report page renders
+  // "Not extracted" for NULL and "Unverified legacy value" for non-null
+  // currency that the canonical resolver flags as unverified.
+  //
+  // No separate currency authority call needed here.
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
   const message = buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });

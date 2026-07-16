@@ -486,20 +486,23 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, 
     );
   });
 
-  it("report page uses the shared resolveCurrencyAuthority helper (not local reimplementation)", () => {
+  it("report page does NOT call resolveCurrencyAuthority or query override/ledger directly (uses canonical resolver)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      src.includes("resolveCurrencyAuthority"),
-      "report page must import and call resolveCurrencyAuthority from the shared helper",
+      !src.includes("resolveCurrencyAuthority"),
+      "report page must NOT import or call resolveCurrencyAuthority — uses canonical resolver via getFinalSubmissionReadiness",
     );
-    // Must NOT contain local override/ledger queries (reimplemented logic)
     assert.ok(
       !src.includes("tenderMetadataOverride.findFirst"),
-      "report page must NOT query tenderMetadataOverride directly (use shared helper)",
+      "report page must NOT query tenderMetadataOverride directly",
     );
     assert.ok(
       !src.includes("tenderFactsLedger.findFirst"),
-      "report page must NOT query tenderFactsLedger directly (use shared helper)",
+      "report page must NOT query tenderFactsLedger directly",
+    );
+    assert.ok(
+      src.includes("getFinalSubmissionReadiness"),
+      "report page must call getFinalSubmissionReadiness (which uses the canonical resolver)",
     );
   });
 
@@ -573,11 +576,15 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, 
     );
   });
 
-  it("report page adds CURRENCY_UNVERIFIED blocker when currency is unverified", () => {
+  it("report page does NOT call resolveCurrencyAuthority (uses canonical resolver via getFinalSubmissionReadiness)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      /currencyAuthority\.blocker/.test(src),
-      "report page must add the shared helper's blocker object to canonicalBlockers",
+      !src.includes("resolveCurrencyAuthority"),
+      "report page must NOT import or call resolveCurrencyAuthority — uses canonical resolver via getFinalSubmissionReadiness",
+    );
+    assert.ok(
+      !src.includes("currency-authority"),
+      "report page must NOT import from currency-authority module",
     );
   });
 
@@ -729,53 +736,50 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 4 — real persistence-path zero-row pr
 // ─── Item 1 (recheck 7): Helper integrated into getFinalSubmissionReadiness ─
 
 describe("[SCREENSHOT-EXPORT-003] Item 1 (recheck 7) — helper integrated into canonical readiness", () => {
-  it("getFinalSubmissionReadiness imports and calls resolveCurrencyAuthority", () => {
+  it("getFinalSubmissionReadiness does NOT import or call resolveCurrencyAuthority (uses canonical resolver)", () => {
     const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
     assert.ok(
-      src.includes("import { resolveCurrencyAuthority } from \"./currency-authority\""),
-      "getFinalSubmissionReadiness must import resolveCurrencyAuthority from currency-authority",
+      !src.includes("resolveCurrencyAuthority"),
+      "getFinalSubmissionReadiness must NOT import or call resolveCurrencyAuthority — the canonical field resolver (resolveCanonicalFieldState) already handles currency",
     );
     assert.ok(
-      src.includes("resolveCurrencyAuthority("),
-      "getFinalSubmissionReadiness must call resolveCurrencyAuthority() inside the function",
+      src.includes("resolveCanonicalFieldState"),
+      "getFinalSubmissionReadiness must use resolveCanonicalFieldState (which includes currency in its field list)",
     );
   });
 
-  it("getFinalSubmissionReadiness pushes the currency blocker into tenderLevelBlockers", () => {
+  it("getFinalSubmissionReadiness handles currency via canonicalExportState.hasExportBlocker", () => {
     const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
     assert.ok(
-      /currencyAuthority\.isUnverified && currencyAuthority\.blocker/.test(src.replace(/\s+/g, " ")),
-      "getFinalSubmissionReadiness must check currencyAuthority.isUnverified and push currencyAuthority.blocker",
+      src.includes("canonicalExportState.hasExportBlocker"),
+      "getFinalSubmissionReadiness must check canonicalExportState.hasExportBlocker (which includes currency)",
     );
     assert.ok(
-      /tenderLevelBlockers\.push\(currencyAuthority\.blocker\)/.test(src),
-      "getFinalSubmissionReadiness must push currencyAuthority.blocker into tenderLevelBlockers",
+      src.includes("TENDER_FACTS_INVALID"),
+      "getFinalSubmissionReadiness must push TENDER_FACTS_INVALID when canonicalExportState has export blockers (covers currency)",
     );
   });
 
-  it("getFinalSubmissionReadiness fails closed on currency authority errors (no .catch(() => null))", () => {
+  it("getFinalSubmissionReadiness does not have a separate currency authority call that can fail open", () => {
     const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
-    // Per recheck 8 item 1: must NOT use .catch(() => null) — that fails open
+    // No separate currency authority call exists — currency is handled by
+    // the canonical resolver which is already part of the readiness check.
+    // There is no .catch(() => null) on a currency-specific call.
     assert.ok(
-      !/resolveCurrencyAuthority.*\.catch\(\(\) => null\)/.test(src),
-      "getFinalSubmissionReadiness must NOT .catch(() => null) on resolveCurrencyAuthority — fails open",
-    );
-    // Must push CURRENCY_AUTHORITY_UNAVAILABLE when isUnavailable
-    assert.ok(
-      /currencyAuthority\.isUnavailable && currencyAuthority\.blocker/.test(src.replace(/\s+/g, " ")),
-      "getFinalSubmissionReadiness must check currencyAuthority.isUnavailable and push the unavailable blocker",
+      !/resolveCurrencyAuthority/.test(src),
+      "getFinalSubmissionReadiness must NOT call resolveCurrencyAuthority — no separate fail-open path",
     );
   });
 
-  it("the currency check runs BEFORE the ok computation", () => {
+  it("canonical field resolver (which includes currency) runs BEFORE the ok computation", () => {
     const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
-    const currencyPos = src.indexOf("resolveCurrencyAuthority(");
+    const resolverPos = src.indexOf("resolveCanonicalFieldState(");
     const okPos = src.indexOf("const ok = readiness.ok");
-    assert.ok(currencyPos > 0, "resolveCurrencyAuthority call must exist");
+    assert.ok(resolverPos > 0, "resolveCanonicalFieldState call must exist");
     assert.ok(okPos > 0, "ok computation must exist");
     assert.ok(
-      currencyPos < okPos,
-      "currency authority check must run BEFORE the ok computation so the blocker affects ok",
+      resolverPos < okPos,
+      "canonical field resolver (which includes currency) must run BEFORE the ok computation",
     );
   });
 });
