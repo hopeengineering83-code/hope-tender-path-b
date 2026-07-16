@@ -267,7 +267,7 @@ export default async function DashboardPage() {
                   <li key={log.id} className="flex gap-3">
                     <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-slate-800 leading-normal">{log.description}</p>
+                      <p className="text-xs font-medium text-slate-800 leading-normal line-clamp-2">{log.description}</p>
                       <p className="text-[10px] text-slate-400 mt-1">
                         {new Date(log.createdAt).toLocaleDateString()} · {log.action}
                       </p>

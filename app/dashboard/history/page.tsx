@@ -79,7 +79,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
                 <th className="px-5 py-3 font-medium hidden lg:table-cell">Files</th>
                 <th className="px-5 py-3 font-medium hidden lg:table-cell">Docs</th>
                 <th className="px-5 py-3 font-medium hidden md:table-cell">Created</th>
-                <th className="px-5 py-3 font-medium">Actions</th>
+                <th className="px-5 py-3 font-medium whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -100,7 +100,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
                     </td>
                     <td className="px-5 py-3 text-slate-400 text-xs hidden md:table-cell">{formatDate(t.createdAt)}</td>
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Link href={`/dashboard/tenders/${t.id}`} className="text-xs text-blue-600 hover:underline">Open</Link>
                         <DuplicateButton tenderId={t.id} />
                       </div>

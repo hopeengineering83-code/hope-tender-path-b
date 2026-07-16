@@ -219,6 +219,21 @@ export default async function AnalyticsPage() {
         </p>
       </div>
 
+      {/* SCREENSHOT-R2: Empty state when no tenders exist */}
+      {tenders.length === 0 && (
+        <div className="rounded-2xl border bg-white p-12 text-center shadow-sm">
+          <p className="text-lg font-medium text-slate-700">No tender data yet</p>
+          <p className="mt-2 text-sm text-slate-400">
+            Create a tender and run the engine to see pipeline analytics, quality scores, and AI provider health.
+          </p>
+          <Link href="/dashboard/tenders/new" className="mt-4 inline-block rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
+            + New Tender
+          </Link>
+        </div>
+      )}
+
+      {tenders.length > 0 && (
+        <>
       {/* ── 1. Tender pipeline summary cards ── */}
       <section>
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
@@ -783,6 +798,8 @@ export default async function AnalyticsPage() {
           )}
         </div>
       </section>
+        </>
+      )}
     </div>
   );
 }
