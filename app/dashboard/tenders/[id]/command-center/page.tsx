@@ -13,10 +13,6 @@ import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import {
-  filterFinalExportCandidateDocuments,
-  isExportReady,
-} from "../../../../../lib/engine/document-output-state";
 import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";
@@ -66,22 +62,28 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
   const canonicalReadinessLabel = canonical?.ok ? "Export readiness: OPEN" : `Export readiness: BLOCKED (${canonicalBlockedCount})`;
 
-  // Documents card (Issue #1134 recheck 11 item #1): use the canonical
-  // document-output-state helpers — do NOT create a local status vocabulary.
-  // Three truthful counts:
-  //   - currentGeneratedCount: rows that are final-export candidates
-  //     (isFinalExportCandidateDocument — excludes SUPERSEDED, PLANNED,
-  //     NOT_EXPORTABLE, REPLACE_WITH_ORIGINAL, control records, drafts)
-  //   - exportReadyCount: rows whose canonical output state is READY_FOR_EXPORT
-  //     (isExportReady — requires validation passed + review ready + bytes)
-  //   - canonicalBlockerCount: rows with a canonical document blocker
-  //     (from getFinalSubmissionReadiness documentBlockers)
-  // The card shows exportReadyCount as the value, with a caption that
-  // separates current generated from blocked so the counts cannot contradict.
-  const currentGeneratedDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
-  const currentGeneratedCount = currentGeneratedDocs.length;
-  const exportReadyCount = currentGeneratedDocs.filter((d) => isExportReady(d)).length;
-  const canonicalDocBlockerCount = docReadiness.failures.length;
+  // Documents card (Issue #1134 recheck 12): use ONLY the counts returned by
+  // getFinalSubmissionReadiness(...). Do NOT create a local readiness
+  // projection or filter documents locally.
+  //
+  // Three canonical counts from summary:
+  //   - exportReadyCount: summary.exportReadyDocumentsTotal
+  //     (docs that are GENERATED, not SUPERSEDED/PLANNED, with review status
+  //      matching READY_FOR_EXPORT or APPROVED)
+  //   - finalCandidatesCount: summary.finalExportCandidates
+  //     (docs that are final-export candidates per the canonical helper)
+  //   - documentBlockerCount: summary.documentBlockers
+  //     (canonical document blockers)
+  //
+  // When canonical readiness is unavailable (catch returned null), fail
+  // closed: show 0 for all counts with a "canonical readiness unavailable"
+  // caption.
+  const exportReadyCount = canonical?.summary.exportReadyDocumentsTotal ?? 0;
+  const finalCandidatesCount = canonical?.summary.finalExportCandidates ?? 0;
+  const documentBlockerCount = canonical?.summary.documentBlockers ?? 0;
+  const documentsCaption = canonical
+    ? `${finalCandidatesCount} final candidates · ${documentBlockerCount} blocked`
+    : "Canonical readiness unavailable";
 
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
     where: { tenderId: id },
@@ -200,7 +202,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
         <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
         <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
-        <StatCard title="Documents" value={exportReadyCount} caption={`${currentGeneratedCount} generated · ${canonicalDocBlockerCount} blocked`} />
+        <StatCard title="Documents" value={exportReadyCount} caption={documentsCaption} />
         <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Objections open" : "No HIGH objections"} highlight={openHigh.length > 0} />
       </section>
 

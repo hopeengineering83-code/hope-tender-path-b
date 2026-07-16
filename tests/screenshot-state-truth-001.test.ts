@@ -862,18 +862,24 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(ccSrc, /No HIGH objections/);
     });
 
-    it("command center Documents card uses canonical helpers (not local status vocabulary)", () => {
+    it("command center Documents card reads ONLY canonical summary values (no local filtering)", () => {
       const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-      // Must import and use the canonical document-output-state helpers.
-      assert.match(ccSrc, /from ["']\.\.\/.+lib\/engine\/document-output-state["']/);
-      assert.match(ccSrc, /filterFinalExportCandidateDocuments/);
-      assert.match(ccSrc, /isExportReady/);
+      // Must use ONLY the counts from getFinalSubmissionReadiness summary.
+      assert.match(ccSrc, /summary\.exportReadyDocumentsTotal/);
+      assert.match(ccSrc, /summary\.finalExportCandidates/);
+      assert.match(ccSrc, /summary\.documentBlockers/);
+      // Must NOT import or use local document filtering helpers.
+      assert.doesNotMatch(ccSrc, /from ["']\.\.\/.+lib\/engine\/document-output-state["']/);
+      assert.doesNotMatch(ccSrc, /filterFinalExportCandidateDocuments/);
+      assert.doesNotMatch(ccSrc, /isExportReady/);
       // Must NOT use a local ACTIVE_DOC_STATUSES vocabulary.
       assert.doesNotMatch(ccSrc, /ACTIVE_DOC_STATUSES/);
-      // Must show three truthful counts: exportReadyCount, currentGeneratedCount, canonicalDocBlockerCount.
-      assert.match(ccSrc, /exportReadyCount/);
-      assert.match(ccSrc, /currentGeneratedCount/);
-      assert.match(ccSrc, /canonicalDocBlockerCount/);
+      // Must label the second count "final candidates" (not "generated").
+      assert.match(ccSrc, /final candidates/);
+      assert.doesNotMatch(ccSrc, /\d+ generated/);
+      // Must fail closed when canonical is unavailable.
+      assert.match(ccSrc, /Canonical readiness unavailable/);
+      assert.match(ccSrc, /canonical\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
     });
 
     it("command center AI jobs section is labelled 'Historical' (not current state)", () => {
