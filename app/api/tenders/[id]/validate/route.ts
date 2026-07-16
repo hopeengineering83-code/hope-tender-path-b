@@ -5,6 +5,8 @@ import { checkFullExportReadiness, checkFullExportReadinessWithQualityGate } fro
 import { buildTenderDocumentContext } from "../../../../../lib/document-generation/tender-document-context";
 import { logAction } from "../../../../../lib/audit";
 import { childLogger } from "../../../../../lib/observability";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -108,6 +110,19 @@ export async function POST(
       logger.warn(`quality-gate check failed, falling back to base readiness: ${err instanceof Error ? err.message : String(err)}`);
       return checkFullExportReadiness({ tenderId: id, docs, requireFileContent: false });
     });
+    const finalPackage = await getFinalPackageReadinessModel(prisma, id, actor.id);
+    const packageBlockers = [
+      ...finalPackage.documents.blockers,
+      ...finalPackage.export.blockers,
+    ];
+    const envelope = buildPublicReadinessEnvelope({
+      ok: readiness.ok && finalPackage.export.zipReady,
+      blockers: packageBlockers,
+      warnings: readiness.advisoryWarnings ?? [],
+      requiredDocumentsTotal: finalPackage.documents.required.length,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    });
 
     const validationResults = {
       documentCount: docs.length,
@@ -119,6 +134,7 @@ export async function POST(
       })),
       tenderLevelBlockers: readiness.tenderLevelBlockers ?? [],
       advisoryWarnings: readiness.advisoryWarnings ?? [],
+      packageBlockers: envelope.blockers,
     };
 
     // Log the validation action
@@ -136,12 +152,12 @@ export async function POST(
       },
     }).catch((err) => logger.warn(`failed to log action: ${err}`));
 
-    if (!readiness.ok) {
+    if (!envelope.ok) {
       return NextResponse.json(
         {
-          ok: false,
+          ...envelope,
           success: false,
-          error: `Validation found ${readiness.failures.length} document issue(s) and ${readiness.tenderLevelBlockers?.length ?? 0} tender-level blocker(s).`,
+          error: `Validation found ${readiness.failures.length} document issue(s) and ${envelope.blockers.length} package blocker(s).`,
           ...validationResults,
         },
         { status: 422 }
@@ -149,7 +165,7 @@ export async function POST(
     }
 
     return NextResponse.json({
-      ok: true,
+      ...envelope,
       success: true,
       message: "All documents validated successfully.",
       ...validationResults,

@@ -3,6 +3,8 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resultFromRunRow } from "../../../../../lib/engine/tender-workflow-runner";
 import { buildFinalPackageManifest } from "../../../../../lib/engine/final-package-manifest";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 
 export const dynamic = "force-dynamic";
 
@@ -69,18 +71,33 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     generationStatus: doc.generationStatus,
   })));
 
+  const finalPackage = await getFinalPackageReadinessModel(prisma, tenderId, actor.id);
+  const blockers = [
+    ...manifest.blockers,
+    ...finalPackage.documents.blockers,
+    ...finalPackage.export.blockers,
+    ...fileIntegrityProblems.map((p) => `${p.filename ?? p.documentId}: ${p.problem}`),
+  ];
+  const envelope = buildPublicReadinessEnvelope({
+    ok: manifest.ok && finalPackage.export.zipReady,
+    blockers,
+    warnings: manifest.warnings,
+    primaryFixAction: blockers.length > 0 ? "Resolve final package blockers before export." : null,
+    requiredDocumentsTotal: finalPackage.documents.required.length,
+    generatedDocumentsTotal: finalPackage.documents.generated.length,
+    exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+  });
+
   return NextResponse.json({
-    ok: true,
+    ...envelope,
     operation: "WORKFLOW_STATUS",
     tenderId,
     latestRuns: runs.map(resultFromRunRow),
     recoverableFailures: runs.filter((run) => run.status === "FAILED").map((run) => ({ runId: run.id, operation: run.operation, errorCode: run.errorCode, nextAction: "Retry with a new idempotency key after reviewing blockers." })),
     staleGeneratedDocuments: tender.generatedDocuments.filter((doc) => doc.generationStatus === "STALE").map((doc) => ({ documentId: doc.id, filename: doc.exactFileName ?? doc.name })),
-    finalPackageReadiness: { ok: manifest.ok, blockers: manifest.blockers, warnings: manifest.warnings, latestPackageStatus: tender.exportPackages[0]?.status ?? null },
+    finalPackageReadiness: { ok: manifest.ok && finalPackage.export.zipReady, blockers, warnings: manifest.warnings, latestPackageStatus: tender.exportPackages[0]?.status ?? null },
     fileIntegrityProblems,
     providerFailureSummary: runs.filter((run) => run.errorCode === "PROVIDER_FAILURE").map((run) => ({ runId: run.id, operation: run.operation, status: run.status, recoverable: true })),
-    warnings: manifest.warnings,
-    blockers: [...manifest.blockers, ...fileIntegrityProblems.map((p) => `${p.filename ?? p.documentId}: ${p.problem}`)],
     recoverable: true,
   });
 }

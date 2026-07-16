@@ -13,6 +13,8 @@ import { detectMetadataContamination } from "../../../../lib/engine/tender-metad
 import { getCachedPartialJobInfo, setCachedPartialJobInfo, invalidateDashboardCache } from "../../../../lib/dashboard-cache";
 import { Prisma } from "@prisma/client";
 import { executeTenderDeletion } from "../../../../lib/tender/delete-tender";
+import { buildPublicReadinessEnvelope } from "../../../../lib/engine/public-readiness-envelope";
+import { getFinalPackageReadinessModel } from "../../../../lib/engine/final-package-readiness-model";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -173,7 +175,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const aiAnalyzeCheckpointProgress = await getLatestAnalyzeCheckpointProgress(id, userId).catch(() => null);
     const payload = await withDashboardPayload(tender as any);
-    return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo, aiAnalyzeCheckpointProgress });
+    const finalPackage = await getFinalPackageReadinessModel(prisma, id, userId);
+    const detailBlockers = [
+      ...finalPackage.documents.blockers,
+      ...finalPackage.export.blockers,
+    ];
+    const envelope = buildPublicReadinessEnvelope({
+      ok: finalPackage.export.zipReady,
+      blockers: detailBlockers,
+      warnings: [],
+      primaryFixAction: detailBlockers.length > 0 ? "OPEN_EXPORT_READINESS" : null,
+      requiredDocumentsTotal: finalPackage.documents.required.length,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    });
+    return NextResponse.json({
+      ...envelope,
+      ...payload,
+      latestPartialAnalysisJob: partialJobInfo,
+      aiAnalyzeCheckpointProgress,
+    });
   } catch (error) {
     logger.error("[GET /api/tenders/[id]] failed:", { detail: error });
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });

@@ -75,6 +75,67 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-16 UTC — Codex (GPT-5.6 Sol), screenshot follow-up
+
+- **Mode:** requested app screenshot download/capture follow-up; no application code or visual component changed.
+- **Branch / PR:** `fix/pr1128-route-truth-audit` / replacement PR metadata refreshed after commit.
+- **Scope:** Attempted production download through shell and web fetch, local 800×1280 Playwright capture, Playwright Chromium installation, system-browser discovery, and repository/history screenshot discovery. Added the reproducible evidence and honest capture limitation to `docs/audits/pr-1128-route-truth-audit.md`.
+- **Files changed:** `docs/audits/pr-1128-route-truth-audit.md`, `operator_handoff.md` only.
+- **Checks actually run:** local `npm run dev` PASS and served on `127.0.0.1:3000`; production `curl` FAIL/WARN with outbound-proxy HTTP 403; web fetch FAIL/WARN with HTTP 401; Playwright launch FAIL/WARN because Chromium was absent; `npx playwright install chromium` FAIL/WARN after five CDN HTTP 403 responses; system browser search and complete Git/working-tree image search found no browser or existing screenshot.
+- **Known risks / assumptions:** No app screenshot can be truthfully produced in this runner. An authenticated seeded deployment and a runner with Chromium are still required to capture panel state; synthetic mock imagery must not be represented as runtime evidence.
+- **Next action:** Run the 800×1280 Playwright capture in CI or another browser-enabled runner and attach the resulting authenticated tender-detail screenshots to the PR.
+- **Merge status:** unchanged — unsafe until DB-backed route verification and real browser evidence pass.
+
+### 2026-07-16 UTC — Codex (GPT-5.6 Sol)
+
+- **Mode:** line-by-line corrective audit of local PR #1128 commit and route-driven production-safety hardening.
+- **Branch / PR:** `fix/pr1128-route-truth-audit` / replacement PR pending creation.
+- **Scope:** Audited the complete local `39ea6d19` diff; made the current confirmed Build Plan authoritative for package scope; blocked generation/export without confirmation; unified canonical package counts across lifecycle, score, generation, export, workflow, and detail routes; brought authority review and document validation under the same package truth; allowlisted and sanitized the public readiness envelope; added deterministic final-package and route-contract regressions; documented the before/after audit and the unavailable private PR screenshots.
+- **Files changed:** `app/api/tenders/[id]/authority-review/route.ts`, `app/api/tenders/[id]/export-readiness/route.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `app/api/tenders/[id]/lifecycle/route.ts`, `app/api/tenders/[id]/readiness-score/route.ts`, `app/api/tenders/[id]/route.ts`, `app/api/tenders/[id]/validate/route.ts`, `lib/engine/final-package-readiness-model.ts`, `lib/engine/public-readiness-envelope.ts`, `tests/final-package-readiness-model.test.ts`, `tests/route-driven-workflow-truth-verification.test.ts`, `docs/audits/pr-1128-route-truth-audit.md`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsc --noEmit` PASS; targeted route/model/authority tests PASS (45); relevant readiness regression batch PASS (98); `npm run lint` PASS with 32 pre-existing warnings and zero errors; `npm test` executed 6,885 tests with 6,877 passing and only the eight mandatory DB integration guards failing because `RUN_DB_INTEGRATION=true` and PostgreSQL were unavailable; production `npm run build` PASS with development-safe environment stubs and expected optional provider/Sentry/cron warnings.
+- **CI / screenshots:** GitHub state, inline comments, CI artifacts, and PR #1128 screenshot attachments could not be downloaded because this checkout has no remote/GitHub credentials and unauthenticated access returned 401/403. No visual files or components changed, and no preview was created.
+- **Known risks / assumptions:** The deterministic route/model path is covered, but the real DB-backed handler scenarios remain unexecuted locally. The replacement PR must not merge until an isolated seeded PostgreSQL run executes `RUN_DB_INTEGRATION=true` and records the real route payload matrix.
+- **Next action:** Run the DB integration suites in CI and attach sanitized route-response evidence for all five scenarios before review approval.
+- **Merge status:** unsafe until DB-backed route verification passes; otherwise implementation checks pass.
+
+### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** continued route-driven truth fixes after follow-up review.
+- **Branch / PR:** `fix/route-driven-workflow-truth-verification` / PR pending update.
+- **Scope:** Fixed two remaining public-envelope correctness gaps: explicit `PARTIAL` status no longer leaves `ok=true`, and generation-readiness now counts extracted requirements and PLANNED document rows in `requiredDocumentsTotal` even before a confirmed Build Plan exists. Added regression coverage for both.
+- **Files changed:** `lib/engine/public-readiness-envelope.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `tests/route-driven-workflow-truth-verification.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/route-driven-workflow-truth-verification.test.ts` PASS; `npx tsc --noEmit` PASS; `npx tsx --test tests/route-driven-workflow-truth-verification.test.ts tests/route-driven-workflow-truth-db-integration.test.ts` PASS with DB suite skipped because `RUN_DB_INTEGRATION` was not set; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected optional-provider/Sentry/cron warnings.
+- **Known risks / assumptions:** Real DB route suite remains unexecuted in this environment; run with `RUN_DB_INTEGRATION=true` and isolated PostgreSQL before merge.
+- **Next action:** Run DB-backed route truth and full CI; inspect real payloads for all five scenarios.
+- **Merge status:** not reviewed — do not merge until DB-backed route integration passes.
+
+
+### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** deep follow-up on route-driven workflow truth verification after review feedback.
+- **Branch / PR:** `fix/route-driven-workflow-truth-verification` / PR pending update.
+- **Scope:** Replaced ad-hoc per-route envelope shaping with shared `lib/engine/public-readiness-envelope.ts`; strengthened `tests/route-driven-workflow-truth-verification.test.ts` to execute the shared envelope and agreement checks instead of only static/fabricated payload assertions; added optional guarded `tests/route-driven-workflow-truth-db-integration.test.ts` that runs real authenticated route handlers when `RUN_DB_INTEGRATION=true`; fixed workflow-status to use `getFinalPackageReadinessModel()` for required/generated/export-ready counts instead of manifest-only generated rows.
+- **Files changed:** `lib/engine/public-readiness-envelope.ts`, `app/api/tenders/[id]/lifecycle/route.ts`, `app/api/tenders/[id]/readiness-score/route.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `app/api/tenders/[id]/export-readiness/route.ts`, `app/api/tenders/[id]/workflow-status/route.ts`, `app/api/tenders/[id]/route.ts`, `tests/route-driven-workflow-truth-verification.test.ts`, `tests/route-driven-workflow-truth-db-integration.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsc --noEmit` PASS; `npx tsx --test tests/route-driven-workflow-truth-verification.test.ts tests/route-driven-workflow-truth-db-integration.test.ts` PASS with DB suite skipped because `RUN_DB_INTEGRATION` was not set; `npm run lint` FAIL/WARN due existing ESLint 9 flat-config CLI incompatibility with script `--ext`; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected optional-provider/Sentry/cron warnings.
+- **Real contradictions/gaps fixed:** workflow-status counts were still manifest-only and could show required/export-ready agreement based only on generated manifest rows; all routes now delegate to one shared envelope that fails closed when blockers exist. The DB integration test path now exists but is intentionally skipped without `RUN_DB_INTEGRATION=true`.
+- **Known risks / assumptions:** The real DB route suite was not executed here because no reachable isolated PostgreSQL was configured; run it in CI or a local DB with `RUN_DB_INTEGRATION=true` before merge.
+- **Next action:** Run the new DB route test plus the full DB integration suite against a seeded test database and inspect real route JSON for the five scenarios.
+- **Merge status:** not reviewed — do not merge until DB-backed route integration passes.
+
+
+### 2026-07-10 UTC — ChatGPT (GPT-5.5)
+
+- **Mode:** route-driven workflow truth verification for tender readiness payloads.
+- **Branch / PR:** `fix/route-driven-workflow-truth-verification` / PR pending.
+- **Scope:** Added a route-contract regression suite and normalized panel-facing readiness payloads for lifecycle, readiness-score, generation-readiness, export-readiness, workflow-status, and tender detail so each route exposes `ok/status`, `blockers[]`, `warnings[]`, `primaryBlockerReason`, `primaryFixAction`, and required/generated/export-ready document counts.
+- **Files changed:** `app/api/tenders/[id]/lifecycle/route.ts`, `app/api/tenders/[id]/readiness-score/route.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `app/api/tenders/[id]/export-readiness/route.ts`, `app/api/tenders/[id]/workflow-status/route.ts`, `app/api/tenders/[id]/route.ts`, `tests/route-driven-workflow-truth-verification.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** `npx tsx --test tests/route-driven-workflow-truth-verification.test.ts` PASS; `npx tsc --noEmit` PASS; `npm run lint` FAIL/WARN due existing ESLint 9 flat-config CLI incompatibility with script `--ext`; `npm test` FAIL/WARN because DB-gated suites require `RUN_DB_INTEGRATION=true` (several fatal guards including AI promotion/build-plan/metadata evidence integration tests); `npm run build` without env FAIL/WARN due missing required env; `DATABASE_URL='postgresql://user:pass@localhost:5432/db' SESSION_SECRET='12345678901234567890123456789012' ZAI_API_KEY='dummy-not-real-key-for-build' npm run build` PASS with expected optional-provider/Sentry/cron warnings.
+- **Real contradictions found:** Public route payloads did not consistently expose the same truth fields before this change: generation-readiness lacked top-level `ok/status` and document counts, export-readiness buried blockers/counts under `exportReadiness`, readiness-score lacked top-level blocker arrays, workflow-status always returned `ok: true` even when manifest/file blockers existed, and tender detail had no route-level readiness envelope.
+- **Known risks / assumptions:** The new route-level suite is deterministic/mocked and static-contract based; full DB-backed route execution remains guarded by repo integration-test requirements and was not run in this environment.
+- **Next action:** Run DB integration with `RUN_DB_INTEGRATION=true` against a real test PostgreSQL and verify actual seeded route responses before merge.
+- **Merge status:** not reviewed — do not merge until DB-backed route integration and CI pass.
+
+
 ### 2026-07-10 UTC — Claude Code
 
 - **Mode:** production release-acceptance suite (branch `fix/e2e-release-acceptance-and-output-quality`, PR #1017; superseded `perfect/*` #1016 which failed the controlled-route branch-name check). Scoped to gaps NOT covered by open PRs #1012 (metadata-wording/error sanitization), #1013 (UI contradictions/panels/icons), #1014 (guardrail audits + docs/RELEASE_GUARDRAILS.md). Avoided all their files; only NEW test files + a distinct doc added.

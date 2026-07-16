@@ -23,6 +23,8 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -40,12 +42,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     await prismaReady;
     const { id } = await params;
 
-    const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id });
+    const [readiness, finalPackage] = await Promise.all([
+      getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id }),
+      getFinalPackageReadinessModel(prisma, id, actor.id),
+    ]);
     if (!readiness) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+
+    const envelope = buildPublicReadinessEnvelope({
+      ok: readiness.ok,
+      blockers: [...readiness.documentBlockers, ...readiness.tenderLevelBlockers],
+      warnings: readiness.advisoryWarnings,
+      primaryBlockerReason: readiness.summary.primaryBlockerReason,
+      primaryFixAction: readiness.summary.primaryFixAction,
+      requiredDocumentsTotal: finalPackage.documents.required.length,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    });
 
     return NextResponse.json({
       success: true,
-      ok: readiness.ok,
+      ...envelope,
       score: readiness.summary.readinessScore,
       severity: readiness.summary.readinessScore >= 80 ? "READY" : readiness.summary.readinessScore >= 50 ? "PARTIAL" : "BLOCKED",
       capReason: readiness.summary.readinessCapReason,
@@ -80,10 +96,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         // ── Canonical required-document model ───────────────────────────
         // These fields give the widget a single consistent source of truth
         // for required-doc counts, eliminating the 0/0 bug.
-        requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
-        exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
+        requiredDocumentsTotal: finalPackage.documents.required.length,
+        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
         plannedRequiredDocuments: readiness.summary.ungeneratedPlannedRequired,
-        generatedDocumentsTotal: readiness.summary.finalExportCandidates,
+        generatedDocumentsTotal: finalPackage.documents.generated.length,
         totalBlockers: readiness.summary.totalBlockers,
         primaryBlockerReason: readiness.summary.primaryBlockerReason,
         primaryFixAction: readiness.summary.primaryFixAction,

@@ -9,6 +9,7 @@ import {
   type DocumentOutputState,
 } from "./document-output-state";
 import { buildSubmissionPlanWithDerivedFallback, submissionPlanFileKey, type SubmissionEnvelope, type SubmissionPlanFile } from "./submission-plan";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -89,6 +90,10 @@ export type FinalZipManifest = {
 
 export type FinalPackageReadinessModel = {
   tenderId: string;
+  buildPlan: {
+    confirmed: boolean;
+    blocker: string | null;
+  };
   requirementEvidenceStatuses: RequirementEvidenceStatus[];
   projectMatchSummary: {
     selectedReviewed: number;
@@ -354,6 +359,27 @@ export function deriveRequiredPackageDocuments(tender: { id: string; requirement
       priority: req.priority ?? "OPTIONAL",
     })),
   });
+  return mapPlanFilesToPackageDocuments(plan.files, generated);
+}
+
+function buildPlanItemsAsSubmissionFiles(items: BuildPlanItem[]): SubmissionPlanFile[] {
+  return items.map((item) => ({
+    canonicalId: item.canonicalId,
+    exactFileName: item.exactFileName,
+    exactOrder: item.exactOrder,
+    documentType: item.documentType,
+    required: item.required,
+    format: item.format,
+    envelope: item.envelope,
+    sourceRequirementIds: item.sourceRequirementIds,
+    templateSourceFileId: item.templateSourceFileId,
+    brandingAllowed: item.brandingAllowed,
+    signatureAllowed: item.signatureAllowed,
+    stampAllowed: item.stampAllowed,
+  }));
+}
+
+function mapPlanFilesToPackageDocuments(files: SubmissionPlanFile[], generated: GeneratedDocLike[]): PlannedPackageDocument[] {
   const docsByKey = new Map<string, GeneratedDocLike[]>();
   for (const doc of generated) {
     const key = keyForDocument(doc);
@@ -363,7 +389,7 @@ export function deriveRequiredPackageDocuments(tender: { id: string; requirement
     docsByKey.set(key, docs);
   }
 
-  return plan.files.map((file) => {
+  return files.map((file) => {
     const key = submissionPlanFileKey(file.exactFileName);
     const doc = chooseBestGeneratedDocument(docsByKey.get(key) ?? []);
     const derived = plannedStatusFor(doc, file);
@@ -537,8 +563,11 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
   });
   if (!tender) throw new Error("Tender not found");
 
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
   const requirementEvidenceStatuses = mapRequirementsToEvidence(tender.requirements, tender.expertMatches, tender.projectMatches);
-  const planned = deriveRequiredPackageDocuments(tender, tender.generatedDocuments);
+  const planned = confirmedPlan.ok
+    ? mapPlanFilesToPackageDocuments(buildPlanItemsAsSubmissionFiles(confirmedPlan.items), tender.generatedDocuments)
+    : deriveRequiredPackageDocuments(tender, tender.generatedDocuments);
   const generated = mapGeneratedDocumentsToSubmissionPlan(tender.generatedDocuments, planned);
   const missingRequired = detectMissingRequiredDocuments(planned);
   const extraGeneratedOutsidePlan = detectDocumentsOutsidePlan(generated);
@@ -546,14 +575,24 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
   const documentBlockers = buildDocumentBlockers(planned);
   const requirementBlockers = buildRequirementBlockers(requirementEvidenceStatuses);
   const manifest = buildFinalZipManifestFromModel(tenderId, planned, generated);
-  const exportBlockers: FinalPackageBlocker[] = manifest.missingRequiredFiles.map((name) => ({
+  const buildPlanBlockers: FinalPackageBlocker[] = confirmedPlan.ok ? [] : [{
     area: "export",
-    code: "FINAL_ZIP_FILE_NOT_READY",
-    title: name,
-    documentName: name,
-    reason: `${name} is missing, duplicate, wrong format, zero-byte, or unapproved.`,
-    nextAction: "Resolve the document blocker and re-check final ZIP readiness.",
-  }));
+    code: "NO_CONFIRMED_BUILD_PLAN",
+    title: "No confirmed Build Plan",
+    reason: confirmedPlan.blocker ?? "No confirmed Build Plan exists.",
+    nextAction: "Build and confirm the submission plan before generation or export.",
+  }];
+  const exportBlockers: FinalPackageBlocker[] = [
+    ...buildPlanBlockers,
+    ...manifest.missingRequiredFiles.map((name) => ({
+      area: "export",
+      code: "FINAL_ZIP_FILE_NOT_READY",
+      title: name,
+      documentName: name,
+      reason: `${name} is missing, duplicate, wrong format, zero-byte, or unapproved.`,
+      nextAction: "Resolve the document blocker and re-check final ZIP readiness.",
+    } as FinalPackageBlocker)),
+  ];
 
   const selectedProjects = tender.projectMatches.filter((match: MatchLike) => match.isSelected);
   const reviewedSelectedProjects = selectedReviewedProjects(tender.projectMatches);
@@ -561,7 +600,7 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
   const belowThresholdSelectedProjects = selectedProjects.filter((match: MatchLike) => Number(match.score ?? 0) < 90).length;
   const blockerCount = requirementBlockers.length + documentBlockers.length + exportBlockers.length;
   const status = deriveSummaryStatus({
-    manifestReady: manifest.ready,
+    manifestReady: manifest.ready && confirmedPlan.ok,
     missingRequired: missingRequired.length,
     documentBlockers: documentBlockers.length,
     requirementBlockers: requirementBlockers.length,
@@ -570,6 +609,10 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
 
   return {
     tenderId,
+    buildPlan: {
+      confirmed: confirmedPlan.ok,
+      blocker: confirmedPlan.ok ? null : confirmedPlan.blocker,
+    },
     requirementEvidenceStatuses,
     projectMatchSummary: {
       selectedReviewed: reviewedSelectedProjects,
@@ -616,8 +659,8 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
       blockers: documentBlockers,
     },
     export: {
-      ready: manifest.ready,
-      zipReady: manifest.ready,
+      ready: manifest.ready && confirmedPlan.ok,
+      zipReady: manifest.ready && confirmedPlan.ok,
       pdfRequired: pdfRequirements.pdfRequired,
       pdfConversionAvailable: pdfRequirements.pdfConversionAvailable,
       requiredPdfMissing: pdfRequirements.requiredPdfMissing,

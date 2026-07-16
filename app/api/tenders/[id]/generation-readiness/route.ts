@@ -4,8 +4,9 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../../../../../lib/tender-generation-readiness-strict";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
-import { safeParseJsonArray } from "../../../../../lib/safe-json";
 import { randomUUID } from "node:crypto";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 
 export const dynamic = "force-dynamic";
 
@@ -20,22 +21,23 @@ export async function GET(
 
   try {
     await prismaReady;
-    const [readiness, tender] = await Promise.all([
+    const [readiness, tender, finalPackage] = await Promise.all([
       getTenderGenerationReadinessStrict(prisma, userId, tenderId),
       prisma.tender.findFirst({
         where: { id: tenderId, userId },
-        select: { notes: true, exactFileNaming: true, exactFileOrder: true, _count: { select: { requirements: true } } },
+        select: { notes: true, _count: { select: { requirements: true } } },
       }),
+      getFinalPackageReadinessModel(prisma, tenderId, userId),
     ]);
     if (!readiness || !tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-    // Canonical submission-plan check: block full proposal when requirements
-    // exist but no submission plan has been built (exactFileNaming is empty/null
-    // and no per-requirement exactFileName entries exist).
-    const planEntries = safeParseJsonArray(tender.exactFileNaming);
-    const orderEntries = safeParseJsonArray(tender.exactFileOrder);
-    const submissionPlanBuilt = (Array.isArray(planEntries) && planEntries.length > 0) || (Array.isArray(orderEntries) && orderEntries.length > 0);
-    const requirementsExist = (tender._count.requirements ?? 0) > 0;
+    // Legacy exact-file fields are not release authority.
+    // Only a current, hash-verified CONFIRMED BuildPlan can authorize full
+    // proposal generation.
+    const submissionPlanBuilt = finalPackage.buildPlan.confirmed;
+    const requiredDocumentsTotal = Math.max(finalPackage.documents.required.length, tender._count.requirements ?? 0);
+    const generatedDocumentsTotal = finalPackage.documents.generated.length;
+    const exportReadyDocumentsTotal = finalPackage.documents.exportReady.length;
 
     // Use the canonical helper which checks both tender.notes AND the
     // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap so a human-approved
@@ -46,10 +48,10 @@ export async function GET(
     const isUnapprovedFallback = analysisSource === "REGEX_FALLBACK_AI_ERROR" || analysisSource === "UNKNOWN";
     const isApprovedFallback = analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
 
-    const submissionPlanBlocker = (!submissionPlanBuilt && requirementsExist && !isUnapprovedFallback)
+    const submissionPlanBlocker = (!submissionPlanBuilt && !isUnapprovedFallback)
       ? [{
-          code: "FULL_PROPOSAL_SUBMISSION_PLAN_MISSING",
-          message: "Full proposal generation is blocked: submission plan has not been built. Run Build Plan to generate the required file list before generating documents.",
+          code: "NO_CONFIRMED_BUILD_PLAN",
+          message: finalPackage.buildPlan.blocker ?? "No confirmed Build Plan exists.",
           nextAction: "BUILD_SUBMISSION_PLAN",
         }]
       : [];
@@ -88,9 +90,19 @@ export async function GET(
 
     const readyForFullProposalFinal = readyForFullProposal && submissionPlanBlocker.length === 0;
 
+    const publicBlockers = [...readiness.blockers, ...fullProposalBlockers];
+    const envelope = buildPublicReadinessEnvelope({
+      ok: readyForFullProposalFinal,
+      blockers: publicBlockers,
+      warnings,
+      requiredDocumentsTotal,
+      generatedDocumentsTotal,
+      exportReadyDocumentsTotal,
+    });
+
     return NextResponse.json({
       ...readiness,
-      warnings,
+      ...envelope,
       fullProposalBlockers,
       supportPackageReady: readyForSupportPackage,
       fullProposalReady: readyForFullProposalFinal,
@@ -122,7 +134,7 @@ export async function GET(
       tenderId,
       diagnosticId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
+      message: error instanceof Error ? error.message : "Non-Error throwable",
     });
     return NextResponse.json({
       error: "Generation readiness panel failed to load.",
