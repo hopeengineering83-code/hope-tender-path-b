@@ -20,10 +20,13 @@ test "$(jq -r '.required_checks[0]' "$CHECKS")" = "worker-exact-head-validation"
 grep -qF 'required-checks.json' "$CONTROLLER"
 grep -qF 'No required checks are configured' "$CONTROLLER"
 grep -qF 'Missing required exact-head check' "$CONTROLLER"
+# Only trusted-app runs count, and the LATEST completed run is selected (blocker 6).
+grep -qF 'TRUSTED_APP_SLUG' "$CONTROLLER"
+grep -qF "run.app?.slug === TRUSTED_APP_SLUG" "$CONTROLLER"
+grep -qF 'completed_at' "$CONTROLLER"
 
 # Simulate the allow-list gate: required check must be present + completed + success;
 # a non-required stale/neutral suite is ignored.
-required="worker-exact-head-validation"
 gate() { # gate <present:1|0> <status> <conclusion> -> PASS|BLOCK
   [ "$1" = "1" ] || { echo BLOCK; return; }
   [ "$2" = "completed" ] || { echo BLOCK; return; }
@@ -36,8 +39,30 @@ for c in failure neutral cancelled skipped stale timed_out action_required; do
   test "$(gate 1 completed "$c")" = BLOCK        # required check not success
 done
 test "$(gate 1 completed success)" = PASS        # required check present + green
-# A non-required suite being stale/neutral does not affect authority (not evaluated).
-test -n "$required"
+
+# Simulate latest-completed-trusted-run selection (blocker 6): a failed first run
+# followed by a successful rerun must PASS (the stale failure does not block); an
+# untrusted-app run is ignored.
+# Runs: name|app|status|completed_at|conclusion
+latest_trusted_conclusion() {
+  printf '%s\n' "$@" \
+    | awk -F'|' '$1=="worker-exact-head-validation" && $2=="github-actions" && $3=="completed" {print $4"|"$5}' \
+    | sort -r | head -1 | cut -d'|' -f2
+}
+r1="worker-exact-head-validation|github-actions|completed|2026-07-16T00:00:00Z|failure"
+r2="worker-exact-head-validation|github-actions|completed|2026-07-16T00:10:00Z|success"
+r3="worker-exact-head-validation|rogue-app|completed|2026-07-16T00:20:00Z|success"
+test "$(latest_trusted_conclusion "$r1" "$r2")" = "success"          # rerun supersedes stale failure
+test "$(latest_trusted_conclusion "$r1")" = "failure"                # only a failed run -> blocks
+test "$(latest_trusted_conclusion "$r3")" = ""                       # untrusted-app run ignored
+
+# --- Coordinator reconciles ONLY from the required-check allow-list (blocker 7) ---
+grep -qF 'required-checks.json' "$COORDINATOR"
+grep -qF 'latestTrusted' "$COORDINATOR"
+if grep -qF "suites.every(s => s.conclusion === 'success')" "$COORDINATOR"; then
+  echo 'coordinator must not require every external suite green'
+  exit 1
+fi
 
 # --- Durable attempt accounting (blocker 5) ---
 grep -qF 'attempt:' "$COORDINATOR"

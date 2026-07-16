@@ -51,6 +51,36 @@ cycle harmlessly, in order, without ever merging worker code or deploying.
 7. **Prove no release side effects.** Confirm no merge to `main`, no production
    deployment, and no production migration occurred at any step.
 
+## Lane labeling and mapping (manager-applied, fail-closed)
+
+Worker validation requires exactly one recognized `lane:<NAME>` label. To prevent a
+worker from selecting a different, weaker recognized lane, the label is applied by
+the manager (CHATGPT-M1), derived from the immutable finding/issue → lane ownership
+mapping in `.github/agents/worker-roster.md`, not chosen by the worker:
+
+| Worker / Issue | Lane label |
+| --- | --- |
+| GLM-A1 — Issue #1134 | `lane:GLM-A1` |
+| GLM-A2 — Issue #1135 | `lane:GLM-A2` |
+| GLM-X1 — Issue #1136 | `lane:GLM-X1` |
+| CHATGPT-C1 — Issue #1137 | `lane:CHATGPT-C1` |
+| CHATGPT-C2 — Issue #1138 | `lane:CHATGPT-C2` |
+| JULES-T1 — test expansion | `lane:JULES-T1` |
+| JULES-U1 — UI/document workflow | `lane:JULES-U1` |
+| JULES-S2 — security regression | `lane:JULES-S2` |
+
+Rules:
+
+- The manager applies exactly one lane label after confirming the PR's finding/branch
+  matches the roster owner. A missing, unrecognized, or multiple lane labels are
+  `NOT_CONFIGURED` and fail closed.
+- The lane's focused required suites are in `.github/release-control/required-suites.json`
+  and are appended to the default suite set; a worker head cannot pass while its
+  assigned lane suites do not execute.
+- CHATGPT-C2's responsive suite requires `e2e/responsive-viewport-matrix.spec.ts`
+  (390/1024/1440). Until that reviewed spec exists it is `NOT_CONFIGURED` and blocks —
+  it never passes without proving each viewport executed.
+
 ## Hard stops
 
 - No worker SHA is incorporated until steps 1–6 pass for that exact head.

@@ -154,16 +154,24 @@ jobs:
             }
             if (requiredChecks.length === 0) throw new Error('No required checks are configured; integration cannot be authorized (fail closed).');
             const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: head, per_page: 100 });
+            const TRUSTED_APP_SLUG = 'github-actions';
             for (const name of requiredChecks) {
-              const matching = runs.filter(run => run.name === name);
-              if (matching.length === 0) throw new Error(`Missing required exact-head check '${name}'.`);
-              for (const run of matching) {
-                // Anything other than completed + success — missing, skipped, neutral,
-                // cancelled, stale, timed_out, action_required, or failure — blocks.
-                if (run.status !== 'completed' || run.conclusion !== 'success') {
-                  throw new Error(`Required exact-head check '${name}' concluded '${run.conclusion}' (status=${run.status}); integration is blocked.`);
-                }
+              // Only runs produced by the trusted GitHub Actions app count — a
+              // required check emitted by an untrusted app cannot grant authority.
+              const trusted = runs.filter(run => run.name === name && run.app?.slug === TRUSTED_APP_SLUG);
+              if (trusted.length === 0) throw new Error(`Missing required exact-head check '${name}' from the trusted app.`);
+              // Select the LATEST completed run so a failed first attempt followed by
+              // a successful rerun is not permanently blocked by the stale failure.
+              const completed = trusted.filter(run => run.status === 'completed');
+              if (completed.length === 0) throw new Error(`Required exact-head check '${name}' has no completed trusted run.`);
+              completed.sort((a, b) => new Date(b.completed_at || 0) - new Date(a.completed_at || 0));
+              const latest = completed[0];
+              // Anything other than success — skipped, neutral, cancelled, stale,
+              // timed_out, action_required, or failure — blocks integration.
+              if (latest.conclusion !== 'success') {
+                throw new Error(`Latest trusted '${name}' run (${latest.id}) concluded '${latest.conclusion}'; integration is blocked.`);
               }
+              core.notice(`Required check '${name}' satisfied by trusted run ${latest.id} (${latest.external_id || 'no-external-id'}).`);
             }
 
             const currentHead = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data.head.sha;

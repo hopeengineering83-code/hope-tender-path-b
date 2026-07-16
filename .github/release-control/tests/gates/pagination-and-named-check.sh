@@ -21,14 +21,12 @@ if grep -qF 'getCombinedStatusForRef' "$CONTROLLER"; then echo 'controller must 
 # The named exact-head validation check is required via the trusted allow-list.
 grep -qF 'required-checks.json' "$CONTROLLER"
 
-# --- Repair coordinator: subscribe to the validation workflow, require the named
-#     check, exclude its own suite, and paginate. ---
+# --- Repair coordinator: subscribe to the validation workflow, reconcile from the
+#     required-check allow-list, and paginate. ---
 grep -qF 'Worker Exact-Head Validation' "$COORDINATOR"
 grep -qF 'github.paginate(github.rest.pulls.list' "$COORDINATOR"
-grep -qF 'github.paginate(github.rest.checks.listSuitesForRef' "$COORDINATOR"
 grep -qF 'github.paginate(github.rest.checks.listForRef' "$COORDINATOR"
-grep -qF "s.id !== currentSuiteId" "$COORDINATOR"                 # exclude own suite
-grep -qF "r.name === 'worker-exact-head-validation'" "$COORDINATOR"  # require named check
+grep -qF 'required-checks.json' "$COORDINATOR"        # reconcile only from the allow-list
 grep -qF 'awaiting-independent-audit' "$COORDINATOR"
 
 # --- Deterministic simulation: first-page-only vs full pagination on a forbidden file. ---

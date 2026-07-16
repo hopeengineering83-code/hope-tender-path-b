@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "description": "Required test suites for exact-head worker validation. Every suite marked required must EXECUTE and PASS on the exact worker head. Missing tooling or a suite that never produced a result is NOT_CONFIGURED (block). Any skipped required test is SKIPPED_BLOCKER (block). A non-zero run is EXECUTED_FAIL (block). Only EXECUTED_PASS satisfies a required suite. Lane-specific suites are appended to the default set for the matching worker lane.",
+  "schema_version": 2,
+  "description": "Required test suites for exact-head worker validation. Every suite marked required must EXECUTE and PASS on the exact worker head. Missing tooling, a missing test file, or a suite that produced no result is NOT_CONFIGURED (block). Any skipped required test is SKIPPED_BLOCKER (block). A non-zero run is EXECUTED_FAIL (block). Only EXECUTED_PASS satisfies a required suite. Each worker lane appends its OWN focused suites to the default set, so a worker head cannot pass while its assigned tests never execute. A worker cannot select a weaker recognized lane: the lane is derived from a manager-applied label and mapped fail-closed (see activation-plan.md).",
   "classifications": ["EXECUTED_PASS", "EXECUTED_FAIL", "NOT_CONFIGURED", "SKIPPED_BLOCKER"],
   "default_required_suites": [
     { "id": "unit-and-db", "kind": "node-test", "command": "npm test", "required": true },
@@ -8,13 +8,44 @@
     { "id": "browser-e2e", "kind": "playwright", "command": "npm run test:e2e", "required": true }
   ],
   "lanes": {
-    "GLM-A1": { "extra_required_suites": [] },
-    "GLM-A2": { "extra_required_suites": [] },
-    "GLM-X1": { "extra_required_suites": [] },
-    "CHATGPT-C1": { "extra_required_suites": [] },
+    "GLM-A1": {
+      "extra_required_suites": [
+        { "id": "glm-a1-state-readiness", "kind": "node-test", "command": "npx tsx --test tests/analysis-state-resolver.test.ts tests/ai-runtime-capability.test.ts tests/readiness.test.ts", "required": true }
+      ]
+    },
+    "GLM-A2": {
+      "extra_required_suites": [
+        { "id": "glm-a2-matching", "kind": "node-test", "command": "npx tsx --test tests/matching-quality-state.test.ts tests/matching-relevance-gates.test.ts tests/matching-strict-domain.test.ts", "required": true }
+      ]
+    },
+    "GLM-X1": {
+      "extra_required_suites": [
+        { "id": "glm-x1-export", "kind": "node-test", "command": "npx tsx --test tests/export-approval-policy.test.ts tests/export-byte-readiness.test.ts tests/export-format-policy.test.ts", "required": true }
+      ]
+    },
+    "CHATGPT-C1": {
+      "extra_required_suites": [
+        { "id": "chatgpt-c1-vault-provenance", "kind": "node-test", "command": "npx tsx --test tests/evidence-provenance-boundary.test.ts tests/link-vault-evidence-auto.test.ts tests/traceability-leakage.test.ts", "required": true }
+      ]
+    },
     "CHATGPT-C2": {
       "extra_required_suites": [
-        { "id": "browser-e2e-responsive-matrix", "kind": "playwright", "command": "E2E_VIEWPORT_MATRIX=390,1024,1440 npm run test:e2e -- --grep @responsive", "required": true }
+        { "id": "chatgpt-c2-responsive-matrix", "kind": "playwright", "command": "npx playwright test e2e/responsive-viewport-matrix.spec.ts", "required": true }
+      ]
+    },
+    "JULES-T1": {
+      "extra_required_suites": [
+        { "id": "jules-t1-test-expansion", "kind": "node-test", "command": "npx tsx --test tests/comprehensive-workflow-regression.test.ts", "required": true }
+      ]
+    },
+    "JULES-U1": {
+      "extra_required_suites": [
+        { "id": "jules-u1-ui-document", "kind": "node-test", "command": "npx tsx --test tests/dashboard-generated-documents.test.ts", "required": true }
+      ]
+    },
+    "JULES-S2": {
+      "extra_required_suites": [
+        { "id": "jules-s2-security", "kind": "node-test", "command": "npx tsx --test tests/security-hardening.test.ts tests/auth-rbac-isolation.test.ts tests/input-validation-hardening.test.ts", "required": true }
       ]
     }
   }
