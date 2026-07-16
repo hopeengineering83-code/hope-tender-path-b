@@ -100,10 +100,10 @@ export default function ActivityPage() {
           <table className="w-full table-fixed text-sm">
             <thead className="bg-slate-50 text-left text-slate-500 text-xs">
               <tr>
-                <th className="w-24 px-4 py-3 font-medium sm:w-36">Action</th>
+                <th className="w-24 px-4 py-3 font-medium sm:w-36 lg:w-60">Action</th>
                 <th className="px-4 py-3 font-medium">Description</th>
                 <th className="hidden w-28 px-4 py-3 font-medium md:table-cell">Entity</th>
-                <th className="w-20 px-4 py-3 font-medium sm:w-32">Time</th>
+                <th className="w-20 px-4 py-3 font-medium sm:w-32 lg:w-40">Time</th>
               </tr>
             </thead>
             <tbody className="divide-y">
