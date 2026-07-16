@@ -13,6 +13,10 @@ import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import {
+  filterFinalExportCandidateDocuments,
+  isExportReady,
+} from "../../../../../lib/engine/document-output-state";
 import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";
@@ -62,18 +66,22 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
   const canonicalReadinessLabel = canonical?.ok ? "Export readiness: OPEN" : `Export readiness: BLOCKED (${canonicalBlockedCount})`;
 
-  // Documents card consistency (Issue #1134 recheck 10 item #5):
-  // Separate active authoritative candidates from all rows. PLANNED,
-  // PENDING, FAILED, SUPERSEDED rows are NOT active candidates — they
-  // are missing-required-document blockers or stale rows. The card shows
-  // active candidate count + separate blocker count so "0 documents / 1
-  // not ready" cannot occur (0 active + 1 blocker = 1 total row, labeled
-  // honestly as "0 active · 1 blocker").
-  const ACTIVE_DOC_STATUSES = ["VALIDATED", "PASSED", "GENERATED", "IN_REVIEW", "APPROVED"];
-  const activeDocCount = tender.generatedDocuments.filter(
-    (d) => ACTIVE_DOC_STATUSES.includes(d.generationStatus),
-  ).length;
-  const blockedDocCount = tender.generatedDocuments.length - activeDocCount;
+  // Documents card (Issue #1134 recheck 11 item #1): use the canonical
+  // document-output-state helpers — do NOT create a local status vocabulary.
+  // Three truthful counts:
+  //   - currentGeneratedCount: rows that are final-export candidates
+  //     (isFinalExportCandidateDocument — excludes SUPERSEDED, PLANNED,
+  //     NOT_EXPORTABLE, REPLACE_WITH_ORIGINAL, control records, drafts)
+  //   - exportReadyCount: rows whose canonical output state is READY_FOR_EXPORT
+  //     (isExportReady — requires validation passed + review ready + bytes)
+  //   - canonicalBlockerCount: rows with a canonical document blocker
+  //     (from getFinalSubmissionReadiness documentBlockers)
+  // The card shows exportReadyCount as the value, with a caption that
+  // separates current generated from blocked so the counts cannot contradict.
+  const currentGeneratedDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
+  const currentGeneratedCount = currentGeneratedDocs.length;
+  const exportReadyCount = currentGeneratedDocs.filter((d) => isExportReady(d)).length;
+  const canonicalDocBlockerCount = docReadiness.failures.length;
 
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
     where: { tenderId: id },
@@ -192,7 +200,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
         <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
         <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
-        <StatCard title="Documents" value={activeDocCount} caption={blockedDocCount > 0 ? `${blockedDocCount} blocked (PLANNED/PENDING/FAILED/SUPERSEDED)` : "All active"} />
+        <StatCard title="Documents" value={exportReadyCount} caption={`${currentGeneratedCount} generated · ${canonicalDocBlockerCount} blocked`} />
         <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Objections open" : "No HIGH objections"} highlight={openHigh.length > 0} />
       </section>
 

@@ -862,11 +862,18 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(ccSrc, /No HIGH objections/);
     });
 
-    it("command center Documents card uses activeDocCount (not generatedDocuments.length)", () => {
+    it("command center Documents card uses canonical helpers (not local status vocabulary)", () => {
       const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-      assert.match(ccSrc, /activeDocCount/);
-      assert.match(ccSrc, /blockedDocCount/);
-      assert.match(ccSrc, /ACTIVE_DOC_STATUSES/);
+      // Must import and use the canonical document-output-state helpers.
+      assert.match(ccSrc, /from ["']\.\.\/.+lib\/engine\/document-output-state["']/);
+      assert.match(ccSrc, /filterFinalExportCandidateDocuments/);
+      assert.match(ccSrc, /isExportReady/);
+      // Must NOT use a local ACTIVE_DOC_STATUSES vocabulary.
+      assert.doesNotMatch(ccSrc, /ACTIVE_DOC_STATUSES/);
+      // Must show three truthful counts: exportReadyCount, currentGeneratedCount, canonicalDocBlockerCount.
+      assert.match(ccSrc, /exportReadyCount/);
+      assert.match(ccSrc, /currentGeneratedCount/);
+      assert.match(ccSrc, /canonicalDocBlockerCount/);
     });
 
     it("command center AI jobs section is labelled 'Historical' (not current state)", () => {
