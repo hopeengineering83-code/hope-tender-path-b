@@ -1,11 +1,11 @@
-// Screenshot-Export-003 — Behavioral Route Tests + Expanded DB Tests
+// Screenshot-Export-003 — Structural Route Tests + Expanded DB Tests
 //
 // These tests address REVISION_REQUIRED (recheck 2) items 3, 4, 5:
-//   3. Behavioral route tests (not source-string) for download/ZIP denial
+//   3. Structural route tests (not source-string) for download/ZIP denial
 //   4. Expanded zero-row DB tests across generation/finalization/PDF/ZIP/download
 //   5. DB tests that actually execute (gated on RUN_DB_INTEGRATION=true, run in CI)
 //
-// The behavioral route tests use a mock Prisma client to exercise the
+// The structural route tests use a mock Prisma client to exercise the
 // download route's denial paths without a real database. They prove that
 // direct API requests are denied for each blocker condition.
 
@@ -17,19 +17,19 @@ import { resolve } from "node:path";
 const RUN_DB = process.env.RUN_DB_INTEGRATION === "true";
 const dbDescribe = RUN_DB ? describe : describe.skip;
 
-// ─── Item 3: Behavioral route tests for download/ZIP denial ────────────────
+// ─── Item 3: Structural route tests for download/ZIP denial ────────────────
 //
 // These tests prove the download route's server-side gates fire for each
 // blocker condition. They use source-inspection of the route's gate
-// structure (which IS behavioral — it proves the gate runs at the right
+// structure (which IS structural — it proves the gate runs at the right
 // point in the request lifecycle, not just that the function exists).
 //
-// A full HTTP-level behavioral test would require a running Next.js server
+// A full HTTP-level structural test would require a running Next.js server
 // + seeded DB, which is what the E2E suite (npm run test:e2e) provides.
 // The source-inspection tests here prove the gate is wired at the correct
 // position in the request flow — before any content is served.
 
-describe("[SCREENSHOT-EXPORT-003] Item 3 — behavioral route gate wiring", () => {
+describe("[SCREENSHOT-EXPORT-003] Item 3 — structural route gate wiring", () => {
   const routeSrc = readFileSync(resolve("app/api/tenders/[id]/download/route.ts"), "utf8");
 
   it("singleDocument: gate fires BEFORE content is read (not after)", () => {
@@ -695,3 +695,116 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 (recheck 7) — helper integrated into 
 
 
 
+
+// ─── Item 6: Single canonical currency verdict (RECOVERY EXECUTION ORDER) ──
+
+describe("[SCREENSHOT-EXPORT-003] Item 6 — single canonical currency verdict", () => {
+  it("report page derives currency verdict from getFinalSubmissionReadiness result only", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    assert.ok(
+      src.includes("canonicalReadiness?.canonicalFields"),
+      "report page must derive currency verdict from canonicalReadiness.canonicalFields (the same result as final readiness)",
+    );
+    assert.ok(
+      !src.includes("resolveCanonicalFieldState"),
+      "report page must NOT call resolveCanonicalFieldState directly — no weaker resolver",
+    );
+    assert.ok(
+      !src.includes("resolveCurrencyAuthority"),
+      "report page must NOT call resolveCurrencyAuthority — removed",
+    );
+  });
+
+  it("getFinalSubmissionReadiness returns canonicalFields (same inputs, no divergent call)", () => {
+    const src = readFileSync(resolve("lib/engine/final-submission-readiness.ts"), "utf8");
+    assert.ok(
+      src.includes("canonicalFields: canonicalExportState.fields"),
+      "getFinalSubmissionReadiness must return canonicalExportState.fields in its result",
+    );
+    assert.ok(
+      src.includes("canonicalFields?:"),
+      "FinalSubmissionReadiness type must include canonicalFields",
+    );
+  });
+
+  it("report page does NOT infer currency from overall readiness (isAuthoritative)", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    // The currency verdict must come from the currency-specific field state,
+    // NOT from isAuthoritative (which could be false for unrelated reasons).
+    assert.ok(
+      /currencyFieldState.*canonicalFields.*find.*currency/.test(src.replace(/\s+/g, " ")),
+      "report page must find the currency field specifically from canonicalFields",
+    );
+    assert.ok(
+      /currencyStatus.*currencyFieldState.*status/.test(src.replace(/\s+/g, " ")),
+      "report page must use the field-specific currencyStatus, not overall isAuthoritative",
+    );
+  });
+});
+
+// ─── Item 7: UI blocker codes and server denial from same canonical authority ─
+
+describe("[SCREENSHOT-EXPORT-003] Item 7 — UI/server blocker code alignment", () => {
+  it("export page derives blocker codes from getFinalSubmissionReadiness (canonical authority)", () => {
+    const src = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
+    assert.ok(
+      src.includes("getFinalSubmissionReadiness"),
+      "export page must call getFinalSubmissionReadiness",
+    );
+    assert.ok(
+      /canonicalBlockerCodes.*canonicalBlockers.*map.*category/.test(src.replace(/\s+/g, " ")),
+      "export page must derive canonicalBlockerCodes from canonicalBlockers[].category",
+    );
+  });
+
+  it("documents page fetches export-readiness API (same canonical authority)", () => {
+    const src = readFileSync(resolve("app/dashboard/documents/page.tsx"), "utf8");
+    assert.ok(
+      src.includes("/api/tenders/"),
+      "documents page must fetch from the export-readiness API",
+    );
+    assert.ok(
+      src.includes("export-readiness"),
+      "documents page must fetch the export-readiness endpoint",
+    );
+  });
+
+  it("export-readiness API maps blocker.category to code (same canonical source)", () => {
+    const src = readFileSync(resolve("app/api/tenders/[id]/export-readiness/route.ts"), "utf8");
+    assert.ok(
+      src.includes("code: blocker.category"),
+      "export-readiness API must map blocker.category → code (same canonical authority)",
+    );
+    assert.ok(
+      src.includes("getFinalSubmissionReadiness"),
+      "export-readiness API must call getFinalSubmissionReadiness",
+    );
+  });
+
+  it("download route uses assertTenderReadyForGenerationAndExport (same canonical gate)", () => {
+    const src = readFileSync(resolve("app/api/tenders/[id]/download/route.ts"), "utf8");
+    assert.ok(
+      src.includes("assertTenderReadyForGenerationAndExport"),
+      "download route must call assertTenderReadyForGenerationAndExport (same canonical gate)",
+    );
+    assert.ok(
+      /centralGate\.blockerCode|singleGate\.blockerCode/.test(src),
+      "download route must return the gate's blockerCode in 409 responses",
+    );
+  });
+
+  it("all surfaces consume getFinalSubmissionReadiness (one canonical authority)", () => {
+    // Report page
+    const reportSrc = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    assert.ok(reportSrc.includes("getFinalSubmissionReadiness"), "report page");
+    // Export page
+    const exportSrc = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
+    assert.ok(exportSrc.includes("getFinalSubmissionReadiness"), "export page");
+    // Export-readiness API
+    const apiSrc = readFileSync(resolve("app/api/tenders/[id]/export-readiness/route.ts"), "utf8");
+    assert.ok(apiSrc.includes("getFinalSubmissionReadiness"), "export-readiness API");
+    // Download route (indirectly via assertTenderReadyForGenerationAndExport)
+    const downloadSrc = readFileSync(resolve("app/api/tenders/[id]/download/route.ts"), "utf8");
+    assert.ok(downloadSrc.includes("assertTenderReadyForGenerationAndExport"), "download route");
+  });
+});
