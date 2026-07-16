@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { resolveCanonicalFieldState } from "../../../../../lib/engine/canonical-field-state";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -49,6 +50,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
     select: {
       id: true,
       title: true,
+      reference: true,
       clientName: true,
       procuringEntityName: true,
       country: true,
@@ -63,10 +65,15 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       submissionMethod: true,
       submissionAddress: true,
       submissionEmails: true,
+      submissionEmailSubject: true,
       preBidChannel: true,
       preBidMeetingDate: true,
       preBidMeetingLocation: true,
       analysisSummary: true,
+      metadataContaminated: true,
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true, reason: true, authorityClass: true },
+      },
       requirements: {
         select: { id: true, title: true, priority: true, requirementType: true },
         orderBy: { createdAt: "asc" },
@@ -112,24 +119,67 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
   const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
   const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
 
-  // ── Currency display (canonical resolver handles authority) ─────────
-  // Per REVISION_REQUIRED (exact-head recheck): do NOT maintain a second
-  // currency authority resolver. The canonical field resolver
-  // (resolveCanonicalFieldState, called inside getFinalSubmissionReadiness)
-  // already includes "currency" in its field list. It resolves override +
-  // ledger + fieldState + evidence + active-file membership.
-  // canonicalExportState.hasExportBlocker catches currency issues and
-  // pushes TENDER_FACTS_INVALID into tenderLevelBlockers.
+  // ── Currency display (field-specific canonical verdict) ─────────────
+  // Per THREE-PASS MASTER PROMPT item 2: currency display must use a
+  // field-specific canonical currency verdict, NOT a blanket "unverified"
+  // whenever the tender is blocked for any unrelated reason.
   //
-  // The report page only needs to RENDER the currency display:
-  // - NULL currency → "Not extracted" (the migration removed the USD default)
-  // - Non-null currency on a tender whose canonical readiness has export
-  //   blockers → "Unverified legacy value" (the canonical resolver flagged it)
-  // - Non-null currency on a canonical-ready tender → the currency value
-  const hasUnverifiedCurrency = Boolean(tender.currency) && !isAuthoritative;
-  const currencyDisplay = tender.currency
-    ? (hasUnverifiedCurrency ? "Unverified legacy value" : tender.currency)
-    : "Not extracted";
+  // We call resolveCanonicalFieldState (the same canonical resolver used
+  // inside getFinalSubmissionReadiness) to get the currency field's
+  // specific status. This is NOT a parallel resolver — it's the SAME
+  // resolver, consumed directly to get a per-field verdict.
+  const currencyFieldState = (() => {
+    try {
+      const result = resolveCanonicalFieldState({
+        tender: {
+          id: tender.id,
+          title: tender.title,
+          reference: tender.reference,
+          clientName: tender.clientName,
+          procuringEntityName: tender.procuringEntityName,
+          deadline: tender.deadline ?? null,
+          currency: tender.currency,
+          country: tender.country,
+          submissionMethod: tender.submissionMethod,
+          submissionAddress: tender.submissionAddress,
+          submissionEmails: tender.submissionEmails,
+          submissionEmailSubject: tender.submissionEmailSubject,
+          clientContactName: tender.clientContactName,
+          clientContactEmail: tender.clientContactEmail,
+          metadataContaminated: tender.metadataContaminated === true,
+        },
+        overrides: tender.metadataOverrides.map((o) => ({
+          field: o.field,
+          fieldState: o.fieldState as any,
+          overrideValue: o.overrideValue,
+          reason: o.reason,
+          authorityClass: o.authorityClass,
+        })),
+        hasExtractedRequirements: (tender.requirements?.length ?? 0) > 0,
+      });
+      return result.fields.find((f) => f.fieldKey === "currency") ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  // Field-specific currency verdict:
+  // - EXTRACTED_AND_GROUNDED / MANUAL_CONFIRMED → verified, show value
+  // - EXTRACTED_UNVERIFIED → show value with "unverified" annotation
+  // - INVALID / NOT_STATED / null currency → "Not extracted"
+  // - Any other blocked state → "Unverified legacy value"
+  const currencyStatus = currencyFieldState?.status ?? "INVALID";
+  const isCurrencyVerified = [
+    "EXTRACTED_AND_GROUNDED",
+    "MANUAL_CONFIRMED",
+  ].includes(currencyStatus);
+  const isCurrencyAbsent = !tender.currency || ["INVALID", "NOT_STATED", "NOT_APPLICABLE"].includes(currencyStatus);
+  const hasUnverifiedCurrency = Boolean(tender.currency) && !isCurrencyVerified && !isCurrencyAbsent;
+  const currencyDisplay = isCurrencyAbsent
+    ? "Not extracted"
+    : isCurrencyVerified
+      ? (tender.currency ?? "—")
+      : "Unverified legacy value";
 
   // Sort requirements: MANDATORY first, then by priority order
   const sortedRequirements = [...tender.requirements].sort(

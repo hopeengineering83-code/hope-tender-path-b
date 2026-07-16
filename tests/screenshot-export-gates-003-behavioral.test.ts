@@ -436,12 +436,36 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration verification (PostgreSQ
 
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────
 
-describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, value-bound authority)", () => {
-  it("shared helper produces 'Unverified legacy value' for non-null currency without explicit confirmation", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
+describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance (canonical resolver)", () => {
+  it("report page calls resolveCanonicalFieldState for currency verdict", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      src.includes("Unverified legacy value"),
-      "shared helper must return 'Unverified legacy value' display for non-null currency without explicit confirmation",
+      src.includes("resolveCanonicalFieldState"),
+      "report page must call resolveCanonicalFieldState for field-specific currency verdict",
+    );
+    assert.ok(
+      src.includes("currency"),
+      "report page must look up the currency field from the canonical resolver result",
+    );
+  });
+
+  it("report page does NOT import or call resolveCurrencyAuthority", () => {
+    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    assert.ok(
+      !src.includes("resolveCurrencyAuthority"),
+      "report page must NOT import or call resolveCurrencyAuthority — removed",
+    );
+    assert.ok(
+      !src.includes("currency-authority"),
+      "report page must NOT import from currency-authority module — file deleted",
+    );
+  });
+
+  it("lib/engine/currency-authority.ts does NOT exist (dead file removed)", () => {
+    const fs = require("node:fs");
+    assert.ok(
+      !fs.existsSync(resolve("lib/engine/currency-authority.ts")),
+      "lib/engine/currency-authority.ts must be removed — dead competing policy file",
     );
   });
 
@@ -453,146 +477,27 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance UI (non-proxy, 
     );
   });
 
-  it("shared helper uses TenderMetadataOverride as currency authority (value-bound)", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      src.includes("tenderMetadataOverride.findFirst"),
-      "shared helper must query TenderMetadataOverride for currency authority",
-    );
-    assert.ok(
-      src.includes('field: "currency"'),
-      "shared helper must query for field='currency' override",
-    );
-    // Must NOT accept bare SOURCE_GROUNDED — only confirmed states
-    assert.ok(
-      src.includes("SOURCE_GROUNDED_CONFIRMED"),
-      "shared helper must accept SOURCE_GROUNDED_CONFIRMED",
-    );
-    assert.ok(
-      src.includes("HUMAN_CONFIRMED_OPERATIONAL"),
-      "shared helper must accept HUMAN_CONFIRMED_OPERATIONAL",
-    );
-  });
-
-  it("shared helper uses TenderFactsLedger as a second currency authority (value-bound)", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      src.includes("tenderFactsLedger.findFirst"),
-      "shared helper must query TenderFactsLedger for currency authority",
-    );
-    assert.ok(
-      src.includes('semanticKey: "currency"'),
-      "shared helper must query for semanticKey='currency' ledger fact",
-    );
-  });
-
-  it("report page does NOT call resolveCurrencyAuthority or query override/ledger directly (uses canonical resolver)", () => {
+  it("report page renders 'Unverified legacy value' for unverified currency", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      !src.includes("resolveCurrencyAuthority"),
-      "report page must NOT import or call resolveCurrencyAuthority — uses canonical resolver via getFinalSubmissionReadiness",
-    );
-    assert.ok(
-      !src.includes("tenderMetadataOverride.findFirst"),
-      "report page must NOT query tenderMetadataOverride directly",
-    );
-    assert.ok(
-      !src.includes("tenderFactsLedger.findFirst"),
-      "report page must NOT query tenderFactsLedger directly",
-    );
-    assert.ok(
-      src.includes("getFinalSubmissionReadiness"),
-      "report page must call getFinalSubmissionReadiness (which uses the canonical resolver)",
+      src.includes("Unverified legacy value"),
+      "report page must render 'Unverified legacy value' for unverified currency",
     );
   });
 
-  it("shared helper binds authority value to current tender.currency (rejects stale authority)", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    // Per REVISION_REQUIRED (recheck 5) item 1: authority must be value-bound.
-    assert.ok(
-      /overrideValue.*toUpperCase.*===.*upperCurrency/.test(src.replace(/\s+/g, " ")),
-      "shared helper must compare overrideValue (normalized) to tender.currency (normalized)",
-    );
-    assert.ok(
-      /normalizedValue.*toUpperCase.*===.*upperCurrency/.test(src.replace(/\s+/g, " ")),
-      "shared helper must compare normalizedValue (normalized) to tender.currency (normalized)",
-    );
-    // Must have a value-bound check (valueOk or valueMatches)
-    assert.ok(
-      /valueOk|valueMatches/.test(src),
-      "shared helper must compute a value-bound check for authority",
-    );
-  });
-
-  it("shared helper resolves the LATEST override decision (currentness)", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    // Per REVISION_REQUIRED (recheck 6) item 2: resolve the latest field
-    // decision first and fail closed when it is no longer current.
-    assert.ok(
-      /orderBy.*updatedAt.*desc/.test(src.replace(/\s+/g, " ")),
-      "shared helper must order by updatedAt desc to get the LATEST decision",
-    );
-    // The helper must query ALL overrides (not just qualifying ones) so the
-    // latest non-qualifying decision takes precedence over older qualifying ones.
-    assert.ok(
-      /where.*tenderId.*field.*currency/.test(src.replace(/\s+/g, " ")),
-      "shared helper must query all currency overrides (not just qualifying classes)",
-    );
-  });
-
-  it("shared helper accepts only SOURCE_GROUNDED_CONFIRMED and HUMAN_CONFIRMED_OPERATIONAL", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      src.includes("SOURCE_GROUNDED_CONFIRMED"),
-      "shared helper must accept SOURCE_GROUNDED_CONFIRMED",
-    );
-    assert.ok(
-      src.includes("HUMAN_CONFIRMED_OPERATIONAL"),
-      "shared helper must accept HUMAN_CONFIRMED_OPERATIONAL",
-    );
-    assert.ok(
-      !/authorityClass.*SOURCE_GROUNDED[^_]/.test(src),
-      "shared helper must NOT accept bare SOURCE_GROUNDED",
-    );
-  });
-
-  it("shared helper returns CURRENCY_UNVERIFIED blocker code", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      src.includes("CURRENCY_UNVERIFIED"),
-      "shared helper must return CURRENCY_UNVERIFIED blocker code",
-    );
-  });
-
-  it("report page feeds currency verification into isAuthoritative", () => {
+  it("report page uses field-specific currency status (not blanket unverified for any blocked tender)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      /hasUnverifiedCurrency/.test(src),
-      "report page must compute hasUnverifiedCurrency from the shared helper",
+      /currencyStatus/.test(src),
+      "report page must compute a field-specific currencyStatus from the canonical resolver",
     );
     assert.ok(
-      /isAuthoritative.*hasUnverifiedCurrency|!hasUnverifiedCurrency.*isAuthoritative/.test(src.replace(/\s+/g, " ")),
-      "isAuthoritative must include !hasUnverifiedCurrency as a condition",
-    );
-  });
-
-  it("report page does NOT call resolveCurrencyAuthority (uses canonical resolver via getFinalSubmissionReadiness)", () => {
-    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    assert.ok(
-      !src.includes("resolveCurrencyAuthority"),
-      "report page must NOT import or call resolveCurrencyAuthority — uses canonical resolver via getFinalSubmissionReadiness",
+      /isCurrencyVerified/.test(src),
+      "report page must compute isCurrencyVerified from the field-specific status",
     );
     assert.ok(
-      !src.includes("currency-authority"),
-      "report page must NOT import from currency-authority module",
-    );
-  });
-
-  it("report page does NOT use analysisExtractionStatus as a currency provenance proxy", () => {
-    const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    assert.ok(
-      !src.includes("CORRUPTED_STATUSES"),
-      "report page must NOT use CORRUPTED_STATUSES denylist (fails open for unlisted statuses)",
+      /EXTRACTED_AND_GROUNDED/.test(src),
+      "report page must treat EXTRACTED_AND_GROUNDED as verified",
     );
   });
 });
@@ -784,85 +689,5 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 (recheck 7) — helper integrated into 
   });
 });
 
-// ─── Item 2 (recheck 7): Cross-source decision precedence ─────────────────
 
-describe("[SCREENSHOT-EXPORT-003] Item 2 (recheck 7) — cross-source decision precedence", () => {
-  it("helper compares latest decision across both sources by timestamp", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      /allDecisions/.test(src),
-      "helper must collect all decisions into an allDecisions array",
-    );
-    assert.ok(
-      /b\.updatedAt\.getTime\(\) - a\.updatedAt\.getTime\(\)/.test(src),
-      "helper must sort decisions by updatedAt desc (latest first)",
-    );
-    assert.ok(
-      /latestDecision = allDecisions\[0\]/.test(src),
-      "helper must select the latest decision as allDecisions[0]",
-    );
-  });
 
-  it("helper uses latestDecision.qualifies (not OR of both sources)", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      /latestDecision\.qualifies/.test(src),
-      "helper must check latestDecision.qualifies — NOT OR both sources independently",
-    );
-    // Must NOT use the old OR pattern
-    assert.ok(
-      !/overrideValueMatches \|\| ledgerValueMatches/.test(src),
-      "helper must NOT OR override and ledger independently — must use latest decision",
-    );
-  });
-});
-
-// ─── Item 3 (recheck 7): fieldState evaluation ────────────────────────────
-
-describe("[SCREENSHOT-EXPORT-003] Item 3 (recheck 7) — fieldState evaluation", () => {
-  it("helper evaluates fieldState (not just authorityClass)", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      /CURRENT_FIELD_STATES/.test(src),
-      "helper must define a CURRENT_FIELD_STATES set",
-    );
-    assert.ok(
-      /fieldStateOk/.test(src),
-      "helper must compute fieldStateOk from the override's fieldState",
-    );
-    assert.ok(
-      /USER_EDITED.*USER_CONFIRMED/.test(src),
-      "CURRENT_FIELD_STATES must include USER_EDITED and USER_CONFIRMED",
-    );
-  });
-
-  it("helper requires fieldStateOk for override to qualify", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      /qualifies.*authorityOk && fieldStateOk && valueOk/.test(src.replace(/\s+/g, " ")),
-      "override qualifies only when authorityOk AND fieldStateOk AND valueOk",
-    );
-  });
-});
-
-// ─── Item 4 (recheck 7): Comment accuracy ──────────────────────────────────
-
-describe("[SCREENSHOT-EXPORT-003] Item 4 (recheck 7) — comment accuracy", () => {
-  it("helper comment says it is consumed by getFinalSubmissionReadiness", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    assert.ok(
-      /getFinalSubmissionReadiness/.test(src),
-      "helper comment must mention getFinalSubmissionReadiness as the consumer",
-    );
-  });
-
-  it("helper comment does NOT overclaim direct calls from pages/APIs", () => {
-    const src = readFileSync(resolve("lib/engine/currency-authority.ts"), "utf8");
-    // The comment should say pages inherit the blocker via getFinalSubmissionReadiness,
-    // not that they call resolveCurrencyAuthority directly.
-    assert.ok(
-      /inherit.*automatic|do NOT call|not call this helper/i.test(src),
-      "helper comment must clarify pages inherit the blocker via getFinalSubmissionReadiness, not call the helper directly",
-    );
-  });
-});
