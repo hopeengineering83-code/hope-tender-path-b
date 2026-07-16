@@ -35,8 +35,8 @@ const SORT_OPTIONS = [
   { value: "createdAt_asc", label: "Oldest first" },
   { value: "deadline_asc", label: "Deadline (soonest)" },
   { value: "deadline_desc", label: "Deadline (latest)" },
-  { value: "readinessScore_desc", label: "Workflow Progress (high)" },
-  { value: "readinessScore_asc", label: "Workflow Progress (low)" },
+  { value: "readinessScore_desc", label: "Readiness score (high)" },
+  { value: "readinessScore_asc", label: "Readiness score (low)" },
   { value: "status_asc", label: "Status A–Z" },
 ] as const;
 
@@ -371,7 +371,7 @@ export default async function TendersPage({
                   <th className="px-6 py-3 font-medium">Title</th>
                   <th className="px-6 py-3 font-medium">Reference</th>
                   <th className="px-6 py-3 font-medium">Deadline</th>
-                  <th className="px-6 py-3 font-medium">Workflow Progress</th>
+                  <th className="px-6 py-3 font-medium">Analysis</th>
                   <th className="px-6 py-3 font-medium">Status</th>
                   <th className="px-6 py-3 font-medium">Action</th>
                 </tr>
@@ -400,21 +400,15 @@ export default async function TendersPage({
                         <DeadlineCell deadline={tender.deadline} />
                       </td>
                       <td className="px-6 py-4 text-slate-500">
-                        {tender.readinessScore != null ? (
-                          <span className="font-medium text-slate-700">{tender.readinessScore}%</span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
                         {(() => {
                           const src = parseAnalysisSource(tender.notes);
                           if (!src) return null;
-                          if (src === "REGEX") return <span className="ml-1 rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
-                          if (src === "PARTIAL") return <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
+                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
                           // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
                           // Neutral slate color to avoid implying export readiness.
-                          return <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
+                          return <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
                         })()}
-                        <span className="ml-1 text-xs text-slate-400 italic">(workflow)</span>
                         <span className="ml-1 text-xs text-slate-400">
                           ({tender._count.files} files · {tender._count.requirements} reqs
                           {unresolvedGaps > 0 && (
@@ -485,12 +479,9 @@ export default async function TendersPage({
                       )}
                     </div>
 
-                    {/* Workflow progress bar (NOT export readiness — neutral color) */}
-                    {tender.readinessScore != null && (
-                      <div className="h-1 rounded-full bg-slate-100" title="Workflow progress — NOT export readiness. Workspace projection; per-tender verification required.">
-                        <div className="h-1 rounded-full bg-slate-400" style={{ width: `${tender.readinessScore}%` }} />
-                      </div>
-                    )}
+                    {/* Workflow progress bar REMOVED — persisted readinessScore is
+                        not a valid workflow-stage metric and must not be
+                        displayed as progress. See Issue #1134 recheck 9 item #1. */}
 
                     {/* Bottom action row */}
                     <div className="flex items-center gap-2 pt-1">

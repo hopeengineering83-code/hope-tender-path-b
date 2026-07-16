@@ -141,22 +141,25 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
       // VERIFIED BEHAVIOR: /api/ai-jobs/run-next does NOT become publicly
       // unauthenticated when worker/cron secrets are absent. It falls back
       // to requireRole("ADMIN", "PROPOSAL_MANAGER") and scopes claims to
-      // that user. So missing secrets are an OPERATIONAL blocker (automated
-      // global callers — cron, external orchestrators — cannot invoke the
-      // worker without a user session), not a security hole.
-      // In production, automated callers are typically required for
-      // scheduled retries, lease reaping, and external job dispatch. Mark
-      // this as requiredForProduction so productionReady correctly reflects
-      // the operational requirement.
+      // that user. So missing secrets are an OPERATIONAL limitation
+      // (automated global callers — cron, external orchestrators — cannot
+      // invoke the worker without a user session), not a security hole.
+      //
+      // This is NOT an unconditional production blocker — the endpoint
+      // remains safely usable through authenticated user-scoped execution.
+      // Marking production CRITICAL is only correct when this deployment
+      // is configured to require cron/global automated processing. Since
+      // we cannot infer that from the environment, we keep this as a
+      // WARNING with a precise operational limitation, and do NOT mark
+      // it requiredForProduction. Deployments that require automated
+      // callers should monitor this check and set secrets accordingly.
       severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "OK"
-        : (production ? "CRITICAL" : "WARNING"),
-      requiredForProduction: true,
+        : "WARNING",
+      requiredForProduction: false,
       detail: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "Automated worker authentication is configured (AI_JOBS_WORKER_SECRET or CRON_SECRET)."
-        : (production
-          ? "Production requires AI_JOBS_WORKER_SECRET or CRON_SECRET for automated worker invocation (cron, external orchestrators). Without them, the worker endpoint falls back to requireRole(ADMIN, PROPOSAL_MANAGER) — automated global callers cannot invoke it."
-          : "No automated worker secret is configured. The worker endpoint falls back to requireRole(ADMIN, PROPOSAL_MANAGER). Set AI_JOBS_WORKER_SECRET or CRON_SECRET before deploying to production if automated callers are needed."),
+        : "No automated worker secret is configured. The worker endpoint falls back to requireRole(ADMIN, PROPOSAL_MANAGER) — user-scoped execution remains available. Set AI_JOBS_WORKER_SECRET or CRON_SECRET ONLY if this deployment requires automated callers (cron, external orchestrators).",
     },
   );
 

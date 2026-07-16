@@ -98,6 +98,9 @@ export default async function DashboardPage() {
       where: { userId, NOT: { bidOutcome: null }, bidOutcome: { not: "PENDING" } },
     }),
     // Recent tenders for the Live Pipeline display table only.
+    // NOTE: readinessScore is intentionally NOT selected — it is not a
+    // valid workflow-stage metric and must not be displayed as progress.
+    // See Issue #1134 recheck 9 item #1.
     prisma.tender.findMany({
       where: { userId },
       take: 8,
@@ -109,7 +112,6 @@ export default async function DashboardPage() {
         deadline: true,
         status: true,
         analysisExtractionStatus: true,
-        readinessScore: true,
         _count: {
           select: {
             requirements: true,
@@ -316,14 +318,10 @@ export default async function DashboardPage() {
                   <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Deadline</th>
                   <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Status</th>
                   <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Extraction State</th>
-                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Workflow %</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {recentTenders.map((tender) => {
-                  const total = tender._count.requirements;
-                  const critical = tender._count.complianceGaps;
-                  const workflowPct = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
                   // Use workspace-currentness verdict. This is a LOWER BOUND
                   // projection — it can prove blocked, but cannot prove clear.
@@ -332,8 +330,6 @@ export default async function DashboardPage() {
                   // level". The per-tender resolver is the canonical authority.
                   const verdict = recentCurrentnessVerdicts.get(tender.id);
                   const extractionState = verdict?.currentness ?? "BLOCKED";
-                  // Workflow % bar uses neutral slate always — never green.
-                  const workflowBarColor = "bg-slate-300";
 
                   return (
                     <tr key={tender.id} className="hover:bg-slate-50 group">
@@ -363,15 +359,6 @@ export default async function DashboardPage() {
                             ○ Not analyzed
                           </span>
                         )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
-                            <div className={`h-full rounded-full ${workflowBarColor}`}
-                              style={{ width: `${workflowPct}%` }} />
-                          </div>
-                          <span className="text-[10px] font-bold text-slate-500" title="Workflow progress, not export readiness">{workflowPct}%</span>
-                        </div>
                       </td>
                     </tr>
                   );

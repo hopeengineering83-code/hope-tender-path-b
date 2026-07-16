@@ -123,12 +123,18 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
-  // Runtime timeout guards — validate the EFFECTIVE values from the
-  // centralized timeout module (lib/timeout-config.ts), NOT raw env
-  // presence. Missing env vars fall back to validated defaults
-  // (analysis 50s/240s by tier, proposal 55s/220s, section 30s), so the
-  // runtime has valid timeouts even when the env vars are absent.
-  // Block only when the effective value is outside the supported range.
+  // INVARIANT ASSERTION on effective runtime timeout values.
+  //
+  // This check validates the EFFECTIVE values exported by the centralized
+  // timeout module (lib/timeout-config.ts), NOT raw environment configuration.
+  // The centralized module already clamps/falls back on invalid raw env
+  // values before this function sees them — so this check cannot meaningfully
+  // detect invalid raw overrides. Its purpose is to assert that the effective
+  // runtime values are within supported ranges (an invariant that should
+  // always hold if the centralized module is correct).
+  //
+  // This is NOT a raw environment validation — tests and UI must not claim
+  // it validates raw env configuration. It validates effective runtime safety.
   const SUPPORTED_TIMEOUT_RANGES: Record<string, { min: number; max: number; label: string }> = {
     "AI_ANALYSIS_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "analysis" },
     "AI_PROPOSAL_TIMEOUT_MS": { min: 10_000, max: 300_000, label: "proposal" },
@@ -148,7 +154,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
       effective > range.max
     ) {
       blockers.push(
-        `Effective ${envVar} (${range.label}) is ${effective}, outside the supported range [${range.min}, ${range.max}]. The centralized timeout module (lib/timeout-config.ts) must return a valid value.`,
+        `Effective ${envVar} (${range.label}) runtime value is ${effective}, outside the supported range [${range.min}, ${range.max}]. This is an invariant assertion on the centralized timeout module output, not a raw env validation.`,
       );
     }
   }

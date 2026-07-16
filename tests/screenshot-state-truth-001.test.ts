@@ -517,9 +517,11 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.doesNotMatch(dashboardSrc, /✓ Clear/);
     });
 
-    it("uses neutral slate color for the workflow bar even when CLEAR", () => {
-      // No green-500 / green-600 anywhere in the workflow bar code path.
-      assert.match(dashboardSrc, /workflowBarColor/);
+    it("does NOT render a workflow % bar in the Live Pipeline (bar removed)", () => {
+      // The workflow % bar was removed entirely — readinessScore is not a
+      // valid workflow-stage metric and must not be displayed as progress.
+      assert.doesNotMatch(dashboardSrc, /workflowBarColor/);
+      assert.doesNotMatch(dashboardSrc, /workflowPct/);
     });
   });
 
@@ -591,12 +593,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   });
 
   describe("Tenders page and compliance dashboard use provisional wording (no Clear authority)", () => {
-    it("tenders page workflow progress bar uses neutral slate color (not green)", () => {
+    it("tenders page does NOT render a readinessScore progress bar (removed)", () => {
+      // The progress bar was removed entirely — readinessScore is not a
+      // valid workflow-stage metric.
       const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
-      // The workflow progress bar must NOT use emerald/green — it's workflow
-      // progress, not export readiness.
-      assert.doesNotMatch(tendersPageSrc, /bg-emerald-400/);
-      assert.match(tendersPageSrc, /bg-slate-400/);
+      assert.doesNotMatch(tendersPageSrc, /bg-slate-400.*style=\{\{ width/);
+      assert.doesNotMatch(tendersPageSrc, /width:\s*`\$\{tender\.readinessScore\}%`/);
     });
 
     it("tenders page 'AI' analysis-source badge uses neutral slate (not green)", () => {
@@ -615,9 +617,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(tendersPageSrc, /bg-slate-100 px-1 py-0.5 text-\[10px\] font-semibold text-slate-600/);
     });
 
-    it("tenders page workflow bar title says 'NOT export readiness'", () => {
+    it("tenders page documents the bar removal in a code comment", () => {
       const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
-      assert.match(tendersPageSrc, /NOT export readiness/);
+      assert.match(tendersPageSrc, /Workflow progress bar REMOVED/);
     });
 
     it("compliance dashboard has no Clear/classifyTender/readinessScore wording", () => {
@@ -628,11 +630,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("AI environment readiness production path (effective timeout validation)", () => {
+  describe("AI environment readiness production path (effective timeout invariant assertion)", () => {
     it("imports effective timeout values from lib/timeout-config.ts", () => {
-      // Readiness must validate the EFFECTIVE values, not raw env presence.
-      // Missing env vars fall back to validated defaults via the centralized
-      // timeout module.
+      // Readiness validates the EFFECTIVE values, not raw env presence.
       assert.match(aiEnvSrc, /from "\.\/timeout-config"/);
       assert.match(aiEnvSrc, /AI_ANALYSIS_TIMEOUT_MS/);
       assert.match(aiEnvSrc, /AI_PROPOSAL_TIMEOUT_MS/);
@@ -652,36 +652,28 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("does NOT check raw env presence for timeouts (uses effective values)", () => {
-      // The old code checked `present("AI_ANALYSIS_TIMEOUT_MS")` — the new
-      // code must NOT do that. It reads the effective value from the
-      // centralized module instead.
       assert.doesNotMatch(aiEnvSrc, /present\("AI_ANALYSIS_TIMEOUT_MS"\)/);
       assert.doesNotMatch(aiEnvSrc, /present\("AI_PROPOSAL_TIMEOUT_MS"\)/);
       assert.doesNotMatch(aiEnvSrc, /present\("PROPOSAL_SECTION_TIMEOUT_MS"\)/);
     });
 
+    it("documents itself as an invariant assertion, NOT raw env validation", () => {
+      assert.match(aiEnvSrc, /INVARIANT ASSERTION/);
+      assert.match(aiEnvSrc, /NOT a raw environment validation/);
+      assert.match(aiEnvSrc, /centralized module already clamps\/falls back/);
+    });
+
     it("ready === true when env vars are absent (effective defaults are valid)", () => {
-      // This is the critical fix for recheck 8 defect #1: missing env vars
-      // must NOT cause a false production failure, because the centralized
-      // timeout module supplies validated defaults (analysis 50s/240s by
-      // tier, proposal 55s/220s, section 30s).
       const saved: Record<string, string | undefined> = {
         AI_ANALYSIS_TIMEOUT_MS: process.env.AI_ANALYSIS_TIMEOUT_MS,
         AI_PROPOSAL_TIMEOUT_MS: process.env.AI_PROPOSAL_TIMEOUT_MS,
         PROPOSAL_SECTION_TIMEOUT_MS: process.env.PROPOSAL_SECTION_TIMEOUT_MS,
-        DATABASE_URL: process.env.DATABASE_URL,
-        SESSION_SECRET: process.env.SESSION_SECRET,
       };
       delete process.env.AI_ANALYSIS_TIMEOUT_MS;
       delete process.env.AI_PROPOSAL_TIMEOUT_MS;
       delete process.env.PROPOSAL_SECTION_TIMEOUT_MS;
-      // Keep DATABASE_URL and SESSION_SECRET so the only potential blockers
-      // are the timeout checks.
       try {
         const r = getAIEnvironmentReadiness();
-        // The effective timeout values should be the defaults (50s, 55s, 30s)
-        // — all within the supported ranges. So ready should NOT be false
-        // due to timeouts.
         const timeoutBlockers = r.blockers.filter((b) =>
           /AI_ANALYSIS_TIMEOUT_MS|AI_PROPOSAL_TIMEOUT_MS|PROPOSAL_SECTION_TIMEOUT_MS/.test(b),
         );
@@ -696,22 +688,14 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
         }
       }
     });
-
-    it("ready === false when an effective timeout is out of range", () => {
-      // Set an env var to an out-of-range value. The centralized module
-      // will reject it and fall back to the default — so we can't easily
-      // force an out-of-range effective value via env. Instead, verify
-      // that the code path EXISTS to block on out-of-range values by
-      // checking the source has the range check.
-      assert.match(aiEnvSrc, /outside the supported range/);
-    });
   });
 
-  describe("System readiness production path (worker_auth operational blocker)", () => {
-    it("marks worker_auth as requiredForProduction: true", () => {
-      // This is an OPERATIONAL requirement (automated callers need secrets),
-      // not a security hole. The endpoint falls back to requireRole.
-      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: true/);
+  describe("System readiness production path (worker_auth WARNING, not unconditional CRITICAL)", () => {
+    it("marks worker_auth as requiredForProduction: false (not unconditional)", () => {
+      // CHATGPT-M1 recheck 9 item #2: marking production CRITICAL is only
+      // correct when the deployment requires automated processing. We cannot
+      // infer that, so it's a WARNING, not requiredForProduction.
+      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: false/);
     });
 
     it("title reflects operational (not security) rationale", () => {
@@ -719,19 +703,18 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("documents the requireRole fallback (not public unauthenticated)", () => {
-      // The endpoint does NOT become publicly unauthenticated when secrets
-      // are absent — it falls back to requireRole("ADMIN", "PROPOSAL_MANAGER").
       assert.match(systemSrc, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)|requireRole\(ADMIN, PROPOSAL_MANAGER\)/);
       assert.match(systemSrc, /falls back to requireRole/);
     });
 
     it("does NOT claim the endpoint is unauthenticated when secrets are absent", () => {
-      // The previous (inaccurate) wording claimed "unauthenticated" —
-      // that was a false statement about the runtime behavior.
       assert.doesNotMatch(systemSrc, /endpoints are unauthenticated/);
     });
 
-    it("returns CRITICAL worker_auth in production when no secret (operational)", async () => {
+    it("returns WARNING (not CRITICAL) in production when no secret", async () => {
+      // The endpoint remains safely usable through user-scoped execution.
+      // Missing secrets are an operational limitation, not a production
+      // blocker.
       const savedNodeEnv = process.env.NODE_ENV;
       const savedVercelEnv = process.env.VERCEL_ENV;
       const savedWorker = process.env.AI_JOBS_WORKER_SECRET;
@@ -743,15 +726,94 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       try {
         const r = await getSystemReadiness();
         const workerCheck = r.checks.find((c) => c.key === "worker_auth");
-        assert.equal(workerCheck?.severity, "CRITICAL");
-        assert.equal(workerCheck?.requiredForProduction, true);
-        assert.equal(r.productionReady, false);
+        assert.equal(workerCheck?.severity, "WARNING", "worker_auth must be WARNING, not CRITICAL");
+        assert.equal(workerCheck?.requiredForProduction, false);
+        // productionReady should NOT be false just because worker_auth is WARNING
+        // (it's not requiredForProduction)
+        const otherRequiredFailures = r.checks.filter(
+          (c) => c.requiredForProduction && c.severity !== "OK",
+        );
+        // productionReady is false only if OTHER required checks fail (e.g. DB
+        // connectivity in test env). worker_auth alone must NOT cause it.
+        const workerCausesFailure = otherRequiredFailures.some((c) => c.key === "worker_auth");
+        assert.equal(workerCausesFailure, false, "worker_auth must not cause productionReady=false");
       } finally {
         Reflect.set(process.env, "NODE_ENV", savedNodeEnv ?? "test");
         if (savedVercelEnv !== undefined) process.env.VERCEL_ENV = savedVercelEnv;
         if (savedWorker !== undefined) process.env.AI_JOBS_WORKER_SECRET = savedWorker;
         if (savedCron !== undefined) process.env.CRON_SECRET = savedCron;
       }
+    });
+  });
+
+  describe("readinessScore is NOT displayed as workflow progress (recheck 9 item #1)", () => {
+    it("dashboard Live Pipeline has NO Workflow % column", () => {
+      assert.doesNotMatch(dashboardSrc, /Workflow %/);
+      assert.doesNotMatch(dashboardSrc, /workflowPct/);
+      assert.doesNotMatch(dashboardSrc, /workflowBarColor/);
+    });
+
+    it("dashboard does NOT select readinessScore for the Live Pipeline table", () => {
+      // The recentTenders query must NOT select readinessScore — it's not
+      // a valid workflow-stage metric.
+      assert.doesNotMatch(dashboardSrc, /readinessScore: true/);
+    });
+
+    it("tenders page has NO Workflow Progress column header", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      assert.doesNotMatch(tendersPageSrc, /Workflow Progress/);
+    });
+
+    it("tenders page does NOT display readinessScore as a percentage", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      // The percentage display was removed — no {readinessScore}% rendering.
+      assert.doesNotMatch(tendersPageSrc, /\{tender\.readinessScore\}%/);
+    });
+
+    it("tenders page does NOT render a readinessScore progress bar", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      // The progress bar div was removed entirely.
+      assert.doesNotMatch(tendersPageSrc, /width:\s*`\$\{tender\.readinessScore\}%`/);
+    });
+
+    it("tenders page sort options use honest 'Readiness score' label (not 'Workflow Progress')", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      assert.match(tendersPageSrc, /Readiness score \(high\)/);
+      assert.match(tendersPageSrc, /Readiness score \(low\)/);
+      assert.doesNotMatch(tendersPageSrc, /Workflow Progress \(high\)/);
+      assert.doesNotMatch(tendersPageSrc, /Workflow Progress \(low\)/);
+    });
+  });
+
+  describe("PROVISIONAL_NOT_BLOCKED is never treated as canonical readiness (recheck 9 item #4)", () => {
+    it("dashboard never renders 'Clear' wording for PROVISIONAL_NOT_BLOCKED", () => {
+      assert.doesNotMatch(dashboardSrc, /✓ Clear/);
+      assert.match(dashboardSrc, /◐ Provisional/);
+    });
+
+    it("analysis page never renders 'Clear' wording for PROVISIONAL_NOT_BLOCKED", () => {
+      assert.doesNotMatch(analysisSrc, /✓ Clear/);
+      assert.match(analysisSrc, /◐ Provisional/);
+    });
+
+    it("tenders page never renders 'Clear' wording", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      assert.doesNotMatch(tendersPageSrc, /✓ Clear/);
+    });
+
+    it("compliance dashboard never renders 'Clear' wording", () => {
+      assert.doesNotMatch(complianceSrc, /✓ Clear/);
+    });
+
+    it("no consumer file contains 'CANONICAL_CLEAR' (old verdict name)", () => {
+      // The old verdict name was CANONICAL_CLEAR — it must not appear in any
+      // consumer file. Only lib/engine/tender-currentness.ts may reference it
+      // in comments documenting the rename.
+      assert.doesNotMatch(dashboardSrc, /CANONICAL_CLEAR/);
+      assert.doesNotMatch(analysisSrc, /CANONICAL_CLEAR/);
+      assert.doesNotMatch(complianceSrc, /CANONICAL_CLEAR/);
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      assert.doesNotMatch(tendersPageSrc, /CANONICAL_CLEAR/);
     });
   });
 });
