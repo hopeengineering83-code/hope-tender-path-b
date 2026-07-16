@@ -2,6 +2,15 @@
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+/**
+ * Single search + status-filter authority for /dashboard/tenders.
+ *
+ * Preserves q, status, AND sort together in the URL. Replaces the prior
+ * duplicate controls (server GET form + status chips + this component).
+ *
+ * Issue #1134 recheck 10 item #2: "Keep one search authority and one
+ * status-filter authority, preserving q, status, and sort together."
+ */
 export function TenderSearchBar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -46,8 +55,11 @@ export function TenderSearchBar() {
         <option value="DRAFT">Draft</option>
         <option value="IN_PROGRESS">In Progress</option>
         <option value="GENERATED">Generated</option>
+        <option value="IN_REVIEW">In Review</option>
+        <option value="APPROVED">Approved</option>
         <option value="EXPORTED">Exported</option>
         <option value="CLOSED">Closed</option>
+        <option value="REGEX_FALLBACK">Needs re-analysis</option>
       </select>
       {hasFilter && (
         <button
