@@ -39,3 +39,9 @@ skills/
 # Tool-generated persisted outputs (Read tool large outputs)
 tool-results/
 .auth/
+
+# Local ad-hoc verification scripts and their generated screenshot output —
+# never part of the PR diff (see scripts/capture-production-pages.mjs on
+# tmp/app-page-screenshot-capture for the CI-uploaded equivalent).
+.scratch-*
+artifacts/
