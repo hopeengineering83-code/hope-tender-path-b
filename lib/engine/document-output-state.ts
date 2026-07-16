@@ -65,10 +65,18 @@ export function isInternalDraftDocument(doc: DocumentLike): boolean {
   return false;
 }
 
+const NON_CANDIDATE_GENERATION_STATES: readonly string[] = [
+  "SUPERSEDED",
+  "PLANNED",
+  "GENERATING",
+  "FAILED",
+  "QUEUED",
+  "STALE",
+];
+
 export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
-  if (normalizeStatus(doc.generationStatus) === "SUPERSEDED") return false;
+  if (NON_CANDIDATE_GENERATION_STATES.includes(normalizeStatus(doc.generationStatus))) return false;
   if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
-  if (normalizeStatus(doc.generationStatus) === "PLANNED") return false;
   const rev = normalizeStatus(doc.reviewStatus);
   if (rev === "NOT_EXPORTABLE" || rev === "REPLACE_WITH_ORIGINAL") return false;
   const fmt = normalizeStatus(doc.format);
