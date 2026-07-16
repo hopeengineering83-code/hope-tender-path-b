@@ -104,7 +104,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  async function loadNotifications() {
+  async function loadNotifications(): Promise<boolean> {
     setLoading(true);
     setError(null);
     try {
@@ -113,11 +113,14 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
         const data = await res.json() as { notifications: Notification[]; unreadCount: number };
         setNotifications(data.notifications);
         setUnread(data.unreadCount);
+        return true;
       } else {
         setError("Failed to load notifications.");
+        return false;
       }
     } catch (err) {
       setError("Failed to load notifications.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -136,9 +139,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
       });
       if (res.ok) {
         // Authoritatively sync final read state from server (no optimistic client arithmetic)
-        await loadNotifications();
-        setError(null);
-        return true;
+        const refreshSuccess = await loadNotifications();
+        return refreshSuccess;
       } else {
         setError("Failed to mark notifications as read.");
         return false;
@@ -165,9 +167,8 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
       });
       if (res.ok) {
         // Authoritatively sync final read state from server (no optimistic client arithmetic)
-        await loadNotifications();
-        setError(null);
-        return true;
+        const refreshSuccess = await loadNotifications();
+        return refreshSuccess;
       } else {
         setError("Failed to mark notification as read.");
         return false;

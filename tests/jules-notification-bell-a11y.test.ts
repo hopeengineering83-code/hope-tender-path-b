@@ -896,4 +896,241 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     // Unread count should remain exactly 1
     assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
   });
+
+  it("linked notification: PATCH succeeds but refresh GET fails — no router navigation, popup remains open, and error is visible", async () => {
+    // Redefine fetch mock so PATCH succeeds, but refresh GET fails with 500
+    cleanup();
+    let getCallCount = 0;
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
+      calls.push({ url, method, body: init?.body });
+
+      if (method === "PATCH") {
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      getCallCount++;
+      if (getCallCount > 1) {
+        // Refresh GET fails!
+        return new Response(JSON.stringify({ error: "Server error during refresh" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+
+      return new Response(
+        JSON.stringify({
+          unreadCount: 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    // Spy on fakeRouter.push
+    let pushedPath = "";
+    (fakeRouter as any).push = (path: string) => {
+      pushedPath = path;
+    };
+
+    calls = [];
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    // Open dropdown to trigger first GET
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const links = container.querySelectorAll("#notification-popup a");
+    const linkEl = Array.from(links).find((link) => link.textContent?.trim() === "Tender Deadline Approaching") as HTMLAnchorElement;
+    assert.ok(linkEl);
+
+    // Click the link
+    fireEvent.click(linkEl);
+
+    // Verify that PATCH request is dispatched
+    await waitFor(() => {
+      assert.ok(calls.some((c) => c.method === "PATCH"));
+    });
+
+    // Since refresh GET failed, there should be NO navigation, popup remains open, and the alert error is visible!
+    await waitFor(() => {
+      assert.equal(pushedPath, ""); // No navigation!
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup); // Popup still open!
+      const alertDiv = container.querySelector("[role='alert']");
+      assert.ok(alertDiv); // Alert visible!
+      assert.match(alertDiv.textContent ?? "", /Failed to load notifications/);
+    });
+  });
+
+  it("mark-all: PATCH succeeds but refresh GET fails — no false success and no locally fabricated unread count", async () => {
+    // Redefine fetch mock so PATCH succeeds, but refresh GET fails with 500
+    cleanup();
+    let getCallCount = 0;
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
+      calls.push({ url, method, body: init?.body });
+
+      if (method === "PATCH") {
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      getCallCount++;
+      if (getCallCount > 1) {
+        // Refresh GET fails!
+        return new Response(JSON.stringify({ error: "Server error during refresh" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+
+      return new Response(
+        JSON.stringify({
+          unreadCount: 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    calls = [];
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    // Open dropdown to trigger first GET
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const markAllBtn = Array.from(container.querySelectorAll("#notification-popup button")).find(
+      (btn) => btn.textContent?.trim() === "Mark all read"
+    ) as HTMLButtonElement;
+    assert.ok(markAllBtn);
+
+    // Click mark all read
+    fireEvent.click(markAllBtn);
+
+    // Verify that PATCH request is dispatched
+    await waitFor(() => {
+      assert.ok(calls.some((c) => c.method === "PATCH"));
+    });
+
+    // Since refresh GET failed, unread count remains 2 (not fabricated to 0), and error alert is shown!
+    await waitFor(() => {
+      assert.equal(button.getAttribute("aria-label"), "Notifications (2 unread)");
+      const alertDiv = container.querySelector("[role='alert']");
+      assert.ok(alertDiv);
+      assert.match(alertDiv.textContent ?? "", /Failed to load notifications/);
+    });
+  });
+
+  it("retrying after a failed refresh succeeds and synchronizes authoritative state", async () => {
+    cleanup();
+    let getCallCount = 0;
+    let shouldFailRefresh = true;
+    const g = globalThis as any;
+    g.fetch = async (input: any, init: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method || "GET";
+      calls.push({ url, method, body: init?.body });
+
+      if (method === "PATCH") {
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      getCallCount++;
+      if (getCallCount > 1 && shouldFailRefresh) {
+        // Refresh GET fails on the first retry!
+        return new Response(JSON.stringify({ error: "Server error during refresh" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+
+      return new Response(
+        JSON.stringify({
+          unreadCount: getCallCount > 2 ? 1 : 2,
+          notifications: [
+            {
+              id: "n1",
+              type: "TENDER_DEADLINE_SOON",
+              title: "Tender Deadline Approaching",
+              body: "The tender is closing soon.",
+              createdAt: new Date().toISOString(),
+              link: "/tenders/t1",
+              readAt: getCallCount > 2 ? new Date().toISOString() : null,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    calls = [];
+    const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
+    const button = container.querySelector("button");
+    assert.ok(button);
+
+    // Open dropdown to trigger first GET
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      const popup = container.querySelector("#notification-popup");
+      assert.ok(popup);
+    });
+
+    const closeButtons = container.querySelectorAll("#notification-popup button");
+    const markReadBtn = Array.from(closeButtons).find(
+      (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
+    ) as HTMLButtonElement;
+    assert.ok(markReadBtn);
+
+    // Click mark read (First attempt - refresh fails)
+    fireEvent.click(markReadBtn);
+
+    await waitFor(() => {
+      assert.equal(button.getAttribute("aria-label"), "Notifications (2 unread)");
+      const alertDiv = container.querySelector("[role='alert']");
+      assert.ok(alertDiv);
+      assert.match(alertDiv.textContent ?? "", /Failed to load notifications/);
+    });
+
+    // Configure refresh to succeed now
+    shouldFailRefresh = false;
+
+    // Trigger a second markRead on retry
+    fireEvent.click(markReadBtn);
+
+    // Verify it succeeded on retry, clears error alert, and synchronizes unread count to 1
+    await waitFor(() => {
+      assert.equal(button.getAttribute("aria-label"), "Notifications (1 unread)");
+      const alertDiv = container.querySelector("[role='alert']");
+      assert.ok(!alertDiv); // Alert cleared!
+    });
+  });
 });
