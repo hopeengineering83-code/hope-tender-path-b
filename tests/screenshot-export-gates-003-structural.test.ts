@@ -1,13 +1,19 @@
-// Screenshot-Export-003 — Structural Route Tests + Expanded DB Tests
+// Screenshot-Export-003 — Structural Source-String Tests + DB-Gated Tests
 //
-// These tests address REVISION_REQUIRED (recheck 2) items 3, 4, 5:
-//   3. Structural route tests (not source-string) for download/ZIP denial
-//   4. Expanded zero-row DB tests across generation/finalization/PDF/ZIP/download
-//   5. DB tests that actually execute (gated on RUN_DB_INTEGRATION=true, run in CI)
+// These are STRUCTURAL tests: they read source files with readFileSync and
+// assert on string positions, regexes, and code structure. They do NOT
+// execute authenticated routes, handlers, or HTTP paths. They do NOT prove
+// that direct API requests are denied at runtime.
 //
-// The structural route tests use a mock Prisma client to exercise the
-// download route's denial paths without a real database. They prove that
-// direct API requests are denied for each blocker condition.
+// DB-gated tests (dbDescribe) require RUN_DB_INTEGRATION=true and a live
+// PostgreSQL instance. Without that env flag, they are SKIPPED (describe.skip).
+// They call readiness/query helpers, not authenticated generation, finalization,
+// PDF, ZIP, or download handlers.
+//
+// Test classification:
+//   - Structural source-string tests: verify code structure, not runtime behavior
+//   - DB-gated helper tests: verify readiness/predicate functions, not handler paths
+//   - Migration tests: create post-migration rows, do NOT prove pre-existing upgrade survival
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -29,7 +35,7 @@ const dbDescribe = RUN_DB ? describe : describe.skip;
 // The source-inspection tests here prove the gate is wired at the correct
 // position in the request flow — before any content is served.
 
-describe("[SCREENSHOT-EXPORT-003] Item 3 — structural route gate wiring", () => {
+describe("[SCREENSHOT-EXPORT-003] Item 3 — structural source-string gate wiring (NOT runtime)", () => {
   const routeSrc = readFileSync(resolve("app/api/tenders/[id]/download/route.ts"), "utf8");
 
   it("singleDocument: gate fires BEFORE content is read (not after)", () => {
@@ -143,7 +149,7 @@ describe("[SCREENSHOT-EXPORT-003] Item 3 — structural route gate wiring", () =
 
 // ─── Item 4: Expanded zero-row DB tests ────────────────────────────────────
 
-dbDescribe("[SCREENSHOT-EXPORT-003] Item 4 — expanded zero-row proof (PostgreSQL)", () => {
+dbDescribe("[SCREENSHOT-EXPORT-003] Item 4 — DB-gated readiness helper checks (NOT handler/persistence proof) (PostgreSQL)", () => {
   it("corrupted tender: getFinalSubmissionReadiness creates zero GeneratedDocument rows", async () => {
     const { PrismaClient } = await import("@prisma/client");
     const prisma = new PrismaClient();
@@ -361,7 +367,7 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 4 — expanded zero-row proof (PostgreS
 
 // ─── Item 5: Migration verification (executed in CI) ───────────────────────
 
-dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration verification (PostgreSQL, executed)", () => {
+dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration DB-gated tests (SKIPPED without RUN_DB_INTEGRATION=true)", () => {
   it("new tender with no extracted currency has currency = NULL", async () => {
     const { PrismaClient } = await import("@prisma/client");
     const prisma = new PrismaClient();
@@ -557,9 +563,9 @@ describe("[SCREENSHOT-EXPORT-003] Item 2 — print-visible watermark", () => {
   });
 });
 
-// ─── Item 4: Real persistence-path zero-row proof (PostgreSQL) ─────────────
+// ─── Item 4: Real persistence-path DB-gated readiness helper check (PostgreSQL) ─────────────
 
-dbDescribe("[SCREENSHOT-EXPORT-003] Item 4 — real persistence-path zero-row proof", () => {
+dbDescribe("[SCREENSHOT-EXPORT-003] Item 4 — DB-gated readiness helper checks (NOT DB-gated readiness helper proof)", () => {
   it("corrupted tender: report page readiness check creates zero GeneratedDocument/PDF/ZIP rows", async () => {
     const { PrismaClient } = await import("@prisma/client");
     const prisma = new PrismaClient();
