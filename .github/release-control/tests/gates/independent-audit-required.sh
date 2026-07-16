@@ -15,6 +15,7 @@ grep -qF 'CONTROL_TOWER_AUDIT' "$CONTROLLER"
 grep -qF "fieldOf(lines, 'Decision') !== 'ACCEPT'" "$CONTROLLER"
 grep -qF 'Reviewer-Role' "$CONTROLLER"
 grep -qF 'Reviewed-Head-SHA' "$CONTROLLER"
+grep -qF 'Reviewed-Control-SHA' "$CONTROLLER"                      # audit bound to the pinned control SHA
 grep -qF 'author self-audit is never independent' "$CONTROLLER"   # independent of the author
 grep -qF 'PR head moved during preflight' "$CONTROLLER"          # head move invalidates
 grep -qF 'required-checks.json' "$CONTROLLER"                    # named exact-head evidence via allow-list
@@ -30,6 +31,8 @@ if grep -qF 'ready-for-integrator' "$COORDINATOR"; then echo 'coordinator must n
 # --- Deterministic simulation of the audit-acceptance rule ---
 HEAD="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 OLD="0000000000000000000000000000000000000000"
+CONTROL="cccccccccccccccccccccccccccccccccccccccc"
+CONTROL_MOVED="dddddddddddddddddddddddddddddddddddddddd"
 AUTHOR="worker-bot"
 REVIEWER="independent-maintainer"
 
@@ -37,12 +40,13 @@ field() { # field <key> <text>
   printf '%s\n' "$2" | awk -F': *' -v k="$1" 'tolower($1)==tolower(k){print $2; exit}'
 }
 
-accept() { # accept <text> <commenter> -> ACCEPT | REJECT (uses global $HEAD, $AUTHOR)
+accept() { # accept <text> <commenter> -> ACCEPT | REJECT (uses global $HEAD, $CONTROL, $AUTHOR)
   local text="$1" who="$2"
   printf '%s\n' "$text" | grep -qx 'CONTROL_TOWER_AUDIT' || { echo REJECT; return; }
   [ "$(field Decision "$text")" = "ACCEPT" ] || { echo REJECT; return; }
   [ "$(field Reviewer-Role "$text" | tr '[:upper:]' '[:lower:]')" = "independent" ] || { echo REJECT; return; }
   [ "$(field Reviewed-Head-SHA "$text")" = "$HEAD" ] || { echo REJECT; return; }
+  [ "$(field Reviewed-Control-SHA "$text")" = "$CONTROL" ] || { echo REJECT; return; }
   [ "$who" != "$AUTHOR" ] || { echo REJECT; return; }
   echo ACCEPT
 }
@@ -50,11 +54,19 @@ accept() { # accept <text> <commenter> -> ACCEPT | REJECT (uses global $HEAD, $A
 VALID="CONTROL_TOWER_AUDIT
 Decision: ACCEPT
 Reviewed-Head-SHA: ${HEAD}
+Reviewed-Control-SHA: ${CONTROL}
 Reviewer-Role: independent"
 
 STALE="CONTROL_TOWER_AUDIT
 Decision: ACCEPT
 Reviewed-Head-SHA: ${OLD}
+Reviewed-Control-SHA: ${CONTROL}
+Reviewer-Role: independent"
+
+STALE_CONTROL="CONTROL_TOWER_AUDIT
+Decision: ACCEPT
+Reviewed-Head-SHA: ${HEAD}
+Reviewed-Control-SHA: ${CONTROL_MOVED}
 Reviewer-Role: independent"
 
 NO_AUDIT="Looks good, all checks are green, ship it."
@@ -62,16 +74,22 @@ NO_AUDIT="Looks good, all checks are green, ship it."
 NON_INDEPENDENT="CONTROL_TOWER_AUDIT
 Decision: ACCEPT
 Reviewed-Head-SHA: ${HEAD}
+Reviewed-Control-SHA: ${CONTROL}
 Reviewer-Role: worker"
 
-test "$(accept "$VALID" "$REVIEWER")" = ACCEPT             # valid independent exact-head audit
-test "$(accept "$STALE" "$REVIEWER")" = REJECT             # audit for an old SHA cannot integrate
+test "$(accept "$VALID" "$REVIEWER")" = ACCEPT             # valid independent exact-head+control audit
+test "$(accept "$STALE" "$REVIEWER")" = REJECT             # audit for an old worker SHA cannot integrate
+test "$(accept "$STALE_CONTROL" "$REVIEWER")" = REJECT     # audit under a different control SHA cannot integrate
 test "$(accept "$NO_AUDIT" "$REVIEWER")" = REJECT          # green checks without audit cannot integrate
 test "$(accept "$VALID" "$AUTHOR")" = REJECT               # author self-audit is not independent
 test "$(accept "$NON_INDEPENDENT" "$REVIEWER")" = REJECT   # non-independent reviewer role rejected
 
 # Head movement invalidates a previously valid audit — Reviewed-Head-SHA no longer matches.
 HEAD="feedfacefeedfacefeedfacefeedfacefeedface"
+test "$(accept "$VALID" "$REVIEWER")" = REJECT
+# Control-SHA movement invalidates acceptance too.
+HEAD="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+CONTROL="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 test "$(accept "$VALID" "$REVIEWER")" = REJECT
 
 echo "independent-audit gate simulation passed: green CI is not approval; stale/missing/self/non-independent/moved-head audits all fail closed"

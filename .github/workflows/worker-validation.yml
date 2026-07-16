@@ -116,9 +116,18 @@ jobs:
               core.setFailed(`NOT_CONFIGURED: derived lane '${derivedLane}' has no focused required suite in the trusted manifest.`);
               return;
             }
-            const closes = (pr.body || '').match(/closes\s+#(\d+)/i);
-            if (closes && derivedDef.issue && Number(closes[1]) !== Number(derivedDef.issue)) {
-              core.setFailed(`NOT_CONFIGURED: PR declares Closes #${closes[1]} but branch '${pr.head.ref}' maps to lane '${derivedLane}' (issue #${derivedDef.issue}).`);
+            // Exactly ONE owning closing-issue reference is required and must equal the
+            // branch-derived lane's issue. Missing, conflicting, or multiple distinct
+            // closing references are NOT_CONFIGURED (a worker cannot leave its owner
+            // ambiguous). Only GitHub closing keywords count; prose dependency mentions do not.
+            const closesRefs = [...(pr.body || '').matchAll(/(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#(\d+)/gi)].map(m => Number(m[1]));
+            const distinctCloses = [...new Set(closesRefs)];
+            if (distinctCloses.length !== 1) {
+              core.setFailed(`NOT_CONFIGURED: the worker PR must declare exactly one owning closing-issue reference; found [${distinctCloses.join(', ') || 'none'}].`);
+              return;
+            }
+            if (derivedDef.issue && distinctCloses[0] !== Number(derivedDef.issue)) {
+              core.setFailed(`NOT_CONFIGURED: PR declares Closes #${distinctCloses[0]} but branch '${pr.head.ref}' maps to lane '${derivedLane}' (issue #${derivedDef.issue}).`);
               return;
             }
             const laneLabels = (pr.labels || []).map(l => l.name).filter(n => n.startsWith('lane:')).map(n => n.slice('lane:'.length));

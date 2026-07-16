@@ -82,6 +82,24 @@ for lane in $CODING_LANES; do
   test "${pp:-0}" -ge 1 || { echo "lane $lane has no permitted_paths"; exit 1; }
   test "$(jq -r --arg l "$lane" '.lanes | has($l)' "$MANIFEST")" = "true" || { echo "lane $lane not in suite manifest"; exit 1; }
 done
+# Permitted paths reconcile with each PR's ACTUAL changed files (exact file names).
+# GLM-A1 must include the six files previously omitted from the #1140 body.
+for f in app/dashboard/analysis/page.tsx app/dashboard/compliance/compliance-dashboard.tsx \
+         'app/dashboard/tenders/[id]/command-center/page.tsx' components/tender-search-bar.tsx \
+         lib/engine/tender-currentness.ts lib/engine/tender-extraction-state.ts; do
+  test "$(jq -r --arg f "$f" '[.lanes["GLM-A1"].permitted_paths[] | select(. == $f)] | length' "$MAP")" = "1" \
+    || { echo "GLM-A1 permitted paths missing $f"; exit 1; }
+done
+# GLM-X1 names the EXACT authorized migration file, not the bare directory.
+test "$(jq -r '[.lanes["GLM-X1"].permitted_paths[] | select(. == "prisma/migrations/")] | length' "$MAP")" = "0"
+test "$(jq -r '[.lanes["GLM-X1"].permitted_paths[] | select(. == "prisma/migrations/20260715192500_tender_currency_nullable/migration.sql")] | length' "$MAP")" = "1"
+# Reviewed entries are exact file names (no trailing-slash directory prefixes) for the
+# fully-enumerated lanes.
+for lane in GLM-A1 GLM-X1 CHATGPT-C1 CHATGPT-C2 JULES-T1 JULES-S2; do
+  test "$(jq -r --arg l "$lane" '[.lanes[$l].permitted_paths[] | select(endswith("/"))] | length' "$MAP")" = "0" \
+    || { echo "lane $lane must use exact file names, not directory prefixes"; exit 1; }
+done
+
 # Real branch bindings match the current authorized PR branches exactly.
 test "$(jq -r '.lanes["GLM-A1"].branch' "$MAP")" = "worker/screenshot-state-truth-001"
 test "$(jq -r '.lanes["JULES-T1"].branch' "$MAP")" = "worker/jules-notification-a11y-006-16137658204389118457"

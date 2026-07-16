@@ -183,15 +183,28 @@ jobs:
             test "$(jq -r --arg l "$notlane" '.lanes | has($l)' "$map")" = 'false'
             test "$(jq -r --arg l "$notlane" '.lanes | has($l)' "$manifest")" = 'false'
           done
+          # Permitted paths reconcile with each PR's ACTUAL changed files (exact names).
+          test "$(jq -r '[.lanes["GLM-A1"].permitted_paths[] | select(. == "app/dashboard/tenders/[id]/command-center/page.tsx")] | length' "$map")" = '1'
+          test "$(jq -r '[.lanes["GLM-A1"].permitted_paths[] | select(. == "lib/engine/tender-currentness.ts")] | length' "$map")" = '1'
+          test "$(jq -r '[.lanes["GLM-X1"].permitted_paths[] | select(. == "prisma/migrations/")] | length' "$map")" = '0'
+          test "$(jq -r '[.lanes["GLM-X1"].permitted_paths[] | select(. == "prisma/migrations/20260715192500_tender_currency_nullable/migration.sql")] | length' "$map")" = '1'
           # Lane is derived from issue+branch, then the label is verified (both places).
           grep -qF 'def.branch === pr.head.ref' "$wf"
           grep -qF 'derived lane' "$wf"
           grep -qF "def.branch === pr.head.ref" "$ctrl"
+          # Exactly one owning closing-issue reference is required (both places).
+          grep -qF 'exactly one owning closing-issue reference' "$wf"
+          grep -qF 'exactly one owning closing-issue reference' "$ctrl"
+          # Exact file-name matching (directory prefix only for trailing-slash entries).
+          grep -qF "p.endsWith('/') ? name.startsWith(p) : name === p" "$ctrl"
           # Integration policy is bound to ONE pinned trusted control SHA (no mutable reload).
           grep -qF 'controlSha = br.commit.sha' "$ctrl"
           grep -qF "path: '.github/release-control/lane-mapping.json', ref: controlSha" "$ctrl"
           grep -qF "path: '.github/release-control/independent-auditors.json', ref: controlSha" "$ctrl"
           grep -qF "path: '.github/release-control/required-checks.json', ref: controlSha" "$ctrl"
+          # Audit and validation are bound to the SAME control SHA.
+          grep -qF 'Reviewed-Control-SHA' "$ctrl"
+          grep -qF 'does not equal the pinned control SHA' "$ctrl"
 
       - name: Require activation truth
         run: |

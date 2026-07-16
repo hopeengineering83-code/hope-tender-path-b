@@ -117,12 +117,23 @@ jobs:
             const laneLabels = (pr.labels || []).map(l => l.name).filter(n => n.startsWith('lane:')).map(n => n.slice('lane:'.length));
             if (laneLabels.length !== 1) throw new Error('Worker PR must carry exactly one lane label.');
             if (laneLabels[0] !== derivedLane) throw new Error(`Lane label '${laneLabels[0]}' does not match the branch-derived lane '${derivedLane}'.`);
-            const closes = (pr.body || '').match(/closes\s+#(\d+)/i);
-            if (closes && laneDef.issue && Number(closes[1]) !== Number(laneDef.issue)) throw new Error(`PR Closes #${closes[1]} but branch maps to lane '${derivedLane}' (issue #${laneDef.issue}).`);
+            // Exactly ONE owning closing-issue reference is required and must equal the
+            // branch-derived lane's issue. Missing, conflicting, or multiple distinct
+            // closing references block validation (a worker cannot leave the owner
+            // ambiguous). Only GitHub closing keywords count; prose mentions of other
+            // dependency issues do not.
+            const closesRefs = [...(pr.body || '').matchAll(/(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#(\d+)/gi)].map(m => Number(m[1]));
+            const distinctCloses = [...new Set(closesRefs)];
+            if (distinctCloses.length !== 1) throw new Error(`Worker PR must declare exactly one owning closing-issue reference; found [${distinctCloses.join(', ') || 'none'}].`);
+            if (laneDef.issue && distinctCloses[0] !== Number(laneDef.issue)) throw new Error(`PR Closes #${distinctCloses[0]} but branch maps to lane '${derivedLane}' (issue #${laneDef.issue}).`);
             if (pr.base.ref !== (laneMap.expected_base || 'integration/controlled-recovery')) throw new Error('Worker PR base does not match the lane mapping expected base.');
+            // Permitted entries are EXACT file names unless they end with '/', which is a
+            // deliberate directory prefix. A changed file must match a permitted file
+            // exactly (or fall under a permitted directory).
             const permitted = laneDef.permitted_paths || [];
-            const outside = files.filter(file => !permitted.some(p => file.filename.startsWith(p)));
-            if (outside.length) throw new Error(`Changed files outside lane '${laneLabels[0]}' permitted paths: ${outside.slice(0, 5).map(file => file.filename).join(', ')}`);
+            const allowed = (name) => permitted.some(p => p.endsWith('/') ? name.startsWith(p) : name === p);
+            const outside = files.filter(file => !allowed(file.filename));
+            if (outside.length) throw new Error(`Changed files outside lane '${derivedLane}' permitted paths: ${outside.slice(0, 5).map(file => file.filename).join(', ')}`);
 
             // Independent-auditor allow-list, loaded from the trusted control-plane
             // config. A missing/empty list fails closed — no acceptance can be
@@ -141,8 +152,12 @@ jobs:
             // never enough — integration requires a CONTROL_TOWER_AUDIT block:
             //   CONTROL_TOWER_AUDIT
             //   Decision: ACCEPT
-            //   Reviewed-Head-SHA: <exact head>
+            //   Reviewed-Head-SHA: <exact worker head>
+            //   Reviewed-Control-SHA: <pinned trusted control SHA>
             //   Reviewer-Role: independent
+            // The audit must state BOTH the reviewed worker head and the reviewed control
+            // SHA, and both must match at integration time — so an audit performed under
+            // a different control-plane policy cannot authorize integration.
             // The auditor identity must be on the allow-list (a distinct human
             // collaborator, or a verifiable trusted GitHub App), must NOT be the PR
             // author, and a same-account marker is never independent. An audit whose
@@ -161,6 +176,7 @@ jobs:
               if (fieldOf(lines, 'Decision') !== 'ACCEPT') continue;
               if ((fieldOf(lines, 'Reviewer-Role') || '').toLowerCase() !== 'independent') continue;
               if (fieldOf(lines, 'Reviewed-Head-SHA') !== head) continue;
+              if (fieldOf(lines, 'Reviewed-Control-SHA') !== controlSha) continue; // audit must be bound to the same control SHA
               const login = (comment.user?.login || '').toLowerCase();
               if (!login || login === (pr.user?.login || '').toLowerCase()) continue; // author self-audit is never independent
               if (comment.user?.type === 'Bot') {
@@ -176,7 +192,7 @@ jobs:
                 // Ignore audits from actors who are no longer collaborators.
               }
             }
-            if (!acceptedBy) throw new Error(`Missing authorized exact-head acceptance comment: an INDEPENDENT CONTROL_TOWER_AUDIT (Decision: ACCEPT, Reviewed-Head-SHA: ${head}, Reviewer-Role: independent) from an allow-listed independent identity that is not the PR author is required. Green CI alone is not approval.`);
+            if (!acceptedBy) throw new Error(`Missing authorized exact-head acceptance comment: an INDEPENDENT CONTROL_TOWER_AUDIT (Decision: ACCEPT, Reviewed-Head-SHA: ${head}, Reviewed-Control-SHA: ${controlSha}, Reviewer-Role: independent) from an allow-listed independent identity that is not the PR author is required. Green CI alone is not approval.`);
 
             // Required-check allow-list from the trusted control-plane config. Named
             // check runs are the repository's real status model; a legacy combined
@@ -210,6 +226,16 @@ jobs:
               // timed_out, action_required, or failure — blocks integration.
               if (latest.conclusion !== 'success') {
                 throw new Error(`Latest trusted '${name}' run (${latest.id}) concluded '${latest.conclusion}'; integration is blocked.`);
+              }
+              // Bind the accepted validation evidence to the SAME trusted control SHA:
+              // the exact-head validation check records the harness SHA it ran under in
+              // its external_id (harness:<sha>;run:<id>). That harness SHA must equal the
+              // pinned control SHA, so the control plane did not move between validation,
+              // audit, and integration.
+              if (name === 'worker-exact-head-validation') {
+                const m = /harness:([0-9a-f]{7,40})/i.exec(latest.external_id || '');
+                if (!m) throw new Error(`Required check '${name}' recorded no harness SHA; cannot bind validation to the control SHA (fail closed).`);
+                if (m[1] !== controlSha) throw new Error(`Validation harness SHA ${m[1]} does not equal the pinned control SHA ${controlSha}; the control plane moved between validation and integration.`);
               }
               core.notice(`Required check '${name}' satisfied by trusted run ${latest.id} (${latest.external_id || 'no-external-id'}).`);
             }
