@@ -62,6 +62,19 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
   const canonicalReadinessLabel = canonical?.ok ? "Export readiness: OPEN" : `Export readiness: BLOCKED (${canonicalBlockedCount})`;
 
+  // Documents card consistency (Issue #1134 recheck 10 item #5):
+  // Separate active authoritative candidates from all rows. PLANNED,
+  // PENDING, FAILED, SUPERSEDED rows are NOT active candidates — they
+  // are missing-required-document blockers or stale rows. The card shows
+  // active candidate count + separate blocker count so "0 documents / 1
+  // not ready" cannot occur (0 active + 1 blocker = 1 total row, labeled
+  // honestly as "0 active · 1 blocker").
+  const ACTIVE_DOC_STATUSES = ["VALIDATED", "PASSED", "GENERATED", "IN_REVIEW", "APPROVED"];
+  const activeDocCount = tender.generatedDocuments.filter(
+    (d) => ACTIVE_DOC_STATUSES.includes(d.generationStatus),
+  ).length;
+  const blockedDocCount = tender.generatedDocuments.length - activeDocCount;
+
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
     where: { tenderId: id },
     orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
@@ -154,7 +167,9 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           <div className="text-xs text-slate-500">Status / Stage</div>
           <div className="font-semibold text-slate-800">{tender.status} / {tender.stage}</div>
           <div className={`text-xs mt-1 ${canonical?.ok ? "text-emerald-700" : "text-red-700"}`}>{canonicalReadinessLabel}</div>
-          <div className="text-[10px] text-slate-400">Legacy workflow score: {Math.round(tender.readinessScore ?? 0)}/100 (not an export gate)</div>
+          {/* Legacy workflow score line REMOVED — Issue #1134 recheck 10 item #3.
+              The persisted readinessScore is not a valid metric and must not
+              be displayed beside canonical readiness. */}
         </div>
       </div>
 
@@ -177,8 +192,8 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
         <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
         <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
-        <StatCard title="Documents" value={tender.generatedDocuments.length} caption={`${docReadiness.failures.length} not ready · includes all statuses`} />
-        <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Export gate is closed" : "Export gate clear"} highlight={openHigh.length > 0} />
+        <StatCard title="Documents" value={activeDocCount} caption={blockedDocCount > 0 ? `${blockedDocCount} blocked (PLANNED/PENDING/FAILED/SUPERSEDED)` : "All active"} />
+        <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Objections open" : "No HIGH objections"} highlight={openHigh.length > 0} />
       </section>
 
       {/* Export gate */}
@@ -290,9 +305,16 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         )}
       </section>
 
-      {/* Recent AI jobs */}
+      {/* Historical background AI jobs — NOT current canonical state.
+          Issue #1134 recheck 10 items #6 and #7: historical failed/succeeded
+          rows are shown only under a clearly labelled history section and
+          must not alter the current verdict. No green success styling from
+          stale job fields — use neutral slate for completed, red for failed,
+          amber for in-progress. The current canonical analysis state is
+          shown above via the canonical readiness helper. */}
       <section className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold text-slate-900">Recent background AI jobs</h2>
+        <h2 className="mb-1 text-sm font-semibold text-slate-900">Historical background AI jobs</h2>
+        <p className="mb-2 text-[10px] text-slate-400">History only — does not define current canonical analysis state. See canonical readiness above.</p>
         {recentJobs.length === 0 ? (
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
             No background AI jobs have been queued yet.
@@ -313,7 +335,10 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
                   <tr key={j.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                     <td className="px-3 py-2 text-xs text-slate-700">{j.jobType}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${j.status === "DONE" ? "bg-green-100 text-green-700" : j.status === "FAILED" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                      {/* Neutral slate for completed (NOT green — historical
+                          success does not define current canonical state).
+                          Red for failed, amber for in-progress. */}
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${j.status === "FAILED" ? "bg-red-100 text-red-700" : j.status === "SUCCEEDED" || j.status === "DONE" ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-700"}`}>
                         {j.status}
                       </span>
                     </td>

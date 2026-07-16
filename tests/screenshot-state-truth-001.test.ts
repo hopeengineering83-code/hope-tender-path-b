@@ -776,10 +776,14 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.doesNotMatch(tendersPageSrc, /width:\s*`\$\{tender\.readinessScore\}%`/);
     });
 
-    it("tenders page sort options use honest 'Readiness score' label (not 'Workflow Progress')", () => {
+    it("tenders page sort options do NOT include readinessScore (recheck 10 item #1)", () => {
       const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
-      assert.match(tendersPageSrc, /Readiness score \(high\)/);
-      assert.match(tendersPageSrc, /Readiness score \(low\)/);
+      // readinessScore sorting was removed entirely — it's not a valid
+      // ordering authority.
+      assert.doesNotMatch(tendersPageSrc, /readinessScore_desc/);
+      assert.doesNotMatch(tendersPageSrc, /readinessScore_asc/);
+      assert.doesNotMatch(tendersPageSrc, /Readiness score \(high\)/);
+      assert.doesNotMatch(tendersPageSrc, /Readiness score \(low\)/);
       assert.doesNotMatch(tendersPageSrc, /Workflow Progress \(high\)/);
       assert.doesNotMatch(tendersPageSrc, /Workflow Progress \(low\)/);
     });
@@ -814,6 +818,79 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.doesNotMatch(complianceSrc, /CANONICAL_CLEAR/);
       const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
       assert.doesNotMatch(tendersPageSrc, /CANONICAL_CLEAR/);
+    });
+  });
+
+  describe("Recheck 10 — duplicate controls, command center, lockfile", () => {
+    it("tenders page does NOT have a duplicate server GET search form", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      // The server GET form was removed — TenderSearchBar is the single
+      // search authority.
+      assert.doesNotMatch(tendersPageSrc, /<form className="flex-1" method="GET">/);
+    });
+
+    it("tenders page does NOT have duplicate status chips", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      // STATUS_FILTERS chips were removed — TenderSearchBar's dropdown is
+      // the single status-filter authority.
+      assert.doesNotMatch(tendersPageSrc, /STATUS_FILTERS/);
+    });
+
+    it("tenders page has exactly one TenderSearchBar", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      const matches = tendersPageSrc.match(/<TenderSearchBar/g) ?? [];
+      assert.equal(matches.length, 1, `expected exactly 1 TenderSearchBar, got ${matches.length}`);
+    });
+
+    it("tenders page does NOT select readinessScore in any query", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      assert.doesNotMatch(tendersPageSrc, /readinessScore: true/);
+    });
+
+    it("command center does NOT display 'Legacy workflow score' to users", () => {
+      const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+      // The rendered text must not include "Legacy workflow score" — only
+      // a code comment mentioning the removal is allowed.
+      assert.doesNotMatch(ccSrc, />Legacy workflow score/);
+      assert.doesNotMatch(ccSrc, /Legacy workflow score:/);
+    });
+
+    it("command center does NOT say 'Export gate clear' from openHigh alone", () => {
+      const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+      // The caption must be "No HIGH objections", not "Export gate clear".
+      assert.doesNotMatch(ccSrc, /Export gate clear/);
+      assert.match(ccSrc, /No HIGH objections/);
+    });
+
+    it("command center Documents card uses activeDocCount (not generatedDocuments.length)", () => {
+      const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+      assert.match(ccSrc, /activeDocCount/);
+      assert.match(ccSrc, /blockedDocCount/);
+      assert.match(ccSrc, /ACTIVE_DOC_STATUSES/);
+    });
+
+    it("command center AI jobs section is labelled 'Historical' (not current state)", () => {
+      const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+      assert.match(ccSrc, /Historical background AI jobs/);
+      assert.match(ccSrc, /History only/);
+    });
+
+    it("command center AI jobs use neutral slate for SUCCEEDED (not green)", () => {
+      const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+      // No green-100/green-700 for job status badges — historical success
+      // does not define current canonical state.
+      assert.doesNotMatch(ccSrc, /bg-green-100 text-green-700/);
+    });
+
+    it("package-lock.json has NO diff vs authorized base (fsevents dev:true preserved)", () => {
+      // Verify the fsevents 2.3.2 entry still has "dev": true — the
+      // unauthorized lockfile change removed it. We check the specific
+      // entry to avoid greedy regex matching across the whole file.
+      const lockSrc = readFileSync("package-lock.json", "utf8");
+      // Find the playwright fsevents 2.3.2 block and verify dev:true is present.
+      const fseventsBlock = lockSrc.match(/"node_modules\/playwright\/node_modules\/fsevents":\s*\{[^}]*\}/);
+      assert.ok(fseventsBlock, "playwright fsevents block must exist");
+      assert.match(fseventsBlock[0], /"dev": true/, 'fsevents 2.3.2 must have "dev": true (unauthorized lockfile change reverted)');
     });
   });
 });

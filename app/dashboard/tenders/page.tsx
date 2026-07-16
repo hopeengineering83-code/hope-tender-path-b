@@ -4,39 +4,18 @@ import { Suspense } from "react";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { StatusBadge } from "../../../components/status-badge";
-import { formatDate, formatTenderStatus, parseTenderStatus } from "../../../lib/tender-workflow";
+import { formatDate, parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 import { DuplicateButton } from "../history/duplicate-button";
 import { SortSelect } from "./sort-select";
 import { TenderSearchBar } from "../../../components/tender-search-bar";
 import { TenderNotificationsBanner } from "../../../components/tender-notifications-banner";
 
-const STATUS_FILTERS = [
-  "ALL",
-  "DRAFT",
-  "INTAKE",
-  "ANALYZED",
-  "AI_ANALYZED",
-  "AI_ANALYSIS_PARTIAL",
-  "FALLBACK_DRAFT_CREATED",
-  "ANALYSIS_REQUIRES_REVIEW",
-  "MATCHED",
-  "COMPLIANCE_REVIEW",
-  "READY_FOR_GENERATION",
-  "GENERATED",
-  "IN_REVIEW",
-  "APPROVED",
-  "EXPORTED",
-  "CLOSED",
-] as const;
-
 const SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
   { value: "createdAt_asc", label: "Oldest first" },
   { value: "deadline_asc", label: "Deadline (soonest)" },
   { value: "deadline_desc", label: "Deadline (latest)" },
-  { value: "readinessScore_desc", label: "Readiness score (high)" },
-  { value: "readinessScore_asc", label: "Readiness score (low)" },
   { value: "status_asc", label: "Status A–Z" },
 ] as const;
 
@@ -177,7 +156,6 @@ export default async function TendersPage({
       select: {
         id: true, title: true, reference: true, clientName: true, procuringEntityName: true,
         deadline: true, status: true, category: true, budget: true, currency: true,
-        readinessScore: true,
         notes: true,
         stage: true,
         createdAt: true, updatedAt: true,
@@ -187,9 +165,11 @@ export default async function TendersPage({
       orderBy: buildOrderBy(sort),
     }),
     // Always load all tenders for KPI summary (no filter, small payload)
+    // NOTE: readinessScore is intentionally NOT selected — it is not a
+    // valid ordering or display metric. See Issue #1134 recheck 10 item #1.
     prisma.tender.findMany({
       where: { userId },
-      select: { id: true, status: true, stage: true, deadline: true, readinessScore: true },
+      select: { id: true, status: true, stage: true, deadline: true },
     }),
   ]);
 
@@ -288,51 +268,18 @@ export default async function TendersPage({
       )}
 
       <div className="rounded-2xl border bg-white shadow-sm">
-        {/* Filter bar */}
+        {/* Filter bar — single search + status-filter authority.
+            TenderSearchBar preserves q, status, AND sort together in the URL.
+            Issue #1134 recheck 10 item #2: removed duplicate server GET form
+            and status chips that duplicated TenderSearchBar's controls. */}
         <div className="flex flex-col gap-3 border-b p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <form className="flex-1" method="GET">
-              <input
-                name="q"
-                defaultValue={q}
-                placeholder="Search tenders"
-                className="w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black"
-              />
-              <input type="hidden" name="status" value={status} />
-              <input type="hidden" name="sort" value={sort} />
-            </form>
+            <Suspense fallback={null}>
+              <TenderSearchBar />
+            </Suspense>
             <SortSelect currentSort={sort} />
           </div>
-          <div className="flex flex-wrap gap-1">
-            {STATUS_FILTERS.map((filterValue) => (
-              <Link
-                key={filterValue}
-                href={`/dashboard/tenders?status=${filterValue}&sort=${sort}`}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  status === filterValue ? "bg-black text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                {filterValue === "ALL" ? "All" : formatTenderStatus(filterValue)}
-              </Link>
-            ))}
-            <Link
-              href={`/dashboard/tenders?status=REGEX_FALLBACK&sort=${sort}`}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                status === "REGEX_FALLBACK" ? "bg-red-700 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"
-              }`}
-              title="Tenders analyzed by regex fallback — AI providers failed. These need re-analysis."
-            >
-              Needs re-analysis
-            </Link>
-          </div>
-        </div>
-
-        {/* Live search bar + result count */}
-        <div className="border-b px-4 pt-3">
-          <Suspense fallback={null}>
-            <TenderSearchBar />
-          </Suspense>
-          <p className="mb-2 text-xs text-slate-500">{tenders.length} tender{tenders.length !== 1 ? "s" : ""}{q ? ` matching "${q}"` : ""}</p>
+          <p className="text-xs text-slate-500">{tenders.length} tender{tenders.length !== 1 ? "s" : ""}{q ? ` matching "${q}"` : ""}</p>
         </div>
 
         {/* Empty states */}
