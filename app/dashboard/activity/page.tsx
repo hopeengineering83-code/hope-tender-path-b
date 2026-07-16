@@ -97,28 +97,28 @@ export default function ActivityPage() {
             <p className="text-xs mt-1">Actions like uploads, engine runs, and exports appear here automatically.</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead className="bg-slate-50 text-left text-slate-500 text-xs">
               <tr>
-                <th className="px-4 py-3 font-medium">Action</th>
+                <th className="w-24 px-4 py-3 font-medium sm:w-36">Action</th>
                 <th className="px-4 py-3 font-medium">Description</th>
-                <th className="px-4 py-3 font-medium hidden md:table-cell">Entity</th>
-                <th className="px-4 py-3 font-medium">Time</th>
+                <th className="hidden w-28 px-4 py-3 font-medium md:table-cell">Entity</th>
+                <th className="w-20 px-4 py-3 font-medium sm:w-32">Time</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {logs.map((log) => (
                 <tr key={log.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ACTION_COLORS[log.action] ?? "bg-slate-100 text-slate-600"}`}>
+                    <span className={`inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium align-bottom ${ACTION_COLORS[log.action] ?? "bg-slate-100 text-slate-600"}`}>
                       {log.action.replace(/_/g, " ")}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-slate-700 max-w-xs truncate">{log.description}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs hidden md:table-cell">
+                  <td className="truncate px-4 py-3 text-slate-700">{log.description}</td>
+                  <td className="hidden truncate px-4 py-3 text-xs text-slate-400 md:table-cell">
                     {log.entityType ? `${log.entityType}` : "—"}
                   </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{fmtDate(log.createdAt)}</td>
+                  <td className="truncate px-4 py-3 text-xs text-slate-400">{fmtDate(log.createdAt)}</td>
                 </tr>
               ))}
             </tbody>

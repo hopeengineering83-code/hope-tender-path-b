@@ -120,3 +120,28 @@ describe("SCREENSHOT-R2 Gap #5 — dashboard activity feed overflow", () => {
     );
   });
 });
+
+describe("SCREENSHOT-R2 Gap #6 — activity logs table clipped columns on mobile", () => {
+  it("activity logs table uses a fixed layout so columns can't force page-level overflow", () => {
+    const src = readFileSync("app/dashboard/activity/page.tsx", "utf8");
+    assert.match(
+      src,
+      /table-fixed/,
+      "Activity logs table must use table-fixed so cell widths are bounded, not content-driven",
+    );
+  });
+
+  it("action badge and description/entity/time cells truncate instead of forcing table width", () => {
+    const src = readFileSync("app/dashboard/activity/page.tsx", "utf8");
+    assert.match(
+      src,
+      /max-w-full truncate rounded-full/,
+      "Action badge must truncate within its bounded cell instead of forcing the row wider",
+    );
+    const truncateCount = (src.match(/truncate/g) ?? []).length;
+    assert.ok(
+      truncateCount >= 4,
+      "Description, Entity, and Time cells (plus the Action badge) must all truncate under table-fixed layout",
+    );
+  });
+});
