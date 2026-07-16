@@ -410,7 +410,9 @@ export default async function TendersPage({
                           if (!src) return null;
                           if (src === "REGEX") return <span className="ml-1 rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
                           if (src === "PARTIAL") return <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
-                          return <span className="ml-1 rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-semibold text-emerald-700" title="Analyzed by AI.">AI</span>;
+                          // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
+                          // Neutral slate color to avoid implying export readiness.
+                          return <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
                         })()}
                         <span className="ml-1 text-xs text-slate-400 italic">(workflow)</span>
                         <span className="ml-1 text-xs text-slate-400">
@@ -467,7 +469,9 @@ export default async function TendersPage({
                           if (!src) return null;
                           if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
                           if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
-                          return <span className="rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-semibold text-emerald-700" title="Analyzed by AI.">AI</span>;
+                          // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
+                          // Neutral slate color to avoid implying export readiness.
+                          return <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
                         })()}
                       </div>
                     </div>
@@ -481,10 +485,10 @@ export default async function TendersPage({
                       )}
                     </div>
 
-                    {/* Workflow progress bar (not export readiness) */}
+                    {/* Workflow progress bar (NOT export readiness — neutral color) */}
                     {tender.readinessScore != null && (
-                      <div className="h-1 rounded-full bg-slate-100" title="Workflow progress — not export readiness">
-                        <div className="h-1 rounded-full bg-emerald-400" style={{ width: `${tender.readinessScore}%` }} />
+                      <div className="h-1 rounded-full bg-slate-100" title="Workflow progress — NOT export readiness. Workspace projection; per-tender verification required.">
+                        <div className="h-1 rounded-full bg-slate-400" style={{ width: `${tender.readinessScore}%` }} />
                       </div>
                     )}
 

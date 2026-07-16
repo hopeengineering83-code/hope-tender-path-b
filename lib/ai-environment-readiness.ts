@@ -6,6 +6,18 @@ import {
   isProviderConfigured,
   providerDisplayName,
 } from "./ai-provider-registry";
+// Effective timeout values from the centralized timeout module. These are
+// the values the runtime actually uses — env vars are optional overrides.
+// Readiness must validate the EFFECTIVE values, not raw env presence,
+// because missing env vars fall back to validated defaults (analysis
+// 50s/240s by tier, proposal 55s/220s, section 30s). Marking the env
+// blocked when the env var is absent would create a false production
+// failure contradicting the actual runtime configuration.
+import {
+  AI_ANALYSIS_TIMEOUT_MS,
+  AI_PROPOSAL_TIMEOUT_MS,
+  PROPOSAL_SECTION_TIMEOUT_MS,
+} from "./timeout-config";
 
 export type AIEnvironmentVariableStatus = {
   name: string;
@@ -111,27 +123,32 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
-  // Runtime timeout guards — these are BLOCKERS in production, not just
-  // recommended. Without them, AI calls can hang indefinitely and hit the
-  // Vercel function timeout, costing money and blocking the worker pool.
-  // A missing or non-positive timeout is treated as a missing guard.
-  const parseTimeoutMs = (name: string): number | null => {
-    const raw = (process.env[name] ?? "").trim();
-    if (!raw) return null;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return n;
+  // Runtime timeout guards — validate the EFFECTIVE values from the
+  // centralized timeout module (lib/timeout-config.ts), NOT raw env
+  // presence. Missing env vars fall back to validated defaults
+  // (analysis 50s/240s by tier, proposal 55s/220s, section 30s), so the
+  // runtime has valid timeouts even when the env vars are absent.
+  // Block only when the effective value is outside the supported range.
+  const SUPPORTED_TIMEOUT_RANGES: Record<string, { min: number; max: number; label: string }> = {
+    "AI_ANALYSIS_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "analysis" },
+    "AI_PROPOSAL_TIMEOUT_MS": { min: 10_000, max: 300_000, label: "proposal" },
+    "PROPOSAL_SECTION_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "section" },
   };
-  const requiredTimeouts = [
-    "AI_ANALYSIS_TIMEOUT_MS",
-    "AI_PROPOSAL_TIMEOUT_MS",
-    "PROPOSAL_SECTION_TIMEOUT_MS",
-  ];
-  for (const t of requiredTimeouts) {
-    const ms = parseTimeoutMs(t);
-    if (ms === null) {
+  const effectiveTimeouts: Record<string, number> = {
+    "AI_ANALYSIS_TIMEOUT_MS": AI_ANALYSIS_TIMEOUT_MS,
+    "AI_PROPOSAL_TIMEOUT_MS": AI_PROPOSAL_TIMEOUT_MS,
+    "PROPOSAL_SECTION_TIMEOUT_MS": PROPOSAL_SECTION_TIMEOUT_MS,
+  };
+  for (const [envVar, range] of Object.entries(SUPPORTED_TIMEOUT_RANGES)) {
+    const effective = effectiveTimeouts[envVar];
+    if (
+      typeof effective !== "number" ||
+      !Number.isFinite(effective) ||
+      effective < range.min ||
+      effective > range.max
+    ) {
       blockers.push(
-        `${t} is missing or not a positive finite number. AI calls without a timeout guard can hang indefinitely and exhaust the worker pool.`,
+        `Effective ${envVar} (${range.label}) is ${effective}, outside the supported range [${range.min}, ${range.max}]. The centralized timeout module (lib/timeout-config.ts) must return a valid value.`,
       );
     }
   }

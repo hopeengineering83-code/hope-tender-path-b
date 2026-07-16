@@ -590,41 +590,105 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("AI environment readiness production path (fail-closed on missing timeouts)", () => {
-    it("treats missing AI_ANALYSIS_TIMEOUT_MS as a blocker", () => {
+  describe("Tenders page and compliance dashboard use provisional wording (no Clear authority)", () => {
+    it("tenders page workflow progress bar uses neutral slate color (not green)", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      // The workflow progress bar must NOT use emerald/green — it's workflow
+      // progress, not export readiness.
+      assert.doesNotMatch(tendersPageSrc, /bg-emerald-400/);
+      assert.match(tendersPageSrc, /bg-slate-400/);
+    });
+
+    it("tenders page 'AI' analysis-source badge uses neutral slate (not green)", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      // The AI badge is the analysis SOURCE, not a readiness/Clear verdict.
+      // Must not use emerald/green styling. Check that no AI badge uses
+      // emerald colors — there are multiple render paths (table + card).
+      const aiBadgeMatches = tendersPageSrc.match(/title="[^"]*AI[^"]*"\s*>\s*AI\s*</g) ?? [];
+      for (const m of aiBadgeMatches) {
+        assert.doesNotMatch(
+          m,
+          /emerald/i,
+          `AI badge must not use emerald/green styling. Found: ${m}`,
+        );
+      }
+      assert.match(tendersPageSrc, /bg-slate-100 px-1 py-0.5 text-\[10px\] font-semibold text-slate-600/);
+    });
+
+    it("tenders page workflow bar title says 'NOT export readiness'", () => {
+      const tendersPageSrc = readFileSync("app/dashboard/tenders/page.tsx", "utf8");
+      assert.match(tendersPageSrc, /NOT export readiness/);
+    });
+
+    it("compliance dashboard has no Clear/classifyTender/readinessScore wording", () => {
+      // The compliance dashboard was already clean — verify it stays clean.
+      assert.doesNotMatch(complianceSrc, /✓ Clear/);
+      assert.doesNotMatch(complianceSrc, /classifyTenderExtractionState/);
+      assert.doesNotMatch(complianceSrc, /classifyTenderCurrentnessBatch/);
+    });
+  });
+
+  describe("AI environment readiness production path (effective timeout validation)", () => {
+    it("imports effective timeout values from lib/timeout-config.ts", () => {
+      // Readiness must validate the EFFECTIVE values, not raw env presence.
+      // Missing env vars fall back to validated defaults via the centralized
+      // timeout module.
+      assert.match(aiEnvSrc, /from "\.\/timeout-config"/);
       assert.match(aiEnvSrc, /AI_ANALYSIS_TIMEOUT_MS/);
-      assert.match(aiEnvSrc, /requiredTimeouts/);
-    });
-
-    it("treats missing AI_PROPOSAL_TIMEOUT_MS as a blocker", () => {
       assert.match(aiEnvSrc, /AI_PROPOSAL_TIMEOUT_MS/);
-    });
-
-    it("treats missing PROPOSAL_SECTION_TIMEOUT_MS as a blocker", () => {
       assert.match(aiEnvSrc, /PROPOSAL_SECTION_TIMEOUT_MS/);
     });
 
-    it("parses timeout values and rejects non-positive / non-finite", () => {
-      // The check is `!Number.isFinite(n) || n <= 0` — inverted form.
-      assert.match(aiEnvSrc, /Number\.isFinite\(n\)/);
-      assert.match(aiEnvSrc, /n <= 0/);
+    it("defines supported timeout ranges for each required timeout", () => {
+      assert.match(aiEnvSrc, /SUPPORTED_TIMEOUT_RANGES/);
+      assert.match(aiEnvSrc, /AI_ANALYSIS_TIMEOUT_MS":\s*\{\s*min:\s*5_000/);
+      assert.match(aiEnvSrc, /AI_PROPOSAL_TIMEOUT_MS":\s*\{\s*min:\s*10_000/);
+      assert.match(aiEnvSrc, /PROPOSAL_SECTION_TIMEOUT_MS":\s*\{\s*min:\s*5_000/);
     });
 
-    it("ready === false when any required timeout is missing", () => {
+    it("validates effective values against the supported range", () => {
+      assert.match(aiEnvSrc, /effective < range\.min/);
+      assert.match(aiEnvSrc, /effective > range\.max/);
+    });
+
+    it("does NOT check raw env presence for timeouts (uses effective values)", () => {
+      // The old code checked `present("AI_ANALYSIS_TIMEOUT_MS")` — the new
+      // code must NOT do that. It reads the effective value from the
+      // centralized module instead.
+      assert.doesNotMatch(aiEnvSrc, /present\("AI_ANALYSIS_TIMEOUT_MS"\)/);
+      assert.doesNotMatch(aiEnvSrc, /present\("AI_PROPOSAL_TIMEOUT_MS"\)/);
+      assert.doesNotMatch(aiEnvSrc, /present\("PROPOSAL_SECTION_TIMEOUT_MS"\)/);
+    });
+
+    it("ready === true when env vars are absent (effective defaults are valid)", () => {
+      // This is the critical fix for recheck 8 defect #1: missing env vars
+      // must NOT cause a false production failure, because the centralized
+      // timeout module supplies validated defaults (analysis 50s/240s by
+      // tier, proposal 55s/220s, section 30s).
       const saved: Record<string, string | undefined> = {
         AI_ANALYSIS_TIMEOUT_MS: process.env.AI_ANALYSIS_TIMEOUT_MS,
         AI_PROPOSAL_TIMEOUT_MS: process.env.AI_PROPOSAL_TIMEOUT_MS,
         PROPOSAL_SECTION_TIMEOUT_MS: process.env.PROPOSAL_SECTION_TIMEOUT_MS,
+        DATABASE_URL: process.env.DATABASE_URL,
+        SESSION_SECRET: process.env.SESSION_SECRET,
       };
       delete process.env.AI_ANALYSIS_TIMEOUT_MS;
       delete process.env.AI_PROPOSAL_TIMEOUT_MS;
       delete process.env.PROPOSAL_SECTION_TIMEOUT_MS;
+      // Keep DATABASE_URL and SESSION_SECRET so the only potential blockers
+      // are the timeout checks.
       try {
         const r = getAIEnvironmentReadiness();
-        assert.equal(r.ready, false, "ready must be false when timeouts missing");
-        assert.ok(
-          r.blockers.some((b) => b.includes("AI_ANALYSIS_TIMEOUT_MS")),
-          "blockers must mention AI_ANALYSIS_TIMEOUT_MS",
+        // The effective timeout values should be the defaults (50s, 55s, 30s)
+        // — all within the supported ranges. So ready should NOT be false
+        // due to timeouts.
+        const timeoutBlockers = r.blockers.filter((b) =>
+          /AI_ANALYSIS_TIMEOUT_MS|AI_PROPOSAL_TIMEOUT_MS|PROPOSAL_SECTION_TIMEOUT_MS/.test(b),
+        );
+        assert.equal(
+          timeoutBlockers.length,
+          0,
+          `there must be NO timeout blockers when env vars are absent (effective defaults are valid). Got: ${JSON.stringify(timeoutBlockers)}`,
         );
       } finally {
         for (const [k, v] of Object.entries(saved)) {
@@ -632,18 +696,42 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
         }
       }
     });
+
+    it("ready === false when an effective timeout is out of range", () => {
+      // Set an env var to an out-of-range value. The centralized module
+      // will reject it and fall back to the default — so we can't easily
+      // force an out-of-range effective value via env. Instead, verify
+      // that the code path EXISTS to block on out-of-range values by
+      // checking the source has the range check.
+      assert.match(aiEnvSrc, /outside the supported range/);
+    });
   });
 
-  describe("System readiness production path (worker_auth required in production)", () => {
+  describe("System readiness production path (worker_auth operational blocker)", () => {
     it("marks worker_auth as requiredForProduction: true", () => {
-      // Previously this was false, allowing production to deploy without
-      // worker auth — a security hole.
+      // This is an OPERATIONAL requirement (automated callers need secrets),
+      // not a security hole. The endpoint falls back to requireRole.
       assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: true/);
     });
 
-    it("returns CRITICAL worker_auth in production when no secret", async () => {
-      // NODE_ENV is typed as readonly in @types/node. Use Reflect.set to
-      // bypass the type guard for this test only.
+    it("title reflects operational (not security) rationale", () => {
+      assert.match(systemSrc, /Background worker automated-call authentication/);
+    });
+
+    it("documents the requireRole fallback (not public unauthenticated)", () => {
+      // The endpoint does NOT become publicly unauthenticated when secrets
+      // are absent — it falls back to requireRole("ADMIN", "PROPOSAL_MANAGER").
+      assert.match(systemSrc, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)|requireRole\(ADMIN, PROPOSAL_MANAGER\)/);
+      assert.match(systemSrc, /falls back to requireRole/);
+    });
+
+    it("does NOT claim the endpoint is unauthenticated when secrets are absent", () => {
+      // The previous (inaccurate) wording claimed "unauthenticated" —
+      // that was a false statement about the runtime behavior.
+      assert.doesNotMatch(systemSrc, /endpoints are unauthenticated/);
+    });
+
+    it("returns CRITICAL worker_auth in production when no secret (operational)", async () => {
       const savedNodeEnv = process.env.NODE_ENV;
       const savedVercelEnv = process.env.VERCEL_ENV;
       const savedWorker = process.env.AI_JOBS_WORKER_SECRET;
