@@ -3,10 +3,12 @@
 // 1. History page Actions column: whitespace-nowrap + flex-wrap for mobile
 // 2. Analytics page: empty state when zero tenders
 // 3. History page: status display is human-readable (no raw EXTRACTION_CORRUPTED)
+// 4. Admin page: /dashboard/admin no longer returns 404 (page.tsx exists)
+// 5. Dashboard overview: activity feed description uses line-clamp to prevent overflow
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 describe("SCREENSHOT-R2 Gap #1 — history page mobile Actions column", () => {
   it("Actions header has whitespace-nowrap to prevent truncation", () => {
@@ -65,7 +67,6 @@ describe("SCREENSHOT-R2 Gap #2 — analytics page empty state", () => {
 describe("SCREENSHOT-R2 Gap #3 — no false status labels in history", () => {
   it("history page does not hardcode 'EXTRACTION CORRUPTED' text", () => {
     const src = readFileSync("app/dashboard/history/page.tsx", "utf8");
-    // The page should use StatusBadge component, not hardcode status strings
     assert.ok(
       !src.includes("EXTRACTION CORRUPTED"),
       "History page must not hardcode 'EXTRACTION CORRUPTED' — use StatusBadge component",
@@ -74,6 +75,48 @@ describe("SCREENSHOT-R2 Gap #3 — no false status labels in history", () => {
       src,
       /StatusBadge/,
       "History page must use StatusBadge component for status display",
+    );
+  });
+});
+
+describe("SCREENSHOT-R2 Gap #4 — admin page 404 fix", () => {
+  it("app/dashboard/admin/page.tsx exists", () => {
+    assert.ok(
+      existsSync("app/dashboard/admin/page.tsx"),
+      "app/dashboard/admin/page.tsx must exist to fix the 404 error",
+    );
+  });
+
+  it("admin page checks for ADMIN role", () => {
+    const src = readFileSync("app/dashboard/admin/page.tsx", "utf8");
+    assert.match(
+      src,
+      /ADMIN/,
+      "Admin page must check for ADMIN role before granting access",
+    );
+    assert.match(
+      src,
+      /redirect/,
+      "Admin page must redirect non-admin users",
+    );
+  });
+
+  it("admin page links to sub-pages", () => {
+    const src = readFileSync("app/dashboard/admin/page.tsx", "utf8");
+    assert.match(src, /ai-readiness/, "Admin page must link to AI Readiness sub-page");
+    assert.match(src, /safety-center/, "Admin page must link to Safety Center sub-page");
+    assert.match(src, /users/, "Admin page must link to User Management");
+    assert.match(src, /system/, "Admin page must link to System Status");
+  });
+});
+
+describe("SCREENSHOT-R2 Gap #5 — dashboard activity feed overflow", () => {
+  it("activity feed description uses line-clamp to prevent overflow", () => {
+    const src = readFileSync("app/dashboard/page.tsx", "utf8");
+    assert.match(
+      src,
+      /line-clamp-2/,
+      "Dashboard activity feed description must use line-clamp-2 to prevent text overflow",
     );
   });
 });
