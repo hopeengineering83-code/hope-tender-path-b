@@ -158,6 +158,8 @@ export type FinalSubmissionReadiness = {
   advisoryWarnings: FinalReadinessAdvisoryWarning[];
   summary: FinalReadinessSummary;
   message: string;
+  /** Per-field canonical state from resolveCanonicalFieldState (same inputs, no divergent call). */
+  canonicalFields?: import("./canonical-field-state").CanonicalFieldState[];
 };
 
 export type GetFinalSubmissionReadinessOptions = {
@@ -1250,6 +1252,7 @@ export async function getFinalSubmissionReadiness(
     advisoryWarnings,
     summary,
     message,
+    canonicalFields: canonicalExportState.fields,
   };
 }
 

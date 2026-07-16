@@ -3,7 +3,6 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import { resolveCanonicalFieldState } from "../../../../../lib/engine/canonical-field-state";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -71,9 +70,6 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       preBidMeetingLocation: true,
       analysisSummary: true,
       metadataContaminated: true,
-      metadataOverrides: {
-        select: { field: true, fieldState: true, overrideValue: true, reason: true, authorityClass: true },
-      },
       requirements: {
         select: { id: true, title: true, priority: true, requirementType: true },
         orderBy: { createdAt: "asc" },
@@ -109,65 +105,31 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
     userId,
   }).catch(() => null);
 
-  // isAuthoritative is derived from canonical readiness — which now
-  // includes currency authority via the canonical field resolver
-  // (resolveCanonicalFieldState, called inside getFinalSubmissionReadiness).
-  // No separate currency authority call needed.
+  // isAuthoritative is derived from canonical readiness — which includes
+  // currency authority via the canonical field resolver called inside
+  // getFinalSubmissionReadiness. No separate authority call needed.
   const isAuthoritative =
     canonicalReadiness?.ok === true &&
     (canonicalReadiness.tenderLevelBlockers.length === 0);
   const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
   const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
 
-  // ── Currency display (field-specific canonical verdict) ─────────────
-  // Per THREE-PASS MASTER PROMPT item 2: currency display must use a
-  // field-specific canonical currency verdict, NOT a blanket "unverified"
-  // whenever the tender is blocked for any unrelated reason.
-  //
-  // We call resolveCanonicalFieldState (the same canonical resolver used
-  // inside getFinalSubmissionReadiness) to get the currency field's
-  // specific status. This is NOT a parallel resolver — it's the SAME
-  // resolver, consumed directly to get a per-field verdict.
-  const currencyFieldState = (() => {
-    try {
-      const result = resolveCanonicalFieldState({
-        tender: {
-          id: tender.id,
-          title: tender.title,
-          reference: tender.reference,
-          clientName: tender.clientName,
-          procuringEntityName: tender.procuringEntityName,
-          deadline: tender.deadline ?? null,
-          currency: tender.currency,
-          country: tender.country,
-          submissionMethod: tender.submissionMethod,
-          submissionAddress: tender.submissionAddress,
-          submissionEmails: tender.submissionEmails,
-          submissionEmailSubject: tender.submissionEmailSubject,
-          clientContactName: tender.clientContactName,
-          clientContactEmail: tender.clientContactEmail,
-          metadataContaminated: tender.metadataContaminated === true,
-        },
-        overrides: tender.metadataOverrides.map((o) => ({
-          field: o.field,
-          fieldState: o.fieldState as any,
-          overrideValue: o.overrideValue,
-          reason: o.reason,
-          authorityClass: o.authorityClass,
-        })),
-        hasExtractedRequirements: (tender.requirements?.length ?? 0) > 0,
-      });
-      return result.fields.find((f) => f.fieldKey === "currency") ?? null;
-    } catch {
-      return null;
-    }
-  })();
+  // ── Currency display (from canonical readiness result) ──────────────
+  // Per REVISION_REQUIRED: the report page must NOT call the canonical
+  // field resolver directly with weaker inputs. Instead, derive the
+  // currency verdict from the getFinalSubmissionReadiness result, which
+  // already calls the canonical resolver with FULL inputs (ledgerFacts,
+  // active files, source-evidence columns, etc.). The readiness result
+  // now exposes canonicalFields[] — we find the currency field and use
+  // its specific status.
+  const currencyFieldState = canonicalReadiness?.canonicalFields?.find(
+    (f) => f.fieldKey === "currency",
+  ) ?? null;
 
   // Field-specific currency verdict:
   // - EXTRACTED_AND_GROUNDED / MANUAL_CONFIRMED → verified, show value
-  // - EXTRACTED_UNVERIFIED → show value with "unverified" annotation
   // - INVALID / NOT_STATED / null currency → "Not extracted"
-  // - Any other blocked state → "Unverified legacy value"
+  // - Any other state → "Unverified legacy value"
   const currencyStatus = currencyFieldState?.status ?? "INVALID";
   const isCurrencyVerified = [
     "EXTRACTED_AND_GROUNDED",

@@ -437,15 +437,19 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration verification (PostgreSQ
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────
 
 describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance (canonical resolver)", () => {
-  it("report page calls resolveCanonicalFieldState for currency verdict", () => {
+  it("report page derives currency verdict from getFinalSubmissionReadiness result (not a separate divergent call)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      src.includes("resolveCanonicalFieldState"),
-      "report page must call resolveCanonicalFieldState for field-specific currency verdict",
+      !src.includes("resolveCanonicalFieldState"),
+      "report page must NOT call resolveCanonicalFieldState directly — uses the result from getFinalSubmissionReadiness",
     );
     assert.ok(
-      src.includes("currency"),
-      "report page must look up the currency field from the canonical resolver result",
+      src.includes("canonicalFields"),
+      "report page must consume canonicalFields from the getFinalSubmissionReadiness result",
+    );
+    assert.ok(
+      /canonicalReadiness.*canonicalFields/.test(src.replace(/\s+/g, " ")),
+      "report page must derive currency verdict from canonicalReadiness.canonicalFields",
     );
   });
 
