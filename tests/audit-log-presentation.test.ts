@@ -65,9 +65,11 @@ describe("activity route and responsive UI contracts", () => {
     assert.match(routeSource, /groupAuditLogs\(rawLogs\)/);
   });
 
-  it("uses responsive cards at 390px and a table only from md upward", () => {
+  it("uses responsive cards at 390px and a bounded table only from md upward", () => {
     assert.match(pageSource, /className="divide-y md:hidden"/);
-    assert.match(pageSource, /className="hidden md:block"/);
+    assert.match(pageSource, /className="hidden [^"]*md:block"/);
+    assert.match(pageSource, /table-fixed/);
+    assert.match(pageSource, /truncate px-4 py-3 text-slate-700/);
     assert.doesNotMatch(pageSource, /max-w-xs truncate/);
   });
 });
