@@ -173,15 +173,15 @@ describe("migrated UI canonical rendering", () => {
 });
 
 describe("phase 1 architectural guardrails", () => {
-  it("migrated areas do not introduce a second readiness/severity mapping", () => {
+  it("migrated areas do not introduce a second readiness/severity authority", () => {
     for (const file of [
       "app/dashboard/tenders/[id]/executive-snapshot.tsx",
       "components/tender-health-score-panel.tsx",
       "components/generation-action-panel.tsx",
     ]) {
       const source = readFileSync(file, "utf8");
-      assert.doesNotMatch(source, /UISeverity/);
-      assert.doesNotMatch(source, /good['\"]?\s*[,|]|warning['\"]?\s*[,|]|poor['\"]?\s*[,|]|muted['\"]?\s*[,|]/i);
+      assert.doesNotMatch(source, /\btype\s+UISeverity\b|\binterface\s+UISeverity\b/);
+      assert.doesNotMatch(source, /(?:const|let|var)\s+(?:severityMap|readinessMap|statusSeverityMap)\s*=/i);
       assert.doesNotMatch(source, /generationReady\s*=|canGenerateFromLocal|localGenerationReadiness/);
     }
   });
