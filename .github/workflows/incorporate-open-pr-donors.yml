@@ -1,3 +1,4 @@
+# Triggered after the workflow existed on the consolidation branch.
 name: Incorporate open PR donors into consolidation
 
 on:
