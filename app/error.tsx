@@ -15,7 +15,7 @@ export default function ErrorPage({
         <p className="text-sm font-semibold uppercase tracking-wide text-red-600">Application error</p>
         <h1 className="mt-3 text-3xl font-bold tracking-tight">Something went wrong</h1>
         <p className="mt-4 text-slate-600">
-          The page could not be rendered. You can retry or return to the dashboard.
+          The page could not be rendered. You can retry or return home.
         </p>
         {error?.digest ? (
           <p className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-500">Error digest: {error.digest}</p>
@@ -32,7 +32,7 @@ export default function ErrorPage({
             href="/"
             className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
           >
-            Return to dashboard
+            Return home
           </Link>
         </div>
       </div>
