@@ -1,6 +1,7 @@
 name: Consolidation Schema Repair
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - release/consolidated-recovery-20260717
