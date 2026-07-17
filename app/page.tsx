@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-// P2 fix: Public landing page showed 3 competing actions (Login, Open Dashboard, Create Tender)
+// P2 fix: Public landing page previously showed competing actions to unauthenticated users.
 // to unauthenticated users. The latter two redirect to login anyway.
 // Fix: Single primary "Sign in" CTA. Dashboard/tender creation shown only after auth.
 

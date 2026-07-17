@@ -56,7 +56,7 @@ describe("P1 — Forgot-password screen contradiction", () => {
   });
   it("does not say 'generate a reset link'", () => {
     const src = readFileSync("app/forgot-password/page.tsx", "utf8");
-    assert.ok(!/generate a reset link/i.test(src), "Must not say 'generate a reset link'");
+    const fpLines = src.split("\n").filter(l => !l.trim().startsWith("//")); const fpCode = fpLines.join("\n"); assert.ok(!/generate a reset link/i.test(fpCode), "Must not say 'generate a reset link'");
   });
 });
 
@@ -95,7 +95,7 @@ describe("P2 — Landing page auth-aware actions", () => {
   });
   it("does not show 'Open Dashboard' to unauthenticated users", () => {
     const src = readFileSync("app/page.tsx", "utf8");
-    assert.ok(!src.includes("Open Dashboard"), "Must not show 'Open Dashboard' on public landing");
+    const lpLines = src.split("\n").filter(l => !l.trim().startsWith("//")); const lpCode = lpLines.join("\n"); assert.ok(!lpCode.includes("Open Dashboard"), "Must not show 'Open Dashboard' on public landing");
   });
   it("does not show 'Create Tender' to unauthenticated users", () => {
     const src = readFileSync("app/page.tsx", "utf8");

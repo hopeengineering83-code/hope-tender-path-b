@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 
-// P1 fix: The page said "generate a reset link" and had unreachable code to
+// P1 fix: The page previously had misleading wording and unreachable reset-link display code.
 // display/copy a returned reset URL. The actual API never returns a reset link —
 // it sends instructions by email and returns only a generic message.
 // Fix: Changed wording to "Send reset instructions", removed resetLink display/copy logic.
