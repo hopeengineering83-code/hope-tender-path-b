@@ -7,16 +7,27 @@ const aiExtractor = fs.readFileSync("lib/company-knowledge-ai.ts", "utf8");
 const diagnosticsRoute = fs.readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
 
 describe("company knowledge repair safety copy and diagnostics", () => {
-  it("lists all 10 providers (not just Gemini)", () => {
+  it("derives provider availability from the shared company-knowledge AI authority", () => {
     assert.ok(!/GEMINI_API_KEY is required/.test(repairRoute));
-    assert.match(repairRoute, /ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY/);
-    assert.match(repairRoute, /emergency-only last resort/);
+    assert.match(repairRoute, /isCompanyKnowledgeAIEnabled\(\)/);
+    assert.match(repairRoute, /AI extraction is not enabled/);
+    assert.match(repairRoute, /approved AI provider/);
   });
 
-  it("downgrades missing dedicated CV/project docs to LOW when reviewed records exist", () => {
-    assert.match(repairRoute, /severity: "LOW", title: "No dedicated expert source documents detected"/);
-    assert.match(repairRoute, /severity: "LOW", title: "No dedicated project source documents detected"/);
-    assert.match(repairRoute, /Reviewed records available; dedicated source docs optional/);
+  it("keeps missing source documents fail-closed under durable provenance authority", () => {
+    assert.match(repairRoute, /severity: "HIGH", title: "No expert source documents detected"/);
+    assert.match(repairRoute, /severity: "HIGH", title: "No project source documents detected"/);
+    assert.match(repairRoute, /Expert records cannot become usable without an owned CV\/staff source document and field evidence/);
+    assert.match(repairRoute, /Project records cannot become usable without an owned project-reference source document and field evidence/);
+    assert.doesNotMatch(repairRoute, /dedicated source docs optional/);
+  });
+
+  it("blocks unverified bytes and reviews without durable provenance", () => {
+    assert.match(repairRoute, /Source byte integrity is unverified/);
+    assert.match(repairRoute, /Expert reviews lack durable provenance/);
+    assert.match(repairRoute, /Project reviews lack durable provenance/);
+    assert.match(repairRoute, /isDurablyReviewed/);
+    assert.match(repairRoute, /sourceByteIntegrityIsVerified/);
   });
 
   it("sanitizes provider errors before storing extraction warnings", () => {
