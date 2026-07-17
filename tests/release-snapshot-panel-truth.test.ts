@@ -253,3 +253,37 @@ describe("Spec Test 15 — Orchestrator forwards stale/partial", () => {
     assert.ok(src.includes("analysisInputHash !== binding.contentHash"), "must compare hashes");
   });
 });
+
+// ─── 16. Tender Health "Submission Plan" dimension requires a CONFIRMED Build
+//         Plan, not just a non-empty derived/legacy plan ────────────────────
+//
+// Regression for a real, screenshot-verified contradiction: the Submission
+// Plan dimension previously scored 10/10 PASS whenever
+// `finalPackage.documents.planned` was non-empty — but that array is also
+// populated by a legacy derived-fallback plan
+// (deriveRequiredPackageDocuments) even when NO confirmed Build Plan exists.
+// The Recovery Command Center and Workflow Control Center both correctly
+// report "No confirmed Build Plan exists" / "No Build Plan exists" for the
+// same tender in that state, so the health score must agree with them
+// instead of silently scoring the unconfirmed derived draft as complete.
+describe("Spec Test 16 — Tender Health 'Submission Plan' dimension agrees with the confirmed Build Plan gate", () => {
+  it("imports getCurrentConfirmedBuildPlan from the shared build-plan authority", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.match(src, /import\s*\{\s*getCurrentConfirmedBuildPlan\s*\}\s*from\s*"..\/lib\/engine\/build-plan"/);
+  });
+
+  it("fetches the confirmed Build Plan before computing hasPlan", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.match(src, /confirmedBuildPlan\s*=\s*await getCurrentConfirmedBuildPlan\(/);
+  });
+
+  it("hasPlan requires confirmedBuildPlan.ok, not just a non-empty planned array", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.match(src, /const hasPlan = confirmedBuildPlan\.ok && plannedDocs\.length > 0;/);
+  });
+
+  it("FAIL detail surfaces the real confirmed-plan blocker instead of a bare 'Not built'", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.match(src, /confirmedBuildPlan\.blocker \?\? "Not built"/);
+  });
+});
