@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, WarningIcon } from "./icons";
+import { CheckIcon, WarningIcon, CrossIcon } from "./icons";
 
 type Perspective =
   | "DISCIPLINE_FIT"
@@ -280,7 +280,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
                 aria-label="Close results"
                 className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               >
-                ✕
+                <CrossIcon />
               </button>
             </div>
 

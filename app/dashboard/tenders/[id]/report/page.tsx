@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { ArrowRightIcon, WarningIcon } from "../../../../../components/icons";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -170,7 +171,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       {!isAuthoritative && (
         <div className="mb-6 rounded-lg border-2 border-dashed border-amber-500 bg-amber-50 px-4 py-3 print:border-amber-700 print:bg-amber-100">
           <p className="text-sm font-bold text-amber-900 print:text-amber-950">
-            ⚠ NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
+            <WarningIcon /> NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
           </p>
           <p className="mt-1 text-xs text-amber-800 print:text-amber-900">
             This report has NOT passed canonical final-submission readiness.
@@ -184,7 +185,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               {canonicalBlockers.slice(0, 5).map((b, i) => (
                 <li key={i}>
                   <span className="font-mono font-semibold">{b.category}:</span> {b.title}
-                  {b.recommendedAction ? <span className="block pl-4 italic">→ {b.recommendedAction}</span> : null}
+                  {b.recommendedAction ? <span className="block pl-4 italic"><ArrowRightIcon /> {b.recommendedAction}</span> : null}
                 </li>
               ))}
               {canonicalBlockers.length > 5 && (

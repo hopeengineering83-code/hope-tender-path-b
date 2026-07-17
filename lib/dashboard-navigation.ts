@@ -1,7 +1,12 @@
+import type { ReactNode } from "react";
+
 export type DashboardNavLink = {
   href: string;
   label: string;
-  icon: string;
+  // A rendered icon element (inline SVG), not a raw emoji/Unicode string —
+  // emoji glyph coverage depends on the viewer's OS/browser font stack and
+  // renders as blank "tofu" boxes in many environments (see components/icons.tsx).
+  icon: ReactNode;
 };
 
 export type DashboardNavGroup = {

@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  SearchIcon, DocumentIcon, ClockIcon, BrainIcon, TrophyIcon, WarningIcon,
+  InfoIcon, BellIcon, CrossIcon,
+} from "../../components/icons";
 
 type Notification = {
   id: string;
@@ -69,14 +73,14 @@ function isSafeInternalLink(link: string): boolean {
   }
 }
 
-const TYPE_ICON: Record<string, string> = {
-  TENDER_ANALYZED: "🔎",
-  TENDER_GENERATED: "📄",
-  TENDER_DEADLINE_SOON: "⏰",
-  KNOWLEDGE_IMPORTED: "🧠",
-  BID_OUTCOME_RECORDED: "🏆",
-  COMPLIANCE_GAP_FOUND: "⚠️",
-  SYSTEM: "ℹ️",
+const TYPE_ICON: Record<string, ReactNode> = {
+  TENDER_ANALYZED: <SearchIcon />,
+  TENDER_GENERATED: <DocumentIcon />,
+  TENDER_DEADLINE_SOON: <ClockIcon />,
+  KNOWLEDGE_IMPORTED: <BrainIcon />,
+  BID_OUTCOME_RECORDED: <TrophyIcon />,
+  COMPLIANCE_GAP_FOUND: <WarningIcon />,
+  SYSTEM: <InfoIcon />,
 };
 
 export function NotificationBell({ initialUnread }: { initialUnread: number }) {
@@ -242,7 +246,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                   key={n.id}
                   className={`flex gap-3 border-b px-4 py-3 last:border-b-0 ${n.readAt ? "bg-white" : "bg-blue-50"}`}
                 >
-                  <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? "🔔"}</span>
+                  <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? <BellIcon />}</span>
                   <div className="flex-1 min-w-0">
                     {n.link && isLinkSafe ? (
                       <Link
@@ -283,7 +287,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                       className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
                       aria-label={`Mark "${n.title}" as read`}
                     >
-                      ✕
+                      <CrossIcon />
                     </button>
                   )}
                 </div>

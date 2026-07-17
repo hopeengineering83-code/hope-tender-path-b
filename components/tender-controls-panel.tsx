@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDownIcon, RefreshIcon, WarningIcon } from "./icons";
+import { ChevronDownIcon, RefreshIcon, WarningIcon, DocumentIcon, ChatIcon, QuestionIcon, FlagIcon, CheckCircleIcon, CoinIcon } from "./icons";
 
 type ControlType =
   | "ADDENDUM"
@@ -90,13 +90,13 @@ const HIGH_CONFIDENCE_CODES: SuggestionCode[] = [
 ];
 
 const TYPE_CONFIG: Record<ControlType, { label: string; color: string; icon: ReactNode }> = {
-  ADDENDUM:             { label: "Addendum",          color: "bg-purple-100 text-purple-800 border-purple-300", icon: "📄" },
-  CLARIFICATION:        { label: "Clarification",     color: "bg-blue-100 text-blue-800 border-blue-300",   icon: "💬" },
-  QUESTION:             { label: "Question",           color: "bg-sky-100 text-sky-800 border-sky-300",       icon: "❓" },
-  MILESTONE:            { label: "Milestone",          color: "bg-green-100 text-green-800 border-green-300", icon: "🏁" },
-  TASK:                 { label: "Task",               color: "bg-gray-100 text-gray-700 border-gray-300",    icon: "✅" },
+  ADDENDUM:             { label: "Addendum",          color: "bg-purple-100 text-purple-800 border-purple-300", icon: <DocumentIcon /> },
+  CLARIFICATION:        { label: "Clarification",     color: "bg-blue-100 text-blue-800 border-blue-300",   icon: <ChatIcon /> },
+  QUESTION:             { label: "Question",           color: "bg-sky-100 text-sky-800 border-sky-300",       icon: <QuestionIcon /> },
+  MILESTONE:            { label: "Milestone",          color: "bg-green-100 text-green-800 border-green-300", icon: <FlagIcon /> },
+  TASK:                 { label: "Task",               color: "bg-gray-100 text-gray-700 border-gray-300",    icon: <CheckCircleIcon /> },
   RISK:                 { label: "Risk",               color: "bg-red-100 text-red-800 border-red-300",       icon: <WarningIcon /> },
-  COMMERCIAL_ASSUMPTION:{ label: "Commercial",         color: "bg-amber-100 text-amber-800 border-amber-300", icon: "💰" },
+  COMMERCIAL_ASSUMPTION:{ label: "Commercial",         color: "bg-amber-100 text-amber-800 border-amber-300", icon: <CoinIcon /> },
 };
 
 const SEVERITY_CONFIG: Record<Severity, { label: string; color: string }> = {

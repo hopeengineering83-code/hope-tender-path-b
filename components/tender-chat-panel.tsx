@@ -210,9 +210,9 @@ export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: str
           <div className="flex items-start gap-2">
             <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-slate-100 bg-slate-50 px-3 py-2">
               <span className="flex gap-1 items-center text-xs text-slate-400">
-                <span className="animate-pulse">●</span>
-                <span className="animate-pulse delay-100">●</span>
-                <span className="animate-pulse delay-200">●</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-pulse" aria-hidden="true" />
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-pulse delay-100" aria-hidden="true" />
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-pulse delay-200" aria-hidden="true" />
               </span>
             </div>
           </div>

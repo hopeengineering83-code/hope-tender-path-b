@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { CheckIcon, ChevronUpIcon, ChevronDownIcon } from "./icons";
 
 const PREVIEW = 5;
 
@@ -38,13 +39,15 @@ function SelectionDot({ selected }: { selected: boolean }) {
   if (selected)
     return (
       <span title="Selected for this tender" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">
-        ✓
+        <CheckIcon className="h-3 w-3" />
       </span>
     );
   return (
-    <span title="Available — not yet selected for this tender" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-100 text-slate-400 text-[10px]">
-      ○
-    </span>
+    <span
+      title="Available — not yet selected for this tender"
+      aria-hidden="true"
+      className="inline-block h-3 w-3 rounded-full border-2 border-slate-300"
+    />
   );
 }
 
@@ -119,7 +122,7 @@ export function VaultExpertsList({
                 onClick={() => setShowAll((v) => !v)}
                 className="text-xs font-medium text-slate-500 hover:text-slate-800"
               >
-                {showAll ? "▲ Show fewer" : `▼ Show all ${experts.length} reviewed experts`}
+                {showAll ? <><ChevronUpIcon /> Show fewer</> : <><ChevronDownIcon /> Show all {experts.length} reviewed experts</>}
               </button>
             </div>
           )}
@@ -219,7 +222,7 @@ export function VaultProjectsList({
                 onClick={() => setShowAll((v) => !v)}
                 className="text-xs font-medium text-slate-500 hover:text-slate-800"
               >
-                {showAll ? "▲ Show fewer" : `▼ Show all ${projects.length} reviewed projects`}
+                {showAll ? <><ChevronUpIcon /> Show fewer</> : <><ChevronDownIcon /> Show all {projects.length} reviewed projects</>}
               </button>
             </div>
           )}

@@ -5,6 +5,7 @@ import { detectAnalysisSource } from "@/lib/engine/analysis-source";
 import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
 import { SnapshotConsistencyBadge } from "@/components/snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
+import { ArrowRightIcon, ShareIcon } from "@/components/icons";
 
 type GeneratedDocLike = {
   id?: string;
@@ -246,14 +247,14 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
             href={`/dashboard/tenders/${tender.id}/command-center`}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
-            Full Command Center →
+            Full Command Center <ArrowRightIcon />
           </Link>
           <Link
             href={`/dashboard/tenders/${tender.id}/report`}
             target="_blank"
             className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
-            PDF Report ↗
+            PDF Report <ShareIcon />
           </Link>
         </div>
       </div>

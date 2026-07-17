@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ArrowRightIcon, CheckIcon, ChevronUpIcon, ChevronDownIcon } from "../../../components/icons";
 
 type Expert = { id: string; fullName: string; title?: string | null; disciplines: string; sectors: string; trustLevel?: string | null };
 type Project = { id: string; name: string; clientName?: string | null; sector?: string | null; contractValue?: number | null; currency?: string | null; trustLevel?: string | null };
@@ -10,7 +11,7 @@ type ProjectMatch = { id: string; score: number; rationale?: string | null; isSe
 type Tender = { id: string; title: string; expertMatches: ExpertMatch[]; projectMatches: ProjectMatch[] };
 
 function TrustBadge({ level }: { level?: string | null }) {
-  if (level === "REVIEWED") return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">✓ REVIEWED</span>;
+  if (level === "REVIEWED") return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700"><CheckIcon /> REVIEWED</span>;
   if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">AI DRAFT</span>;
   return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">DRAFT — review needed</span>;
 }
@@ -86,7 +87,7 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
 
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
         <strong>Note:</strong> Only <strong>REVIEWED</strong> experts and projects can be used for final document generation.
-        {" "}<Link href="/dashboard/company/review" className="font-semibold underline hover:text-amber-900">Review knowledge records →</Link>
+        {" "}<Link href="/dashboard/company/review" className="font-semibold underline hover:text-amber-900">Review knowledge records <ArrowRightIcon /></Link>
       </div>
 
       <div className="space-y-4">
@@ -118,7 +119,7 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                   >
                     Open workspace
                   </Link>
-                  <span className="text-slate-400">{isExpanded ? "▲" : "▼"}</span>
+                  <span className="text-slate-400">{isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}</span>
                 </div>
               </div>
 
@@ -168,7 +169,7 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                                       : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
                                   }`}
                                 >
-                                  {isBusy ? "…" : match.isSelected ? "✓ Selected" : "Select"}
+                                  {isBusy ? "…" : match.isSelected ? <><CheckIcon /> Selected</> : "Select"}
                                 </button>
                               </div>
                               {isExpanded && (
@@ -233,7 +234,7 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                                       : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
                                   }`}
                                 >
-                                  {isBusy ? "…" : match.isSelected ? "✓ Selected" : "Select"}
+                                  {isBusy ? "…" : match.isSelected ? <><CheckIcon /> Selected</> : "Select"}
                                 </button>
                               </div>
                               {isExpanded && (
