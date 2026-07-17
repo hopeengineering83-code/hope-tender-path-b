@@ -17,6 +17,7 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   "manual-tender-facts-flexibility.spec.ts",
   "share-link.spec.ts",
   "tender-list.spec.ts",
+  "mobile-overflow-gap-repair.spec.ts",
 ];
 
 // Tablet-authenticated contract specs validate responsive UI, role-aware

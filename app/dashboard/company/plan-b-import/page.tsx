@@ -121,7 +121,7 @@ export default function PlanBImportPage() {
 
       <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
         <h2 className="font-semibold">Strict Plan B rules</h2>
-        <ul className="mt-2 list-disc space-y-1 pl-5">
+        <ul className="mt-2 list-disc space-y-1 break-words pl-5">
           <li>Do not upload summaries as the source of truth.</li>
           <li>Each CV must include the full raw CV text block in <code>rawText</code>.</li>
           <li>Each project must include the full raw project record text in <code>rawText</code>.</li>

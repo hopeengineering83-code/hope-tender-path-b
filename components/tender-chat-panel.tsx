@@ -176,7 +176,7 @@ export function TenderChatPanel({ tenderId, canMutate = false }: { tenderId: str
   return (
     <div className="flex flex-col rounded-2xl border bg-white shadow-sm" style={{ height: "600px" }}>
       {/* Header */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Tender Assistant</h3>
           <p className="mt-0.5 text-xs text-slate-500">

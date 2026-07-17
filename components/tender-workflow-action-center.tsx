@@ -60,9 +60,9 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
 
   return (
     <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <h2 className="text-lg font-bold text-slate-900">Workflow Control Center</h2>
-        <button onClick={fetchStages} className="text-[10px] font-bold text-slate-400 hover:text-slate-600 uppercase tracking-widest">Refresh State</button>
+        <button onClick={fetchStages} className="shrink-0 text-[10px] font-bold text-slate-400 hover:text-slate-600 uppercase tracking-widest">Refresh State</button>
       </div>
       <div className="grid gap-3">
         {stages.map((s) => (
@@ -71,8 +71,8 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
               {s.stage}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-slate-900">{s.label}</h3>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h3 className="min-w-0 break-words font-semibold text-slate-900">{s.label}</h3>
                 <StatusBadge status={s.status} />
               </div>
               <p className="mt-0.5 text-sm text-slate-600">{s.explanation}</p>

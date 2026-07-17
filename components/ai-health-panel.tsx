@@ -166,7 +166,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
   if (!p.isAi) {
     return (
       <div className="rounded-xl bg-slate-50 p-3 shadow-sm border border-slate-200">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <p className="font-semibold text-slate-900">{p.label}</p>
           <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Final fallback (non-AI)</span>
         </div>
@@ -198,7 +198,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
   const failing = p.configured && p.status !== "GENERATION_VERIFIED" && p.status !== "CONFIGURED" && p.status !== "NOT_CONFIGURED";
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <p className="font-semibold text-slate-900">{p.label}</p>
         {pill}
       </div>

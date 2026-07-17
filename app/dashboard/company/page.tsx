@@ -679,7 +679,7 @@ export default function CompanyPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-xl bg-slate-100 p-1 w-fit">
+      <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
         {TABS.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "compliance") void loadComplianceData(); }}
             className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${tab===t.id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
@@ -1046,7 +1046,7 @@ export default function CompanyPage() {
       {tab==="compliance" && (
         <div className="space-y-6">
           {/* Sub-tabs */}
-          <div className="flex gap-1 rounded-xl bg-slate-100 p-1 w-fit text-sm">
+          <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1 text-sm">
             {([["compliance","Compliance Records"],["legal","Legal & Registrations"],["financial","Financials"]] as const).map(([id,label]) => (
               <button key={id} onClick={() => setComplianceSubTab(id)}
                 className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${complianceSubTab===id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
