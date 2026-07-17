@@ -73,6 +73,46 @@ test("5 reviewed selected projects below 90 stays explainable instead of false f
   assert.equal(model.projectMatchSummary.explanation, "Selected projects are reviewed but below 90% match; improve relevance or accept with justification.");
 });
 
+test("final package blocks ZIP when no confirmed Build Plan exists", async () => {
+  const model = await getFinalPackageReadinessModel({
+    tender: { findFirst: async () => ({ id: "t", requirements: [{ ...req("1"), exactFileName: "Technical Proposal.docx" }], generatedDocuments: [], expertMatches: [], projectMatches: [] }) },
+    buildPlan: { findFirst: async () => null },
+  }, "t", "u");
+  assert.equal(model.buildPlan.confirmed, false);
+  assert.equal(model.export.zipReady, false);
+  assert.ok(model.export.blockers.some((blocker) => blocker.code === "NO_CONFIRMED_BUILD_PLAN"));
+  assert.equal(model.documents.required.length, 1, "derived plan remains visible for a non-zero required denominator");
+});
+
+test("confirmed Build Plan items are the authoritative package scope", async () => {
+  const planItem = {
+    canonicalId: "confirmed-1",
+    exactFileName: "Confirmed Technical.pdf",
+    exactOrder: 1,
+    documentType: "TECHNICAL",
+    required: true,
+    format: "PDF",
+    envelope: "TECHNICAL",
+    sourceRequirementIds: ["1"],
+    brandingAllowed: true,
+    signatureAllowed: true,
+    stampAllowed: true,
+  };
+  const model = await getFinalPackageReadinessModel({
+    tender: { findFirst: async () => ({
+      id: "t",
+      requirements: [req("1")],
+      generatedDocuments: [doc({ id: "confirmed", name: "Confirmed Technical", exactFileName: "Confirmed Technical.pdf", format: "PDF", storagePath: "uploads/confirmed.pdf" })],
+      expertMatches: [],
+      projectMatches: [],
+    }) },
+    buildPlan: { findFirst: async () => ({ id: "plan", status: "CONFIRMED", revision: 1, confirmedRevision: 1, contentHash: "hash", confirmedContentHash: "hash", itemsJson: JSON.stringify([planItem]) }) },
+  }, "t", "u");
+  assert.equal(model.buildPlan.confirmed, true);
+  assert.deepEqual(model.documents.required.map((item) => item.displayName), ["Confirmed Technical.pdf"]);
+  assert.equal(model.documents.exportReady.length, 1);
+});
+
 test("one shared plan drives planned 8 required docs, 2 generated, 6 missing", () => {
   const tender = { id: "t", requirements: Array.from({ length: 8 }, (_, i) => ({ id: `r${i}`, title: `Doc ${i}`, description: "", requirementType: "FORM", priority: "MANDATORY", exactFileName: `Doc ${i}.docx` })) };
   const docs = [0, 1].map((i) => doc({ id: `d${i}`, name: `Doc ${i}`, exactFileName: `Doc ${i}.docx`, storagePath: `uploads/doc-${i}.docx` }));
