@@ -230,7 +230,16 @@ jobs:
           grep -c "error TS" /tmp/typecheck-before.log > /tmp/typecheck-before.count || echo 0 > /tmp/typecheck-before.count
 
       - name: Apply exact mixed-fallback repair
-        run: python3 scripts/enforce-zero-write-proposal-fallback.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Fq 'if (sectionResult.anyFallback)' lib/ai-job-handlers.ts \
+            && grep -Fq 'AI_PROPOSAL_MIXED_FALLBACK_BLOCKED' lib/ai-job-handlers.ts \
+            && test -f tests/proposal-mixed-fallback-zero-write.test.ts; then
+            echo "The exact mixed-fallback zero-write repair is already present; validation remains required."
+          else
+            python3 scripts/enforce-zero-write-proposal-fallback.py
+          fi
 
       - name: Run focused zero-write regression
         run: npx tsx --test tests/proposal-mixed-fallback-zero-write.test.ts
@@ -266,6 +275,10 @@ jobs:
         run: |
           set -euo pipefail
           git add lib/ai-job-handlers.ts tests/proposal-mixed-fallback-zero-write.test.ts
+          if git diff --cached --quiet; then
+            echo "No repair diff remains; exact-head files already contain the validated zero-write rule."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix(ai): block mixed fallback before proposal persistence"
