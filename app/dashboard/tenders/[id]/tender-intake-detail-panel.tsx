@@ -43,7 +43,7 @@ type TenderDetailLike = {
   country?: string | null;
   category?: string;
   budget?: number | null;
-  currency?: string;
+  currency?: string | null;
   deadline?: Date | string | null;
   submissionMethod?: string | null;
   submissionAddress?: string | null;

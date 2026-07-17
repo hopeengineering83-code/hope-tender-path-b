@@ -22,12 +22,20 @@ type Props = {
   criticalGaps: CriticalGap[];
   highGaps: HighGap[];
   documents: DocItem[];
+  // Canonical server-authority blocker codes (from getFinalSubmissionReadiness).
+  // The UI mirrors these so the disabled state and the server denial use the
+  // same blocker model. When canonicalBlockerCodes is non-empty, the ZIP /
+  // download links are hidden (server will deny anyway — this is defense in
+  // depth, not the sole gate).
+  canonicalBlockerCodes?: string[];
+  canonicalNextAction?: string;
 };
 
 export function ExportTenderCard({
   tenderId, tenderTitle, tenderStatus, isReady, isExported,
   generatedCount, totalDocs, blockingGaps, warningGaps,
   checks, criticalGaps, highGaps, documents,
+  canonicalBlockerCodes = [], canonicalNextAction,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
 
@@ -48,7 +56,7 @@ export function ExportTenderCard({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-          {isReady && (
+          {isReady && canonicalBlockerCodes.length === 0 && (
             <a
               href={`/api/tenders/${tenderId}/download?type=zip`}
               target="_blank"
@@ -56,6 +64,14 @@ export function ExportTenderCard({
             >
               ↓ Download ZIP
             </a>
+          )}
+          {!isReady && canonicalBlockerCodes.length > 0 && (
+            <span
+              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-400 cursor-not-allowed"
+              title={canonicalNextAction ?? "Not ready"}
+            >
+              ZIP locked
+            </span>
           )}
           <Link href={`/dashboard/tenders/${tenderId}`}
             className="rounded border px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
@@ -79,6 +95,23 @@ export function ExportTenderCard({
 
       {expanded && (
         <div className="border-t px-6 pb-6 pt-4">
+          {/* One canonical blocker model + one next action */}
+          {!isReady && canonicalBlockerCodes.length > 0 && (
+            <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-800">Canonical export blockers</p>
+              <p className="mt-1 text-xs text-amber-700">
+                Next action: {canonicalNextAction ?? "Resolve the blockers below."}
+              </p>
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {canonicalBlockerCodes.map((code) => (
+                  <li key={code} className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono font-semibold text-amber-700">
+                    {code}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <p className="mb-3 text-sm font-medium text-slate-700">Submission checklist</p>
           <ul className="space-y-2">
             {checks.map((check, i) => (
@@ -128,19 +161,32 @@ export function ExportTenderCard({
 
           {documents.length > 0 && (
             <div className="mt-4">
-              <p className="mb-2 text-sm font-medium text-slate-600">Document checklist ({generatedCount} ready)</p>
+              <p className="mb-2 text-sm font-medium text-slate-600">Document checklist ({generatedCount} generated — planned/pending excluded)</p>
               <div className="space-y-1">
                 {documents.map((doc) => {
                   const isGen = doc.generationStatus === "GENERATED";
+                  const isPending = doc.generationStatus === "PLANNED" || doc.generationStatus === "GENERATING" || doc.generationStatus === "QUEUED";
+                  const isFailed = doc.generationStatus === "FAILED";
+                  // Only GENERATED rows may show a download link. Planned /
+                  // pending / failed rows are never downloadable.
+                  const canDownload = isGen && isReady && canonicalBlockerCodes.length === 0;
                   return (
                     <div key={doc.id} className="flex items-center gap-3 text-sm">
-                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] ${isGen ? "bg-green-500 text-white" : "border border-slate-200 text-slate-300"}`}>
-                        {isGen ? "✓" : ""}
+                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] ${
+                        isGen ? "bg-green-500 text-white" :
+                        isFailed ? "bg-red-400 text-white" :
+                        isPending ? "bg-slate-200 text-slate-400" :
+                        "border border-slate-200 text-slate-300"
+                      }`}>
+                        {isGen ? "✓" : isFailed ? "✕" : isPending ? "⋯" : ""}
                       </span>
                       <span className={isGen ? "text-slate-700" : "text-slate-400"}>
                         {doc.exactOrder ? `${doc.exactOrder}. ` : ""}{doc.exactFileName || doc.name}
+                        {!isGen && (
+                          <span className="ml-2 text-xs text-slate-400">({doc.generationStatus})</span>
+                        )}
                       </span>
-                      {isGen && (
+                      {canDownload && (
                         <a
                           href={`/api/tenders/${tenderId}/download?docId=${doc.id}`}
                           target="_blank"

@@ -1,0 +1,35 @@
+-- AlterTable: make Tender.currency nullable and drop the USD default
+--
+-- Previously: currency String @default("USD") (NOT NULL with default)
+-- Now: currency String? (nullable, no default)
+--
+-- This fixes the screenshot gap where corrupted tenders
+-- (EXTRACTION_CORRUPTED_AI_SKIPPED) showed "Currency: USD" even when
+-- all other extracted fields were null. The USD default was a schema
+-- artifact, not a sourced value.
+--
+-- BACKFILL POLICY (per CHATGPT-M1 REVISION_REQUIRED):
+-- Status is NOT proof that currency was default-contaminated. A corrupted
+-- or weak tender may still have had its currency genuinely sourced from
+-- the document text before extraction degraded. Clearing every USD value
+-- for selected statuses would erase genuinely sourced USD.
+--
+-- Therefore: this migration does NOT clear any existing currency values.
+-- It only:
+--   1. Drops the DEFAULT 'USD' so new tenders get NULL (not USD) when
+--      the extractor finds no currency.
+--   2. Drops the NOT NULL constraint so NULL is a valid value.
+--
+-- Legacy tenders with currency = 'USD' retain that value. The report
+-- page renders 'Unverified legacy value' (not 'USD') when the tender's
+-- analysisExtractionStatus indicates corruption/weak extraction, so the
+-- screenshot defect is fixed at the UI layer without erasing uncertain
+-- data. For tenders with valid extraction (FULL or PARTIAL), the currency
+-- is displayed as-is because it was either sourced or explicitly set.
+--
+-- Rollback: re-add DEFAULT 'USD' and NOT NULL. This will fail if any NULL
+-- rows exist — the operator must manually backfill before rollback.
+
+-- Step 1: Drop the default and NOT NULL constraint
+ALTER TABLE "Tender" ALTER COLUMN "currency" DROP DEFAULT;
+ALTER TABLE "Tender" ALTER COLUMN "currency" DROP NOT NULL;
