@@ -89,7 +89,11 @@ export default async function ExportPage() {
             : "All canonical gates passed. Download the final package.";
 
           const checks = [
-            { label: "Tender documents uploaded", done: tender.generatedDocuments.length > 0 },
+            // Checks generatedDocuments (system-authored output rows), not the
+            // source tender file uploads — label matches what's actually measured
+            // to avoid implying "0 source files uploaded" when only output
+            // generation hasn't started yet.
+            { label: "Document workspace initialized", done: tender.generatedDocuments.length > 0 },
             { label: `${generated.length} document${generated.length !== 1 ? "s" : ""} generated`, done: generated.length > 0 },
             { label: "All documents validated", done: generated.length > 0 && allPassed, warn: generated.length > 0 && !allPassed },
             { label: `No critical compliance gaps (${blockingGaps} remaining)`, done: blockingGaps === 0, blocking: blockingGaps > 0 },

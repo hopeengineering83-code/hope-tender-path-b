@@ -36,6 +36,7 @@ function statusColor(status: string): string {
     APPROVED: "bg-green-100 text-green-700",
     EXPORTED: "bg-emerald-100 text-emerald-700",
     CLOSED: "bg-slate-200 text-slate-500",
+    NO_BID: "bg-neutral-800 text-neutral-100",
   };
   return map[status] ?? "bg-slate-100 text-slate-600";
 }

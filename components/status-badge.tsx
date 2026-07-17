@@ -16,6 +16,7 @@ const styles: Record<string, string> = {
   APPROVED: "bg-green-100 text-green-700",
   EXPORTED: "bg-emerald-100 text-emerald-700",
   CLOSED: "bg-rose-100 text-rose-700",
+  NO_BID: "bg-neutral-800 text-neutral-100",
 };
 
 export function StatusBadge({ status }: { status: string }) {
