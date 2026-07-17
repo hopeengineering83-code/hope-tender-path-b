@@ -8,7 +8,12 @@ import {
   type DocumentLike,
   type DocumentOutputState,
 } from "./document-output-state";
-import { buildSubmissionPlanWithDerivedFallback, submissionPlanFileKey, type SubmissionEnvelope, type SubmissionPlanFile } from "./submission-plan";
+import {
+  buildSubmissionPlanWithDerivedFallback,
+  submissionPlanFileKey,
+  type SubmissionEnvelope,
+  type SubmissionPlanFile,
+} from "./submission-plan";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -89,6 +94,15 @@ export type FinalZipManifest = {
 
 export type FinalPackageReadinessModel = {
   tenderId: string;
+  buildPlan: {
+    id: string | null;
+    confirmed: boolean;
+    revision: number | null;
+    contentHash: string | null;
+    itemCount: number;
+    source: "CONFIRMED" | "DERIVED_FALLBACK";
+    blockerReason: string | null;
+  };
   requirementEvidenceStatuses: RequirementEvidenceStatus[];
   projectMatchSummary: {
     selectedReviewed: number;
@@ -159,7 +173,11 @@ type RequirementLike = {
   sourceTenderFileId?: string | null;
   sourcePageNumber?: number | null;
   sourceExactQuote?: string | null;
-  complianceMatrixRows?: Array<{ supportLevel?: string | null; evidenceType?: string | null; evidenceSource?: string | null }>;
+  complianceMatrixRows?: Array<{
+    supportLevel?: string | null;
+    evidenceType?: string | null;
+    evidenceSource?: string | null;
+  }>;
 };
 
 type MatchLike = {
@@ -177,7 +195,25 @@ type GeneratedDocLike = DocumentLike & {
   updatedAt?: Date | string | null;
 };
 
+type BuildPlanRowLike = {
+  id: string;
+  status: string;
+  revision: number;
+  contentHash: string;
+  confirmedRevision?: number | null;
+  confirmedContentHash?: string | null;
+  itemsJson?: string | null;
+};
+
+type BuildPlanAuthority = {
+  confirmed: boolean;
+  items: SubmissionPlanFile[];
+  blockerReason: string | null;
+};
+
 const GENERATED_STATUS = new Set(["GENERATED", "UPLOADED", "ATTACHED", "READY_FOR_EXPORT"]);
+const SUBMISSION_PLAN_FORMATS = new Set(["DOCX", "PDF", "ZIP", "XLSX", "OTHER"]);
+const SUBMISSION_ENVELOPES = new Set(["TECHNICAL", "FINANCIAL", "ADMIN"]);
 
 function hasText(value?: string | null): boolean {
   return typeof value === "string" && value.trim().length > 0;
@@ -187,11 +223,14 @@ function activeStatus(value?: string | null): string {
   return normalizeStatus(value);
 }
 
-function byteSize(doc: { fileContent?: string | null; storagePath?: string | null; hasInlineFileContent?: boolean | null }): number {
+function byteSize(doc: {
+  fileContent?: string | null;
+  storagePath?: string | null;
+  hasInlineFileContent?: boolean | null;
+}): number {
   if (hasText(doc.fileContent)) return Buffer.byteLength(doc.fileContent ?? "", "utf8");
-  // Storage-backed rows are real bytes but the dashboard model intentionally
-  // does not read private blobs. Use 1 as a non-zero byte sentinel; download
-  // and export routes still validate the actual object bytes before serving.
+  // Storage-backed rows are real bytes but this dashboard/readiness model does
+  // not load private blobs. Download and export routes validate actual bytes.
   if (hasText(doc.storagePath) || doc.hasInlineFileContent) return 1;
   return 0;
 }
@@ -204,7 +243,9 @@ function envelope(value: SubmissionEnvelope): PlannedPackageDocument["envelope"]
 
 function expectedFormat(value?: string | null): PlannedPackageDocument["expectedFormat"] {
   const format = activeStatus(value);
-  if (["PDF", "XLSX", "CSV", "ZIP", "ORIGINAL"].includes(format)) return format as PlannedPackageDocument["expectedFormat"];
+  if (["PDF", "XLSX", "CSV", "ZIP", "ORIGINAL"].includes(format)) {
+    return format as PlannedPackageDocument["expectedFormat"];
+  }
   return "DOCX";
 }
 
@@ -225,114 +266,149 @@ function mapSupportLevel(value?: string | null): RequirementEvidenceLevel {
   return "NONE";
 }
 
-function isMandatoryRequirement(req: { priority?: string | null }): boolean {
-  return ["MANDATORY", "CRITICAL"].includes(activeStatus(req.priority));
+function isMandatoryRequirement(requirement: { priority?: string | null }): boolean {
+  return ["MANDATORY", "CRITICAL"].includes(activeStatus(requirement.priority));
 }
 
 function strongestSupportLevel(rows: Array<{ supportLevel?: string | null }>): RequirementEvidenceLevel {
   return rows
     .map((row) => mapSupportLevel(row.supportLevel))
-    .sort((a, b) => evidenceRank(b) - evidenceRank(a))[0] ?? "NONE";
+    .sort((left, right) => evidenceRank(right) - evidenceRank(left))[0] ?? "NONE";
 }
 
-function hasRequirementSourceTrace(req: RequirementLike): boolean {
-  return hasText(req.sourceTenderFileId) && typeof req.sourcePageNumber === "number" && req.sourcePageNumber > 0 && hasText(req.sourceExactQuote);
+function hasRequirementSourceTrace(requirement: RequirementLike): boolean {
+  return hasText(requirement.sourceTenderFileId)
+    && typeof requirement.sourcePageNumber === "number"
+    && requirement.sourcePageNumber > 0
+    && hasText(requirement.sourceExactQuote);
 }
 
 function selectedReviewedExperts(matches: MatchLike[]): number {
-  return matches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length;
+  return matches.filter((match) => match.isSelected && match.expert?.trustLevel === "REVIEWED").length;
 }
 
 function selectedReviewedProjects(matches: MatchLike[]): number {
-  return matches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length;
+  return matches.filter((match) => match.isSelected && match.project?.trustLevel === "REVIEWED").length;
 }
 
-function documentOutputBlockReason(doc: DocumentLike): string | null {
-  const state = deriveDocumentOutputState(doc);
-  return exportBlockReason(state);
+function documentOutputBlockReason(document: DocumentLike): string | null {
+  return exportBlockReason(deriveDocumentOutputState(document));
 }
 
-function chooseBestGeneratedDocument(docs: GeneratedDocLike[]): GeneratedDocLike | null {
-  if (docs.length === 0) return null;
-  const scored = docs.map((doc, index) => {
-    const state = deriveDocumentOutputState(doc);
+function chooseBestGeneratedDocument(documents: GeneratedDocLike[]): GeneratedDocLike | null {
+  if (documents.length === 0) return null;
+  const scored = documents.map((document, index) => {
+    const state = deriveDocumentOutputState(document);
     const score = (state === "READY_FOR_EXPORT" ? 100 : 0)
-      + (isReviewReadyForExport(doc.reviewStatus) ? 30 : 0)
-      + (isValidationPassed(doc.validationStatus) ? 20 : 0)
-      + (isFinalExportCandidateDocument(doc) ? 10 : 0)
-      + (byteSize(doc) > 0 ? 5 : 0)
-      - (activeStatus(doc.generationStatus) === "SUPERSEDED" ? 1000 : 0);
-    return { doc, score, index };
+      + (isReviewReadyForExport(document.reviewStatus) ? 30 : 0)
+      + (isValidationPassed(document.validationStatus) ? 20 : 0)
+      + (isFinalExportCandidateDocument(document) ? 10 : 0)
+      + (byteSize(document) > 0 ? 5 : 0)
+      - (activeStatus(document.generationStatus) === "SUPERSEDED" ? 1000 : 0);
+    return { document, score, index };
   });
-  scored.sort((a, b) => b.score - a.score || b.index - a.index);
-  return scored[0]?.doc ?? null;
+  scored.sort((left, right) => right.score - left.score || right.index - left.index);
+  return scored[0]?.document ?? null;
 }
 
-function generatedDocumentExclusionReason(doc: GeneratedDocLike, plannedKey: string | null): string | null {
-  if (!plannedKey) return "outside submission plan";
-  if (activeStatus(doc.generationStatus) === "SUPERSEDED" || activeStatus(doc.validationStatus) === "SUPERSEDED") return "superseded";
-  if (!isFinalExportCandidateDocument(doc)) {
-    const status = activeStatus(doc.reviewStatus);
-    if (status === "REPLACE_WITH_ORIGINAL") return "tender-issued original must be uploaded";
-    if (status === "NOT_EXPORTABLE") return "not required by tender or marked not exportable";
-    if (activeStatus(doc.format) === "CONTROL") return "control/replacement row only";
+function generatedDocumentExclusionReason(
+  document: GeneratedDocLike,
+  plannedDocumentKey: string | null,
+): string | null {
+  if (!plannedDocumentKey) return "outside submission plan";
+  if (
+    activeStatus(document.generationStatus) === "SUPERSEDED"
+    || activeStatus(document.validationStatus) === "SUPERSEDED"
+  ) {
+    return "superseded";
+  }
+  if (!isFinalExportCandidateDocument(document)) {
+    const reviewStatus = activeStatus(document.reviewStatus);
+    if (reviewStatus === "REPLACE_WITH_ORIGINAL") return "tender-issued original must be uploaded";
+    if (reviewStatus === "NOT_EXPORTABLE") return "not required by tender or marked not exportable";
+    if (activeStatus(document.format) === "CONTROL") return "control/replacement row only";
     return "draft only or not a final export candidate";
   }
-  const state = deriveDocumentOutputState(doc);
+  const state = deriveDocumentOutputState(document);
   if (state === "READY_FOR_EXPORT") return null;
   if (state === "PDF_CONVERSION_REQUIRED") return "wrong format: PDF required but final PDF is not attached";
-  if (!isValidationPassed(doc.validationStatus)) return "not validated";
-  if (!isReviewReadyForExport(doc.reviewStatus)) return "not approved";
-  if (byteSize(doc) === 0) return "zero-byte or missing file bytes";
+  if (!isValidationPassed(document.validationStatus)) return "not validated";
+  if (!isReviewReadyForExport(document.reviewStatus)) return "not approved";
+  if (byteSize(document) === 0) return "zero-byte or missing file bytes";
   return exportBlockReason(state) ?? "not export-ready";
 }
 
-function plannedStatusFor(doc: GeneratedDocLike | null, file: SubmissionPlanFile): Pick<PlannedPackageDocument, "status" | "blockerReason" | "generationMode"> {
-  const mode: PlannedPackageDocument["generationMode"] = file.templateRequired ? "manual_upload_required" : "generated";
-  if (!doc) {
+function plannedStatusFor(
+  document: GeneratedDocLike | null,
+  file: SubmissionPlanFile,
+): Pick<PlannedPackageDocument, "status" | "blockerReason" | "generationMode"> {
+  const mode: PlannedPackageDocument["generationMode"] = file.templateRequired
+    ? "manual_upload_required"
+    : "generated";
+
+  if (!document) {
     return {
       status: file.required ? "missing" : "not_applicable",
       generationMode: mode,
-      blockerReason: file.required ? `${file.exactFileName} is planned as required but has not been generated or uploaded.` : null,
+      blockerReason: file.required
+        ? `${file.exactFileName} is planned as required but has not been generated or uploaded.`
+        : null,
     };
   }
 
-  const state = deriveDocumentOutputState(doc);
+  const state = deriveDocumentOutputState(document);
   const format = expectedFormat(file.format);
-  if (format === "PDF" && activeStatus(doc.format) !== "PDF") {
+  if (format === "PDF" && activeStatus(document.format) !== "PDF") {
     return {
       status: "blocked",
       generationMode: "manual_upload_required",
-      blockerReason: `${file.exactFileName} requires PDF but current document format is ${doc.format ?? "unknown"}. Upload an approved final PDF mapped to this planned document.`,
+      blockerReason: `${file.exactFileName} requires PDF but current document format is ${document.format ?? "unknown"}. Upload an approved final PDF mapped to this planned document.`,
     };
   }
-  if (state === "READY_FOR_EXPORT" && byteSize(doc) > 0) return { status: "export_ready", generationMode: mode, blockerReason: null };
-  if (isReviewReadyForExport(doc.reviewStatus)) return { status: "approved", generationMode: mode, blockerReason: documentOutputBlockReason(doc) };
-  if (isValidationPassed(doc.validationStatus)) return { status: "valid", generationMode: mode, blockerReason: documentOutputBlockReason(doc) };
-  if (GENERATED_STATUS.has(activeStatus(doc.generationStatus))) return { status: "generated", generationMode: mode, blockerReason: documentOutputBlockReason(doc) };
-  return { status: "blocked", generationMode: mode, blockerReason: documentOutputBlockReason(doc) ?? "Generated row is not usable for final packaging." };
+  if (state === "READY_FOR_EXPORT" && byteSize(document) > 0) {
+    return { status: "export_ready", generationMode: mode, blockerReason: null };
+  }
+  if (isReviewReadyForExport(document.reviewStatus)) {
+    return { status: "approved", generationMode: mode, blockerReason: documentOutputBlockReason(document) };
+  }
+  if (isValidationPassed(document.validationStatus)) {
+    return { status: "valid", generationMode: mode, blockerReason: documentOutputBlockReason(document) };
+  }
+  if (GENERATED_STATUS.has(activeStatus(document.generationStatus))) {
+    return { status: "generated", generationMode: mode, blockerReason: documentOutputBlockReason(document) };
+  }
+  return {
+    status: "blocked",
+    generationMode: mode,
+    blockerReason: documentOutputBlockReason(document) ?? "Generated row is not usable for final packaging.",
+  };
 }
 
-export function mapRequirementsToEvidence(requirements: RequirementLike[], expertMatches: MatchLike[] = [], projectMatches: MatchLike[] = []): RequirementEvidenceStatus[] {
+export function mapRequirementsToEvidence(
+  requirements: RequirementLike[],
+  expertMatches: MatchLike[] = [],
+  projectMatches: MatchLike[] = [],
+): RequirementEvidenceStatus[] {
   const hasReviewedExpert = selectedReviewedExperts(expertMatches) > 0;
   const hasReviewedProject = selectedReviewedProjects(projectMatches) > 0;
 
-  return requirements.map((req) => {
-    const links = req.complianceMatrixRows ?? [];
+  return requirements.map((requirement) => {
+    const links = requirement.complianceMatrixRows ?? [];
     const strongestEvidenceLevel = strongestSupportLevel(links);
-    const mandatory = isMandatoryRequirement(req);
-    const hasTrustedTrace = hasRequirementSourceTrace(req) && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL");
+    const mandatory = isMandatoryRequirement(requirement);
+    const hasTrustedTrace = hasRequirementSourceTrace(requirement)
+      && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL");
     const blockerReason = hasTrustedTrace
       ? null
       : links.length === 0
         ? "No selected or linked evidence is traced to this requirement."
-        : !hasRequirementSourceTrace(req)
+        : !hasRequirementSourceTrace(requirement)
           ? "Requirement lacks source file, page, and exact quote trace, so linked evidence is not trusted."
           : "Linked evidence is weaker than PARTIAL.";
 
     return {
-      requirementId: req.id,
-      title: req.title,
+      requirementId: requirement.id,
+      title: requirement.title,
       mandatory,
       selectedEvidenceCount: links.length,
       strongestEvidenceLevel,
@@ -344,29 +420,23 @@ export function mapRequirementsToEvidence(requirements: RequirementLike[], exper
   });
 }
 
-export function deriveRequiredPackageDocuments(tender: { id: string; requirements?: RequirementLike[] } & Record<string, unknown>, generated: GeneratedDocLike[] = []): PlannedPackageDocument[] {
-  const plan = buildSubmissionPlanWithDerivedFallback({
-    ...tender,
-    requirements: (tender.requirements ?? []).map((req) => ({
-      ...req,
-      title: req.title,
-      requirementType: req.requirementType ?? "TECHNICAL",
-      priority: req.priority ?? "OPTIONAL",
-    })),
-  });
-  const docsByKey = new Map<string, GeneratedDocLike[]>();
-  for (const doc of generated) {
-    const key = keyForDocument(doc);
+function derivePlannedPackageDocumentsFromFiles(
+  files: SubmissionPlanFile[],
+  generated: GeneratedDocLike[] = [],
+): PlannedPackageDocument[] {
+  const documentsByKey = new Map<string, GeneratedDocLike[]>();
+  for (const document of generated) {
+    const key = keyForDocument(document);
     if (!key) continue;
-    const docs = docsByKey.get(key) ?? [];
-    docs.push(doc);
-    docsByKey.set(key, docs);
+    const documents = documentsByKey.get(key) ?? [];
+    documents.push(document);
+    documentsByKey.set(key, documents);
   }
 
-  return plan.files.map((file) => {
+  return files.map((file) => {
     const key = submissionPlanFileKey(file.exactFileName);
-    const doc = chooseBestGeneratedDocument(docsByKey.get(key) ?? []);
-    const derived = plannedStatusFor(doc, file);
+    const document = chooseBestGeneratedDocument(documentsByKey.get(key) ?? []);
+    const derived = plannedStatusFor(document, file);
     return {
       key,
       displayName: file.exactFileName,
@@ -375,82 +445,195 @@ export function deriveRequiredPackageDocuments(tender: { id: string; requirement
       expectedFormat: expectedFormat(file.format),
       sourceRequirementIds: file.sourceRequirementIds,
       generationMode: derived.generationMode,
-      generatedDocumentId: doc?.id ?? null,
+      generatedDocumentId: document?.id ?? null,
       status: derived.status,
       blockerReason: derived.blockerReason,
     };
   });
 }
 
-export function mapGeneratedDocumentsToSubmissionPlan(generated: GeneratedDocLike[], planned: PlannedPackageDocument[]): GeneratedPackageDocument[] {
-  const plannedByKey = new Map(planned.map((p) => [p.key, p]));
-  return generated.map((doc) => {
-    const key = keyForDocument(doc);
-    const plannedDocumentKey = plannedByKey.has(key) ? key : null;
-    const outputState = deriveDocumentOutputState(doc);
-    const exportCandidate = Boolean(plannedDocumentKey) && isFinalExportCandidateDocument(doc);
-    const exportReady = exportCandidate && outputState === "READY_FOR_EXPORT" && byteSize(doc) > 0;
-    const exclusionReason = generatedDocumentExclusionReason(doc, plannedDocumentKey);
+export function deriveRequiredPackageDocuments(
+  tender: { id: string; requirements?: RequirementLike[] } & Record<string, unknown>,
+  generated: GeneratedDocLike[] = [],
+): PlannedPackageDocument[] {
+  const plan = buildSubmissionPlanWithDerivedFallback({
+    ...tender,
+    requirements: (tender.requirements ?? []).map((requirement) => ({
+      ...requirement,
+      title: requirement.title,
+      requirementType: requirement.requirementType ?? "TECHNICAL",
+      priority: requirement.priority ?? "OPTIONAL",
+    })),
+  });
+  return derivePlannedPackageDocumentsFromFiles(plan.files, generated);
+}
+
+function parseConfirmedBuildPlan(row: BuildPlanRowLike | null | undefined): BuildPlanAuthority {
+  if (!row || activeStatus(row.status) !== "CONFIRMED") {
     return {
-      id: doc.id,
+      confirmed: false,
+      items: [],
+      blockerReason: "No confirmed Build Plan exists for the current tender.",
+    };
+  }
+  if (
+    row.confirmedRevision !== row.revision
+    || !row.confirmedContentHash
+    || row.confirmedContentHash !== row.contentHash
+  ) {
+    return {
+      confirmed: false,
+      items: [],
+      blockerReason: "The Build Plan confirmation no longer matches its current revision or content hash.",
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.itemsJson ?? "[]");
+  } catch {
+    return {
+      confirmed: false,
+      items: [],
+      blockerReason: "The confirmed Build Plan items are malformed.",
+    };
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return {
+      confirmed: false,
+      items: [],
+      blockerReason: "The confirmed Build Plan contains no package items.",
+    };
+  }
+
+  const items = parsed.filter((item): item is SubmissionPlanFile => {
+    if (!item || typeof item !== "object") return false;
+    const candidate = item as Partial<SubmissionPlanFile>;
+    return typeof candidate.canonicalId === "string"
+      && candidate.canonicalId.trim().length > 0
+      && typeof candidate.exactFileName === "string"
+      && candidate.exactFileName.trim().length > 0
+      && typeof candidate.documentType === "string"
+      && typeof candidate.required === "boolean"
+      && typeof candidate.exactOrder === "number"
+      && SUBMISSION_PLAN_FORMATS.has(String(candidate.format))
+      && SUBMISSION_ENVELOPES.has(String(candidate.envelope))
+      && Array.isArray(candidate.sourceRequirementIds);
+  });
+  if (items.length !== parsed.length) {
+    return {
+      confirmed: false,
+      items: [],
+      blockerReason: "One or more confirmed Build Plan items are invalid.",
+    };
+  }
+  return { confirmed: true, items, blockerReason: null };
+}
+
+export function mapGeneratedDocumentsToSubmissionPlan(
+  generated: GeneratedDocLike[],
+  planned: PlannedPackageDocument[],
+): GeneratedPackageDocument[] {
+  const plannedByKey = new Map(planned.map((document) => [document.key, document]));
+  return generated.map((document) => {
+    const key = keyForDocument(document);
+    const plannedDocumentKey = plannedByKey.has(key) ? key : null;
+    const outputState = deriveDocumentOutputState(document);
+    const exportCandidate = Boolean(plannedDocumentKey) && isFinalExportCandidateDocument(document);
+    const exportReady = exportCandidate && outputState === "READY_FOR_EXPORT" && byteSize(document) > 0;
+    const exclusionReason = generatedDocumentExclusionReason(document, plannedDocumentKey);
+    return {
+      id: document.id,
       key: key || null,
-      name: doc.name ?? doc.exactFileName ?? doc.id,
-      finalFileName: doc.exactFileName ?? doc.name ?? `${doc.id}.docx`,
-      documentType: doc.documentType ?? "",
-      format: activeStatus(doc.format) || expectedFormat(doc.exactFileName),
-      generationStatus: doc.generationStatus ?? "",
-      validationStatus: doc.validationStatus ?? "",
-      reviewStatus: doc.reviewStatus ?? "",
+      name: document.name ?? document.exactFileName ?? document.id,
+      finalFileName: document.exactFileName ?? document.name ?? `${document.id}.docx`,
+      documentType: document.documentType ?? "",
+      format: activeStatus(document.format) || expectedFormat(document.exactFileName),
+      generationStatus: document.generationStatus ?? "",
+      validationStatus: document.validationStatus ?? "",
+      reviewStatus: document.reviewStatus ?? "",
       plannedDocumentKey,
       outputState,
       exportCandidate,
       exportReady,
-      blockerReason: exportReady ? null : documentOutputBlockReason(doc) ?? exclusionReason,
+      blockerReason: exportReady ? null : documentOutputBlockReason(document) ?? exclusionReason,
       exclusionReason,
-      sizeBytes: byteSize(doc),
+      sizeBytes: byteSize(document),
     };
   });
 }
 
-export function detectDocumentsOutsidePlan(generated: GeneratedPackageDocument[]): GeneratedPackageDocument[] {
-  return generated.filter((doc) => !doc.plannedDocumentKey);
+export function detectDocumentsOutsidePlan(
+  generated: GeneratedPackageDocument[],
+): GeneratedPackageDocument[] {
+  return generated.filter((document) => !document.plannedDocumentKey);
 }
 
-export function detectMissingRequiredDocuments(planned: PlannedPackageDocument[]): PlannedPackageDocument[] {
-  return planned.filter((doc) => doc.required && doc.status === "missing");
+export function detectMissingRequiredDocuments(
+  planned: PlannedPackageDocument[],
+): PlannedPackageDocument[] {
+  return planned.filter((document) => document.required && document.status === "missing");
 }
 
-export function detectPdfExportRequirements(planned: PlannedPackageDocument[], generated: GeneratedPackageDocument[]) {
-  const requiredPdf = planned.filter((doc) => doc.required && doc.expectedFormat === "PDF");
-  const missing = requiredPdf.filter((doc) => !generated.some((generatedDoc) => generatedDoc.plannedDocumentKey === doc.key && generatedDoc.format === "PDF" && generatedDoc.exportReady));
-  return { pdfRequired: requiredPdf.length > 0, pdfConversionAvailable: false, requiredPdfMissing: missing.length > 0, missing };
+export function detectPdfExportRequirements(
+  planned: PlannedPackageDocument[],
+  generated: GeneratedPackageDocument[],
+) {
+  const requiredPdf = planned.filter(
+    (document) => document.required && document.expectedFormat === "PDF",
+  );
+  const missing = requiredPdf.filter(
+    (document) => !generated.some(
+      (generatedDocument) => generatedDocument.plannedDocumentKey === document.key
+        && generatedDocument.format === "PDF"
+        && generatedDocument.exportReady,
+    ),
+  );
+  return {
+    pdfRequired: requiredPdf.length > 0,
+    pdfConversionAvailable: false,
+    requiredPdfMissing: missing.length > 0,
+    missing,
+  };
 }
 
-export function buildFinalZipManifestFromModel(tenderId: string, planned: PlannedPackageDocument[], generated: GeneratedPackageDocument[]): FinalZipManifest {
+export function buildFinalZipManifestFromModel(
+  tenderId: string,
+  planned: PlannedPackageDocument[],
+  generated: GeneratedPackageDocument[],
+): FinalZipManifest {
   const files = planned
-    .filter((doc) => doc.status !== "not_applicable")
-    .map((plannedDoc) => {
-      const doc = generated.find((g) => g.plannedDocumentKey === plannedDoc.key && g.exportReady)
-        ?? generated.find((g) => g.plannedDocumentKey === plannedDoc.key && g.exportCandidate)
-        ?? generated.find((g) => g.plannedDocumentKey === plannedDoc.key)
+    .filter((document) => document.status !== "not_applicable")
+    .map((plannedDocument) => {
+      const document = generated.find(
+        (candidate) => candidate.plannedDocumentKey === plannedDocument.key && candidate.exportReady,
+      )
+        ?? generated.find(
+          (candidate) => candidate.plannedDocumentKey === plannedDocument.key && candidate.exportCandidate,
+        )
+        ?? generated.find((candidate) => candidate.plannedDocumentKey === plannedDocument.key)
         ?? null;
-      const approved = doc ? isReviewReadyForExport(doc.reviewStatus) : false;
-      const formatMatches = !doc || doc.format === plannedDoc.expectedFormat;
-      const exportReady = Boolean(doc?.exportReady && approved && doc.sizeBytes > 0 && formatMatches);
+      const approved = document ? isReviewReadyForExport(document.reviewStatus) : false;
+      const formatMatches = !document || document.format === plannedDocument.expectedFormat;
+      const exportReady = Boolean(
+        document?.exportReady && approved && document.sizeBytes > 0 && formatMatches,
+      );
       return {
-        plannedDocumentKey: plannedDoc.key,
-        finalFileName: plannedDoc.displayName,
-        sourceDocumentId: doc?.id ?? null,
+        plannedDocumentKey: plannedDocument.key,
+        finalFileName: plannedDocument.displayName,
+        sourceDocumentId: document?.id ?? null,
         sourceUploadId: null,
-        format: doc?.format ?? plannedDoc.expectedFormat,
-        sizeBytes: doc?.sizeBytes ?? 0,
-        envelope: plannedDoc.envelope,
-        required: plannedDoc.required,
+        format: document?.format ?? plannedDocument.expectedFormat,
+        sizeBytes: document?.sizeBytes ?? 0,
+        envelope: plannedDocument.envelope,
+        required: plannedDocument.required,
         approved,
         exportReady,
-        blockerReason: exportReady || !plannedDoc.required
+        blockerReason: exportReady || !plannedDocument.required
           ? null
-          : plannedDoc.blockerReason ?? doc?.blockerReason ?? `${plannedDoc.displayName} is not ready for ZIP export.`,
+          : plannedDocument.blockerReason
+            ?? document?.blockerReason
+            ?? `${plannedDocument.displayName} is not ready for ZIP export.`,
       };
     });
 
@@ -463,7 +646,9 @@ export function buildFinalZipManifestFromModel(tenderId: string, planned: Planne
   }
 
   const missingRequiredFiles = [
-    ...files.filter((file) => file.required && !file.exportReady).map((file) => file.finalFileName),
+    ...files
+      .filter((file) => file.required && !file.exportReady)
+      .map((file) => file.finalFileName),
     ...duplicates.map((name) => `Duplicate filename: ${name}`),
   ];
 
@@ -472,31 +657,41 @@ export function buildFinalZipManifestFromModel(tenderId: string, planned: Planne
     files,
     missingRequiredFiles,
     extraFilesExcluded: generated
-      .filter((doc) => !doc.plannedDocumentKey)
-      .map((doc) => `${doc.finalFileName}: ${doc.exclusionReason ?? "outside submission plan"}`),
+      .filter((document) => !document.plannedDocumentKey)
+      .map(
+        (document) => `${document.finalFileName}: ${document.exclusionReason ?? "outside submission plan"}`,
+      ),
     ready: missingRequiredFiles.length === 0,
   };
 }
 
-function buildDocumentBlockers(planned: PlannedPackageDocument[]): FinalPackageBlocker[] {
+function buildDocumentBlockers(
+  planned: PlannedPackageDocument[],
+): FinalPackageBlocker[] {
   return planned
-    .filter((doc) => doc.required && doc.blockerReason)
-    .map((doc) => ({
+    .filter((document) => document.required && document.blockerReason)
+    .map((document) => ({
       area: "documents" as const,
-      code: doc.status === "missing" ? "PLANNED_DOCUMENT_MISSING" : doc.expectedFormat === "PDF" ? "PDF_REQUIRED_NOT_READY" : "PLANNED_DOCUMENT_BLOCKED",
-      title: doc.displayName,
-      documentName: doc.displayName,
-      generatedDocumentId: doc.generatedDocumentId,
-      reason: doc.blockerReason ?? "Required document is not ready.",
-      nextAction: doc.status === "missing"
+      code: document.status === "missing"
+        ? "PLANNED_DOCUMENT_MISSING"
+        : document.expectedFormat === "PDF"
+          ? "PDF_REQUIRED_NOT_READY"
+          : "PLANNED_DOCUMENT_BLOCKED",
+      title: document.displayName,
+      documentName: document.displayName,
+      generatedDocumentId: document.generatedDocumentId,
+      reason: document.blockerReason ?? "Required document is not ready.",
+      nextAction: document.status === "missing"
         ? "Generate the planned document or upload the required original."
-        : doc.expectedFormat === "PDF"
+        : document.expectedFormat === "PDF"
           ? "Upload an approved final PDF mapped to this planned document."
           : "Validate, review, and approve this document.",
     }));
 }
 
-function buildRequirementBlockers(statuses: RequirementEvidenceStatus[]): FinalPackageBlocker[] {
+function buildRequirementBlockers(
+  statuses: RequirementEvidenceStatus[],
+): FinalPackageBlocker[] {
   return statuses
     .filter((status) => status.mandatory && !status.hasTrustedTrace)
     .map((status) => ({
@@ -509,7 +704,13 @@ function buildRequirementBlockers(statuses: RequirementEvidenceStatus[]): FinalP
     }));
 }
 
-function deriveSummaryStatus(args: { manifestReady: boolean; missingRequired: number; documentBlockers: number; requirementBlockers: number; generatedCount: number }): FinalPackageReadinessModel["summary"]["status"] {
+function deriveSummaryStatus(args: {
+  manifestReady: boolean;
+  missingRequired: number;
+  documentBlockers: number;
+  requirementBlockers: number;
+  generatedCount: number;
+}): FinalPackageReadinessModel["summary"]["status"] {
   if (args.manifestReady) return "export_ready";
   if (args.missingRequired > 0) return "generation_ready";
   if (args.documentBlockers > 0 || args.requirementBlockers > 0) return "review_required";
@@ -517,49 +718,109 @@ function deriveSummaryStatus(args: { manifestReady: boolean; missingRequired: nu
   return "export_blocked";
 }
 
-export async function getFinalPackageReadinessModel(prisma: any, tenderId: string, userId: string): Promise<FinalPackageReadinessModel> {
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    select: {
-      id: true,
-      title: true,
-      exactFileNaming: true,
-      exactFileOrder: true,
-      pageLimit: true,
-      submissionMethod: true,
-      category: true,
-      analysisExtractionStatus: true,
-      requirements: { include: { complianceMatrixRows: true } },
-      generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },
-      expertMatches: { include: { expert: { select: { trustLevel: true } } } },
-      projectMatches: { include: { project: { select: { trustLevel: true } } } },
-    },
-  });
+export async function getFinalPackageReadinessModel(
+  prisma: any,
+  tenderId: string,
+  userId: string,
+): Promise<FinalPackageReadinessModel> {
+  const [tender, buildPlanRow] = await Promise.all([
+    prisma.tender.findFirst({
+      where: { id: tenderId, userId },
+      select: {
+        id: true,
+        title: true,
+        exactFileNaming: true,
+        exactFileOrder: true,
+        pageLimit: true,
+        submissionMethod: true,
+        category: true,
+        analysisExtractionStatus: true,
+        requirements: { include: { complianceMatrixRows: true } },
+        generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },
+        expertMatches: { include: { expert: { select: { trustLevel: true } } } },
+        projectMatches: { include: { project: { select: { trustLevel: true } } } },
+      },
+    }),
+    prisma.buildPlan?.findFirst
+      ? prisma.buildPlan.findFirst({
+          where: { tenderId },
+          orderBy: [{ revision: "desc" }, { updatedAt: "desc" }],
+          select: {
+            id: true,
+            status: true,
+            revision: true,
+            contentHash: true,
+            confirmedRevision: true,
+            confirmedContentHash: true,
+            itemsJson: true,
+          },
+        })
+      : Promise.resolve(null),
+  ]);
+
   if (!tender) throw new Error("Tender not found");
 
-  const requirementEvidenceStatuses = mapRequirementsToEvidence(tender.requirements, tender.expertMatches, tender.projectMatches);
-  const planned = deriveRequiredPackageDocuments(tender, tender.generatedDocuments);
-  const generated = mapGeneratedDocumentsToSubmissionPlan(tender.generatedDocuments, planned);
+  const buildPlanAuthority = parseConfirmedBuildPlan(buildPlanRow);
+  const requirementEvidenceStatuses = mapRequirementsToEvidence(
+    tender.requirements,
+    tender.expertMatches,
+    tender.projectMatches,
+  );
+  const planned = buildPlanAuthority.confirmed
+    ? derivePlannedPackageDocumentsFromFiles(
+        buildPlanAuthority.items,
+        tender.generatedDocuments,
+      )
+    : deriveRequiredPackageDocuments(tender, tender.generatedDocuments);
+  const generated = mapGeneratedDocumentsToSubmissionPlan(
+    tender.generatedDocuments,
+    planned,
+  );
   const missingRequired = detectMissingRequiredDocuments(planned);
   const extraGeneratedOutsidePlan = detectDocumentsOutsidePlan(generated);
   const pdfRequirements = detectPdfExportRequirements(planned, generated);
   const documentBlockers = buildDocumentBlockers(planned);
   const requirementBlockers = buildRequirementBlockers(requirementEvidenceStatuses);
-  const manifest = buildFinalZipManifestFromModel(tenderId, planned, generated);
-  const exportBlockers: FinalPackageBlocker[] = manifest.missingRequiredFiles.map((name) => ({
-    area: "export",
-    code: "FINAL_ZIP_FILE_NOT_READY",
-    title: name,
-    documentName: name,
-    reason: `${name} is missing, duplicate, wrong format, zero-byte, or unapproved.`,
-    nextAction: "Resolve the document blocker and re-check final ZIP readiness.",
-  }));
+  const documentManifest = buildFinalZipManifestFromModel(tenderId, planned, generated);
+  const manifest: FinalZipManifest = {
+    ...documentManifest,
+    ready: buildPlanAuthority.confirmed && documentManifest.ready,
+  };
+  const buildPlanBlocker: FinalPackageBlocker | null = buildPlanAuthority.confirmed
+    ? null
+    : {
+        area: "export",
+        code: "NO_CONFIRMED_BUILD_PLAN",
+        title: "Confirmed Build Plan required",
+        reason: buildPlanAuthority.blockerReason
+          ?? "No confirmed Build Plan exists for the current tender.",
+        nextAction: "Build, review, and confirm the current Build Plan before generation or export.",
+      };
+  const exportBlockers: FinalPackageBlocker[] = [
+    ...(buildPlanBlocker ? [buildPlanBlocker] : []),
+    ...documentManifest.missingRequiredFiles.map((name) => ({
+      area: "export" as const,
+      code: "FINAL_ZIP_FILE_NOT_READY",
+      title: name,
+      documentName: name,
+      reason: `${name} is missing, duplicate, wrong format, zero-byte, or unapproved.`,
+      nextAction: "Resolve the document blocker and re-check final ZIP readiness.",
+    })),
+  ];
 
-  const selectedProjects = tender.projectMatches.filter((match: MatchLike) => match.isSelected);
+  const selectedProjects = tender.projectMatches.filter(
+    (match: MatchLike) => match.isSelected,
+  );
   const reviewedSelectedProjects = selectedReviewedProjects(tender.projectMatches);
-  const highScoreSelectedProjects = selectedProjects.filter((match: MatchLike) => Number(match.score ?? 0) >= 90).length;
-  const belowThresholdSelectedProjects = selectedProjects.filter((match: MatchLike) => Number(match.score ?? 0) < 90).length;
-  const blockerCount = requirementBlockers.length + documentBlockers.length + exportBlockers.length;
+  const highScoreSelectedProjects = selectedProjects.filter(
+    (match: MatchLike) => Number(match.score ?? 0) >= 90,
+  ).length;
+  const belowThresholdSelectedProjects = selectedProjects.filter(
+    (match: MatchLike) => Number(match.score ?? 0) < 90,
+  ).length;
+  const blockerCount = requirementBlockers.length
+    + documentBlockers.length
+    + exportBlockers.length;
   const status = deriveSummaryStatus({
     manifestReady: manifest.ready,
     missingRequired: missingRequired.length,
@@ -570,34 +831,74 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
 
   return {
     tenderId,
+    buildPlan: {
+      id: buildPlanRow?.id ?? null,
+      confirmed: buildPlanAuthority.confirmed,
+      revision: buildPlanRow?.revision ?? null,
+      contentHash: buildPlanRow?.contentHash ?? null,
+      itemCount: buildPlanAuthority.items.length,
+      source: buildPlanAuthority.confirmed ? "CONFIRMED" : "DERIVED_FALLBACK",
+      blockerReason: buildPlanAuthority.blockerReason,
+    },
     requirementEvidenceStatuses,
     projectMatchSummary: {
       selectedReviewed: reviewedSelectedProjects,
       highScoreSelected: highScoreSelectedProjects,
       belowThresholdSelected: belowThresholdSelectedProjects,
-      missingComparableCoverage: tender.requirements.some((req: RequirementLike) => activeStatus(req.requirementType) === "PROJECT_EXPERIENCE") && reviewedSelectedProjects === 0 ? 1 : 0,
+      missingComparableCoverage: tender.requirements.some(
+        (requirement: RequirementLike) => activeStatus(requirement.requirementType) === "PROJECT_EXPERIENCE",
+      ) && reviewedSelectedProjects === 0
+        ? 1
+        : 0,
       explanation: reviewedSelectedProjects > 0 && highScoreSelectedProjects === 0
         ? "Selected projects are reviewed but below 90% match; improve relevance or accept with justification."
         : null,
     },
     requirements: {
       total: requirementEvidenceStatuses.length,
-      mandatory: requirementEvidenceStatuses.filter((status) => status.mandatory).length,
-      traced: requirementEvidenceStatuses.filter((status) => status.hasTrustedTrace).length,
-      mandatoryTraced: requirementEvidenceStatuses.filter((status) => status.mandatory && status.hasTrustedTrace).length,
-      strongEvidence: requirementEvidenceStatuses.filter((status) => status.strongestEvidenceLevel === "FULL").length,
-      weakEvidence: requirementEvidenceStatuses.filter((status) => ["WEAK", "PARTIAL"].includes(status.strongestEvidenceLevel)).length,
-      missingEvidence: requirementEvidenceStatuses.filter((status) => status.strongestEvidenceLevel === "NONE").length,
-      coverageRatio: requirementEvidenceStatuses.length ? requirementEvidenceStatuses.filter((status) => status.hasTrustedTrace).length / requirementEvidenceStatuses.length : 0,
+      mandatory: requirementEvidenceStatuses.filter((item) => item.mandatory).length,
+      traced: requirementEvidenceStatuses.filter((item) => item.hasTrustedTrace).length,
+      mandatoryTraced: requirementEvidenceStatuses.filter(
+        (item) => item.mandatory && item.hasTrustedTrace,
+      ).length,
+      strongEvidence: requirementEvidenceStatuses.filter(
+        (item) => item.strongestEvidenceLevel === "FULL",
+      ).length,
+      weakEvidence: requirementEvidenceStatuses.filter(
+        (item) => ["WEAK", "PARTIAL"].includes(item.strongestEvidenceLevel),
+      ).length,
+      missingEvidence: requirementEvidenceStatuses.filter(
+        (item) => item.strongestEvidenceLevel === "NONE",
+      ).length,
+      coverageRatio: requirementEvidenceStatuses.length
+        ? requirementEvidenceStatuses.filter((item) => item.hasTrustedTrace).length
+          / requirementEvidenceStatuses.length
+        : 0,
       blockers: requirementBlockers,
     },
     evidence: {
-      rows: tender.requirements.reduce((sum: number, req: RequirementLike) => sum + (req.complianceMatrixRows?.length ?? 0), 0),
-      selected: tender.requirements.reduce((sum: number, req: RequirementLike) => sum + (req.complianceMatrixRows?.length ?? 0), 0),
-      strong: requirementEvidenceStatuses.filter((status) => status.strongestEvidenceLevel === "FULL").length,
-      substantial: requirementEvidenceStatuses.filter((status) => status.strongestEvidenceLevel === "SUBSTANTIAL").length,
-      weak: requirementEvidenceStatuses.filter((status) => ["WEAK", "PARTIAL"].includes(status.strongestEvidenceLevel)).length,
-      missing: requirementEvidenceStatuses.filter((status) => status.strongestEvidenceLevel === "NONE").length,
+      rows: tender.requirements.reduce(
+        (sum: number, requirement: RequirementLike) => sum
+          + (requirement.complianceMatrixRows?.length ?? 0),
+        0,
+      ),
+      selected: tender.requirements.reduce(
+        (sum: number, requirement: RequirementLike) => sum
+          + (requirement.complianceMatrixRows?.length ?? 0),
+        0,
+      ),
+      strong: requirementEvidenceStatuses.filter(
+        (item) => item.strongestEvidenceLevel === "FULL",
+      ).length,
+      substantial: requirementEvidenceStatuses.filter(
+        (item) => item.strongestEvidenceLevel === "SUBSTANTIAL",
+      ).length,
+      weak: requirementEvidenceStatuses.filter(
+        (item) => ["WEAK", "PARTIAL"].includes(item.strongestEvidenceLevel),
+      ).length,
+      missing: requirementEvidenceStatuses.filter(
+        (item) => item.strongestEvidenceLevel === "NONE",
+      ).length,
       expertMatches: tender.expertMatches.length,
       reviewedExpertMatches: selectedReviewedExperts(tender.expertMatches),
       projectMatches: tender.projectMatches.length,
@@ -606,13 +907,13 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
     },
     documents: {
       planned,
-      required: planned.filter((doc) => doc.required),
+      required: planned.filter((document) => document.required),
       generated,
-      valid: generated.filter((doc) => isValidationPassed(doc.validationStatus)),
-      approved: generated.filter((doc) => isReviewReadyForExport(doc.reviewStatus)),
+      valid: generated.filter((document) => isValidationPassed(document.validationStatus)),
+      approved: generated.filter((document) => isReviewReadyForExport(document.reviewStatus)),
       missingRequired,
       extraGeneratedOutsidePlan,
-      exportReady: generated.filter((doc) => doc.exportReady),
+      exportReady: generated.filter((document) => document.exportReady),
       blockers: documentBlockers,
     },
     export: {
@@ -622,15 +923,25 @@ export async function getFinalPackageReadinessModel(prisma: any, tenderId: strin
       pdfConversionAvailable: pdfRequirements.pdfConversionAvailable,
       requiredPdfMissing: pdfRequirements.requiredPdfMissing,
       workspaceCount: generated.length,
-      exportCandidateCount: generated.filter((doc) => doc.exportCandidate).length,
+      exportCandidateCount: generated.filter((document) => document.exportCandidate).length,
       blockers: exportBlockers,
       manifest,
     },
     summary: {
       status,
-      score: Math.max(0, Math.min(100, Math.round(100 - blockerCount * 12 - missingRequired.length * 8))),
+      score: Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(100 - blockerCount * 12 - missingRequired.length * 8),
+        ),
+      ),
       blockerCount,
-      nextBestActions: [...requirementBlockers, ...documentBlockers, ...exportBlockers].slice(0, 8).map((blocker) => blocker.nextAction),
+      nextBestActions: [
+        ...requirementBlockers,
+        ...documentBlockers,
+        ...exportBlockers,
+      ].slice(0, 8).map((blocker) => blocker.nextAction),
     },
   };
 }
