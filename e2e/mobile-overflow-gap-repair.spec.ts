@@ -40,10 +40,18 @@ async function visitAtMobileWidth(page: Page, route: string) {
 test.describe("Mobile (390x844) overflow gap repair", () => {
   test("tender detail page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
-    // TenderWorkflowActionCenter fetches /workflow-center client-side and
-    // renders an animate-pulse skeleton (no text) until it resolves — wait
-    // for its real heading so a slow response can't leave this measuring
-    // the skeleton instead of the repaired row content.
+    // TenderWorkflowActionCenter now lives inside a collapsed-by-default
+    // <details>/<summary> disclosure ("Quick workflow control") — the page
+    // was redesigned to lead with NextActionPanel and demote the full
+    // stage-by-stage panel to an optional expandable section. Its content
+    // (including the "Workflow Control Center" heading) is not visible
+    // until the disclosure is opened. Open it first, then wait for the
+    // heading: TenderWorkflowActionCenter fetches /workflow-center
+    // client-side and renders an animate-pulse skeleton (no text) until it
+    // resolves — waiting for the real heading stops a slow response from
+    // leaving this measuring the skeleton instead of the repaired row
+    // content.
+    await page.getByText("Quick workflow control").click();
     await expect(page.getByRole("heading", { name: "Workflow Control Center" })).toBeVisible({ timeout: 15_000 });
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
   });
@@ -190,10 +198,13 @@ test.describe("Mobile (390x844) overflow — pathologically long, unbroken tende
       await visitAtMobileWidth(page, route);
       if (route === "/dashboard/documents") {
         // DocumentsPage fetches its tender/document list client-side and
-        // renders a SkeletonTable + "Loading documents…" subtitle until it
-        // resolves — wait for the real subtitle so a slow response can't
-        // leave this measuring the skeleton instead of the repaired card.
-        await expect(page.getByText("Review planned submission outputs, validation status, review decisions, and download documents.")).toBeVisible({ timeout: 15_000 });
+        // renders a SkeletonTable + "Loading planned and generated
+        // documents…" subtitle until it resolves — wait for the real
+        // (current) subtitle so a slow response can't leave this measuring
+        // the skeleton instead of the repaired card. Text below was
+        // reworded by a donor PR ("and generated" added, ending changed to
+        // "canonical download readiness"); matched to current copy.
+        await expect(page.getByText("Review planned and generated submission outputs, validation status, review decisions, and canonical download readiness.")).toBeVisible({ timeout: 15_000 });
       }
       await expectNoHorizontalScroll(page, route);
     });
