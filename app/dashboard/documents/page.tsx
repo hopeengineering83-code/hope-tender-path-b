@@ -137,7 +137,7 @@ export default function DocumentsPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Generated Documents</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Document Workspace</h1>
           <p className="mt-1 text-sm text-slate-500">Loading documents…</p>
         </div>
         <SkeletonTable rows={5} columns={6} />
@@ -148,7 +148,7 @@ export default function DocumentsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Generated Documents</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Document Workspace</h1>
         <p className="mt-1 text-sm text-slate-500">
           Review planned submission outputs, validation status, review decisions, and download documents.
         </p>
