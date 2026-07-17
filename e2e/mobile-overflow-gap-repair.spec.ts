@@ -40,11 +40,21 @@ async function visitAtMobileWidth(page: Page, route: string) {
 test.describe("Mobile (390x844) overflow gap repair", () => {
   test("tender detail page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
+    // TenderWorkflowActionCenter fetches /workflow-center client-side and
+    // renders an animate-pulse skeleton (no text) until it resolves — wait
+    // for its real heading so a slow response can't leave this measuring
+    // the skeleton instead of the repaired row content.
+    await expect(page.getByRole("heading", { name: "Workflow Control Center" })).toBeVisible({ timeout: 15_000 });
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
   });
 
   test("Knowledge Vault (company) page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, "/dashboard/company");
+    // The page renders "Loading Company Vault…" (role="status") until its
+    // client-side fetch resolves, then swaps in the repaired tab bar — wait
+    // for the loading status to clear so a slow DB response can't leave
+    // this measuring the loading placeholder instead of the real tabs.
+    await expect(page.getByRole("status", { name: /Loading Company Vault/ })).toBeHidden({ timeout: 15_000 });
     await expectNoHorizontalScroll(page, "/dashboard/company");
   });
 
