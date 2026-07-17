@@ -187,7 +187,7 @@ describe("post-1162 UI truth and responsive contracts", () => {
 
     assert.doesNotMatch(page, />Generated Documents<\/h1>/);
     assert.match(page, />Proposal Documents<\/h1>/);
-    assert.match(page, /No proposal document workspaces are available yet/);
+    assert.match(page, /No proposal documents yet\. Build a submission plan and generate the required outputs/);
   });
 
   it("labels root links as home navigation", () => {
