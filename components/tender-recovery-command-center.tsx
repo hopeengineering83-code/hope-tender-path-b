@@ -508,8 +508,8 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-y-2 border-b border-gray-100 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-gray-800">Recovery Command Center</span>
           <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${stateColor(data.lifecycleState, data.finalSubmissionStatus)}`} title={isBlocked ? "Lifecycle context (secondary) — final submission is BLOCKED" : undefined}>
             {stateLabel}
@@ -518,7 +518,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             {data.finalSubmissionStatus}
           </span>
           {isBlocked && data.diagnosticId && (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-mono text-gray-500" title="Quote this ID in support requests">
+            <span className="max-w-full break-all rounded-full bg-gray-100 px-2 py-0.5 text-xs font-mono text-gray-500" title="Quote this ID in support requests">
               {data.diagnosticId}
             </span>
           )}

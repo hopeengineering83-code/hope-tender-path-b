@@ -294,8 +294,8 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
-        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
+        <div className="min-w-0 rounded-2xl border bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b px-6 py-4">
             <div>
               <h2 className="font-bold text-slate-900">Live Pipeline</h2>
@@ -311,6 +311,7 @@ export default async function DashboardPage() {
               <Link href="/dashboard/tenders/new" className="mt-2 inline-block text-sm text-black underline">Create your first tender</Link>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-500">
                 <tr>
@@ -333,8 +334,8 @@ export default async function DashboardPage() {
 
                   return (
                     <tr key={tender.id} className="hover:bg-slate-50 group">
-                      <td className="px-6 py-4">
-                        <Link href={`/dashboard/tenders/${tender.id}`} className="font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
+                      <td className="max-w-[240px] px-6 py-4">
+                        <Link href={`/dashboard/tenders/${tender.id}`} className="break-words font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
                         {tender.clientName && <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>}
                       </td>
                       <td className="px-6 py-4">
@@ -365,6 +366,7 @@ export default async function DashboardPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 

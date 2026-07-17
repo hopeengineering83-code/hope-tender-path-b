@@ -98,11 +98,11 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
           return (
             <div key={tender.id} className="rounded-2xl border bg-white shadow-sm">
               <div
-                className="flex cursor-pointer items-center justify-between gap-4 p-6"
+                className="flex flex-wrap cursor-pointer items-center justify-between gap-4 p-6"
                 onClick={() => setExpandedTender(isExpanded ? null : tender.id)}
               >
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">{tender.title}</h2>
+                <div className="min-w-0">
+                  <h2 className="break-words text-lg font-semibold text-slate-900">{tender.title}</h2>
                   <p className="text-sm text-slate-500">
                     {tender.expertMatches.length} expert candidates · {tender.projectMatches.length} project candidates
                     {(selectedExperts + selectedProjects > 0) && (

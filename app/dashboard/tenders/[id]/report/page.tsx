@@ -231,7 +231,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       {/* ── Report header ───────────────────────────────────────────── */}
       <header className="mb-8 border-b-2 border-slate-800 pb-4">
         <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Tender Summary Report</p>
-        <h1 className="mt-1 text-2xl font-bold leading-snug text-slate-900">
+        <h1 className="mt-1 break-words text-2xl font-bold leading-snug text-slate-900">
           {tender.title ?? "—"}
         </h1>
         <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-600">

@@ -141,6 +141,7 @@ export default async function AnalysisPage() {
             <Link href="/dashboard/tenders/new" className="mt-2 inline-block text-sm text-black underline">Create your first tender</Link>
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-500 text-xs">
               <tr>
@@ -160,8 +161,8 @@ export default async function AnalysisPage() {
                 const critGaps = tender.complianceGaps.filter(g=>!g.isResolved&&g.severity==="CRITICAL").length;
                 return (
                   <tr key={tender.id} className="hover:bg-slate-50">
-                    <td className="px-5 py-3">
-                      <p className="font-medium text-slate-900">{tender.title}</p>
+                    <td className="max-w-[220px] px-5 py-3">
+                      <p className="break-words font-medium text-slate-900">{tender.title}</p>
                       {tender.analysisSummary
                         ? <p className="text-xs text-slate-400 truncate max-w-xs">{tender.analysisSummary}</p>
                         : <p className="text-xs text-slate-300">No analysis yet</p>
@@ -199,6 +200,7 @@ export default async function AnalysisPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
