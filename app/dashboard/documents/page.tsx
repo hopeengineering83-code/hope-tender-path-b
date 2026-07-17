@@ -25,6 +25,12 @@ type Tender = {
   title: string;
   status: string;
   generatedDocuments: GeneratedDocument[];
+  // Canonical server-authority readiness (from /api/tenders/[id]/export-readiness).
+  // When canonicalReady is false, ZIP and per-document download buttons are
+  // hidden — the server will deny them anyway, but the UI mirrors the server
+  // denial so the user sees why.
+  canonicalReady?: boolean;
+  canonicalBlockerCodes?: string[];
 };
 
 type CurrentUser = { id: string; email: string; role: string };
@@ -63,11 +69,42 @@ export default function DocumentsPage() {
           fetch("/api/documents"),
           fetch("/api/auth/me"),
         ]);
-        if (tendersRes.ok) setTenders(await tendersRes.json());
+        let tenderList: Tender[] = [];
+        if (tendersRes.ok) tenderList = await tendersRes.json();
         if (meRes.ok) {
           const me = await meRes.json();
           if (me?.user) setCurrentUser({ id: me.user.id, email: me.user.email, role: me.user.role });
         }
+
+        // ── Fetch canonical export readiness per tender ──────────────
+        // The documents page must not show ZIP/download whenever any
+        // generated row exists. Each download and ZIP request must be
+        // authorized server-side against canonical readiness. We fetch
+        // the export-readiness endpoint for each tender and pass the
+        // result to the UI so the disabled state mirrors the server
+        // denial.
+        const readinessResults = await Promise.all(
+          tenderList.map(async (t) => {
+            try {
+              const res = await fetch(`/api/tenders/${t.id}/export-readiness`, { method: "GET" });
+              if (!res.ok) return { tenderId: t.id, canonicalReady: false, canonicalBlockerCodes: [] as string[] };
+              const body = await res.json();
+              const blockers: string[] = Array.isArray(body?.blockers)
+                ? body.blockers.map((b: any) => b.code ?? b.reason ?? "UNKNOWN").filter(Boolean)
+                : [];
+              const ready = body?.ok === true && blockers.length === 0;
+              return { tenderId: t.id, canonicalReady: ready, canonicalBlockerCodes: blockers };
+            } catch {
+              return { tenderId: t.id, canonicalReady: false, canonicalBlockerCodes: [] as string[] };
+            }
+          }),
+        );
+        const readinessMap = new Map(readinessResults.map((r) => [r.tenderId, r]));
+        setTenders(tenderList.map((t) => ({
+          ...t,
+          canonicalReady: readinessMap.get(t.id)?.canonicalReady ?? false,
+          canonicalBlockerCodes: readinessMap.get(t.id)?.canonicalBlockerCodes ?? [],
+        })));
       } finally {
         setLoading(false);
       }
@@ -128,6 +165,14 @@ export default function DocumentsPage() {
           const planned = tender.generatedDocuments.filter((d) => d.generationStatus === "PLANNED");
           const approved = generated.filter((d) => d.reviewStatus === "APPROVED").length;
           const needsRevision = generated.filter((d) => d.reviewStatus === "NEEDS_REVISION").length;
+          // Canonical readiness from server authority — the ZIP button is
+          // only shown when canonicalReady is true AND there are GENERATED
+          // rows. Previously, any generated row enabled ZIP even when
+          // extraction/analysis/grounding/plan/storage/manifest/integrity
+          // gates would deny the download server-side.
+          const canonicalReady = tender.canonicalReady ?? false;
+          const canonicalBlockerCodes = tender.canonicalBlockerCodes ?? [];
+          const canZip = canonicalReady && generated.length > 0 && canonicalBlockerCodes.length === 0;
 
           return (
             <div key={tender.id} className="rounded-2xl border bg-white shadow-sm">
@@ -138,16 +183,29 @@ export default function DocumentsPage() {
                     {generated.length} generated · {planned.length} planned
                     {approved > 0 && <span className="ml-2 text-green-600">{approved} approved</span>}
                     {needsRevision > 0 && <span className="ml-2 text-amber-600">{needsRevision} needs revision</span>}
+                    {!canonicalReady && canonicalBlockerCodes.length > 0 && (
+                      <span className="ml-2 text-amber-600">
+                        ZIP locked ({canonicalBlockerCodes.length} canonical blocker{canonicalBlockerCodes.length !== 1 ? "s" : ""})
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {generated.length > 0 && (
+                  {canZip && (
                     <button
                       onClick={() => downloadZip(tender.id)}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700"
                     >
                       ↓ ZIP Package
                     </button>
+                  )}
+                  {!canZip && generated.length > 0 && (
+                    <span
+                      className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-400 cursor-not-allowed"
+                      title={canonicalBlockerCodes.join(", ") || "Canonical readiness not met"}
+                    >
+                      ZIP locked
+                    </span>
                   )}
                   <Link href={`/dashboard/tenders/${tender.id}`}
                     className="rounded border px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
@@ -211,7 +269,7 @@ export default function DocumentsPage() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1.5">
-                                {doc.generationStatus === "GENERATED" && (
+                                {doc.generationStatus === "GENERATED" && canZip && (
                                   <button
                                     type="button"
                                     onClick={() => downloadDoc(tender.id, doc.id)}
@@ -221,6 +279,14 @@ export default function DocumentsPage() {
                                   >
                                     <span aria-hidden="true">↓</span>
                                   </button>
+                                )}
+                                {doc.generationStatus === "GENERATED" && !canZip && (
+                                  <span
+                                    className="rounded border px-2.5 py-1 text-xs text-slate-300 cursor-not-allowed"
+                                    title={canonicalBlockerCodes.join(", ") || "Canonical readiness not met"}
+                                  >
+                                    <span aria-hidden="true">↓</span>
+                                  </span>
                                 )}
                                 <button
                                   type="button"

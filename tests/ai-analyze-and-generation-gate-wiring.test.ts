@@ -183,8 +183,13 @@ describe("command center avoids stale workflow progress contradiction", () => {
   it("labels canonical export readiness instead of presenting legacy readinessScore as readiness", () => {
     assert.match(source, /canonicalReadinessLabel/);
     assert.match(source, /Export readiness: BLOCKED/);
-    assert.match(source, /Legacy workflow score:/);
-    assert.match(source, /not an export gate/);
+    // The legacy readinessScore line was removed outright (not merely
+    // relabeled) — Issue #1134 recheck 10 item #3: the persisted
+    // readinessScore is not a valid metric and must not be displayed
+    // beside canonical readiness at all, labeled or not. A code comment
+    // documenting the removal may still mention the field name; only
+    // actual display usage (JSX interpolation) is forbidden.
+    assert.doesNotMatch(source, /\{tender\.readinessScore\}/);
     assert.doesNotMatch(source, /Workflow Progress:/);
   });
 });

@@ -37,6 +37,18 @@ describe("final-export-candidate exclusions", () => {
   it("PLANNED is excluded", () => {
     assert.equal(isFinalExportCandidateDocument(doc({ generationStatus: "PLANNED" })), false);
   });
+  it("GENERATING (still in progress) is excluded", () => {
+    assert.equal(isFinalExportCandidateDocument(doc({ generationStatus: "GENERATING" })), false);
+  });
+  it("FAILED generation is excluded", () => {
+    assert.equal(isFinalExportCandidateDocument(doc({ generationStatus: "FAILED" })), false);
+  });
+  it("QUEUED (not yet started) is excluded", () => {
+    assert.equal(isFinalExportCandidateDocument(doc({ generationStatus: "QUEUED" })), false);
+  });
+  it("STALE generation is excluded", () => {
+    assert.equal(isFinalExportCandidateDocument(doc({ generationStatus: "STALE" })), false);
+  });
   it("CONTROL format is excluded", () => {
     assert.equal(isFinalExportCandidateDocument(doc({ format: "CONTROL" })), false);
   });
@@ -69,6 +81,10 @@ describe("final-export-candidate exclusions", () => {
       doc({ id: "draft-only", documentType: "DRAFT_ONLY" }),
       doc({ id: "submission-rules", documentType: "SUBMISSION_RULES" }),
       doc({ id: "submission-control", documentType: "SUBMISSION_CONTROL" }),
+      doc({ id: "generating", generationStatus: "GENERATING" }),
+      doc({ id: "failed", generationStatus: "FAILED" }),
+      doc({ id: "queued", generationStatus: "QUEUED" }),
+      doc({ id: "stale", generationStatus: "STALE" }),
     ];
     const out = filterFinalExportCandidateDocuments(rows);
     assert.deepEqual(out.map((r) => r.id), ["valid"]);

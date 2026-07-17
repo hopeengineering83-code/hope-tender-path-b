@@ -164,10 +164,20 @@ describe("production hardening — O1: file delete nullifies source-evidence", (
 describe("production hardening — performance: dashboard optimization", () => {
   const src = read("app/dashboard/page.tsx");
 
-  it("adds pagination (take: 25) to the dashboard tender list", () => {
+  it("bounds the dashboard's displayed tender list with a take limit", () => {
+    // Workspace-wide totals now come from real COUNT/GROUP-BY queries
+    // (activeTenderCount, overdueCount, etc.) which cannot load ALL
+    // tenders. The recent-tenders list feeding the Live Pipeline table
+    // is separately bounded — take: 8 replaces the old take: 25 (an
+    // even tighter bound, not a regression).
     assert.ok(
-      src.includes("take: 25"),
-      "must add take: 25 (was unbounded — loaded ALL tenders)",
+      src.includes("take: 8"),
+      "must bound the recent-tenders list with a take limit (was unbounded — loaded ALL tenders)",
+    );
+    assert.doesNotMatch(
+      src,
+      /tender\.findMany\(\{\s*where:\s*\{\s*userId\s*\}\s*\}\)/,
+      "must not reintroduce an unbounded tender.findMany({ where: { userId } })",
     );
   });
 
@@ -178,10 +188,16 @@ describe("production hardening — performance: dashboard optimization", () => {
     );
   });
 
-  it("filters generatedDocuments to non-SUPERSEDED", () => {
-    assert.ok(
-      src.includes('generationStatus: { not: "SUPERSEDED" }'),
-      "must filter generatedDocuments to non-SUPERSEDED (was loading ALL docs)",
+  it("does not query generatedDocuments on the dashboard at all", () => {
+    // Even safer than filtering to non-SUPERSEDED: the workspace-wide
+    // "documents validated" card was removed outright, since counting
+    // documents by validationStatus is not export authority (see the
+    // NOTE comments in app/dashboard/page.tsx). generatedDocuments is
+    // not selected anywhere on this page.
+    assert.doesNotMatch(
+      src,
+      /generatedDocuments\s*:/,
+      "dashboard must not query generatedDocuments at all (superseded by per-tender final-package readiness)",
     );
   });
 });

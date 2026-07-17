@@ -316,7 +316,7 @@ model Tender {
   category              String               @default("General")
   country               String?
   budget                Float?
-  currency              String               @default("USD")
+  currency              String?
   deadline              DateTime?
   submissionMethod      String?
   submissionAddress     String?

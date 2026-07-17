@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { ExportTenderCard } from "./export-tender-card";
+import { getFinalSubmissionReadiness, type FinalSubmissionReadiness } from "../../../lib/engine/final-submission-readiness";
 
 export default async function ExportPage() {
   const userId = await getSession();
@@ -28,6 +29,23 @@ export default async function ExportPage() {
     take: 20,
   });
 
+  // ── Canonical readiness per tender ──────────────────────────────────
+  // The export page must NOT compute readiness locally from generated count
+  // and persisted CRITICAL gaps. The canonical server authority
+  // (getFinalSubmissionReadiness) checks extraction, analysis, source
+  // grounding, reviewed evidence, Build Plan, approvals, storage, manifest,
+  // and byte integrity. We call it for each tender and pass the result
+  // (blocker codes + next action) to the card.
+  const readinessResults: Array<{ tenderId: string; readiness: FinalSubmissionReadiness | null }> = [];
+  for (const tender of tenders) {
+    const readiness = await getFinalSubmissionReadiness(prisma, {
+      tenderId: tender.id,
+      userId,
+    }).catch(() => null);
+    readinessResults.push({ tenderId: tender.id, readiness });
+  }
+  const readinessByTenderId = new Map(readinessResults.map((r) => [r.tenderId, r.readiness]));
+
   return (
     <div className="space-y-6">
       <div>
@@ -45,6 +63,10 @@ export default async function ExportPage() {
 
       <div className="space-y-6">
         {tenders.map((tender) => {
+          // ── Filter to GENERATED rows only for the "generated count" ──
+          // Planned/PENDING/FAILED rows must NOT count as generated, ready,
+          // downloadable, or included in ZIP. They may appear in a separate
+          // "pending/planned" section for visibility but never as ready.
           const generated = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED");
           const allPassed = generated.every((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED");
           const criticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
@@ -54,6 +76,18 @@ export default async function ExportPage() {
           const warningGaps = highGaps.length + unresolvedMediumLow.length;
           const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
 
+          // ── Canonical readiness from server authority ──────────────
+          const canonical = readinessByTenderId.get(tender.id) ?? null;
+          const canonicalBlockers = canonical?.tenderLevelBlockers ?? [];
+          const canonicalAdvisories = canonical?.advisoryWarnings ?? [];
+          const isCanonicalReady = canonical?.ok === true && canonicalBlockers.length === 0;
+          // FinalReadinessTenderBlocker has {category, severity, title, recommendedAction}.
+          // Use category as the blocker code and title/recommendedAction for the next action.
+          const canonicalBlockerCodes = canonicalBlockers.map((b) => b.category);
+          const canonicalNextAction = canonicalBlockers.length > 0
+            ? canonicalBlockers[0]?.recommendedAction ?? canonicalBlockers[0]?.title ?? "Resolve the primary blocker below."
+            : "All canonical gates passed. Download the final package.";
+
           const checks = [
             { label: "Tender documents uploaded", done: tender.generatedDocuments.length > 0 },
             { label: `${generated.length} document${generated.length !== 1 ? "s" : ""} generated`, done: generated.length > 0 },
@@ -61,9 +95,18 @@ export default async function ExportPage() {
             { label: `No critical compliance gaps (${blockingGaps} remaining)`, done: blockingGaps === 0, blocking: blockingGaps > 0 },
             { label: `${highGaps.length + unresolvedMediumLow.length} warning gap${warningGaps !== 1 ? "s" : ""} (non-blocking)`, done: warningGaps === 0, warn: warningGaps > 0 },
             { label: `${mandatoryReqs} mandatory requirement${mandatoryReqs !== 1 ? "s" : ""} covered`, done: mandatoryReqs > 0 },
+            // Canonical gate check — surfaces extraction/analysis/grounding/plan/storage/manifest/integrity
+            {
+              label: isCanonicalReady
+                ? "Canonical final-submission readiness passed"
+                : `Canonical readiness: ${canonicalBlockerCodes.length} blocker(s)`,
+              done: isCanonicalReady,
+              blocking: !isCanonicalReady,
+            },
           ];
 
-          const isReady = blockingGaps === 0 && generated.length > 0;
+          // isReady is now derived from canonical authority, not local computation
+          const isReady = isCanonicalReady;
           const isExported = tender.status === "EXPORTED";
 
           return (
@@ -82,6 +125,8 @@ export default async function ExportPage() {
               criticalGaps={criticalGaps}
               highGaps={highGaps}
               documents={tender.generatedDocuments}
+              canonicalBlockerCodes={canonicalBlockerCodes}
+              canonicalNextAction={canonicalNextAction}
             />
           );
         })}

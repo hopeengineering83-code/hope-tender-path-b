@@ -158,6 +158,8 @@ export type FinalSubmissionReadiness = {
   advisoryWarnings: FinalReadinessAdvisoryWarning[];
   summary: FinalReadinessSummary;
   message: string;
+  /** Per-field canonical state from resolveCanonicalFieldState (same inputs, no divergent call). */
+  canonicalFields?: import("./canonical-field-state").CanonicalFieldState[];
 };
 
 export type GetFinalSubmissionReadinessOptions = {
@@ -1214,6 +1216,23 @@ export async function getFinalSubmissionReadiness(
     })(),
   };
 
+  // ── Currency authority ─────────────────────────────────────────────
+  // Per REVISION_REQUIRED (exact-head recheck): do NOT maintain a second
+  // currency authority resolver. The canonical field resolver
+  // (resolveCanonicalFieldState, called above) already includes "currency"
+  // in its field list and resolves override + ledger + fieldState + evidence
+  // + active-file membership. canonicalExportState.hasExportBlocker already
+  // catches currency issues. The TENDER_FACTS_INVALID blocker (pushed above
+  // when hasExportBlocker is true) covers currency.
+  //
+  // The screenshot defect (USD default on corrupted tenders) is fixed by
+  // the migration (Tender.currency is now nullable, no default). New tenders
+  // get NULL when the extractor finds no currency. The report page renders
+  // "Not extracted" for NULL and "Unverified legacy value" for non-null
+  // currency that the canonical resolver flags as unverified.
+  //
+  // No separate currency authority call needed here.
+
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
   const message = buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
 
@@ -1233,6 +1252,7 @@ export async function getFinalSubmissionReadiness(
     advisoryWarnings,
     summary,
     message,
+    canonicalFields: canonicalExportState.fields,
   };
 }
 

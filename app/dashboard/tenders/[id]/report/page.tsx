@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -48,6 +49,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
     select: {
       id: true,
       title: true,
+      reference: true,
       clientName: true,
       procuringEntityName: true,
       country: true,
@@ -55,16 +57,19 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       currency: true,
       status: true,
       stage: true,
+      analysisExtractionStatus: true,
       clientContactName: true,
       clientContactEmail: true,
       clientContactPhone: true,
       submissionMethod: true,
       submissionAddress: true,
       submissionEmails: true,
+      submissionEmailSubject: true,
       preBidChannel: true,
       preBidMeetingDate: true,
       preBidMeetingLocation: true,
       analysisSummary: true,
+      metadataContaminated: true,
       requirements: {
         select: { id: true, title: true, priority: true, requirementType: true },
         orderBy: { createdAt: "asc" },
@@ -88,6 +93,56 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   if (!tender) notFound();
 
+  // ── Canonical final-submission readiness ──────────────────────────────
+  // The report page must NOT expose authoritative Print/Save-as-PDF for
+  // corrupted, AI-skipped, stale, partial, fallback, or export-blocked
+  // tenders. The canonical server authority (getFinalSubmissionReadiness)
+  // is the single source of truth for whether this tender may produce an
+  // authoritative document. A non-authoritative preview is still shown
+  // (review-only), but it creates zero GeneratedDocument/PDF/ZIP rows.
+  const canonicalReadiness = await getFinalSubmissionReadiness(prisma, {
+    tenderId: id,
+    userId,
+  }).catch(() => null);
+
+  // isAuthoritative is derived from canonical readiness — which includes
+  // currency authority via the canonical field resolver called inside
+  // getFinalSubmissionReadiness. No separate authority call needed.
+  const isAuthoritative =
+    canonicalReadiness?.ok === true &&
+    (canonicalReadiness.tenderLevelBlockers.length === 0);
+  const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
+  const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
+
+  // ── Currency display (from canonical readiness result) ──────────────
+  // Per REVISION_REQUIRED: the report page must NOT call the canonical
+  // field resolver directly with weaker inputs. Instead, derive the
+  // currency verdict from the getFinalSubmissionReadiness result, which
+  // already calls the canonical resolver with FULL inputs (ledgerFacts,
+  // active files, source-evidence columns, etc.). The readiness result
+  // now exposes canonicalFields[] — we find the currency field and use
+  // its specific status.
+  const currencyFieldState = canonicalReadiness?.canonicalFields?.find(
+    (f) => f.fieldKey === "currency",
+  ) ?? null;
+
+  // Field-specific currency verdict:
+  // - EXTRACTED_AND_GROUNDED / MANUAL_CONFIRMED → verified, show value
+  // - INVALID / NOT_STATED / null currency → "Not extracted"
+  // - Any other state → "Unverified legacy value"
+  const currencyStatus = currencyFieldState?.status ?? "INVALID";
+  const isCurrencyVerified = [
+    "EXTRACTED_AND_GROUNDED",
+    "MANUAL_CONFIRMED",
+  ].includes(currencyStatus);
+  const isCurrencyAbsent = !tender.currency || ["INVALID", "NOT_STATED", "NOT_APPLICABLE"].includes(currencyStatus);
+  const hasUnverifiedCurrency = Boolean(tender.currency) && !isCurrencyVerified && !isCurrencyAbsent;
+  const currencyDisplay = isCurrencyAbsent
+    ? "Not extracted"
+    : isCurrencyVerified
+      ? (tender.currency ?? "—")
+      : "Unverified legacy value";
+
   // Sort requirements: MANDATORY first, then by priority order
   const sortedRequirements = [...tender.requirements].sort(
     (a, b) => priorityOrder(a.priority) - priorityOrder(b.priority),
@@ -100,13 +155,78 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
+  // currencyDisplay and hasUnverifiedCurrency are derived from the canonical
+  // resolver (via getFinalSubmissionReadiness). No separate helper needed.
+  const isCurrencyUnverified = hasUnverifiedCurrency;
+
   return (
     <div className="mx-auto max-w-4xl px-6 py-8 font-sans text-slate-900 print:max-w-none print:px-0 print:py-0">
+      {/* Print-VISIBLE watermark for non-authoritative previews.
+          This MUST NOT use print:hidden — otherwise a user can invoke the
+          browser print dialog directly and the warning disappears, producing
+          an apparently authoritative PDF. The watermark is screen-hidden
+          (hidden) when authoritative, and screen-shown + print-shown when
+          non-authoritative. */}
+      {!isAuthoritative && (
+        <div className="mb-6 rounded-lg border-2 border-dashed border-amber-500 bg-amber-50 px-4 py-3 print:border-amber-700 print:bg-amber-100">
+          <p className="text-sm font-bold text-amber-900 print:text-amber-950">
+            ⚠ NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
+          </p>
+          <p className="mt-1 text-xs text-amber-800 print:text-amber-900">
+            This report has NOT passed canonical final-submission readiness.
+            It must not be submitted to any procuring entity. Resolve the
+            blockers below and re-run the engine to produce an authoritative
+            document. This watermark is print-visible to prevent bypass via
+            the browser print dialog.
+          </p>
+          {canonicalBlockers.length > 0 && (
+            <ul className="mt-2 list-inside list-disc text-xs text-amber-800 print:text-amber-900">
+              {canonicalBlockers.slice(0, 5).map((b, i) => (
+                <li key={i}>
+                  <span className="font-mono font-semibold">{b.category}:</span> {b.title}
+                  {b.recommendedAction ? <span className="block pl-4 italic">→ {b.recommendedAction}</span> : null}
+                </li>
+              ))}
+              {canonicalBlockers.length > 5 && (
+                <li className="italic">…and {canonicalBlockers.length - 5} more</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Print controls — hidden in print */}
       <div className="print:hidden mb-6 flex items-center justify-between">
         <h1 className="text-lg font-bold text-slate-700">Tender Report Preview</h1>
-        <PrintButton />
+        {isAuthoritative ? (
+          <PrintButton />
+        ) : (
+          <div className="flex flex-col items-end gap-1">
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+              Non-authoritative preview
+            </span>
+            <span className="text-xs text-slate-400">
+              Print/Save-as-PDF disabled — {canonicalBlockers.length > 0
+                ? `${canonicalBlockers.length} canonical blocker(s)`
+                : "final-submission readiness not met"}
+            </span>
+          </div>
+        )}
       </div>
+
+      {/* Non-authoritative preview banner (screen-only summary) — visible only when not canonical-ready */}
+      {!isAuthoritative && (
+        <div className="print:hidden mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-semibold text-amber-800">
+            Non-authoritative review preview
+          </p>
+          <p className="mt-1 text-xs text-amber-700">
+            This report is for internal review only. It does not create a GeneratedDocument,
+            PDF, or ZIP row. Authoritative printing/export requires all canonical final-submission
+            gates to pass. Resolve the blockers below and re-run the engine.
+          </p>
+        </div>
+      )}
 
       {/* ── Report header ───────────────────────────────────────────── */}
       <header className="mb-8 border-b-2 border-slate-800 pb-4">
@@ -118,7 +238,13 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <span><span className="font-medium">Client:</span> {(tender.clientName || tender.procuringEntityName) ?? "—"}</span>
           <span><span className="font-medium">Country:</span> {tender.country ?? "—"}</span>
           <span><span className="font-medium">Deadline:</span> {fmt(tender.deadline)}</span>
-          <span><span className="font-medium">Currency:</span> {tender.currency ?? "—"}</span>
+          <span>
+            <span className="font-medium">Currency:</span>{" "}
+            {currencyDisplay}
+            {isCurrencyUnverified && (
+              <span className="ml-1 text-xs text-amber-600">(unverified — not in authoritative output)</span>
+            )}
+          </span>
           <span>
             <span className="font-medium">Status:</span>{" "}
             <span className="inline-block rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-700">

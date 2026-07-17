@@ -73,7 +73,10 @@ export function SecureUploadPolicyEnforcer() {
       const input = event.target instanceof HTMLInputElement ? event.target : null;
       if (!input || input.dataset.secureDocumentPicker !== "true" || !input.files) return;
       const rejected = invalidFiles(input.files);
-      if (rejected.length === 0) return;
+      if (rejected.length === 0) {
+        setMessage("");
+        return;
+      }
 
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -85,7 +88,10 @@ export function SecureUploadPolicyEnforcer() {
       const picker = findDocumentPicker(event.target);
       if (!picker || !event.dataTransfer?.files.length) return;
       const rejected = invalidFiles(event.dataTransfer.files);
-      if (rejected.length === 0) return;
+      if (rejected.length === 0) {
+        setMessage("");
+        return;
+      }
 
       event.preventDefault();
       event.stopImmediatePropagation();

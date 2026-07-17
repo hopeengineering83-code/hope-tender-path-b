@@ -92,6 +92,9 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
 
   const allGaps = tenders.flatMap(t => t.complianceGaps.map(g => ({ ...g, tenderId:t.id, tenderTitle:t.title })));
   const allMatrix = tenders.flatMap(t => (t.complianceMatrix||[]).map(m => ({ ...m, tenderId:t.id, tenderTitle:t.title })));
+  // Count tenders with no requirements (unanalyzed) — these represent
+  // implicit compliance risks. Missing gap rows are NOT proof of compliance.
+  const unanalyzedCount = tenders.filter(t => !t.requirements || t.requirements.length === 0).length;
   const filtered = allGaps.filter(g => {
     if (filterTender!=="all" && g.tenderId!==filterTender) return false;
     if (filterSeverity!=="all" && g.severity!==filterSeverity) return false;
@@ -159,7 +162,13 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
 
           {filtered.length===0 ? (
             <div className="rounded-2xl border bg-white p-10 text-center shadow-sm">
-              <p className="text-slate-400 text-sm">{allGaps.length===0 ? "No compliance gaps. Run the engine on a tender first." : "No gaps match current filters."}</p>
+              <p className="text-slate-400 text-sm">
+                {allGaps.length===0 && unanalyzedCount>0
+                  ? `${unanalyzedCount} tender(s) have not been analyzed. Missing gap rows are not proof of compliance — run the engine on each tender first.`
+                  : allGaps.length===0
+                    ? "No compliance gaps recorded. Run the engine on a tender first."
+                    : "No gaps match current filters."}
+              </p>
             </div>
           ) : (
             <div className="space-y-2">

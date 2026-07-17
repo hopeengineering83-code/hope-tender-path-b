@@ -6,6 +6,18 @@ import {
   isProviderConfigured,
   providerDisplayName,
 } from "./ai-provider-registry";
+// Effective timeout values from the centralized timeout module. These are
+// the values the runtime actually uses — env vars are optional overrides.
+// Readiness must validate the EFFECTIVE values, not raw env presence,
+// because missing env vars fall back to validated defaults (analysis
+// 50s/240s by tier, proposal 55s/220s, section 30s). Marking the env
+// blocked when the env var is absent would create a false production
+// failure contradicting the actual runtime configuration.
+import {
+  AI_ANALYSIS_TIMEOUT_MS,
+  AI_PROPOSAL_TIMEOUT_MS,
+  PROPOSAL_SECTION_TIMEOUT_MS,
+} from "./timeout-config";
 
 export type AIEnvironmentVariableStatus = {
   name: string;
@@ -111,6 +123,41 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
+  // INVARIANT ASSERTION on effective runtime timeout values.
+  //
+  // This check validates the EFFECTIVE values exported by the centralized
+  // timeout module (lib/timeout-config.ts), NOT raw environment configuration.
+  // The centralized module already clamps/falls back on invalid raw env
+  // values before this function sees them — so this check cannot meaningfully
+  // detect invalid raw overrides. Its purpose is to assert that the effective
+  // runtime values are within supported ranges (an invariant that should
+  // always hold if the centralized module is correct).
+  //
+  // This is NOT a raw environment validation — tests and UI must not claim
+  // it validates raw env configuration. It validates effective runtime safety.
+  const SUPPORTED_TIMEOUT_RANGES: Record<string, { min: number; max: number; label: string }> = {
+    "AI_ANALYSIS_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "analysis" },
+    "AI_PROPOSAL_TIMEOUT_MS": { min: 10_000, max: 300_000, label: "proposal" },
+    "PROPOSAL_SECTION_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "section" },
+  };
+  const effectiveTimeouts: Record<string, number> = {
+    "AI_ANALYSIS_TIMEOUT_MS": AI_ANALYSIS_TIMEOUT_MS,
+    "AI_PROPOSAL_TIMEOUT_MS": AI_PROPOSAL_TIMEOUT_MS,
+    "PROPOSAL_SECTION_TIMEOUT_MS": PROPOSAL_SECTION_TIMEOUT_MS,
+  };
+  for (const [envVar, range] of Object.entries(SUPPORTED_TIMEOUT_RANGES)) {
+    const effective = effectiveTimeouts[envVar];
+    if (
+      typeof effective !== "number" ||
+      !Number.isFinite(effective) ||
+      effective < range.min ||
+      effective > range.max
+    ) {
+      blockers.push(
+        `Effective ${envVar} (${range.label}) runtime value is ${effective}, outside the supported range [${range.min}, ${range.max}]. This is an invariant assertion on the centralized timeout module output, not a raw env validation.`,
+      );
+    }
+  }
   if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. OCR runs by default when ANTHROPIC_API_KEY is present. Set PDF_OCR_ENABLED=false to disable, or PDF_OCR_ENABLED=true to make it explicit.");
   // PDF_OCR_MAX_RACES removed — it was a phantom env var that was never read
   // by any code. The "race/concurrency guard" described in its docstring did
