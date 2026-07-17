@@ -4,11 +4,13 @@ on:
   pull_request:
     branches:
       - main
+      - integration/controlled-recovery
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   push:
     branches:
       - main
+      - integration/controlled-recovery
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   workflow_dispatch:
@@ -96,6 +98,15 @@ jobs:
         run: |
           set -o pipefail
           npx prisma migrate deploy 2>&1 | tee test-results/migrate-idempotency.log
+
+      - name: Verify Prisma zero drift
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code 2>&1 | tee test-results/prisma-zero-drift.log
 
       - name: Audit release integrity
         run: npm run audit:release-integrity
