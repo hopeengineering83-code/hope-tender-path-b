@@ -14,6 +14,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { VersionActionsTable } from "./version-actions";
+import { ArrowRightIcon, CheckIcon, CrossIcon } from "../../../../../components/icons";
 
 export const dynamic = "force-dynamic";
 
@@ -168,7 +169,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
         <div className="min-w-0">
           <Link href={`/dashboard/tenders/${id}`} className="text-sm text-slate-500 hover:text-slate-800 no-underline">
-            ← Tender detail
+            <ArrowRightIcon className="rotate-180" /> Tender detail
           </Link>
           <h1 className="mt-2 break-words text-2xl font-bold text-slate-900">{tender.title}</h1>
           <p className="text-sm text-slate-500">Command Center — single view of readiness, blockers, and next best action.</p>
@@ -193,7 +194,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
             href={nextAction.href}
             className="mt-3 inline-block rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 no-underline"
           >
-            Take action →
+            Take action <ArrowRightIcon />
           </a>
         )}
       </section>
@@ -211,7 +212,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Export gate</h2>
         {docReadiness.ok && tenderBlockers.length === 0 ? (
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-            ✓ Export gate is open. All documents READY_FOR_EXPORT and no tender-level blockers.
+            <CheckIcon /> Export gate is open. All documents READY_FOR_EXPORT and no tender-level blockers.
           </div>
         ) : (
           <div className="space-y-2">
@@ -307,8 +308,8 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
             <div>
               Price leakage check:{" "}
               {workbook.noPriceLeakage
-                ? <span className="text-emerald-700 font-medium">✓ clear</span>
-                : <span className="text-red-700 font-semibold">✗ flagged — export blocked</span>
+                ? <span className="text-emerald-700 font-medium"><CheckIcon /> clear</span>
+                : <span className="text-red-700 font-semibold"><CrossIcon /> flagged — export blocked</span>
               }
             </div>
           </div>

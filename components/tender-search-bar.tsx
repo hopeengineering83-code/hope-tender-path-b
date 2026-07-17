@@ -1,6 +1,7 @@
 "use client";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { CrossIcon } from "./icons";
 
 /**
  * Single search + status-filter authority for /dashboard/tenders.
@@ -66,7 +67,7 @@ export function TenderSearchBar() {
           onClick={() => { setQ(""); setStatus(""); }}
           className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-500 hover:bg-slate-50"
         >
-          Clear ✕
+          Clear <CrossIcon />
         </button>
       )}
     </div>

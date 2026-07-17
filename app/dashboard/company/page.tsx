@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { classifyDeleteResponse, type DeleteResponse } from "../../../lib/company-vault-delete-classifier";
+import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from "../../../components/icons";
 
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
@@ -778,7 +779,7 @@ export default function CompanyPage() {
                 <div key={i} className={`rounded-lg border px-3 py-2 text-xs flex items-center justify-between gap-2 ${item.status==="done"?"border-green-200 bg-green-50":item.status==="error"?"border-red-200 bg-red-50":item.status==="uploading"?"border-blue-200 bg-blue-50":"border-slate-200"}`}>
                   <span className="truncate font-medium">{item.file.name}</span>
                   <span className={item.status==="done"?"text-green-600":item.status==="error"?"text-red-600":item.status==="uploading"?"text-blue-600":"text-slate-400"}>
-                    {item.status==="uploading"?"Uploading…":item.status==="done"?"✓ Done":item.status==="error"?`✕ ${item.error??"Failed"}`:"Queued"}
+                    {item.status==="uploading"?"Uploading…":item.status==="done"?<><CheckIcon /> Done</>:item.status==="error"?<><CrossIcon /> {item.error??"Failed"}</>:"Queued"}
                   </span>
                 </div>
               ))}
@@ -804,7 +805,7 @@ export default function CompanyPage() {
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[doc.category]??"bg-slate-100 text-slate-500"}`}>{CATEGORY_LABELS[doc.category]??doc.category}</span>
                       <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !(doc.storagePath ?? "").trim() ? " · Restored inline file available" : ""}</span>
-                      {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
+                      {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600"><CheckIcon /> {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
@@ -869,7 +870,7 @@ export default function CompanyPage() {
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.experts||[]).length===0 ? (
               <div className="flex flex-col items-center py-12 px-6 text-center">
-                <span className="text-4xl mb-3" aria-hidden="true">👤</span>
+                <PersonIcon className="text-4xl mb-3" />
                 <h3 className="text-sm font-semibold text-slate-700 mb-1">No experts in your knowledge vault</h3>
                 <p className="text-xs text-slate-400 max-w-xs mb-4">Import CVs to add experts. They&apos;ll be automatically matched to tenders.</p>
                 <button
@@ -927,7 +928,7 @@ export default function CompanyPage() {
               {filteredExperts.length > ROWS_PREVIEW && (
                 <div className="border-t px-5 py-2.5 text-center">
                   <button onClick={() => setShowAllExperts(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
-                    {showAllExperts ? `Show fewer` : `Show all ${filteredExperts.length} experts ▼`}
+                    {showAllExperts ? `Show fewer` : <>Show all {filteredExperts.length} experts <ChevronDownIcon /></>}
                   </button>
                 </div>
               )}
@@ -974,7 +975,7 @@ export default function CompanyPage() {
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.projects||[]).length===0 ? (
               <div className="flex flex-col items-center py-12 px-6 text-center">
-                <span className="text-4xl mb-3" aria-hidden="true">📁</span>
+                <FolderIcon className="text-4xl mb-3" />
                 <h3 className="text-sm font-semibold text-slate-700 mb-1">No projects in your portfolio</h3>
                 <p className="text-xs text-slate-400 max-w-xs mb-4">Add completed projects as references. They&apos;ll be matched to tender requirements.</p>
                 <button
@@ -1032,7 +1033,7 @@ export default function CompanyPage() {
               {filteredProjects.length > ROWS_PREVIEW && (
                 <div className="border-t px-5 py-2.5 text-center">
                   <button onClick={() => setShowAllProjects(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
-                    {showAllProjects ? `Show fewer` : `Show all ${filteredProjects.length} projects ▼`}
+                    {showAllProjects ? `Show fewer` : <>Show all {filteredProjects.length} projects <ChevronDownIcon /></>}
                   </button>
                 </div>
               )}
@@ -1109,7 +1110,7 @@ export default function CompanyPage() {
                   {complianceRecords.length > ROWS_PREVIEW && (
                     <div className="border-t px-4 py-2 text-center">
                       <button onClick={() => setShowAllCompliance(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
-                        {showAllCompliance ? "Show fewer" : `Show all ${complianceRecords.length} records ▼`}
+                        {showAllCompliance ? "Show fewer" : <>Show all {complianceRecords.length} records <ChevronDownIcon /></>}
                       </button>
                     </div>
                   )}
@@ -1175,7 +1176,7 @@ export default function CompanyPage() {
                   {legalRecords.length > ROWS_PREVIEW && (
                     <div className="border-t px-4 py-2 text-center">
                       <button onClick={() => setShowAllLegal(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
-                        {showAllLegal ? "Show fewer" : `Show all ${legalRecords.length} records ▼`}
+                        {showAllLegal ? "Show fewer" : <>Show all {legalRecords.length} records <ChevronDownIcon /></>}
                       </button>
                     </div>
                   )}
@@ -1232,7 +1233,7 @@ export default function CompanyPage() {
                   {financialRecords.length > ROWS_PREVIEW && (
                     <div className="border-t px-4 py-2 text-center">
                       <button onClick={() => setShowAllFinancial(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
-                        {showAllFinancial ? "Show fewer" : `Show all ${financialRecords.length} records ▼`}
+                        {showAllFinancial ? "Show fewer" : <>Show all {financialRecords.length} records <ChevronDownIcon /></>}
                       </button>
                     </div>
                   )}

@@ -2,12 +2,16 @@
  * Reusable empty state component for lists, panels, and dashboards.
  *
  * Usage:
- *   <EmptyState icon="📋" title="No tenders yet" description="Upload your first tender document to get started." actionLabel="Upload Tender" onAction={() => router.push('/dashboard/tenders/new')} />
+ *   <EmptyState icon={<DocumentIcon />} title="No tenders yet" description="Upload your first tender document to get started." actionLabel="Upload Tender" onAction={() => router.push('/dashboard/tenders/new')} />
  */
 "use client";
 
+import type { ReactNode } from "react";
+
 interface EmptyStateProps {
-  icon?: string;
+  // A rendered icon element (inline SVG), not a raw emoji/Unicode string —
+  // see components/icons.tsx for why.
+  icon?: ReactNode;
   title: string;
   description?: string;
   actionLabel?: string;

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ArrowRightIcon, CheckIcon, CrossIcon, DownloadIcon } from "../../../components/icons";
 
 type CheckItem = { label: string; done: boolean; blocking?: boolean; warn?: boolean };
 type CriticalGap = { id: string; title: string };
@@ -62,7 +63,7 @@ export function ExportTenderCard({
               target="_blank"
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm text-white hover:bg-emerald-700"
             >
-              ↓ Download ZIP
+              <DownloadIcon /> Download ZIP
             </a>
           )}
           {!isReady && canonicalBlockerCodes.length > 0 && (
@@ -122,7 +123,7 @@ export function ExportTenderCard({
                   check.warn ? "bg-amber-400 text-white" :
                   "border-2 border-slate-200 text-slate-300"
                 }`}>
-                  {check.blocking ? "✕" : check.done ? "✓" : check.warn ? "!" : ""}
+                  {check.blocking ? <CrossIcon /> : check.done ? <CheckIcon /> : check.warn ? "!" : ""}
                 </span>
                 <span className={check.blocking ? "text-red-600 font-medium" : check.done ? "text-slate-700" : "text-slate-400"}>
                   {check.label}
@@ -143,7 +144,7 @@ export function ExportTenderCard({
                 ))}
               </ul>
               <Link href="/dashboard/compliance" className="mt-2 inline-block text-xs text-red-600 underline hover:no-underline">
-                Resolve in Compliance Dashboard →
+                Resolve in Compliance Dashboard <ArrowRightIcon />
               </Link>
             </div>
           )}
@@ -178,7 +179,7 @@ export function ExportTenderCard({
                         isPending ? "bg-slate-200 text-slate-400" :
                         "border border-slate-200 text-slate-300"
                       }`}>
-                        {isGen ? "✓" : isFailed ? "✕" : isPending ? "⋯" : ""}
+                        {isGen ? <CheckIcon /> : isFailed ? <CrossIcon /> : isPending ? "..." : ""}
                       </span>
                       <span className={isGen ? "text-slate-700" : "text-slate-400"}>
                         {doc.exactOrder ? `${doc.exactOrder}. ` : ""}{doc.exactFileName || doc.name}
@@ -192,7 +193,7 @@ export function ExportTenderCard({
                           target="_blank"
                           className="ml-auto text-xs text-blue-500 hover:underline"
                         >
-                          ↓
+                          <DownloadIcon />
                         </a>
                       )}
                     </div>

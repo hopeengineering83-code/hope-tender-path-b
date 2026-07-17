@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ChevronLeftIcon, ChevronRightIcon } from "../../../components/icons";
 
 type TenderItem = {
   id: string;
@@ -85,9 +86,9 @@ export function CalendarClient({ tenders }: { tenders: TenderItem[] }) {
           <p className="mt-1 text-sm text-slate-500">Advisory view of stored deadlines. Deadline status does not block authoring.</p>
         </div>
         <div className="grid grid-cols-[44px,minmax(0,1fr),44px] items-center gap-2 sm:min-w-[250px]" aria-label="Calendar month navigation">
-          <button type="button" onClick={previousMonth} className="flex h-11 w-11 items-center justify-center rounded-lg border bg-white text-sm hover:bg-slate-50" aria-label="Previous month">◀</button>
+          <button type="button" onClick={previousMonth} className="flex h-11 w-11 items-center justify-center rounded-lg border bg-white text-sm hover:bg-slate-50" aria-label="Previous month"><ChevronLeftIcon /></button>
           <span className="min-w-0 text-center text-sm font-semibold text-slate-800" aria-live="polite">{MONTHS[month]} {year}</span>
-          <button type="button" onClick={nextMonth} className="flex h-11 w-11 items-center justify-center rounded-lg border bg-white text-sm hover:bg-slate-50" aria-label="Next month">▶</button>
+          <button type="button" onClick={nextMonth} className="flex h-11 w-11 items-center justify-center rounded-lg border bg-white text-sm hover:bg-slate-50" aria-label="Next month"><ChevronRightIcon /></button>
         </div>
       </div>
 

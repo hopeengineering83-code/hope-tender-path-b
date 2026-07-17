@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
+import { ChevronDownIcon } from "../../../../components/icons";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
 import { AuthorityReviewTruthPanel } from "../../../../components/authority-review-truth-panel";
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
@@ -81,7 +82,7 @@ function WorkflowStage({
           <span className="block text-base font-semibold text-slate-900">{title}</span>
           <span className="mt-0.5 block text-sm text-slate-600">{description}</span>
         </span>
-        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180">⌄</span>
+        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180"><ChevronDownIcon /></span>
       </summary>
       <div className="space-y-4 border-t border-slate-200 bg-white p-4 sm:p-5">{children}</div>
     </details>

@@ -10,6 +10,7 @@ import { DuplicateButton } from "../history/duplicate-button";
 import { SortSelect } from "./sort-select";
 import { TenderSearchBar } from "../../../components/tender-search-bar";
 import { TenderNotificationsBanner } from "../../../components/tender-notifications-banner";
+import { WarningIcon, ClockIcon, ListIcon } from "../../../components/icons";
 
 const SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
@@ -37,13 +38,13 @@ function DeadlineCell({ deadline }: { deadline: Date | null }) {
   }
   const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
   if (daysLeft < 0) {
-    return <span className="font-medium text-red-600">⚠ Overdue ({formatDate(deadline)})</span>;
+    return <span className="font-medium text-red-600"><WarningIcon /> Overdue ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 7) {
-    return <span className="font-medium text-red-500">⚠ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="font-medium text-red-500"><WarningIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 14) {
-    return <span className="text-amber-500">⏰ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="text-amber-500"><ClockIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
@@ -61,10 +62,10 @@ function MobileDeadlineCell({ deadline }: { deadline: Date | null }) {
     return <span className="font-medium text-red-500"><span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse mr-1" />{daysLeft}d left ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 7) {
-    return <span className="font-medium text-red-500">⚠ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="font-medium text-red-500"><WarningIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 14) {
-    return <span className="text-amber-500">⏰ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="text-amber-500"><ClockIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
@@ -296,7 +297,7 @@ export default async function TendersPage({
             </div>
           ) : (
             <div className="flex flex-col items-center py-16 text-center px-6">
-              <div className="text-5xl mb-4">📋</div>
+              <div className="mb-4 flex justify-center text-5xl"><ListIcon /></div>
               <h2 className="text-lg font-semibold text-slate-900 mb-2">No tenders yet</h2>
               <p className="text-slate-500 text-sm max-w-sm mb-6">
                 Upload your first tender document to get started with AI-powered analysis and proposal generation.

@@ -11,6 +11,7 @@ import { inferSectionRequirementIds } from "../lib/engine/section-evidence-map";
 import { normalizeSupportLevel } from "../lib/engine/requirement-evidence-profile";
 import { clientLogger } from "@/lib/ui/client-logger";
 import { PanelErrorFallback } from "./panel-error-fallback";
+import { ArrowRightIcon } from "./icons";
 
 function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;
@@ -137,7 +138,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence Coverage</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">Requirement → evidence mapping</h2>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">Requirement <ArrowRightIcon /> evidence mapping</h2>
           <p className="mt-1 text-sm text-slate-600">
             Shows which mandatory requirements are covered by section evidence maps. Uncovered requirements
             may indicate missing evidence, unconfirmed sections, or generation that hasn&apos;t run yet.

@@ -579,7 +579,7 @@ function Detail({ label, value, highlight }: { label: string; value: string | nu
   return (
     <div className="flex items-start gap-3 border-b border-slate-100 pb-2">
       <div className="w-44 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`flex-1 text-sm ${empty ? "text-amber-700" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
+      <div className={`min-w-0 flex-1 break-words text-sm ${empty ? "text-amber-700" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
         {empty ? <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs italic">{MISSING_NOTE}</span> : value}
       </div>
     </div>
