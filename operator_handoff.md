@@ -74,6 +74,13 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 15:32 UTC — Codex (GPT-5.6 Sol), activation-truth follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** made provider override states activation-aware. Registry aliases now count toward the displayed API-key state, and provider-specific base/model overrides report `INACTIVE` until the provider is usable rather than misleadingly reporting SET/DEFAULTED. Added alias-only DeepSeek and inactive/active default tests plus INACTIVE rendering coverage.
+- **Tests:** provider/fallback, environment reconciliation, and post-1162 suites passed (63 tests); `npx tsc --noEmit` and lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Merge status:** **unsafe / not integration-ready** — remote exact-head and `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` blockers remain.
+
 ### 2026-07-17 15:22 UTC — Codex (GPT-5.6 Sol), registry-completeness follow-up
 
 - **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.

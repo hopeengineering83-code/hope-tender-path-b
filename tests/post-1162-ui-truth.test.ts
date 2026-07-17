@@ -11,7 +11,7 @@ import {
 } from "../components/ai-environment-variable-status";
 import type { AIEnvironmentVariableStatus } from "../lib/ai-environment-readiness";
 import { getAIEnvironmentReadiness } from "../lib/ai-environment-readiness";
-import { CANONICAL_AI_PROVIDER_ORDER, getProviderRegistry } from "../lib/ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getProviderRegistry, isProviderConfigured } from "../lib/ai-provider-registry";
 
 function source(path: string): string {
   return readFileSync(path, "utf8");
@@ -35,6 +35,7 @@ describe("post-1162 UI truth and responsive contracts", () => {
       variable({ name: "OCR_KEY", scope: "ocr", severity: "recommended", configurationState: "RECOMMENDED", requirementLabel: "recommended", note: "OCR purpose" }),
       variable({ name: "AI_KEY_WITH_A_VERY_LONG_UNBROKEN_NAME", present: true, scope: "ai", severity: "critical", configurationState: "SET", requirementLabel: "alternative provider", note: "AI purpose" }),
       variable({ name: "DATABASE_URL", scope: "database", severity: "critical", configurationState: "MISSING", requirementLabel: "required", note: "Persistent database" }),
+      variable({ name: "OPENAI_BASE_URL", scope: "ai", configurationState: "INACTIVE", note: "Inactive provider override" }),
     ];
     const html = renderToStaticMarkup(
       React.createElement(AIEnvironmentVariableStatusList, { variables }),
@@ -52,6 +53,7 @@ describe("post-1162 UI truth and responsive contracts", () => {
     assert.match(html, />SET<\/span>/);
     assert.match(html, />MISSING<\/span>/);
     assert.match(html, />RECOMMENDED<\/span>/);
+    assert.match(html, />INACTIVE<\/span>/);
   });
 
   it("groups AI variables by canonical provider before functional groups", () => {
@@ -84,7 +86,7 @@ describe("post-1162 UI truth and responsive contracts", () => {
       const variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
       assert.equal(variables.get("ZAI_API_KEY")?.configurationState, "NOT_CONFIGURED");
       assert.equal(variables.get("ZAI_API_KEY")?.requirementLabel, "alternative provider");
-      assert.equal(variables.get("ZAI_BASE_URL")?.configurationState, "DEFAULTED");
+      assert.equal(variables.get("ZAI_BASE_URL")?.configurationState, "INACTIVE");
       assert.equal(variables.get("DATABASE_URL")?.configurationState, "MISSING");
       assert.equal(variables.get("DATABASE_URL")?.requirementLabel, "required");
       assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "DEFAULTED");
@@ -113,9 +115,33 @@ describe("post-1162 UI truth and responsive contracts", () => {
       for (const [name, fallback] of overrides) {
         if (!name) continue;
         assert.ok(variables.has(name), `${provider} override ${name} must be reported`);
-        if (!process.env[name] && fallback) {
+        if (!isProviderConfigured(provider)) {
+          assert.equal(variables.get(name)?.configurationState, "INACTIVE", `${name} must be inactive without its provider`);
+        } else if (!process.env[name] && fallback) {
           assert.equal(variables.get(name)?.configurationState, "DEFAULTED", `${name} must mirror its registry default`);
         }
+      }
+    }
+  });
+
+  it("uses provider aliases and only activates defaults for usable providers", () => {
+    const names = ["DEEPSEEK_API_KEY", "DEEP_SEEK_API_KEY", "DEEPSEEK_KEY", "DEEPSEEK_BASE_URL"];
+    const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    names.forEach((name) => delete process.env[name]);
+    try {
+      let variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
+      assert.equal(variables.get("DEEPSEEK_API_KEY")?.configurationState, "NOT_CONFIGURED");
+      assert.equal(variables.get("DEEPSEEK_BASE_URL")?.configurationState, "INACTIVE");
+
+      process.env.DEEP_SEEK_API_KEY = "alias-only-test-key";
+      variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
+      assert.equal(variables.get("DEEPSEEK_API_KEY")?.configurationState, "SET");
+      assert.equal(variables.get("DEEPSEEK_API_KEY")?.present, true);
+      assert.equal(variables.get("DEEPSEEK_BASE_URL")?.configurationState, "DEFAULTED");
+    } finally {
+      for (const name of names) {
+        if (saved[name] === undefined) delete process.env[name];
+        else process.env[name] = saved[name];
       }
     }
   });

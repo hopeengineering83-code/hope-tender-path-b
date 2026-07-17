@@ -24,7 +24,7 @@ export type AIEnvironmentVariableStatus = {
   present: boolean;
   scope: "ai" | "database" | "auth" | "ocr" | "runtime";
   severity: "critical" | "recommended" | "optional";
-  configurationState: "SET" | "NOT_CONFIGURED" | "DEFAULTED" | "RECOMMENDED" | "OPTIONAL" | "MISSING";
+  configurationState: "SET" | "INACTIVE" | "NOT_CONFIGURED" | "DEFAULTED" | "RECOMMENDED" | "OPTIONAL" | "MISSING";
   requirementLabel: "required" | "alternative provider" | "recommended" | "optional";
   note: string;
 };
@@ -51,11 +51,13 @@ function status(
   scope: AIEnvironmentVariableStatus["scope"],
   severity: AIEnvironmentVariableStatus["severity"],
   note: string,
-  options: { defaultWhenUnset?: boolean } = {},
+  options: { defaultWhenUnset?: boolean; presentOverride?: boolean; active?: boolean } = {},
 ): AIEnvironmentVariableStatus {
-  const isPresent = present(name);
+  const isPresent = options.presentOverride ?? present(name);
   const alternativeProvider = scope === "ai" && name.endsWith("_API_KEY");
-  const configurationState: AIEnvironmentVariableStatus["configurationState"] = isPresent
+  const configurationState: AIEnvironmentVariableStatus["configurationState"] = options.active === false
+    ? "INACTIVE"
+    : isPresent
     ? "SET"
     : options.defaultWhenUnset
       ? "DEFAULTED"
@@ -79,11 +81,13 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
   const variables: AIEnvironmentVariableStatus[] = [];
   for (const provider of CANONICAL_AI_PROVIDER_ORDER) {
     const entry = registry[provider];
+    const providerConfigured = isProviderConfigured(provider);
     variables.push(status(
       entry.env.apiKey,
       "ai",
       "critical",
       `Rank ${entry.rank} ${entry.emergencyOnly ? "emergency-only " : ""}provider in the canonical chain. Configure at least one provider key.`,
+      { presentOverride: providerConfigured },
     ));
 
     const overrides = [
@@ -107,7 +111,7 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
           : hasDefault
           ? `${entry.displayName} ${override.label} override (effective default: ${override.fallback}).`
           : `${entry.displayName} ${override.label} override; no registry default is configured.`,
-        { defaultWhenUnset: hasDefault },
+        { defaultWhenUnset: hasDefault, active: providerConfigured },
       ));
     }
   }
