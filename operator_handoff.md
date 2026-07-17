@@ -74,6 +74,14 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 14:48 UTC — Codex (GPT-5.6 Sol), review follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; follow-up to draft PR metadata, PR #1162 untouched.
+- **Scope / files:** hardened the AI-readiness repair by extracting `components/ai-environment-variable-status.tsx`, removing the `Object.groupBy` runtime dependency, enforcing deterministic scope order and a 44px disclosure touch target, and replacing brittle source-only readiness assertions with rendered-markup and grouping behavior tests in `tests/post-1162-ui-truth.test.ts`. Corrected F-13 from `SOLVED_BY_OPEN_PR` to `CLAIMED_BUT_NOT_PROVEN` because PR #1163's actual security boundary remains inaccessible.
+- **Tests:** targeted post-1162 tests 4/4 passed; `npx tsc --noEmit` passed; lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Risks / next action:** remote/CI/database/preview/screenshot blockers from the prior entry remain unchanged. Obtain authorized remote access and disposable test infrastructure, then complete exact-head evidence.
+- **Merge status:** **unsafe / not integration-ready** — `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE`.
+
 ### 2026-07-17 14:36 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; new draft PR required after commit (PR #1162 was not touched).

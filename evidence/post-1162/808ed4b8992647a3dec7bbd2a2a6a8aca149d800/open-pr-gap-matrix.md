@@ -18,7 +18,7 @@ Remote enumeration is **ENVIRONMENT_BLOCKER**: `gh` is not installed, no session
 | F-10 AI readiness density | NOT_SOLVED_BY_ANY_OPEN_PR | Repaired together with F-05 using native keyboard-accessible grouped disclosures. |
 | F-11 tender detail length | CLAIMED_BUT_NOT_PROVEN | Requires fresh authenticated evidence; no speculative content removal. |
 | F-12 404 destination label | NOT_SOLVED_BY_ANY_OPEN_PR | Exact-main root links were mislabeled dashboard links. Repaired here. |
-| F-13 screenshot workflow secret pattern | SOLVED_BY_OPEN_PR | PR #1128 remains unsafe by hypothesis; PR #1163 owns preview workflow work. Neither workflow was copied or modified. |
+| F-13 screenshot workflow secret pattern | CLAIMED_BUT_NOT_PROVEN | PR #1128 remains unsafe by hypothesis; PR #1163 claims related preview-workflow work, but its remote diff and security boundary could not be verified. Neither workflow was copied or modified. |
 | F-14 conditional/unscheduled authority | PRODUCT_DECISION_REQUIRED | No business rule guessed; final gates remain fail-closed. |
 | F-15 integration divergence | ENVIRONMENT_BLOCKER | Supplied divergence is acknowledged; no integration PR or reconciliation mutation performed. |
 

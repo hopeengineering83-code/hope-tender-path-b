@@ -3,12 +3,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getAIEnvironmentReadiness } from "../../../../lib/ai-environment-readiness";
 import { ArrowRightIcon } from "../../../../components/icons";
-
-function Pill({ ok }: { ok: boolean }) {
-  return ok
-    ? <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">SET</span>
-    : <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">MISSING</span>;
-}
+import { AIEnvironmentVariableStatusList } from "../../../../components/ai-environment-variable-status";
 
 export default async function AIReadinessPage() {
   const userId = await getSession();
@@ -19,7 +14,6 @@ export default async function AIReadinessPage() {
   if (!user || user.role !== "ADMIN") redirect("/dashboard");
 
   const report = getAIEnvironmentReadiness();
-  const variableGroups = Object.entries(Object.groupBy(report.variables, (variable) => variable.scope));
 
   return (
     <div className="space-y-6">
@@ -64,58 +58,7 @@ export default async function AIReadinessPage() {
         </section>
       )}
 
-      <section className="hidden overflow-x-auto rounded-2xl border bg-white shadow-sm md:block">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="px-4 py-3">Variable</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Scope</th>
-              <th className="px-4 py-3">Severity</th>
-              <th className="px-4 py-3">Purpose</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {report.variables.map((variable) => (
-              <tr key={variable.name}>
-                <td className="px-4 py-3 font-mono text-slate-900">{variable.name}</td>
-                <td className="px-4 py-3"><Pill ok={variable.present} /></td>
-                <td className="px-4 py-3 text-slate-600">{variable.scope}</td>
-                <td className="px-4 py-3 text-slate-600">{variable.severity}</td>
-                <td className="px-4 py-3 text-slate-600">{variable.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="space-y-3 md:hidden" aria-label="Environment variables by scope">
-        {variableGroups.map(([scope, variables]) => (
-          <details key={scope} className="rounded-2xl border bg-white shadow-sm" open={scope === "ai"}>
-            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold capitalize text-slate-900">
-              {scope} variables ({variables?.length ?? 0})
-            </summary>
-            <div className="divide-y divide-slate-100 border-t">
-              {variables?.map((variable) => (
-                <article key={variable.name} className="space-y-3 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <code className="min-w-0 break-all text-sm font-semibold text-slate-900">{variable.name}</code>
-                    <Pill ok={variable.present} />
-                  </div>
-                  <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
-                    <dt className="font-medium text-slate-500">Scope</dt>
-                    <dd className="capitalize text-slate-700">{variable.scope}</dd>
-                    <dt className="font-medium text-slate-500">Severity</dt>
-                    <dd className="capitalize text-slate-700">{variable.severity}</dd>
-                    <dt className="font-medium text-slate-500">Purpose</dt>
-                    <dd className="break-words text-slate-700">{variable.note}</dd>
-                  </dl>
-                </article>
-              ))}
-            </div>
-          </details>
-        ))}
-      </section>
+      <AIEnvironmentVariableStatusList variables={report.variables} />
     </div>
   );
 }
