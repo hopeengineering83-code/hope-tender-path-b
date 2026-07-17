@@ -274,7 +274,7 @@ model SubmissionPlanState {
         """  createdAt      DateTime @default(now())
   updatedAt      DateTime @default(now()) @updatedAt
 
-  @@unique([companyId, tenderId, operation, idempotencyKey], map: "TenderWorkflowRun_companyId_tenderId_operation_idempotencyKey_key")
+  @@unique([companyId, tenderId, operation, idempotencyKey], map: "TenderWorkflowRun_companyId_tenderId_operation_idempotencyKey_k")
 """,
         "TenderWorkflowRun default and index map",
     )
