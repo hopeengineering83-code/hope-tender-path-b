@@ -18,6 +18,7 @@ import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness
 import type { CanonicalModuleKey } from "../lib/engine/canonical-readiness-state";
 import { clientLogger } from "@/lib/ui/client-logger";
 import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
+import { getCurrentConfirmedBuildPlan } from "../lib/engine/build-plan";
 import { PanelErrorFallback } from "./panel-error-fallback";
 
 type Dimension = {
@@ -123,6 +124,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
   if (!tender) return null;
 
   const finalPackage = await getFinalPackageReadinessModel(prisma, tenderId, userId);
+  const confirmedBuildPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId).catch(() => ({ ok: false as const, blocker: "No confirmed Build Plan exists." }));
 
   const dimensions: Dimension[] = [];
 
@@ -229,14 +231,22 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
   });
 
   // ── 5. Submission plan (10 pts) ──────────────────────────────────────────
+  // A non-empty `documents.planned` alone is NOT sufficient — that array is
+  // populated from a legacy derived-fallback plan whenever no CONFIRMED Build
+  // Plan exists (see deriveRequiredPackageDocuments in
+  // final-package-readiness-model.ts), which previously made this dimension
+  // show 10/10 PASS even while the Workflow Control Center correctly reported
+  // "No Build Plan exists" for the same tender. Require an actually-confirmed
+  // Build Plan (the same authority the workflow gate and generation gate use)
+  // so this score can never disagree with them.
   const plannedDocs = finalPackage.documents.planned;
   const requiredDocs = finalPackage.documents.required;
-  const hasPlan = plannedDocs.length > 0;
+  const hasPlan = confirmedBuildPlan.ok && plannedDocs.length > 0;
   dimensions.push({
     label: "Submission Plan",
     score: hasPlan ? 10 : 0,
     max: 10,
-    detail: hasPlan ? `${requiredDocs.length}/${plannedDocs.length} required/planned package docs` : "Not built",
+    detail: hasPlan ? `${requiredDocs.length}/${plannedDocs.length} required/planned package docs` : confirmedBuildPlan.blocker ?? "Not built",
     status: hasPlan ? "PASS" : "FAIL",
     ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#submission-plan-reconciliation" } : {}),
   });
