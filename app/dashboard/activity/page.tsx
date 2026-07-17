@@ -49,16 +49,23 @@ function fmtDate(iso: string) {
 }
 
 function actionLabel(action: string) {
-  return action.replace(/_/g, " ");
+  return action
+    .toLowerCase()
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function ActionBadge({ log }: { log: Log }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ACTION_COLORS[log.action] ?? "bg-slate-100 text-slate-600"}`}>
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <span
+        className={`inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium ${ACTION_COLORS[log.action] ?? "bg-slate-100 text-slate-600"}`}
+        title={actionLabel(log.action)}
+      >
         {actionLabel(log.action)}
       </span>
-      {log.count > 1 && <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-medium text-white">×{log.count}</span>}
+      {log.count > 1 && <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-xs font-medium text-white">×{log.count}</span>}
     </div>
   );
 }
@@ -117,7 +124,7 @@ export default function ActivityPage() {
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       <header>
         <h1 className="text-2xl font-bold text-slate-900">Activity Logs</h1>
         <p className="mt-0.5 max-w-2xl text-sm text-slate-500">
@@ -131,7 +138,8 @@ export default function ActivityPage() {
             key={action || "ALL"}
             type="button"
             onClick={() => handleFilter(action)}
-            className={`rounded-full border px-3 py-1 ${filter === action ? "border-black bg-black text-white" : "border-slate-200 bg-white text-slate-600 hover:border-black"}`}
+            aria-pressed={filter === action}
+            className={`min-h-10 rounded-full border px-3 py-1 ${filter === action ? "border-black bg-black text-white" : "border-slate-200 bg-white text-slate-600 hover:border-black"}`}
           >
             {action ? actionLabel(action) : "All Actions"}
           </button>
@@ -140,9 +148,9 @@ export default function ActivityPage() {
 
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <section className="overflow-hidden rounded-2xl border bg-white shadow-sm" aria-label="Activity events">
+      <section className="min-w-0 overflow-hidden rounded-2xl border bg-white shadow-sm" aria-label="Activity events">
         {loading ? (
-          <p className="py-12 text-center text-slate-400">Loading…</p>
+          <p role="status" className="py-12 text-center text-slate-400">Loading…</p>
         ) : logs.length === 0 ? (
           <div className="py-12 text-center text-slate-400">
             <p>No activity recorded yet.</p>
@@ -152,18 +160,18 @@ export default function ActivityPage() {
           <>
             <div className="divide-y md:hidden">
               {logs.map((log) => (
-                <article key={log.id} className="space-y-3 p-4">
+                <article key={log.id} className="min-w-0 space-y-3 p-4">
                   <ActionBadge log={log} />
-                  <p className="text-sm text-slate-700">{log.description}</p>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-                    <span>{log.entityType ?? "Workspace"}</span>
-                    <time dateTime={log.createdAt}>{fmtDate(log.createdAt)}</time>
+                  <p className="break-words text-sm text-slate-700">{log.description}</p>
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                    <span className="min-w-0 break-words">{log.entityType ?? "Workspace"}</span>
+                    <time className="shrink-0" dateTime={log.createdAt}>{fmtDate(log.createdAt)}</time>
                   </div>
                 </article>
               ))}
             </div>
 
-            <div className="hidden md:block">
+            <div className="hidden min-w-0 md:block">
               <table className="w-full table-fixed text-sm">
                 <thead className="bg-slate-50 text-left text-xs text-slate-500">
                   <tr>
@@ -176,10 +184,10 @@ export default function ActivityPage() {
                 <tbody className="divide-y">
                   {logs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3"><ActionBadge log={log} /></td>
-                      <td className="px-4 py-3 text-slate-700">{log.description}</td>
-                      <td className="px-4 py-3 text-xs text-slate-400">{log.entityType ?? "Workspace"}</td>
-                      <td className="px-4 py-3 text-xs text-slate-400"><time dateTime={log.createdAt}>{fmtDate(log.createdAt)}</time></td>
+                      <td className="min-w-0 px-4 py-3"><ActionBadge log={log} /></td>
+                      <td className="truncate px-4 py-3 text-slate-700" title={log.description}>{log.description}</td>
+                      <td className="truncate px-4 py-3 text-xs text-slate-400" title={log.entityType ?? "Workspace"}>{log.entityType ?? "Workspace"}</td>
+                      <td className="truncate px-4 py-3 text-xs text-slate-400"><time dateTime={log.createdAt}>{fmtDate(log.createdAt)}</time></td>
                     </tr>
                   ))}
                 </tbody>
@@ -192,9 +200,9 @@ export default function ActivityPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
         <p>{total} tenant-scoped audit records{groupedOnPage > 0 ? ` · ${groupedOnPage} duplicate event(s) grouped on this page` : ""}</p>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={() => handlePage(page - 1)} disabled={page === 1} className="rounded border px-3 py-1 disabled:opacity-50" aria-label="Previous activity page">Previous</button>
+          <button type="button" onClick={() => handlePage(page - 1)} disabled={page === 1} className="min-h-10 rounded border px-3 py-1 disabled:opacity-50" aria-label="Previous activity page">Previous</button>
           <span className="px-3 py-1">{page} / {totalPages}</span>
-          <button type="button" onClick={() => handlePage(page + 1)} disabled={page >= totalPages} className="rounded border px-3 py-1 disabled:opacity-50" aria-label="Next activity page">Next</button>
+          <button type="button" onClick={() => handlePage(page + 1)} disabled={page >= totalPages} className="min-h-10 rounded border px-3 py-1 disabled:opacity-50" aria-label="Next activity page">Next</button>
         </div>
       </div>
     </div>
