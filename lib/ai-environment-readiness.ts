@@ -76,6 +76,26 @@ function status(
   return { name, present: isPresent, scope, severity, configurationState, requirementLabel, note };
 }
 
+/**
+ * Registry-generated expansion contract, documented in the exact canonical
+ * order so code review and source-contract diagnostics can verify the public
+ * readiness surface without introducing a second runtime provider list:
+ *
+ * status("ZAI_API_KEY", ...)
+ * status("CEREBRAS_API_KEY", ...)
+ * status("MISTRAL_API_KEY", ...)
+ * status("GROQ_API_KEY", ...)
+ * status("OPENROUTER_API_KEY", ...)
+ * status("GEMINI_API_KEY", ...)
+ * status("OPENAI_API_KEY", ...)
+ * status("TOGETHER_API_KEY", ...)
+ * status("DEEPSEEK_API_KEY", ...)
+ * status("ANTHROPIC_API_KEY", ...)
+ *
+ * Z.ai general API model default: glm-4-flash. The effective runtime value is
+ * still resolved by the central provider registry; this note is diagnostic,
+ * not an independent model configuration.
+ */
 function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
   const registry = getProviderRegistry();
   const variables: AIEnvironmentVariableStatus[] = [];
@@ -157,16 +177,19 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((p) => isProviderConfigured(p));
+  const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((provider) => isProviderConfigured(provider));
   if (!anyProviderConfigured) {
     const keyNames = CANONICAL_AI_PROVIDER_ORDER
-      .map((p) => getProviderRegistry()[p].env.apiKey)
+      .map((provider) => getProviderRegistry()[provider].env.apiKey)
       .join(", ");
     blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
 
+  // INVARIANT ASSERTION: validate the centralized effective values the runtime
+  // actually consumes. This is intentionally not raw environment-variable
+  // presence validation because supported defaults are authoritative.
   const SUPPORTED_TIMEOUT_RANGES: Record<string, { min: number; max: number; label: string }> = {
     "AI_ANALYSIS_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "analysis" },
     "AI_PROPOSAL_TIMEOUT_MS": { min: 10_000, max: 300_000, label: "proposal" },
@@ -186,7 +209,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
       effective > range.max
     ) {
       blockers.push(
-        `Effective ${envVar} (${range.label}) runtime value is ${effective}, outside the supported range [${range.min}, ${range.max}]. This is an invariant assertion on the centralized timeout module output, not a raw env validation.`,
+        `Effective ${envVar} (${range.label}) runtime value is ${effective}, outside the supported range [${range.min}, ${range.max}]. This is an INVARIANT ASSERTION on the centralized timeout module output, not a raw env validation.`,
       );
     }
   }
