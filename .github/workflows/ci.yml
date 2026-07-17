@@ -258,7 +258,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix(db): reconcile Prisma schema with migration history"
-          git push origin HEAD:release/consolidated-recovery-20260717
+          git push --force origin HEAD:refs/heads/automation/consolidation-schema-repair-validated
 
       - name: Upload reconciliation diagnostics on failure
         if: failure()
