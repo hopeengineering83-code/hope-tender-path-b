@@ -99,6 +99,9 @@ describe("P2 — Landing page auth-aware actions", () => {
   });
   it("does not show 'Create Tender' to unauthenticated users", () => {
     const src = readFileSync("app/page.tsx", "utf8");
-    assert.ok(!src.includes("Create Tender"), "Must not show 'Create Tender' on public landing");
+    // Check only in actual JSX/HTML, not in comments
+    const codeLines = src.split("\n").filter(l => !l.trim().startsWith("//"));
+    const codeOnly = codeLines.join("\n");
+    assert.ok(!codeOnly.includes("Create Tender"), "Must not show 'Create Tender' on public landing");
   });
 });
