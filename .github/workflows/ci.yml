@@ -117,7 +117,10 @@ jobs:
           npm run audit:release-integrity 2>&1 | tee test-results/release-integrity-audit.log
 
       - name: Typecheck
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee test-results/typecheck.log
 
       - name: Lint
         run: npm run lint
@@ -192,7 +195,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused?schema=public
       SESSION_SECRET: validation-only-session-secret
@@ -213,17 +216,50 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply exact mixed-fallback repair
-        run: python3 scripts/enforce-zero-write-proposal-fallback.py
-
       - name: Install dependencies
         run: npm ci
+
+      - name: Capture existing TypeScript debt
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > /tmp/typecheck-before.log 2>&1
+          status=$?
+          set -e
+          echo "$status" > /tmp/typecheck-before.status
+          grep -c "error TS" /tmp/typecheck-before.log > /tmp/typecheck-before.count || echo 0 > /tmp/typecheck-before.count
+
+      - name: Apply exact mixed-fallback repair
+        run: python3 scripts/enforce-zero-write-proposal-fallback.py
 
       - name: Run focused zero-write regression
         run: npx tsx --test tests/proposal-mixed-fallback-zero-write.test.ts
 
-      - name: Typecheck repaired tree
-        run: npm run typecheck
+      - name: Prove repair introduces no TypeScript regression
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > /tmp/typecheck-after.log 2>&1
+          status=$?
+          set -e
+          before_count=$(cat /tmp/typecheck-before.count)
+          after_count=$(grep -c "error TS" /tmp/typecheck-after.log || true)
+          echo "Existing TypeScript errors: $before_count; repaired tree errors: $after_count"
+          if grep -F "lib/ai-job-handlers.ts" /tmp/typecheck-after.log; then
+            echo "The repaired handler has a TypeScript diagnostic"
+            cat /tmp/typecheck-after.log
+            exit 1
+          fi
+          if [ "$after_count" -gt "$before_count" ]; then
+            echo "The repair introduced additional TypeScript errors"
+            diff -u /tmp/typecheck-before.log /tmp/typecheck-after.log || true
+            exit 1
+          fi
+          if [ "$(cat /tmp/typecheck-before.status)" -eq 0 ] && [ "$status" -ne 0 ]; then
+            echo "A previously clean tree became type-invalid"
+            cat /tmp/typecheck-after.log
+            exit 1
+          fi
 
       - name: Commit validated repair to isolated branch
         shell: bash
@@ -243,5 +279,7 @@ jobs:
           path: |
             lib/ai-job-handlers.ts
             tests/proposal-mixed-fallback-zero-write.test.ts
+            /tmp/typecheck-before.log
+            /tmp/typecheck-after.log
           if-no-files-found: error
           retention-days: 7
