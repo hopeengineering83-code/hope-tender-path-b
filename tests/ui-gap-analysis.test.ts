@@ -80,4 +80,46 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
     it("MatchingQualityPanel has id=matching-quality", () => { assert.match(read("components/matching-quality-panel.tsx"), /id="matching-quality"/); });
     it("ExportReadinessPanel has id=export-readiness", () => { assert.match(read("components/export-readiness-panel.tsx"), /id="export-readiness"/); });
   });
+
+  describe("Gap 7 — TenderWorkflowActionCenter's StatusBadge handles every canonical stage state", () => {
+    // The canonical decision engine (lib/engine/canonical-workflow-decision.ts)
+    // legitimately produces 6 stage-state strings: READY, BLOCKED,
+    // BLOCKED_BY_PRIOR_STEP, WAITING_ON_PRIOR_STEP, COMPLETE, IN_PROGRESS. The
+    // workflow-center route passes these straight through (stageStatusFromCanonical
+    // does NOT normalize). Previously StatusBadge only had cases for
+    // READY/IN_PROGRESS/WARNING/BLOCKED, so COMPLETE, BLOCKED_BY_PRIOR_STEP, and
+    // WAITING_ON_PRIOR_STEP all silently rendered as the generic "Pending" default —
+    // making a tender that was fully complete on every other panel (e.g. the Tender
+    // Health Score) look untouched in the Workflow Control Center.
+    const src = read("components/tender-workflow-action-center.tsx");
+
+    it("WorkflowStageInfo['status'] type includes all 6 canonical states", () => {
+      assert.match(src, /"COMPLETE"/);
+      assert.match(src, /"BLOCKED_BY_PRIOR_STEP"/);
+      assert.match(src, /"WAITING_ON_PRIOR_STEP"/);
+    });
+
+    it("StatusBadge has an explicit case for COMPLETE (not the Pending default)", () => {
+      assert.match(src, /case "COMPLETE":/);
+    });
+
+    it("StatusBadge has an explicit case for BLOCKED_BY_PRIOR_STEP (not the Pending default)", () => {
+      assert.match(src, /case "BLOCKED_BY_PRIOR_STEP":/);
+    });
+
+    it("StatusBadge has an explicit case for WAITING_ON_PRIOR_STEP (not the Pending default)", () => {
+      assert.match(src, /case "WAITING_ON_PRIOR_STEP":/);
+    });
+
+    it("each new case renders a label distinct from the generic Pending badge", () => {
+      const caseBlock = (state: string) => {
+        const m = src.match(new RegExp(`case "${state}":[\\s\\S]*?;`));
+        assert.ok(m, `expected a case block for ${state}`);
+        return m![0];
+      };
+      assert.ok(!caseBlock("COMPLETE").includes(">Pending<"));
+      assert.ok(!caseBlock("BLOCKED_BY_PRIOR_STEP").includes(">Pending<"));
+      assert.ok(!caseBlock("WAITING_ON_PRIOR_STEP").includes(">Pending<"));
+    });
+  });
 });

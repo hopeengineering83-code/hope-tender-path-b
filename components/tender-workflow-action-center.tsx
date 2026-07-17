@@ -7,7 +7,7 @@ import { clientLogger } from "@/lib/ui/client-logger";
 export interface WorkflowStageInfo {
   stage: number;
   label: string;
-  status: "PENDING" | "IN_PROGRESS" | "READY" | "BLOCKED" | "WARNING";
+  status: "PENDING" | "IN_PROGRESS" | "READY" | "BLOCKED" | "WARNING" | "COMPLETE" | "BLOCKED_BY_PRIOR_STEP" | "WAITING_ON_PRIOR_STEP";
   explanation: string;
   blocker?: string;
   actionLabel?: string;
@@ -102,6 +102,8 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
 
 function StatusBadge({ status }: { status: WorkflowStageInfo["status"] }) {
   switch (status) {
+    case "COMPLETE":
+      return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white uppercase border border-emerald-600">Complete</span>;
     case "READY":
       return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 uppercase border border-emerald-100">Ready</span>;
     case "IN_PROGRESS":
@@ -110,6 +112,10 @@ function StatusBadge({ status }: { status: WorkflowStageInfo["status"] }) {
       return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 uppercase border border-amber-100">Attention</span>;
     case "BLOCKED":
       return <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700 uppercase border border-red-100">Blocked</span>;
+    case "BLOCKED_BY_PRIOR_STEP":
+      return <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-500 uppercase border border-red-100">Blocked by prior step</span>;
+    case "WAITING_ON_PRIOR_STEP":
+      return <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500 uppercase border border-slate-100">Waiting</span>;
     default:
       return <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500 uppercase border border-slate-100">Pending</span>;
   }
