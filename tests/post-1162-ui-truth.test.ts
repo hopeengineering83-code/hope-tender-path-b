@@ -5,6 +5,8 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   AIEnvironmentVariableStatusList,
+  getConfigurationState,
+  getSeverityLabel,
   groupEnvironmentVariables,
 } from "../components/ai-environment-variable-status";
 
@@ -17,6 +19,7 @@ describe("post-1162 UI truth and responsive contracts", () => {
     const variables = [
       { name: "OCR_KEY", present: false, scope: "ocr" as const, severity: "recommended" as const, note: "OCR purpose" },
       { name: "AI_KEY_WITH_A_VERY_LONG_UNBROKEN_NAME", present: true, scope: "ai" as const, severity: "critical" as const, note: "AI purpose" },
+      { name: "DATABASE_URL", present: false, scope: "database" as const, severity: "critical" as const, note: "Persistent database" },
     ];
     const html = renderToStaticMarkup(
       React.createElement(AIEnvironmentVariableStatusList, { variables }),
@@ -33,17 +36,29 @@ describe("post-1162 UI truth and responsive contracts", () => {
     assert.match(html, /min-h-11/);
     assert.match(html, />SET<\/span>/);
     assert.match(html, />MISSING<\/span>/);
+    assert.match(html, />RECOMMENDED<\/span>/);
   });
 
-  it("groups variables in a stable product order without Object.groupBy", () => {
+  it("groups AI variables by canonical provider before functional groups", () => {
     const groups = groupEnvironmentVariables([
       { name: "SESSION_SECRET", present: true, scope: "auth", severity: "critical", note: "Auth" },
       { name: "DATABASE_URL", present: true, scope: "database", severity: "critical", note: "DB" },
-      { name: "AI_KEY", present: true, scope: "ai", severity: "critical", note: "AI" },
+      { name: "OPENAI_API_KEY", present: true, scope: "ai", severity: "critical", note: "OpenAI" },
+      { name: "ZAI_API_KEY", present: true, scope: "ai", severity: "critical", note: "Z.ai" },
     ]);
 
-    assert.deepEqual(groups.map((group) => group.scope), ["ai", "database", "auth"]);
-    assert.deepEqual(groups.map((group) => group.variables[0]?.name), ["AI_KEY", "DATABASE_URL", "SESSION_SECRET"]);
+    assert.deepEqual(groups.map((group) => group.label), ["Z.ai", "OpenAI", "Database", "Authentication"]);
+    assert.deepEqual(groups.map((group) => group.variables[0]?.name), ["ZAI_API_KEY", "OPENAI_API_KEY", "DATABASE_URL", "SESSION_SECRET"]);
+  });
+
+  it("distinguishes true blockers from alternatives, defaults, and optional configuration", () => {
+    assert.equal(getConfigurationState({ name: "DATABASE_URL", present: false, scope: "database", severity: "critical", note: "Database" }).label, "MISSING");
+    assert.equal(getConfigurationState({ name: "ZAI_API_KEY", present: false, scope: "ai", severity: "critical", note: "Provider" }).label, "NOT CONFIGURED");
+    assert.equal(getConfigurationState({ name: "ZAI_BASE_URL", present: false, scope: "ai", severity: "optional", note: "API base URL (default: example.test)" }).label, "DEFAULTED");
+    assert.equal(getConfigurationState({ name: "PDF_OCR_MODEL", present: false, scope: "ocr", severity: "recommended", note: "OCR model" }).label, "RECOMMENDED");
+    assert.equal(getConfigurationState({ name: "OPTIONAL_FLAG", present: false, scope: "runtime", severity: "optional", note: "Optional flag" }).label, "OPTIONAL");
+    assert.equal(getSeverityLabel({ name: "ZAI_API_KEY", present: false, scope: "ai", severity: "critical", note: "Provider" }), "alternative provider");
+    assert.equal(getSeverityLabel({ name: "DATABASE_URL", present: false, scope: "database", severity: "critical", note: "Database" }), "required");
   });
 
   it("does not label planned and empty document workspaces as generated", () => {

@@ -74,6 +74,13 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 15:02 UTC — Codex (GPT-5.6 Sol), density/truth follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** closed the remaining F-05/F-10 presentation truth gap in `components/ai-environment-variable-status.tsx`: mobile groups now follow canonical provider order before OCR/database/auth/runtime functions, and display states distinguish SET, NOT CONFIGURED alternative providers, DEFAULTED, RECOMMENDED, OPTIONAL, and genuinely MISSING required configuration. Critical database/auth rows display as required; individual provider keys display as alternatives because readiness requires at least one provider, not every provider. Added rendered and resolver behavior coverage in `tests/post-1162-ui-truth.test.ts` and updated the finding record.
+- **Tests / status:** targeted post-1162 tests 5/5 passed; `npx tsc --noEmit` passed; lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings. Remote, database, preview, CI, and screenshot blockers remain unchanged.
+- **Merge status:** **unsafe / not integration-ready** — `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE`.
+
 ### 2026-07-17 14:48 UTC — Codex (GPT-5.6 Sol), review follow-up
 
 - **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; follow-up to draft PR metadata, PR #1162 untouched.

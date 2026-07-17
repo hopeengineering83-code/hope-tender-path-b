@@ -4,7 +4,7 @@ This is a bounded source audit, not a declaration of full post-merge completion.
 
 ## Implemented gap closure
 
-- **F-05/F-10:** AI readiness retains its complete desktop table and now renders grouped, native `<details>` mobile cards through a separately testable presentation component. Variable, status, scope, severity, and purpose remain visible; names and notes wrap without global overflow suppression; disclosure summaries meet the 44px minimum touch target; secret values remain absent. Grouping uses an explicit stable scope order rather than relying on `Object.groupBy` runtime support or input insertion order.
+- **F-05/F-10:** AI readiness retains its complete desktop table and now renders provider/function-grouped, native `<details>` mobile cards through a separately testable presentation component. Variable, status, scope, severity, and purpose remain visible; names and notes wrap without global overflow suppression; disclosure summaries meet the 44px minimum touch target; secret values remain absent. Status labels distinguish configured, defaulted, optional, recommended, alternative-provider, and genuinely missing configuration instead of calling every absent value `MISSING`. Grouping follows canonical provider order and then functional scope rather than relying on `Object.groupBy` runtime support or input insertion order.
 - **F-08:** the mixed planned/generated surface is titled **Proposal Documents**, and the no-tender empty state no longer implies generated artifacts exist.
 - **F-12:** actions targeting `/` are now labeled **Return home** in both not-found and application-error surfaces.
 

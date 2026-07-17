@@ -1,27 +1,55 @@
 import React from "react";
 import type { AIEnvironmentVariableStatus } from "../lib/ai-environment-readiness";
 
-const SCOPE_ORDER: AIEnvironmentVariableStatus["scope"][] = [
-  "ai",
-  "ocr",
-  "database",
-  "auth",
-  "runtime",
+const GROUPS = [
+  { key: "zai", label: "Z.ai", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("ZAI_") },
+  { key: "cerebras", label: "Cerebras", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("CEREBRAS_") },
+  { key: "mistral", label: "Mistral", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("MISTRAL_") },
+  { key: "groq", label: "Groq", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("GROQ_") },
+  { key: "openrouter", label: "OpenRouter", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("OPENROUTER_") },
+  { key: "gemini", label: "Gemini", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("GEMINI_") },
+  { key: "openai", label: "OpenAI", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("OPENAI_") },
+  { key: "together", label: "Together", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("TOGETHER_") },
+  { key: "deepseek", label: "DeepSeek", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("DEEPSEEK_") },
+  { key: "anthropic", label: "Anthropic", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("ANTHROPIC_") },
+  { key: "ai-other", label: "Other AI", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" },
+  { key: "ocr", label: "OCR", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ocr" },
+  { key: "database", label: "Database", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "database" },
+  { key: "auth", label: "Authentication", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "auth" },
+  { key: "runtime", label: "Runtime", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "runtime" },
 ];
 
-function StatusPill({ present }: { present: boolean }) {
-  return present ? (
-    <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">SET</span>
-  ) : (
-    <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">MISSING</span>
-  );
+export function getConfigurationState(variable: AIEnvironmentVariableStatus) {
+  if (variable.present) return { label: "SET", className: "bg-green-100 text-green-700" };
+  if (variable.scope === "ai" && variable.name.endsWith("_API_KEY")) {
+    return { label: "NOT CONFIGURED", className: "bg-slate-100 text-slate-600" };
+  }
+  if (/\bdefault(?::|s?\b)/i.test(variable.note)) {
+    return { label: "DEFAULTED", className: "bg-blue-100 text-blue-700" };
+  }
+  if (variable.severity === "critical") return { label: "MISSING", className: "bg-red-100 text-red-700" };
+  if (variable.severity === "recommended") return { label: "RECOMMENDED", className: "bg-amber-100 text-amber-700" };
+  return { label: "OPTIONAL", className: "bg-slate-100 text-slate-600" };
+}
+
+export function getSeverityLabel(variable: AIEnvironmentVariableStatus) {
+  if (variable.scope === "ai" && variable.name.endsWith("_API_KEY")) return "alternative provider";
+  if (variable.severity === "critical") return "required";
+  return variable.severity;
+}
+
+function StatusPill({ variable }: { variable: AIEnvironmentVariableStatus }) {
+  const state = getConfigurationState(variable);
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${state.className}`}>{state.label}</span>;
 }
 
 export function groupEnvironmentVariables(variables: AIEnvironmentVariableStatus[]) {
-  return SCOPE_ORDER.map((scope) => ({
-    scope,
-    variables: variables.filter((variable) => variable.scope === scope),
-  })).filter((group) => group.variables.length > 0);
+  const remaining = new Set(variables);
+  return GROUPS.map((group) => {
+    const matches = variables.filter((variable) => remaining.has(variable) && group.matches(variable));
+    matches.forEach((variable) => remaining.delete(variable));
+    return { key: group.key, label: group.label, variables: matches };
+  }).filter((group) => group.variables.length > 0);
 }
 
 export function AIEnvironmentVariableStatusList({
@@ -48,9 +76,9 @@ export function AIEnvironmentVariableStatusList({
             {variables.map((variable) => (
               <tr key={variable.name}>
                 <td className="px-4 py-3 font-mono text-slate-900">{variable.name}</td>
-                <td className="px-4 py-3"><StatusPill present={variable.present} /></td>
+                <td className="px-4 py-3"><StatusPill variable={variable} /></td>
                 <td className="px-4 py-3 text-slate-600">{variable.scope}</td>
-                <td className="px-4 py-3 text-slate-600">{variable.severity}</td>
+                <td className="px-4 py-3 text-slate-600">{getSeverityLabel(variable)}</td>
                 <td className="px-4 py-3 text-slate-600">{variable.note}</td>
               </tr>
             ))}
@@ -59,23 +87,23 @@ export function AIEnvironmentVariableStatusList({
       </section>
 
       <section className="space-y-3 md:hidden" aria-label="Environment variables by scope">
-        {groups.map(({ scope, variables: scopedVariables }) => (
-          <details key={scope} className="rounded-2xl border bg-white shadow-sm" open={scope === "ai"}>
-            <summary className="min-h-11 cursor-pointer px-4 py-3 text-sm font-semibold capitalize text-slate-900">
-              {scope} variables ({scopedVariables.length})
+        {groups.map(({ key, label, variables: scopedVariables }) => (
+          <details key={key} className="rounded-2xl border bg-white shadow-sm">
+            <summary className="min-h-11 cursor-pointer px-4 py-3 text-sm font-semibold text-slate-900">
+              {label} variables ({scopedVariables.length})
             </summary>
             <div className="divide-y divide-slate-100 border-t">
               {scopedVariables.map((variable) => (
                 <article key={variable.name} className="space-y-3 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <code className="min-w-0 break-all text-sm font-semibold text-slate-900">{variable.name}</code>
-                    <StatusPill present={variable.present} />
+                    <StatusPill variable={variable} />
                   </div>
                   <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
                     <dt className="font-medium text-slate-500">Scope</dt>
                     <dd className="capitalize text-slate-700">{variable.scope}</dd>
                     <dt className="font-medium text-slate-500">Severity</dt>
-                    <dd className="capitalize text-slate-700">{variable.severity}</dd>
+                    <dd className="capitalize text-slate-700">{getSeverityLabel(variable)}</dd>
                     <dt className="font-medium text-slate-500">Purpose</dt>
                     <dd className="break-words text-slate-700">{variable.note}</dd>
                   </dl>
