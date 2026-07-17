@@ -447,16 +447,21 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     await recordStep(ctx.jobId, { stepName: "proposal.generate", message: `Generating proposal sections${sectionFilter ? ` (filtered: ${sectionFilter.join(", ")})` : " (full)"}`, status: "RUNNING" });
     const sectionResult = await generateProposalSectionsParallel(input, sectionFilter);
     const markdown = sectionResult.markdown;
-    // If ALL sections used deterministic fallback, this is NOT AI output.
-    // Record the provenance but do NOT create a GeneratedDocument — fallback
-    // content must never be persisted as a generated proposal.
-    if (sectionResult.allFallback) {
+    // Fail closed on ANY deterministic fallback. Mixed AI/fallback output is
+    // not an authoritative proposal and must be rejected before readiness
+    // recheck, byte encoding, transaction entry, database insert, or storage.
+    if (sectionResult.anyFallback) {
+      const fallbackSectionIds = sectionResult.sections
+        .filter((section) => section.source === "fallback")
+        .map((section) => section.id);
       await recordStep(ctx.jobId, {
         stepName: "proposal.fallback",
-        message: "All sections used deterministic fallback — output is non-AI. No GeneratedDocument persisted.",
+        message: `Blocked non-authoritative proposal output: deterministic fallback used by ${fallbackSectionIds.length} section(s) (${fallbackSectionIds.join(", ") || "unknown"}). Zero documents and zero bytes persisted.`,
         status: "FAILED",
       });
-      throw new Error("AI_PROPOSAL_ALL_SECTIONS_FALLBACK");
+      throw new Error(sectionResult.allFallback
+        ? "AI_PROPOSAL_ALL_SECTIONS_FALLBACK"
+        : "AI_PROPOSAL_MIXED_FALLBACK_BLOCKED");
     }
     if (!markdown || markdown.trim().length < 50) {
     await recordStep(ctx.jobId, {
