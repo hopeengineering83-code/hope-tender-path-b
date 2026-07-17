@@ -74,6 +74,13 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 15:42 UTC — Codex (GPT-5.6 Sol), dependency-state follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** made Gemini fallback, Anthropic capacity, and OCR settings dependency-aware. Added ENABLED/DISABLED states for `PDF_OCR_ENABLED`, mirrored the runtime's Anthropic-dependent default-on/explicit-false behavior, and made OCR model/page/timeout defaults inactive when OCR cannot run. Added dependency transition tests.
+- **Tests:** provider/fallback, environment reconciliation, and post-1162 suites passed (64 tests); `npx tsc --noEmit` and lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Merge status:** **unsafe / not integration-ready** — remote exact-head and `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` blockers remain.
+
 ### 2026-07-17 15:32 UTC — Codex (GPT-5.6 Sol), activation-truth follow-up
 
 - **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.

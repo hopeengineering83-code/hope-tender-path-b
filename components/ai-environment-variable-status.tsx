@@ -22,6 +22,8 @@ const GROUPS = [
 export function getConfigurationState(variable: AIEnvironmentVariableStatus) {
   const className = {
     SET: "bg-green-100 text-green-700",
+    ENABLED: "bg-green-100 text-green-700",
+    DISABLED: "bg-slate-100 text-slate-600",
     INACTIVE: "bg-slate-100 text-slate-500",
     NOT_CONFIGURED: "bg-slate-100 text-slate-600",
     DEFAULTED: "bg-blue-100 text-blue-700",

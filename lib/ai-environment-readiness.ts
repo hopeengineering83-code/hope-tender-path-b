@@ -24,7 +24,7 @@ export type AIEnvironmentVariableStatus = {
   present: boolean;
   scope: "ai" | "database" | "auth" | "ocr" | "runtime";
   severity: "critical" | "recommended" | "optional";
-  configurationState: "SET" | "INACTIVE" | "NOT_CONFIGURED" | "DEFAULTED" | "RECOMMENDED" | "OPTIONAL" | "MISSING";
+  configurationState: "SET" | "ENABLED" | "DISABLED" | "INACTIVE" | "NOT_CONFIGURED" | "DEFAULTED" | "RECOMMENDED" | "OPTIONAL" | "MISSING";
   requirementLabel: "required" | "alternative provider" | "recommended" | "optional";
   note: string;
 };
@@ -51,11 +51,11 @@ function status(
   scope: AIEnvironmentVariableStatus["scope"],
   severity: AIEnvironmentVariableStatus["severity"],
   note: string,
-  options: { defaultWhenUnset?: boolean; presentOverride?: boolean; active?: boolean } = {},
+  options: { defaultWhenUnset?: boolean; presentOverride?: boolean; active?: boolean; stateOverride?: AIEnvironmentVariableStatus["configurationState"] } = {},
 ): AIEnvironmentVariableStatus {
   const isPresent = options.presentOverride ?? present(name);
   const alternativeProvider = scope === "ai" && name.endsWith("_API_KEY");
-  const configurationState: AIEnvironmentVariableStatus["configurationState"] = options.active === false
+  const configurationState: AIEnvironmentVariableStatus["configurationState"] = options.stateOverride ?? (options.active === false
     ? "INACTIVE"
     : isPresent
     ? "SET"
@@ -67,7 +67,7 @@ function status(
           ? "MISSING"
           : severity === "recommended"
             ? "RECOMMENDED"
-            : "OPTIONAL";
+            : "OPTIONAL");
   const requirementLabel: AIEnvironmentVariableStatus["requirementLabel"] = alternativeProvider
     ? "alternative provider"
     : severity === "critical"
@@ -119,15 +119,24 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
 }
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
+  const geminiConfigured = isProviderConfigured("gemini");
+  const anthropicConfigured = isProviderConfigured("anthropic");
+  const rawOcrFlag = (process.env.PDF_OCR_ENABLED ?? "").trim().toLowerCase();
+  const ocrEnabled = rawOcrFlag === "true" || (rawOcrFlag !== "false" && anthropicConfigured);
+  const ocrFlagState: AIEnvironmentVariableStatus["configurationState"] = rawOcrFlag === "false"
+    ? "DISABLED"
+    : ocrEnabled
+      ? rawOcrFlag === "true" ? "ENABLED" : "DEFAULTED"
+      : "INACTIVE";
   const variables: AIEnvironmentVariableStatus[] = [
     ...providerVariableStatuses(),
-    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Fallback Gemini model chain (effective default: gemini-2.5-flash,gemini-2.0-flash).", { defaultWhenUnset: true }),
-    status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
-    status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
-    status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
-    status("PDF_OCR_MODEL", "ocr", "optional", "OCR reasoning model selector (effective default: claude-3-5-sonnet-latest).", { defaultWhenUnset: true }),
-    status("PDF_OCR_MAX_PAGES", "ocr", "optional", "Caps OCR pages to avoid serverless timeout/cost overrun (effective default: 50).", { defaultWhenUnset: true }),
-    status("PDF_OCR_TIMEOUT_MS", "ocr", "optional", "OCR call timeout in milliseconds (default 40000). Prevents Vercel FUNCTION_RUNTIME_LIMIT.", { defaultWhenUnset: true }),
+    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Fallback Gemini model chain (effective default: gemini-2.5-flash,gemini-2.0-flash).", { defaultWhenUnset: true, active: geminiConfigured }),
+    status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1.", { active: anthropicConfigured }),
+    status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier.", { active: anthropicConfigured }),
+    status("PDF_OCR_ENABLED", "ocr", "optional", "Vision OCR defaults on when Anthropic is configured; set false to opt out.", { stateOverride: ocrFlagState }),
+    status("PDF_OCR_MODEL", "ocr", "optional", "OCR reasoning model selector (effective default: claude-3-5-sonnet-latest).", { defaultWhenUnset: true, active: ocrEnabled }),
+    status("PDF_OCR_MAX_PAGES", "ocr", "optional", "Caps OCR pages to avoid serverless timeout/cost overrun (effective default: 50).", { defaultWhenUnset: true, active: ocrEnabled }),
+    status("PDF_OCR_TIMEOUT_MS", "ocr", "optional", "OCR call timeout in milliseconds (default 40000). Prevents Vercel FUNCTION_RUNTIME_LIMIT.", { defaultWhenUnset: true, active: ocrEnabled }),
     status("DATABASE_URL", "database", "critical", "Persistent database connection."),
     status("SESSION_SECRET", "auth", "critical", "Required for secure login/session cookies."),
     status("AI_ANALYSIS_TIMEOUT_MS", "runtime", "recommended", "Tender-analysis timeout guard.", { defaultWhenUnset: true }),

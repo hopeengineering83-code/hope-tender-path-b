@@ -89,7 +89,7 @@ describe("post-1162 UI truth and responsive contracts", () => {
       assert.equal(variables.get("ZAI_BASE_URL")?.configurationState, "INACTIVE");
       assert.equal(variables.get("DATABASE_URL")?.configurationState, "MISSING");
       assert.equal(variables.get("DATABASE_URL")?.requirementLabel, "required");
-      assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "DEFAULTED");
+      assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "INACTIVE");
     } finally {
       for (const name of names) {
         if (saved[name] === undefined) delete process.env[name];
@@ -138,6 +138,42 @@ describe("post-1162 UI truth and responsive contracts", () => {
       assert.equal(variables.get("DEEPSEEK_API_KEY")?.configurationState, "SET");
       assert.equal(variables.get("DEEPSEEK_API_KEY")?.present, true);
       assert.equal(variables.get("DEEPSEEK_BASE_URL")?.configurationState, "DEFAULTED");
+    } finally {
+      for (const name of names) {
+        if (saved[name] === undefined) delete process.env[name];
+        else process.env[name] = saved[name];
+      }
+    }
+  });
+
+  it("keeps provider extras and OCR settings inactive until their dependencies are usable", () => {
+    const names = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_FALLBACK_MODELS", "ANTHROPIC_TIER", "PDF_OCR_ENABLED", "PDF_OCR_MODEL"];
+    const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    names.forEach((name) => delete process.env[name]);
+    try {
+      let variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
+      assert.equal(variables.get("GEMINI_FALLBACK_MODELS")?.configurationState, "INACTIVE");
+      assert.equal(variables.get("ANTHROPIC_TIER")?.configurationState, "INACTIVE");
+      assert.equal(variables.get("PDF_OCR_ENABLED")?.configurationState, "INACTIVE");
+      assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "INACTIVE");
+
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+      process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
+      variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
+      assert.equal(variables.get("GEMINI_FALLBACK_MODELS")?.configurationState, "DEFAULTED");
+      assert.equal(variables.get("ANTHROPIC_TIER")?.configurationState, "RECOMMENDED");
+      assert.equal(variables.get("PDF_OCR_ENABLED")?.configurationState, "DEFAULTED");
+      assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "DEFAULTED");
+
+      process.env.PDF_OCR_ENABLED = "false";
+      variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
+      assert.equal(variables.get("PDF_OCR_ENABLED")?.configurationState, "DISABLED");
+      assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "INACTIVE");
+
+      process.env.PDF_OCR_ENABLED = "true";
+      variables = new Map(getAIEnvironmentReadiness().variables.map((item) => [item.name, item]));
+      assert.equal(variables.get("PDF_OCR_ENABLED")?.configurationState, "ENABLED");
+      assert.equal(variables.get("PDF_OCR_MODEL")?.configurationState, "DEFAULTED");
     } finally {
       for (const name of names) {
         if (saved[name] === undefined) delete process.env[name];
