@@ -11,9 +11,12 @@ const getRegion = source.slice(getStart, postStart);
 const postRegion = source.slice(postStart);
 
 describe("company knowledge repair mutation RBAC", () => {
-  it("keeps diagnostics GET available to authenticated readers", () => {
+  it("keeps paginated diagnostics GET available to authenticated readers", () => {
     assert.match(getRegion, /getSession\(\)/);
-    assert.match(getRegion, /buildDiagnostics\(company\.id\)/);
+    assert.match(getRegion, /new URL\(req\.url\)/);
+    assert.match(getRegion, /buildDiagnostics\(company\.id,\s*\{/);
+    assert.match(getRegion, /expertPage: requestedPage\(searchParams, "expertPage"\)/);
+    assert.match(getRegion, /projectPage: requestedPage\(searchParams, "projectPage"\)/);
     assert.doesNotMatch(getRegion, /importCompanyKnowledgeFromDocuments/);
   });
 
@@ -31,12 +34,12 @@ describe("company knowledge repair mutation RBAC", () => {
     assert.match(postRegion, /userId: actor\.id/);
   });
 
-  it("preserves importer and diagnostic behavior", () => {
+  it("preserves importer and paginated diagnostic behavior", () => {
     assert.match(postRegion, /importCompanyKnowledgeFromDocuments\(company\.id\)/);
     assert.match(postRegion, /buildDiagnostics\(company\.id\)/);
-    assert.match(postRegion, /expertsCreated/);
-    assert.match(postRegion, /projectsCreated/);
-    assert.match(postRegion, /aiFailures/);
+    assert.match(postRegion, /result: \{ \.\.\.result, diagnostics \}/);
+    assert.match(postRegion, /expertsCreated: result\.expertsCreated/);
+    assert.match(postRegion, /projectsCreated: result\.projectsCreated/);
   });
 
   it("returns stable correlated failures and makes audit non-fatal", () => {
