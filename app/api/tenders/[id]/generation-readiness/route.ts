@@ -4,7 +4,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../../../../../lib/tender-generation-readiness-strict";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
-import { safeParseJsonArray } from "../../../../../lib/safe-json";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { randomUUID } from "node:crypto";
 import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 
@@ -21,43 +21,46 @@ export async function GET(
 
   try {
     await prismaReady;
-    const [readiness, tender] = await Promise.all([
+    const [readiness, tender, finalPackage] = await Promise.all([
       getTenderGenerationReadinessStrict(prisma, userId, tenderId),
       prisma.tender.findFirst({
         where: { id: tenderId, userId },
-        select: { notes: true, exactFileNaming: true, exactFileOrder: true, generatedDocuments: { select: { generationStatus: true, reviewStatus: true } }, _count: { select: { requirements: true } } },
+        select: { notes: true },
       }),
+      getFinalPackageReadinessModel(prisma, tenderId, userId),
     ]);
     if (!readiness || !tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-    // Canonical submission-plan check: block full proposal when requirements
-    // exist but no submission plan has been built (exactFileNaming is empty/null
-    // and no per-requirement exactFileName entries exist).
-    const planEntries = safeParseJsonArray(tender.exactFileNaming);
-    const orderEntries = safeParseJsonArray(tender.exactFileOrder);
-    const submissionPlanBuilt = (Array.isArray(planEntries) && planEntries.length > 0) || (Array.isArray(orderEntries) && orderEntries.length > 0);
-    const requirementsExist = (tender._count.requirements ?? 0) > 0;
-    const plannedDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "PLANNED").length;
-    const requiredDocumentsTotal = Math.max(planEntries.length, orderEntries.length, tender._count.requirements ?? 0, plannedDocumentsTotal);
-    const generatedDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED").length;
-    const exportReadyDocumentsTotal = tender.generatedDocuments.filter((doc) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && /READY_FOR_EXPORT|APPROVED/i.test(doc.reviewStatus ?? "")).length;
+    const submissionPlanBuilt = finalPackage.buildPlan.confirmed;
+    const requiredDocumentsTotal = finalPackage.documents.required.length;
+    const generatedDocumentsTotal = finalPackage.documents.generated.length;
+    const exportReadyDocumentsTotal = finalPackage.documents.exportReady.length;
 
     // Use the canonical helper which checks both tender.notes AND the
     // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap so a human-approved
     // fallback is not treated the same as an unapproved one.
     const analysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);
-    // UNKNOWN means the tender has never been AI-analyzed AND has no approved fallback.
-    // Treat it the same as an unapproved fallback: block full-proposal and add a blocker.
     const isUnapprovedFallback = analysisSource === "REGEX_FALLBACK_AI_ERROR" || analysisSource === "UNKNOWN";
     const isApprovedFallback = analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
 
-    const submissionPlanBlocker = (!submissionPlanBuilt && requirementsExist && !isUnapprovedFallback)
+    const submissionPlanBlocker = !submissionPlanBuilt && !isUnapprovedFallback
       ? [{
-          code: "FULL_PROPOSAL_SUBMISSION_PLAN_MISSING",
-          message: "Full proposal generation is blocked: submission plan has not been built. Run Build Plan to generate the required file list before generating documents.",
+          code: "NO_CONFIRMED_BUILD_PLAN",
+          message: finalPackage.buildPlan.blockerReason
+            ?? "Full proposal generation is blocked because the current Build Plan is not confirmed.",
           nextAction: "BUILD_SUBMISSION_PLAN",
         }]
       : [];
+
+    const packageBlockers = [
+      ...finalPackage.requirements.blockers,
+      ...finalPackage.documents.blockers,
+      ...finalPackage.export.blockers,
+    ].map((blocker) => ({
+      code: blocker.code,
+      message: blocker.reason,
+      nextAction: blocker.nextAction,
+    }));
 
     const fullProposalBlockers = isUnapprovedFallback
       ? [{
@@ -67,7 +70,7 @@ export async function GET(
             : "Full proposal generation is blocked because the latest analysis used regex fallback and has not been human-approved. Re-run AI Analyze with healthy providers, or approve the fallback analysis via the tender dashboard.",
           nextAction: "RETRY_AI_ANALYZE",
         }, ...readiness.fullProposalBlockers]
-      : [...submissionPlanBlocker, ...readiness.fullProposalBlockers];
+      : [...submissionPlanBlocker, ...packageBlockers, ...readiness.fullProposalBlockers];
 
     const warnings = (isUnapprovedFallback || isApprovedFallback)
       ? [{
@@ -82,8 +85,10 @@ export async function GET(
       : readiness.warnings;
 
     const readyForSupportPackage = Boolean(readiness.supportPackageReady);
-    // Approved fallback allows support packages but not full proposal without further review
-    const readyForFullProposal = Boolean(readiness.fullProposalReady) && !isUnapprovedFallback;
+    const readyForFullProposal = Boolean(readiness.fullProposalReady)
+      && !isUnapprovedFallback
+      && submissionPlanBuilt
+      && packageBlockers.length === 0;
 
     const analysisSourceGate = isUnapprovedFallback
       ? analysisSource === "UNKNOWN" ? "NOT_ANALYZED" : "BLOCKED_REGEX_FALLBACK"
@@ -91,11 +96,9 @@ export async function GET(
         ? "ALLOWED_APPROVED_FALLBACK"
         : "OK";
 
-    const readyForFullProposalFinal = readyForFullProposal && submissionPlanBlocker.length === 0;
-
     const publicBlockers = [...readiness.blockers, ...fullProposalBlockers];
     const envelope = buildPublicReadinessEnvelope({
-      ok: readyForFullProposalFinal,
+      ok: readyForFullProposal,
       blockers: publicBlockers,
       warnings,
       requiredDocumentsTotal,
@@ -108,14 +111,20 @@ export async function GET(
       ...envelope,
       fullProposalBlockers,
       supportPackageReady: readyForSupportPackage,
-      fullProposalReady: readyForFullProposalFinal,
-      ready: readyForFullProposalFinal,
+      fullProposalReady: readyForFullProposal,
+      ready: readyForFullProposal,
       readyForSupportPackage,
-      readyForFullProposal: readyForFullProposalFinal,
-      readyForAnySafeGeneration: readyForSupportPackage || readyForFullProposalFinal,
+      readyForFullProposal,
+      readyForAnySafeGeneration: readyForSupportPackage || readyForFullProposal,
       analysisSourceGate,
       analysisSource,
       submissionPlanBuilt,
+      buildPlan: finalPackage.buildPlan,
+      finalPackageCounts: {
+        requiredDocumentsTotal,
+        generatedDocumentsTotal,
+        exportReadyDocumentsTotal,
+      },
       finalExportReady: false,
       finalExportReadyEvaluated: false,
       links: {
@@ -126,7 +135,7 @@ export async function GET(
       gateSemantics: {
         ready: "full proposal readiness only",
         supportPackageReady: "support/admin package readiness only; not final proposal/export readiness",
-        fullProposalReady: "main proposal generation readiness; blocked when analysis is unapproved regex fallback",
+        fullProposalReady: "main proposal generation readiness; requires trusted analysis and a current confirmed Build Plan",
         finalExportReady: "not evaluated by generation-readiness; check links.exportReadiness or the dashboard export-readiness panel",
       },
     });
