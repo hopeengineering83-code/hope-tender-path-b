@@ -4,6 +4,7 @@ import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getAllProviderHealth } from "../../../lib/ai-provider-health";
 import { formatDate, TENDER_STATUSES } from "../../../lib/tender-workflow";
+import { ArrowRightIcon } from "../../../components/icons";
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ function statusColor(status: string): string {
     APPROVED: "bg-green-100 text-green-700",
     EXPORTED: "bg-emerald-100 text-emerald-700",
     CLOSED: "bg-slate-200 text-slate-500",
+    NO_BID: "bg-neutral-800 text-neutral-100",
   };
   return map[status] ?? "bg-slate-100 text-slate-600";
 }
@@ -331,7 +333,7 @@ export default async function AnalyticsPage() {
             )}
             <div className="border-t px-5 py-3">
               <Link href="/dashboard/activity" className="text-xs text-blue-600 hover:underline">
-                View full activity log →
+                View full activity log <ArrowRightIcon />
               </Link>
             </div>
           </div>
@@ -418,7 +420,7 @@ export default async function AnalyticsPage() {
             )}
             <div className="border-t px-5 py-3">
               <Link href="/dashboard/tenders" className="text-xs text-blue-600 hover:underline">
-                View all tenders →
+                View all tenders <ArrowRightIcon />
               </Link>
             </div>
           </div>
@@ -488,7 +490,7 @@ export default async function AnalyticsPage() {
               <p className="text-sm text-slate-400">
                 No company profile set up yet.{" "}
                 <Link href="/dashboard/setup" className="text-blue-600 hover:underline">
-                  Set up now →
+                  Set up now <ArrowRightIcon />
                 </Link>
               </p>
             ) : (
@@ -505,13 +507,13 @@ export default async function AnalyticsPage() {
                 )}
                 <div className="mt-4 flex gap-3 border-t pt-4">
                   <Link href="/dashboard/company" className="text-xs text-blue-600 hover:underline">
-                    View knowledge vault →
+                    View knowledge vault <ArrowRightIcon />
                   </Link>
                   <Link
                     href="/dashboard/company/readiness"
                     className="text-xs text-blue-600 hover:underline"
                   >
-                    Readiness check →
+                    Readiness check <ArrowRightIcon />
                   </Link>
                 </div>
               </>

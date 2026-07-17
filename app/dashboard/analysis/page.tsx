@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../lib/prisma";
 import { classifyTenderCurrentnessBatch } from "../../../lib/engine/tender-currentness";
 import { StatusBadge } from "../../../components/status-badge";
 import { formatDate } from "../../../lib/tender-workflow";
+import { ArrowRightIcon, AlertCircleIcon } from "../../../components/icons";
 
 export default async function AnalysisPage() {
   const userId = await getSession();
@@ -187,13 +188,13 @@ export default async function AnalysisPage() {
                             if (state === "BLOCKED") return <span className="text-xs font-medium text-red-600">BLOCKED</span>;
                             // PROVISIONAL_NOT_BLOCKED — NOT a canonical Clear verdict.
                             // The per-tender resolver may still find chunk/content-hash blockers.
-                            return <span className="text-xs text-slate-500">◐ Provisional</span>;
+                            return <span className="text-xs text-slate-500"><AlertCircleIcon /> Provisional</span>;
                           })()
                       }
                     </td>
                     <td className="px-5 py-3"><StatusBadge status={tender.status} /></td>
                     <td className="px-5 py-3">
-                      <Link href={`/dashboard/tenders/${tender.id}`} className="text-xs text-blue-600 hover:underline">Open workspace →</Link>
+                      <Link href={`/dashboard/tenders/${tender.id}`} className="text-xs text-blue-600 hover:underline">Open workspace <ArrowRightIcon /></Link>
                     </td>
                   </tr>
                 );

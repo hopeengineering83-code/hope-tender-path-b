@@ -502,19 +502,23 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("renders Blocked badge for blocked extraction", () => {
-      assert.match(dashboardSrc, /✗ Blocked/);
+      // Icon is a real inline SVG (components/icons.tsx), not a raw Unicode
+      // glyph — glyph rendering depends on the viewer's OS/browser emoji
+      // font and shows blank "tofu" boxes in many environments.
+      assert.match(dashboardSrc, /<CrossIcon \/> Blocked/);
     });
 
     it("renders Not analyzed badge for not-analyzed extraction", () => {
-      assert.match(dashboardSrc, /○ Not analyzed/);
+      assert.match(dashboardSrc, /Not analyzed/);
     });
 
     it("renders Provisional badge (NOT Clear) when currentness === PROVISIONAL_NOT_BLOCKED", () => {
       // The dashboard must NEVER render "Clear" wording — the workspace
       // projection is a lower bound, not a canonical authority.
       assert.match(dashboardSrc, /extractionState === "PROVISIONAL_NOT_BLOCKED"/);
-      assert.match(dashboardSrc, /◐ Provisional/);
+      assert.match(dashboardSrc, /<AlertCircleIcon \/> Provisional/);
       assert.doesNotMatch(dashboardSrc, /✓ Clear/);
+      assert.doesNotMatch(dashboardSrc, />\s*Clear\s*</);
     });
 
     it("does NOT render a workflow % bar in the Live Pipeline (bar removed)", () => {
@@ -792,12 +796,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("PROVISIONAL_NOT_BLOCKED is never treated as canonical readiness (recheck 9 item #4)", () => {
     it("dashboard never renders 'Clear' wording for PROVISIONAL_NOT_BLOCKED", () => {
       assert.doesNotMatch(dashboardSrc, /✓ Clear/);
-      assert.match(dashboardSrc, /◐ Provisional/);
+      assert.match(dashboardSrc, /<AlertCircleIcon \/> Provisional/);
     });
 
     it("analysis page never renders 'Clear' wording for PROVISIONAL_NOT_BLOCKED", () => {
       assert.doesNotMatch(analysisSrc, /✓ Clear/);
-      assert.match(analysisSrc, /◐ Provisional/);
+      assert.match(analysisSrc, /Provisional/);
     });
 
     it("tenders page never renders 'Clear' wording", () => {

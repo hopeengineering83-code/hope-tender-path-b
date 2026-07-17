@@ -32,6 +32,11 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
       requirements: true,
       expertMatches: { include: { expert: { select: { trustLevel: true } } } },
       projectMatches: { include: { project: { select: { trustLevel: true } } } },
+      // Feeds computeTenderReadinessState's exportAllowed/complianceCurrent
+      // below — without this, unresolved CRITICAL compliance gaps are
+      // silently invisible to this resolver's export readiness, even though
+      // the actual final ZIP download route hard-blocks on them.
+      complianceGaps: { select: { severity: true, isResolved: true } },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
         select: {
@@ -71,6 +76,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length;
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length;
+  const unresolvedCriticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
 
   const analysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender);
   const baseState = computeTenderReadinessState({
@@ -86,6 +92,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     generatedDocuments: tender.generatedDocuments,
+    complianceGaps: tender.complianceGaps,
   });
 
   const blockers = [
@@ -128,7 +135,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && blockers.length === 0,
+    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { DocumentReviewPanel } from "../../../components/document-review-panel";
 import { SkeletonTable } from "../../../components/skeleton";
+import { ChatIcon, DownloadIcon } from "../../../components/icons";
 
 type GeneratedDocument = {
   id: string;
@@ -196,7 +197,7 @@ export default function DocumentsPage() {
                       onClick={() => downloadZip(tender.id)}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700"
                     >
-                      ↓ ZIP Package
+                      <DownloadIcon /> ZIP Package
                     </button>
                   )}
                   {!canZip && generated.length > 0 && (
@@ -277,7 +278,7 @@ export default function DocumentsPage() {
                                     title="Download document"
                                     aria-label={`Download ${doc.exactFileName || doc.name}`}
                                   >
-                                    <span aria-hidden="true">↓</span>
+                                    <DownloadIcon />
                                   </button>
                                 )}
                                 {doc.generationStatus === "GENERATED" && !canZip && (
@@ -285,7 +286,7 @@ export default function DocumentsPage() {
                                     className="rounded border px-2.5 py-1 text-xs text-slate-300 cursor-not-allowed"
                                     title={canonicalBlockerCodes.join(", ") || "Canonical readiness not met"}
                                   >
-                                    <span aria-hidden="true">↓</span>
+                                    <DownloadIcon />
                                   </span>
                                 )}
                                 <button
@@ -296,7 +297,7 @@ export default function DocumentsPage() {
                                   aria-label={`${expandedDocId === doc.id ? "Close" : "Open"} review and comments for ${doc.exactFileName || doc.name}`}
                                   aria-expanded={expandedDocId === doc.id}
                                 >
-                                  <span aria-hidden="true">💬</span>
+                                  <ChatIcon />
                                 </button>
                               </div>
                             </td>

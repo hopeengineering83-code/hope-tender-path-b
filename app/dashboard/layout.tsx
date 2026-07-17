@@ -8,53 +8,66 @@ import { MobileSidebarToggle } from "../../components/mobile-sidebar-toggle";
 import type { ReactNode } from "react";
 import { NotificationBell } from "../components/notification-bell";
 import { BuildVersionBadge } from "../../components/build-version-badge";
+import {
+  HomeIcon, ListIcon, ClockIcon, CalendarIcon, DatabaseIcon, TrendingUpIcon,
+  UploadIcon, ClipboardCheckIcon, CodeIcon, ImageIcon, SparklesIcon, SettingsIcon,
+  BrainIcon, PuzzleIcon, ShieldIcon, DocumentIcon, PackageIcon, BarChartIcon,
+  SearchIcon, UsersIcon, GaugeIcon,
+} from "../../components/icons";
 
+// Nav icons were previously raw emoji characters (🏠 📋 🕘 etc). Emoji glyph
+// rendering depends entirely on the viewer's OS/browser having a full-color
+// emoji font installed — a client-side concern no server deploy can fix.
+// Environments without one (many headless browsers, screenshot/automation
+// tools, some desktop Linux setups) show blank "tofu" boxes for every single
+// nav item, on every single page. Inline SVGs (components/icons.tsx) render
+// identically everywhere.
 const NAV_GROUPS_BASE = [
   {
     title: "Workspace",
     roles: null as string[] | null,
     links: [
-      { href: "/dashboard", label: "Overview", icon: "🏠" },
-      { href: "/dashboard/tenders", label: "Active Tenders", icon: "📋" },
-      { href: "/dashboard/history", label: "Tender History", icon: "🕘" },
-      { href: "/dashboard/calendar", label: "Deadline Calendar", icon: "📅" },
+      { href: "/dashboard", label: "Overview", icon: <HomeIcon /> },
+      { href: "/dashboard/tenders", label: "Active Tenders", icon: <ListIcon /> },
+      { href: "/dashboard/history", label: "Tender History", icon: <ClockIcon /> },
+      { href: "/dashboard/calendar", label: "Deadline Calendar", icon: <CalendarIcon /> },
     ],
   },
   {
     title: "Knowledge",
     roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
     links: [
-      { href: "/dashboard/company", label: "Knowledge Vault", icon: "🗄️" },
-      { href: "/dashboard/company/readiness", label: "Profile Readiness", icon: "📈" },
-      { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import", icon: "📥" },
-      { href: "/dashboard/company/review-board", label: "Review Board", icon: "⚖️" },
-      { href: "/dashboard/company/review", label: "Data Diagnostics", icon: "🩺" },
-      { href: "/dashboard/assets", label: "Brand Assets", icon: "🖼️" },
-      { href: "/dashboard/setup", label: "Setup Wizard", icon: "✨" },
-      { href: "/dashboard/settings", label: "Settings", icon: "⚙️" },
+      { href: "/dashboard/company", label: "Knowledge Vault", icon: <DatabaseIcon /> },
+      { href: "/dashboard/company/readiness", label: "Profile Readiness", icon: <TrendingUpIcon /> },
+      { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import", icon: <UploadIcon /> },
+      { href: "/dashboard/company/review-board", label: "Review Board", icon: <ClipboardCheckIcon /> },
+      { href: "/dashboard/company/review", label: "Data Diagnostics", icon: <CodeIcon /> },
+      { href: "/dashboard/assets", label: "Brand Assets", icon: <ImageIcon /> },
+      { href: "/dashboard/setup", label: "Setup Wizard", icon: <SparklesIcon /> },
+      { href: "/dashboard/settings", label: "Settings", icon: <SettingsIcon /> },
     ],
   },
   {
     title: "Engine",
     roles: null as string[] | null,
     links: [
-      { href: "/dashboard/analysis", label: "Global Analysis", icon: "🧠" },
-      { href: "/dashboard/matching", label: "Global Matching", icon: "🧩" },
-      { href: "/dashboard/compliance", label: "Global Compliance", icon: "🛡️" },
-      { href: "/dashboard/documents", label: "Document Archive", icon: "📄" },
-      { href: "/dashboard/export", label: "Export Hub", icon: "📦" },
-      { href: "/dashboard/activity", label: "Activity Logs", icon: "📜" },
-      { href: "/dashboard/analytics", label: "System Analytics", icon: "📊" },
-      { href: "/dashboard/search", label: "Global Search", icon: "🔭" },
+      { href: "/dashboard/analysis", label: "Global Analysis", icon: <BrainIcon /> },
+      { href: "/dashboard/matching", label: "Global Matching", icon: <PuzzleIcon /> },
+      { href: "/dashboard/compliance", label: "Global Compliance", icon: <ShieldIcon /> },
+      { href: "/dashboard/documents", label: "Document Archive", icon: <DocumentIcon /> },
+      { href: "/dashboard/export", label: "Export Hub", icon: <PackageIcon /> },
+      { href: "/dashboard/activity", label: "Activity Logs", icon: <ListIcon /> },
+      { href: "/dashboard/analytics", label: "System Analytics", icon: <BarChartIcon /> },
+      { href: "/dashboard/search", label: "Global Search", icon: <SearchIcon /> },
     ],
   },
   {
     title: "Admin",
     roles: ["ADMIN"] as string[] | null,
     links: [
-      { href: "/dashboard/users", label: "User Management", icon: "👥" },
-      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: "🤖" },
-      { href: "/dashboard/system", label: "System Status", icon: "🌡️" },
+      { href: "/dashboard/users", label: "User Management", icon: <UsersIcon /> },
+      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: <SparklesIcon /> },
+      { href: "/dashboard/system", label: "System Status", icon: <GaugeIcon /> },
     ],
   },
 ];

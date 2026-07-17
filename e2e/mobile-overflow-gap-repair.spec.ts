@@ -71,6 +71,62 @@ test.describe("Mobile (390x844) overflow gap repair", () => {
   });
 });
 
+test.describe("Mobile (390x844) overflow — long unbreakable submission email in Tender Detail", () => {
+  // Found via a screenshot recheck: the Tender Detail fact grid's value
+  // column (tender-intake-detail-panel.tsx's Detail() helper) is a flex
+  // child with `flex-1` but no `min-w-0`, so a long unbreakable value
+  // (e.g. a submissionEmails address) refuses to shrink below its own
+  // content width and pushes the whole page 29px past the 390px viewport.
+  // `min-w-0` + `break-words` on that div fixes it without touching the
+  // scroll-clipped tables elsewhere on the same page (those already have
+  // their own overflow-x-auto wrapper and are unaffected by this bug).
+  let tenderId: string | null = null;
+
+  test.beforeAll(async ({ browser }) => {
+    const context = await browser.newContext();
+    await injectSavedSessionIntoContext(context, "primary-loopback.json");
+    const page = await context.newPage();
+    const form = new FormData();
+    form.append("title", "Overflow Regression — Long Submission Email");
+    form.append("reference", "RFP-OVERFLOW-EMAIL-REGRESSION-001");
+    form.append("file", new Blob(["Long unbreakable submission email overflow regression fixture."], { type: "text/plain" }), "fixture.txt");
+    const intake = await page.request.post("/api/tenders/upload-first", { multipart: form });
+    if (intake.status() !== 201 && intake.status() !== 200) {
+      throw new Error(`Overflow-email fixture creation failed: status=${intake.status()} body=${await intake.text()}`);
+    }
+    const json = (await intake.json()) as { tenderId: string };
+    tenderId = json.tenderId;
+
+    const override = await page.request.post(`/api/tenders/${tenderId}/metadata-override`, {
+      data: {
+        field: "submissionEmails",
+        fieldState: "USER_CONFIRMED",
+        overrideValue: "submissions-department-procurement-office@ministryofpublicworksandinfrastructure.example.test",
+        reason: "Manually confirmed from the tender ToR cover page for overflow regression testing.",
+        confirmationBasis: "SOURCE_DOCUMENT_CONFIRMED",
+      },
+    });
+    if (override.status() !== 200) {
+      throw new Error(`Overflow-email metadata-override failed: status=${override.status()} body=${await override.text()}`);
+    }
+    await context.close();
+  });
+
+  test.afterAll(async ({ browser }) => {
+    if (!tenderId) return;
+    const context = await browser.newContext();
+    await injectSavedSessionIntoContext(context, "primary-loopback.json");
+    const page = await context.newPage();
+    await page.request.delete(`/api/tenders/${tenderId}`);
+    await context.close();
+  });
+
+  test("tender detail page has no horizontal overflow with a long unbroken submission email", async ({ page }) => {
+    await visitAtMobileWidth(page, `/dashboard/tenders/${tenderId}`);
+    await expectNoHorizontalScroll(page, `/dashboard/tenders/${tenderId}`);
+  });
+});
+
 test.describe("Mobile (390x844) overflow — pathologically long, unbroken tender title", () => {
   // Found via automated PR review (codex) on a prior revision of this file:
   // a tender title with no whitespace (e.g. a long procurement identifier —

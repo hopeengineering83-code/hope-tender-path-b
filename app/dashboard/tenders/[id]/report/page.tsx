@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { ArrowRightIcon, WarningIcon } from "../../../../../components/icons";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -170,7 +171,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       {!isAuthoritative && (
         <div className="mb-6 rounded-lg border-2 border-dashed border-amber-500 bg-amber-50 px-4 py-3 print:border-amber-700 print:bg-amber-100">
           <p className="text-sm font-bold text-amber-900 print:text-amber-950">
-            ⚠ NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
+            <WarningIcon /> NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
           </p>
           <p className="mt-1 text-xs text-amber-800 print:text-amber-900">
             This report has NOT passed canonical final-submission readiness.
@@ -184,7 +185,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               {canonicalBlockers.slice(0, 5).map((b, i) => (
                 <li key={i}>
                   <span className="font-mono font-semibold">{b.category}:</span> {b.title}
-                  {b.recommendedAction ? <span className="block pl-4 italic">→ {b.recommendedAction}</span> : null}
+                  {b.recommendedAction ? <span className="block pl-4 italic"><ArrowRightIcon /> {b.recommendedAction}</span> : null}
                 </li>
               ))}
               {canonicalBlockers.length > 5 && (
@@ -265,6 +266,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
         <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
           Submission Details
         </h2>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <tbody>
             {[
@@ -286,6 +288,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             ))}
           </tbody>
         </table>
+        </div>
       </section>
 
       {/* ── AI Analysis summary ─────────────────────────────────────── */}
@@ -309,6 +312,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             Requirements (top {topRequirements.length} of {tender.requirements.length})
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -337,6 +341,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -346,6 +351,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             Generated Documents
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -372,6 +378,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -381,6 +388,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             Open Compliance Gaps ({tender.complianceGaps.length})
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -401,6 +409,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -410,6 +419,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             File Extraction Summary
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -440,6 +450,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               })}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 

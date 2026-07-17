@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { ArrowRightIcon, CheckIcon } from "../../../components/icons";
 
 type Gap = {
   id: string; title: string; description: string; severity: string;
@@ -199,7 +200,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                       <div className="px-5 pb-5 border-t border-slate-100 pt-4 space-y-3">
                         <p className="text-sm text-slate-700">{gap.description}</p>
                         {gap.mitigationPlan && <p className="text-xs text-slate-500 italic bg-slate-50 rounded-lg px-3 py-2">Mitigation: {gap.mitigationPlan}</p>}
-                        {gap.resolvedNote && <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2">✓ {gap.resolvedNote}</p>}
+                        {gap.resolvedNote && <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2"><CheckIcon /> {gap.resolvedNote}</p>}
 
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:flex-wrap">
                           {!gap.isResolved ? (
@@ -233,7 +234,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                               {resolvingId===gap.id?"…":"Reopen"}
                             </button>
                           )}
-                          <Link href={`/dashboard/tenders/${gap.tenderId}`} className="text-xs text-blue-600 hover:underline self-center ml-auto">View tender →</Link>
+                          <Link href={`/dashboard/tenders/${gap.tenderId}`} className="text-xs text-blue-600 hover:underline self-center ml-auto">View tender <ArrowRightIcon /></Link>
                         </div>
                       </div>
                     )}

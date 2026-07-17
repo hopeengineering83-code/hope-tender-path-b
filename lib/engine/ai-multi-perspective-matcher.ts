@@ -506,8 +506,11 @@ export function formatAssessmentRationale(assessment: CandidateAssessment): stri
   ].join(", ");
   const criticalFloor = Math.min(p.DISCIPLINE_FIT, p.SCOPE_COVERAGE, p.EVIDENCE_QUALITY, p.COMPLIANCE_CRITICALITY, p.MANDATORY_ELIGIBILITY);
   const parts = [`[AI Multi-Perspective v5 Universal] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
-  if (assessment.strength) parts.push(`✓ ${assessment.strength}`);
-  if (assessment.concern) parts.push(`⚠ ${assessment.concern}`);
+  // Plain text only — flows into the rationale string rendered as raw text
+  // in the UI (app/dashboard/matching/matching-dashboard.tsx), which cannot
+  // render an inline SVG icon.
+  if (assessment.strength) parts.push(`Strength: ${assessment.strength}`);
+  if (assessment.concern) parts.push(`Concern: ${assessment.concern}`);
   if (assessment.recommendSelection) parts.push("Selected by 20-iteration best-available portfolio pass with universal service-capability calibration and critical-floor risk control.");
   return parts.join(" ");
 }

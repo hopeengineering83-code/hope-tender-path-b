@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getAIEnvironmentReadiness } from "../../../../lib/ai-environment-readiness";
+import { ArrowRightIcon } from "../../../../components/icons";
 
 function Pill({ ok }: { ok: boolean }) {
   return ok
@@ -31,7 +32,17 @@ export default async function AIReadinessPage() {
 
       <div className={`rounded-2xl border p-5 ${report.ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
         <h2 className="font-semibold text-slate-900">Runtime status: {report.ready ? "ready" : "blocked"}</h2>
-        <p className="mt-1 text-sm text-slate-600">Provider chain: {report.providerChain.length > 0 ? report.providerChain.join(" → ") : "none"}</p>
+        <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-slate-600">
+          <span>Provider chain:</span>
+          {report.providerChain.length > 0
+            ? report.providerChain.map((provider, i) => (
+                <span key={provider} className="inline-flex items-center gap-1.5">
+                  {i > 0 && <ArrowRightIcon className="text-slate-400" />}
+                  {provider}
+                </span>
+              ))
+            : "none"}
+        </p>
       </div>
 
       {report.blockers.length > 0 && (

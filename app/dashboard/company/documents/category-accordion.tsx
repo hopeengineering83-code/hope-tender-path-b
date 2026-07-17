@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { CheckIcon } from "../../../../components/icons";
 
 type DocItem = {
   id: string;
@@ -97,7 +98,7 @@ export function CategoryAccordion({ categories }: { categories: CategoryData[] }
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                               <span>{formatBytes(doc.size)}</span>
                               {doc.aiExtractionStatus === "EXTRACTED" ? (
-                                <span className="text-green-600">✓ Text extracted</span>
+                                <span className="text-green-600"><CheckIcon /> Text extracted</span>
                               ) : (
                                 <span className="text-slate-400">{doc.aiExtractionStatus === "FAILED" ? "Extraction failed" : "Not extracted"}</span>
                               )}

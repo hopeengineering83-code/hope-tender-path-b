@@ -1,6 +1,8 @@
 import { unstable_noStore as noStore } from "next/cache";
+import type { ReactNode } from "react";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { isValidTenderShareToken } from "../../../lib/tender-share-security";
+import { LinkIcon, BanIcon, ClockIcon, WarningIcon } from "../../../components/icons";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -31,7 +33,7 @@ async function loadShare(id: string) {
   });
 }
 
-function MessagePage({ icon, title, message }: { icon: string; title: string; message: string }) {
+function MessagePage({ icon, title, message }: { icon: ReactNode; title: string; message: string }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -82,22 +84,22 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   noStore();
   const { token } = await params;
   if (!isValidTenderShareToken(token)) {
-    return <MessagePage icon="🔗" title="Link Not Found" message="This link is invalid or has expired." />;
+    return <MessagePage icon={<LinkIcon />} title="Link Not Found" message="This link is invalid or has expired." />;
   }
 
   await prismaReady;
   const result = await claimShareAccess(token);
   if (!result.ok) {
     if (result.reason === "revoked") {
-      return <MessagePage icon="🚫" title="Link Revoked" message="This link has been revoked." />;
+      return <MessagePage icon={<BanIcon />} title="Link Revoked" message="This link has been revoked." />;
     }
     if (result.reason === "expired") {
-      return <MessagePage icon="⏰" title="Link Expired" message="This link has expired." />;
+      return <MessagePage icon={<ClockIcon />} title="Link Expired" message="This link has expired." />;
     }
     if (result.reason === "limit") {
-      return <MessagePage icon="🛑" title="Access Limit Reached" message="This link has reached its maximum access limit." />;
+      return <MessagePage icon={<WarningIcon />} title="Access Limit Reached" message="This link has reached its maximum access limit." />;
     }
-    return <MessagePage icon="🔗" title="Link Not Found" message="This link is invalid or has expired." />;
+    return <MessagePage icon={<LinkIcon />} title="Link Not Found" message="This link is invalid or has expired." />;
   }
 
   const tender = result.share.tender;

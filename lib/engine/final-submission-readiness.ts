@@ -468,6 +468,17 @@ export async function getFinalSubmissionReadiness(
       preBidChannel: true,
       clientRepresentative: true,
       evaluationCriteriaSourceJson: true,
+      // Unresolved CRITICAL compliance gaps must hard-block final export —
+      // the actual ZIP download route (app/api/tenders/[id]/download/route.ts)
+      // already 409s on any unresolved CRITICAL gap regardless of category.
+      // Without this in the readiness computation, the "Ready for export"
+      // signal shown on Bid Control / Export Hub / Command Center could read
+      // Ready while the real download link still hard-blocks — surfacing the
+      // gap here keeps the badge and the gate in agreement.
+      complianceGaps: {
+        where: { isResolved: false, severity: "CRITICAL" },
+        select: { id: true, title: true },
+      },
       requirements: {
         select: {
           id: true,
@@ -735,6 +746,18 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: `Required Tender Details are incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
       recommendedAction: "Fill the missing critical Tender Details — client/procuring entity, deadline, submission method — before final proposal generation.",
+    });
+  }
+  // Unresolved CRITICAL compliance gaps hard-block final export at the
+  // actual download route regardless of category — mirror that here so
+  // this readiness signal cannot show Ready while the download link
+  // still 409s.
+  if (tender.complianceGaps.length > 0) {
+    tenderLevelBlockers.push({
+      category: "CRITICAL_COMPLIANCE_GAPS",
+      severity: "CRITICAL",
+      title: `${tender.complianceGaps.length} unresolved CRITICAL compliance gap(s): ${tender.complianceGaps.map((g) => g.title).join("; ")}`,
+      recommendedAction: "Resolve every CRITICAL compliance gap before final export.",
     });
   }
   // ── Canonical field-state gate (single source of truth) ───────────────────

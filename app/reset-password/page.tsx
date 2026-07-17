@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { ArrowRightIcon } from "../../components/icons";
 
 function ResetForm() {
   const params = useSearchParams();
@@ -47,7 +48,7 @@ function ResetForm() {
           Password updated successfully.
         </div>
         <Link href="/login" className="block text-sm font-medium text-slate-900 hover:underline">
-          Sign in with your new password →
+          Sign in with your new password <ArrowRightIcon />
         </Link>
       </div>
     );

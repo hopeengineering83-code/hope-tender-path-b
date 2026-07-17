@@ -2,7 +2,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { scoreToSeverity, severityBadgeClasses, severityBgClass, severityTextClass, severityBorderClass } from "../lib/ui-tokens";
-import { CheckIcon, WarningIcon } from "./icons";
+import { CheckIcon, WarningIcon, DocumentIcon } from "./icons";
 
 type FileStatus = "GOOD" | "ACCEPTABLE" | "POOR";
 
@@ -75,7 +75,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       return (
         <section id="extraction-quality" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2">
-            <span aria-hidden="true">📄</span>
+            <DocumentIcon aria-hidden="true" />
             <h2 className="text-base font-semibold text-slate-700">Extraction Quality</h2>
           </div>
           <p className="mt-2 text-sm text-slate-500">No files uploaded yet.</p>
@@ -215,7 +215,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       <section id="extraction-quality" className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-lg" aria-hidden="true">📄</span>
+            <DocumentIcon className="text-lg" aria-hidden="true" />
             <div>
               <h2 className="text-base font-bold text-slate-900">Extraction Quality</h2>
               <p className="text-xs text-slate-500">
