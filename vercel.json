@@ -5,8 +5,7 @@
   "git": {
     "deploymentEnabled": {
       "**": false,
-      "main": true,
-      "claude/screenshot-gap-repair-5msz9m": true
+      "main": true
     }
   },
   "crons": [
