@@ -177,11 +177,24 @@ describe("canonical-readiness-state.ts — status icons are SVG components", () 
 describe("matching presentation removes legacy raw Unicode prefixes", () => {
   const page = read("app/dashboard/matching/page.tsx");
   const dashboard = read("app/dashboard/matching/matching-dashboard.tsx");
+  // presentMatchRationale lives in its own module, not exported from page.tsx —
+  // Next.js App Router page.tsx files may only export `default` and a small
+  // reserved set (generateMetadata, dynamic, ...); an arbitrary named function
+  // export fails the build ("is not a valid Page export field").
+  const rationaleHelper = read("app/dashboard/matching/present-match-rationale.ts");
 
   it("sanitizes legacy stored rationales before rendering", () => {
-    assert.match(page, /export function presentMatchRationale/);
-    assert.match(page, /replace\(\/\[✓✔☑⚠⚠️▲▼←→\]\/gu, ""\)/);
+    assert.match(page, /import \{ presentMatchRationale \} from "\.\/present-match-rationale"/);
+    assert.match(rationaleHelper, /export function presentMatchRationale/);
+    assert.match(rationaleHelper, /replace\(\/\[✓✔☑⚠⚠️▲▼←→\]\/gu, ""\)/);
     assert.match(page, /rationale: presentMatchRationale\(match\.rationale\)/);
+  });
+
+  it("page.tsx does not export presentMatchRationale itself (Next.js Page contract)", () => {
+    assert.ok(
+      !/^export function presentMatchRationale/m.test(page),
+      "page.tsx must not export arbitrary named functions — Next.js App Router rejects the build otherwise",
+    );
   });
 
   it("renders trust and selection states with icon components", () => {
