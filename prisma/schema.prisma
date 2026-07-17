@@ -25,6 +25,9 @@ model User {
   tenderShares TenderShare[]
   metadataOverrides    TenderMetadataOverride[]
   passwordResetTokens  PasswordResetToken[]
+  submissionPlansCreated    SubmissionPlanRevision[]      @relation("SubmissionPlanCreatedBy")
+  submissionPlansConfirmed  SubmissionPlanRevision[]      @relation("SubmissionPlanConfirmedBy")
+  evidenceDecisionsReviewed RequirementEvidenceDecision[] @relation("RequirementEvidenceReviewer")
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -446,9 +449,10 @@ model Tender {
   shares                TenderShare[]
   copilotMessages       TenderCopilotMessage[]
   metadataOverrides     TenderMetadataOverride[]
-  submissionPlanState   SubmissionPlanState?
-  aiUsageRecords        AiUsageRecord[]
-  buildPlan             BuildPlan?
+  submissionPlanState     SubmissionPlanState?
+  submissionPlanRevisions SubmissionPlanRevision[]
+  aiUsageRecords          AiUsageRecord[]
+  buildPlan               BuildPlan?
   // Universal tender facts ledger (additive — new in feat/universal-tender-facts-ledger)
   factsLedger           TenderFactsLedger[]
   submissionEmailRecords TenderSubmissionEmail[]
@@ -519,10 +523,12 @@ model TenderFile {
   integrityFailureCode String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  requirementEvidenceDecisions RequirementEvidenceDecision[]
 
   @@index([tenderId])
   @@index([tenderId, deletionStatus]) // Compound — 20+ queries filter by both
-  @@unique([tenderId, contentHash]) // Prevents duplicate uploads of same content
+  // Partial unique index on (tenderId, contentHash) is migration-managed so
+  // empty/NULL legacy hashes remain compatible; Prisma cannot express its WHERE clause.
   @@index([integrityStatus])
 }
 
@@ -555,6 +561,7 @@ model TenderRequirement {
   sourceExtractionMethod String?  // "text" | "ocr" | "manual"
   sourceConfidence       Float              @default(0)
   complianceMatrixRows ComplianceMatrix[]
+  evidenceDecisions    RequirementEvidenceDecision[]
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -674,19 +681,17 @@ model GeneratedDocument {
   // and threaded comments. The aggregate reviewStatus / reviewedBy /
   // reviewedAt fields above are kept for backwards compat (set to the
   // most-recent action), but the full history is in DocumentReview.
-  reviews          DocumentReview[]
-  comments         DocumentComment[]
-  createdAt        DateTime  @default(now())
+  reviews             DocumentReview[]
+  comments            DocumentComment[]
+  submissionPlanItems SubmissionPlanItem[]
+  createdAt           DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   // Audit DB-002 (2026-06-20): every tender-detail panel loads docs by tenderId.
   // Was a sequential scan before this index.
   @@index([tenderId])
-  // Partial unique index — only enforces uniqueness among non-SUPERSEDED rows.
-  // The full @@unique was replaced because the engine supersedes documents while
-  // preserving exactFileName, then inserts new rows with the same name.
-  // See migration 20260705000000_generated_document_partial_unique_index.
-  @@index([tenderId, exactFileName])
+  // Partial unique index on (tenderId, exactFileName) for non-SUPERSEDED rows
+  // is migration-managed because Prisma cannot express the WHERE clause.
   @@index([integrityStatus])
 }
 
@@ -765,6 +770,7 @@ model ExportPackage {
 
   // Audit DB-002 (2026-06-20): export-package list loads by tenderId.
   @@index([tenderId])
+  @@index([integrityStatus])
 }
 
 model AuditLog {
@@ -1235,23 +1241,100 @@ model RateLimitBucket {
   @@index([resetAt])
 }
 
+// Persisted, revisioned submission-plan authority created by migration
+// 20260630000000_persisted_submission_plan_evidence. Unlike the BuildPlan
+// compatibility projection, this model records immutable reviewed revisions.
+model SubmissionPlanRevision {
+  id                 String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenderId           String
+  tender             Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  revision           Int
+  status             String    @default("DRAFT")
+  sourceContentHash  String
+  requirementsHash   String
+  createdById        String
+  createdBy          User      @relation("SubmissionPlanCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  confirmedById      String?
+  confirmedBy        User?     @relation("SubmissionPlanConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  confirmedAt        DateTime? @db.Timestamptz(6)
+  supersededAt       DateTime? @db.Timestamptz(6)
+  invalidatedAt      DateTime? @db.Timestamptz(6)
+  invalidationReason String?
+  confirmationHash   String?
+  items              SubmissionPlanItem[]
+
+  @@unique([tenderId, revision])
+  @@index([tenderId])
+  @@index([status])
+}
+
+model SubmissionPlanItem {
+  id                     String                 @id @default(dbgenerated("(gen_random_uuid())::text"))
+  submissionPlanId       String
+  submissionPlan         SubmissionPlanRevision @relation(fields: [submissionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  exactFileName          String
+  exactOrder             Int
+  documentType           String                 @default("TENDER_REQUIRED_FILE")
+  format                 String                 @default("DOCX")
+  envelope               String                 @default("TECHNICAL")
+  status                 String                 @default("PLANNED")
+  sourceRequirementIds   String                 @default("[]")
+  sourceFileCitations    String                 @default("[]")
+  requiresOriginalUpload Boolean                @default(false)
+  generatedDocumentId    String?
+  generatedDocument      GeneratedDocument?     @relation(fields: [generatedDocumentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdAt              DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([submissionPlanId])
+  @@index([generatedDocumentId])
+}
+
+model RequirementEvidenceDecision {
+  id                   String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenderRequirementId  String
+  tenderRequirement    TenderRequirement @relation(fields: [tenderRequirementId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  tenderFileId         String
+  tenderFile           TenderFile        @relation(fields: [tenderFileId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  pageNumber           Int
+  exactQuote           String
+  evidenceType         String
+  companyAssetType     String
+  companyAssetId       String
+  relevanceExplanation String
+  reviewerId           String
+  reviewer             User              @relation("RequirementEvidenceReviewer", fields: [reviewerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  decisionStatus       String             @default("DRAFT")
+  sourceContentHash    String
+  companyEvidenceHash  String?
+  createdAt            DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime           @default(now()) @updatedAt @db.Timestamptz(6)
+  invalidatedAt        DateTime?          @db.Timestamptz(6)
+  invalidationReason   String?
+
+  @@index([tenderRequirementId])
+  @@index([decisionStatus])
+  @@index([companyAssetId])
+}
+
 // DB-005 FIX: This table was created by migration 20260613190000 but had no
 // Prisma model, meaning prisma db push would drop it.
 model SubmissionPlanState {
-  tenderId            String    @id
-  tender              Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
-  provenance          String    @default("NONE")
-  confirmationStatus  String    @default("NOT_REQUIRED")
-  derivedDocumentCount Int      @default(0)
-  activeDocumentCount Int       @default(0)
-  confirmedAt         DateTime?
-  updatedAt           DateTime  @default(now()) @updatedAt
+  tenderId             String    @id
+  tender               Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  provenance           String    @default("NONE")
+  confirmationStatus   String    @default("NOT_REQUIRED")
+  derivedDocumentCount Int       @default(0)
+  activeDocumentCount  Int       @default(0)
+  confirmedAt          DateTime? @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 }
 
 // Per-provider AI usage tracking for cost monitoring (OBS-004).
 // Never stores API keys, prompts, or raw responses — only safe metadata.
 model AiUsageRecord {
-  id              String   @id @default(uuid())
+  id              String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId          String
   tenderId        String?
   tender          Tender?  @relation(fields: [tenderId], references: [id], onDelete: SetNull)
@@ -1281,7 +1364,7 @@ model AiUsageRecord {
 // Scalar-only (no Prisma relation fields) to mirror AiUsageRecord and avoid
 // back-relation churn on Tender/AiJob/User.
 model FallbackApprovalRecord {
-  id            String   @id @default(uuid())
+  id            String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   tenderId      String
   jobId         String
   contentHash   String
@@ -1302,7 +1385,7 @@ model FallbackApprovalRecord {
 // extraction can never be overridden — only weak extraction. Scalar-only to
 // mirror AiUsageRecord.
 model ExtractionQualityOverride {
-  id             String   @id @default(uuid())
+  id             String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   tenderId       String
   tenderFileId   String
   qualityScore   Float
@@ -1494,9 +1577,9 @@ model TenderWorkflowRun {
   startedAt      DateTime?
   finishedAt     DateTime?
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime @default(now()) @updatedAt
 
-  @@unique([companyId, tenderId, operation, idempotencyKey])
+  @@unique([companyId, tenderId, operation, idempotencyKey], map: "TenderWorkflowRun_companyId_tenderId_operation_idempotencyKey_k")
   @@index([companyId, tenderId, operation, status])
   @@index([tenderId, createdAt])
 }
