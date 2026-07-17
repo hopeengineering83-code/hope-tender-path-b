@@ -1,10 +1,9 @@
-// Regression guard (FM-008 class): the Tender model has NO `analysisSource`
-// column — the analysis source is recorded in `tender.notes`. Consumers that
-// read a non-existent `tender.analysisSource` field always saw `undefined`,
-// silently degrading their behaviour. #814 fixed workflow-state.ts and
-// tender-readiness-state.ts; this guard locks the two remaining consumers:
-//   - app/dashboard/.../executive-snapshot.tsx (GO/REVIEW/NO_GO decision)
-//   - lib/engine/generate-elite.ts (bid-strategy win-probability penalty)
+// Regression guard (FM-008 class): the Tender model has no `analysisSource`
+// column. Analysis source lives in `tender.notes` and must be resolved through
+// the shared analysis-source authority. The executive snapshot no longer owns
+// an independent analysis-source gate: it renders the canonical readiness
+// result produced server-side. Generate-elite still consumes the pure resolver
+// directly for its bid-strategy input.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -20,24 +19,27 @@ describe("detectAnalysisSource reads the notes marker (the real source of truth)
   });
 });
 
-describe("executive-snapshot derives analysis trust from notes, not the missing field", () => {
-  const src = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
+describe("executive snapshot delegates analysis trust to canonical readiness", () => {
+  const source = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
 
-  it("imports and uses detectAnalysisSource(tender)", () => {
-    assert.match(src, /import \{ detectAnalysisSource \} from "@\/lib\/engine\/analysis-source"/);
-    assert.match(src, /detectAnalysisSource\(tender\)/);
+  it("uses canonical final-package readiness for GO/REVIEW/NO_GO", () => {
+    assert.match(source, /canonicalReadiness\?\.readyForFinalExport/);
+    assert.match(source, /canonicalReadiness\?\.modules\.export\.state/);
+    assert.match(source, /Final package status/);
   });
 
-  it("does not gate GO on a raw (tender.analysisSource ?? \"\") read", () => {
-    assert.doesNotMatch(src, /\(tender\.analysisSource \?\? ""\)\.toUpperCase\(\)/);
+  it("does not recreate an analysis-source resolver or read a missing model field", () => {
+    assert.doesNotMatch(source, /tender\.analysisSource/);
+    assert.doesNotMatch(source, /detectAnalysisSource\(tender\)/);
+    assert.doesNotMatch(source, /Analysis source:\s*regex fallback/i);
   });
 });
 
 describe("generate-elite passes a derived analysisSource into computeBidStrategy", () => {
-  const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+  const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
 
   it("imports detectAnalysisSource and sets analysisSource in the bid-strategy input", () => {
-    assert.match(src, /import \{ detectAnalysisSource \} from "\.\/analysis-source"/);
-    assert.match(src, /analysisSource: detectAnalysisSource\(tender\)/);
+    assert.match(source, /import \{ detectAnalysisSource \} from "\.\/analysis-source"/);
+    assert.match(source, /analysisSource: detectAnalysisSource\(tender\)/);
   });
 });
