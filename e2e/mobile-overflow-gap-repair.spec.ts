@@ -101,10 +101,14 @@ test.describe("Mobile (390x844) overflow — pathologically long, unbroken tende
     form.append("reference", "RFP-LONGTITLE-REGRESSION-001");
     form.append("file", new Blob(["Long unbroken title overflow regression fixture."], { type: "text/plain" }), "fixture.txt");
     const intake = await page.request.post("/api/tenders/upload-first", { multipart: form });
-    if (intake.status() === 201) {
-      const json = (await intake.json()) as { tenderId: string };
-      tenderId = json.tenderId;
+    // Fail hard (not test.skip) on a non-201 response — a silent skip here
+    // would let CI go green while exercising none of this file's long-title
+    // regression coverage, masking a real upload-first/auth/DB regression.
+    if (intake.status() !== 201) {
+      throw new Error(`Long-title fixture creation failed: status=${intake.status()} body=${await intake.text()}`);
     }
+    const json = (await intake.json()) as { tenderId: string };
+    tenderId = json.tenderId;
     await context.close();
   });
 
@@ -127,20 +131,24 @@ test.describe("Mobile (390x844) overflow — pathologically long, unbroken tende
 
   for (const [label, route] of routes) {
     test(`${label} has no horizontal overflow with a long unbroken title`, async ({ page }) => {
-      test.skip(!tenderId, "Fixture tender could not be created");
       await visitAtMobileWidth(page, route);
+      if (route === "/dashboard/documents") {
+        // DocumentsPage fetches its tender/document list client-side and
+        // renders a SkeletonTable + "Loading documents…" subtitle until it
+        // resolves — wait for the real subtitle so a slow response can't
+        // leave this measuring the skeleton instead of the repaired card.
+        await expect(page.getByText("Review planned submission outputs, validation status, review decisions, and download documents.")).toBeVisible({ timeout: 15_000 });
+      }
       await expectNoHorizontalScroll(page, route);
     });
   }
 
   test("tender detail command-center has no horizontal overflow with a long unbroken title", async ({ page }) => {
-    test.skip(!tenderId, "Fixture tender could not be created");
     await visitAtMobileWidth(page, `/dashboard/tenders/${tenderId}/command-center`);
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${tenderId}/command-center`);
   });
 
   test("tender report page has no horizontal overflow with a long unbroken title", async ({ page }) => {
-    test.skip(!tenderId, "Fixture tender could not be created");
     await visitAtMobileWidth(page, `/dashboard/tenders/${tenderId}/report`);
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${tenderId}/report`);
   });
