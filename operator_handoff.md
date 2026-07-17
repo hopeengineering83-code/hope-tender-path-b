@@ -74,6 +74,13 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 15:12 UTC — Codex (GPT-5.6 Sol), canonical-state follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** removed purpose-copy parsing from AI readiness truth. `lib/ai-environment-readiness.ts` now emits explicit `configurationState` and `requirementLabel` fields, including explicit default metadata; `components/ai-environment-variable-status.tsx` only renders those canonical fields. Added resolver-to-renderer regression coverage.
+- **Tests:** post-1162, AI-provider fallback, and screenshot-state truth suites passed (145 tests total); `npx tsc --noEmit` passed; lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Merge status:** **unsafe / not integration-ready** — remote exact-head and `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` blockers remain.
+
 ### 2026-07-17 15:02 UTC — Codex (GPT-5.6 Sol), density/truth follow-up
 
 - **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.

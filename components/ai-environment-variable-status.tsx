@@ -20,22 +20,19 @@ const GROUPS = [
 ];
 
 export function getConfigurationState(variable: AIEnvironmentVariableStatus) {
-  if (variable.present) return { label: "SET", className: "bg-green-100 text-green-700" };
-  if (variable.scope === "ai" && variable.name.endsWith("_API_KEY")) {
-    return { label: "NOT CONFIGURED", className: "bg-slate-100 text-slate-600" };
-  }
-  if (/\bdefault(?::|s?\b)/i.test(variable.note)) {
-    return { label: "DEFAULTED", className: "bg-blue-100 text-blue-700" };
-  }
-  if (variable.severity === "critical") return { label: "MISSING", className: "bg-red-100 text-red-700" };
-  if (variable.severity === "recommended") return { label: "RECOMMENDED", className: "bg-amber-100 text-amber-700" };
-  return { label: "OPTIONAL", className: "bg-slate-100 text-slate-600" };
+  const className = {
+    SET: "bg-green-100 text-green-700",
+    NOT_CONFIGURED: "bg-slate-100 text-slate-600",
+    DEFAULTED: "bg-blue-100 text-blue-700",
+    RECOMMENDED: "bg-amber-100 text-amber-700",
+    OPTIONAL: "bg-slate-100 text-slate-600",
+    MISSING: "bg-red-100 text-red-700",
+  }[variable.configurationState];
+  return { label: variable.configurationState.replaceAll("_", " "), className };
 }
 
 export function getSeverityLabel(variable: AIEnvironmentVariableStatus) {
-  if (variable.scope === "ai" && variable.name.endsWith("_API_KEY")) return "alternative provider";
-  if (variable.severity === "critical") return "required";
-  return variable.severity;
+  return variable.requirementLabel;
 }
 
 function StatusPill({ variable }: { variable: AIEnvironmentVariableStatus }) {

@@ -24,6 +24,8 @@ export type AIEnvironmentVariableStatus = {
   present: boolean;
   scope: "ai" | "database" | "auth" | "ocr" | "runtime";
   severity: "critical" | "recommended" | "optional";
+  configurationState: "SET" | "NOT_CONFIGURED" | "DEFAULTED" | "RECOMMENDED" | "OPTIONAL" | "MISSING";
+  requirementLabel: "required" | "alternative provider" | "recommended" | "optional";
   note: string;
 };
 
@@ -44,28 +46,52 @@ function present(name: string): boolean {
   return Boolean((process.env[name] ?? "").trim());
 }
 
-function status(name: string, scope: AIEnvironmentVariableStatus["scope"], severity: AIEnvironmentVariableStatus["severity"], note: string): AIEnvironmentVariableStatus {
-  return { name, present: present(name), scope, severity, note };
+function status(
+  name: string,
+  scope: AIEnvironmentVariableStatus["scope"],
+  severity: AIEnvironmentVariableStatus["severity"],
+  note: string,
+  options: { defaultWhenUnset?: boolean } = {},
+): AIEnvironmentVariableStatus {
+  const isPresent = present(name);
+  const alternativeProvider = scope === "ai" && name.endsWith("_API_KEY");
+  const configurationState: AIEnvironmentVariableStatus["configurationState"] = isPresent
+    ? "SET"
+    : options.defaultWhenUnset
+      ? "DEFAULTED"
+      : alternativeProvider
+        ? "NOT_CONFIGURED"
+        : severity === "critical"
+          ? "MISSING"
+          : severity === "recommended"
+            ? "RECOMMENDED"
+            : "OPTIONAL";
+  const requirementLabel: AIEnvironmentVariableStatus["requirementLabel"] = alternativeProvider
+    ? "alternative provider"
+    : severity === "critical"
+      ? "required"
+      : severity;
+  return { name, present: isPresent, scope, severity, configurationState, requirementLabel, note };
 }
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
     status("ZAI_API_KEY", "ai", "critical", "Rank 1 automatic AI provider in the canonical chain (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic)."),
-    status("ZAI_BASE_URL", "ai", "optional", "Z.ai general API base URL (default: https://api.z.ai/api/paas/v4)."),
-    status("ZAI_PROPOSAL_MODEL", "ai", "optional", "Z.ai proposal model (default: glm-4-flash)."),
-    status("ZAI_ANALYSIS_MODEL", "ai", "optional", "Z.ai analysis model (default: glm-4-flash)."),
-    status("ZAI_FAST_MODEL", "ai", "optional", "Z.ai fast model (default: glm-4-flash)."),
+    status("ZAI_BASE_URL", "ai", "optional", "Z.ai general API base URL (default: https://api.z.ai/api/paas/v4).", { defaultWhenUnset: true }),
+    status("ZAI_PROPOSAL_MODEL", "ai", "optional", "Z.ai proposal model (default: glm-4-flash).", { defaultWhenUnset: true }),
+    status("ZAI_ANALYSIS_MODEL", "ai", "optional", "Z.ai analysis model (default: glm-4-flash).", { defaultWhenUnset: true }),
+    status("ZAI_FAST_MODEL", "ai", "optional", "Z.ai fast model (default: glm-4-flash).", { defaultWhenUnset: true }),
     status("CEREBRAS_API_KEY", "ai", "critical", "Rank 2 automatic AI provider in the canonical chain."),
-    status("CEREBRAS_BASE_URL", "ai", "optional", "Cerebras API base URL (default: https://api.cerebras.ai/v1)."),
-    status("CEREBRAS_PROPOSAL_MODEL", "ai", "optional", "Cerebras proposal model (default: gpt-oss-120b)."),
-    status("CEREBRAS_ANALYSIS_MODEL", "ai", "optional", "Cerebras analysis model (default: gpt-oss-120b)."),
-    status("CEREBRAS_FAST_MODEL", "ai", "optional", "Cerebras fast model (default: gpt-oss-120b)."),
+    status("CEREBRAS_BASE_URL", "ai", "optional", "Cerebras API base URL (default: https://api.cerebras.ai/v1).", { defaultWhenUnset: true }),
+    status("CEREBRAS_PROPOSAL_MODEL", "ai", "optional", "Cerebras proposal model (default: gpt-oss-120b).", { defaultWhenUnset: true }),
+    status("CEREBRAS_ANALYSIS_MODEL", "ai", "optional", "Cerebras analysis model (default: gpt-oss-120b).", { defaultWhenUnset: true }),
+    status("CEREBRAS_FAST_MODEL", "ai", "optional", "Cerebras fast model (default: gpt-oss-120b).", { defaultWhenUnset: true }),
     status("MISTRAL_API_KEY", "ai", "critical", "Rank 3 automatic AI provider in the canonical chain."),
     status("MISTRAL_PROPOSAL_MODEL", "ai", "optional", "Mistral proposal model (default: mistral-large-latest)."),
     status("MISTRAL_ANALYSIS_MODEL", "ai", "optional", "Mistral analysis model override."),
     status("MISTRAL_FAST_MODEL", "ai", "optional", "Mistral fast/cheap model override."),
     status("GROQ_API_KEY", "ai", "critical", `Rank 4 automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
-    status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile)."),
+    status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile).", { defaultWhenUnset: true }),
     status("OPENROUTER_API_KEY", "ai", "critical", `Rank 5 automatic aggregator in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("OPENROUTER_PROPOSAL_MODEL", "ai", "recommended", "OpenRouter model — MUST be an explicit ':free' model. 'openrouter/auto' and non-':free' models are rejected to prevent paid usage."),
     status("GEMINI_API_KEY", "ai", "critical", `Rank 6 automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
@@ -74,13 +100,13 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),
     status("GEMINI_FALLBACK_MODELS", "ai", "recommended", "Fallback Gemini model chain."),
     status("OPENAI_API_KEY", "ai", "critical", `Rank 7 automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
-    status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
+    status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o).", { defaultWhenUnset: true }),
     status("TOGETHER_API_KEY", "ai", "critical", "Rank 8 automatic AI provider in the canonical chain."),
     status("TOGETHER_PROPOSAL_MODEL", "ai", "optional", "Together proposal model override."),
     status("TOGETHER_ANALYSIS_MODEL", "ai", "optional", "Together analysis model override."),
     status("TOGETHER_FAST_MODEL", "ai", "optional", "Together fast/cheap model override."),
     status("DEEPSEEK_API_KEY", "ai", "critical", `Rank 9 automatic provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
-    status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
+    status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning).", { defaultWhenUnset: true }),
     status("ANTHROPIC_API_KEY", "ai", "critical", `Rank 10 emergency-only (last resort) provider in the canonical chain (${CANONICAL_AI_PROVIDER_CHAIN_DISPLAY}).`),
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
@@ -88,12 +114,12 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
     status("PDF_OCR_MAX_PAGES", "ocr", "recommended", "Caps OCR pages to avoid serverless timeout/cost overrun."),
-    status("PDF_OCR_TIMEOUT_MS", "ocr", "optional", "OCR call timeout in milliseconds (default 40000). Prevents Vercel FUNCTION_RUNTIME_LIMIT."),
+    status("PDF_OCR_TIMEOUT_MS", "ocr", "optional", "OCR call timeout in milliseconds (default 40000). Prevents Vercel FUNCTION_RUNTIME_LIMIT.", { defaultWhenUnset: true }),
     status("DATABASE_URL", "database", "critical", "Persistent database connection."),
     status("SESSION_SECRET", "auth", "critical", "Required for secure login/session cookies."),
-    status("AI_ANALYSIS_TIMEOUT_MS", "runtime", "recommended", "Tender-analysis timeout guard."),
-    status("AI_PROPOSAL_TIMEOUT_MS", "runtime", "recommended", "Proposal-generation timeout guard."),
-    status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
+    status("AI_ANALYSIS_TIMEOUT_MS", "runtime", "recommended", "Tender-analysis timeout guard.", { defaultWhenUnset: true }),
+    status("AI_PROPOSAL_TIMEOUT_MS", "runtime", "recommended", "Proposal-generation timeout guard.", { defaultWhenUnset: true }),
+    status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard.", { defaultWhenUnset: true }),
   ];
 
   // Provider chain — ALL 10 automatic providers in canonical order:
