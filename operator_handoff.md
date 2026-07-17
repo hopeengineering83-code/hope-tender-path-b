@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 14:36 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; new draft PR required after commit (PR #1162 was not touched).
+- **Scope / files:** bounded post-merge source audit at `808ed4b8992647a3dec7bbd2a2a6a8aca149d800`; repaired the mobile AI-readiness presentation (`app/dashboard/admin/ai-readiness/page.tsx`), truthful proposal-document heading/empty state (`app/dashboard/documents/page.tsx`), and root-link labels (`app/not-found.tsx`, `app/error.tsx`); added `tests/post-1162-ui-truth.test.ts` and the explicit evidence/blocker record under `evidence/post-1162/808ed4b8992647a3dec7bbd2a2a6a8aca149d800/`.
+- **Tests:** Prisma generation passed; targeted post-1162 tests passed (3/3); `npx tsc --noEmit` passed; lint passed; production build passed with build-only placeholder environment values and expected missing optional-provider/Sentry warnings. The first two build attempts correctly failed closed for missing required configuration. Playwright screenshot capture was attempted but blocked because no Chromium executable is installed.
+- **CI / deployment:** operator-supplied production deployment `dpl_25rmPtkMEQ7D8R6SgncotgyL5ALc` is recorded but could not be independently queried. Exact-main Actions dispatch/inspection, private open-PR enumeration, artifact download, push, preview deployment, disposable-PostgreSQL validation, and authenticated screenshots are blocked: `gh` is absent, no session PAT/Vercel/test-user credentials are present, private API access returns 401, and shell GitHub access returns CONNECT 403.
+- **Risks / assumptions:** this is not full post-merge completion. F-02/#1146, F-03/#1139, F-07/#1157, and F-13/#1163 remain delegated; F-14 remains a product decision; F-01 exact-main CI and F-15 integration routing remain blockers. No export/readiness/security gate was changed.
+- **Next action:** provide a non-persisted fine-grained PAT plus reachable GitHub/Actions tooling and an isolated preview database/test users, then enumerate/diff all open PRs, dispatch exact-main CI, run full PostgreSQL/E2E evidence capture, reconcile routing, and attach exact-head preview proof.
+- **Merge status:** **unsafe / not integration-ready** — `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` and validation evidence is incomplete.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.

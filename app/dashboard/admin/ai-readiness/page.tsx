@@ -19,6 +19,7 @@ export default async function AIReadinessPage() {
   if (!user || user.role !== "ADMIN") redirect("/dashboard");
 
   const report = getAIEnvironmentReadiness();
+  const variableGroups = Object.entries(Object.groupBy(report.variables, (variable) => variable.scope));
 
   return (
     <div className="space-y-6">
@@ -63,7 +64,7 @@ export default async function AIReadinessPage() {
         </section>
       )}
 
-      <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+      <section className="hidden overflow-x-auto rounded-2xl border bg-white shadow-sm md:block">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
             <tr>
@@ -86,6 +87,34 @@ export default async function AIReadinessPage() {
             ))}
           </tbody>
         </table>
+      </section>
+
+      <section className="space-y-3 md:hidden" aria-label="Environment variables by scope">
+        {variableGroups.map(([scope, variables]) => (
+          <details key={scope} className="rounded-2xl border bg-white shadow-sm" open={scope === "ai"}>
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold capitalize text-slate-900">
+              {scope} variables ({variables?.length ?? 0})
+            </summary>
+            <div className="divide-y divide-slate-100 border-t">
+              {variables?.map((variable) => (
+                <article key={variable.name} className="space-y-3 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <code className="min-w-0 break-all text-sm font-semibold text-slate-900">{variable.name}</code>
+                    <Pill ok={variable.present} />
+                  </div>
+                  <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
+                    <dt className="font-medium text-slate-500">Scope</dt>
+                    <dd className="capitalize text-slate-700">{variable.scope}</dd>
+                    <dt className="font-medium text-slate-500">Severity</dt>
+                    <dd className="capitalize text-slate-700">{variable.severity}</dd>
+                    <dt className="font-medium text-slate-500">Purpose</dt>
+                    <dd className="break-words text-slate-700">{variable.note}</dd>
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </details>
+        ))}
       </section>
     </div>
   );

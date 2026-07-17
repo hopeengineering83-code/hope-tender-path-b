@@ -137,7 +137,7 @@ export default function DocumentsPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Generated Documents</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Proposal Documents</h1>
           <p className="mt-1 text-sm text-slate-500">Loading documents…</p>
         </div>
         <SkeletonTable rows={5} columns={6} />
@@ -148,7 +148,7 @@ export default function DocumentsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Generated Documents</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Proposal Documents</h1>
         <p className="mt-1 text-sm text-slate-500">
           Review planned submission outputs, validation status, review decisions, and download documents.
         </p>
@@ -156,7 +156,7 @@ export default function DocumentsPage() {
 
       {tenders.length === 0 && (
         <div className="rounded-2xl border bg-white p-12 text-center shadow-sm">
-          <p className="text-slate-400">No generated documents yet. Run the tender engine on a tender to create outputs.</p>
+          <p className="text-slate-500">No proposal document workspaces are available yet. Create or open a tender to build its submission plan.</p>
         </div>
       )}
 

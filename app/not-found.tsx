@@ -13,7 +13,7 @@ export default function NotFound() {
           href="/"
           className="mt-8 inline-flex rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-700"
         >
-          Return to dashboard
+          Return home
         </Link>
       </div>
     </main>
