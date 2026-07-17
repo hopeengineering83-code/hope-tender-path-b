@@ -61,6 +61,29 @@ import { FinalSubmissionControlCenter } from "../../../../components/final-submi
 import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
 import { prisma as prismaClient } from "../../../../lib/prisma";
 
+function Disclosure({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-4 marker:content-none">
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-semibold text-slate-900">{title}</span>
+          <span className="mt-0.5 block text-sm text-slate-600">{description}</span>
+        </span>
+        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180"><ChevronDownIcon /></span>
+      </summary>
+      <div className="space-y-4 border-t border-slate-200 bg-white p-4 sm:p-5">{children}</div>
+    </details>
+  );
+}
+
 function WorkflowStage({
   number,
   title,
@@ -166,13 +189,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
-  // Canonical workflow decision provides staleAnalysis, mandatoryComplianceRowsCount,
-  // mandatoryRequirementCount — needed to wire TenderHealthScorePanel so the
-  // AI Analysis dimension fails when stale and Compliance dimension fails when
-  // compliance rows = 0.
   const workflowDecision = await getCanonicalTenderWorkflowDecision(prismaClient, userId, tender.id).catch(() => null);
-  // Confirmed BuildPlan items feed the executive snapshot's planned-doc counts
-  // so the dashboard can never show plan numbers the gates do not enforce.
   const confirmedPlanForSnapshot = await getCurrentConfirmedBuildPlan(prismaClient, tender.id, userId).catch(() => ({ ok: false as const, blocker: "unavailable" }));
   const confirmedPlanItems = confirmedPlanForSnapshot.ok ? confirmedPlanForSnapshot.items : null;
 
@@ -188,23 +205,35 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       }} canMutate={canMutate} />
 
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} confirmedPlanItems={confirmedPlanItems} />
-      <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
-      <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
-      <CanonicalReadinessScoreWidget tenderId={tender.id} />
-      <TenderHealthScorePanel
-        tenderId={tender.id}
-        canonicalReadiness={canonicalReadiness}
-        analysisStale={workflowDecision?.staleAnalysis ?? false}
-        mandatoryComplianceRowsCount={workflowDecision?.mandatoryComplianceRowsCount}
-        mandatoryRequirementCount={workflowDecision?.mandatoryRequirementCount}
-      />
-      <BidControlVerdictPanel tenderId={tender.id} />
-      <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
+
+      <Disclosure
+        title="Quick workflow control"
+        description="Optional compact overview of workflow steps and shortcuts. Use the Next Required Action above first."
+      >
+        <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
+      </Disclosure>
+
+      <Disclosure
+        title="Detailed readiness and submission controls"
+        description="Open canonical score, health, recovery, bid verdict, and final-submission diagnostics when deeper investigation is needed."
+      >
+        <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
+        <CanonicalReadinessScoreWidget tenderId={tender.id} />
+        <TenderHealthScorePanel
+          tenderId={tender.id}
+          canonicalReadiness={canonicalReadiness}
+          analysisStale={workflowDecision?.staleAnalysis ?? false}
+          mandatoryComplianceRowsCount={workflowDecision?.mandatoryComplianceRowsCount}
+          mandatoryRequirementCount={workflowDecision?.mandatoryRequirementCount}
+        />
+        <BidControlVerdictPanel tenderId={tender.id} />
+        <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
+      </Disclosure>
 
       <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        Work from Stage 1 through Stage 5. Each major action appears once and uses the canonical server-side readiness gates.
+        Start with Next Required Action, then work from Stage 1 through Stage 5. The optional overview and diagnostic sections remain collapsed until needed.
       </nav>
 
       <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
