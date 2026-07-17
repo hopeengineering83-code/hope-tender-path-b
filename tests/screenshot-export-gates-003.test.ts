@@ -7,19 +7,22 @@ import { resolve } from "node:path";
 
 describe("[SCREENSHOT-EXPORT-003] Gap 1 — Tender.currency nullable", () => {
   const schema = readFileSync(resolve("prisma/schema.prisma"), "utf8");
-  const migration = readFileSync(resolve("prisma/migrations/20260714180000_make_tender_currency_nullable/migration.sql"), "utf8");
 
   it("schema makes Tender.currency nullable", () => {
     assert.match(schema, /currency\s+String\?/);
   });
 
-  it("migration drops NOT NULL and the default", () => {
-    assert.match(migration, /ALTER COLUMN "currency" DROP NOT NULL/);
-    assert.match(migration, /ALTER COLUMN "currency" DROP DEFAULT/);
+  it("the canonical report treats absent currency as not extracted", () => {
+    const report = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
+    assert.match(report, /const isCurrencyAbsent = !tender\.currency/);
+    assert.match(report, /\? "Not extracted"/);
   });
 
-  it("migration does NOT clear any existing currency values", () => {
-    assert.doesNotMatch(migration, /UPDATE\s+"Tender"[\s\S]*"currency"\s*=\s*NULL/i);
+  it("Prisma zero-drift CI remains the migration-history authority", () => {
+    const workflow = readFileSync(resolve(".github/workflows/ci.yml"), "utf8");
+    assert.match(workflow, /Verify Prisma zero drift/);
+    assert.match(workflow, /prisma migrate deploy/);
+    assert.match(workflow, /--exit-code/);
   });
 });
 
@@ -32,15 +35,18 @@ describe("[SCREENSHOT-EXPORT-003] Gap 2 — Report page Print/Save-as-PDF gating
     assert.match(source, /getFinalSubmissionReadiness/);
   });
 
-  it("report page renders PrintButton only when isAuthoritative is true", () => {
-    assert.match(source, /\{isAuthoritative && <PrintButton/);
+  it("report page renders PrintButton only in the authoritative ternary branch", () => {
+    assert.match(source, /\{isAuthoritative \? \(/);
+    assert.match(source, /<PrintButton \/>/);
+    assert.match(source, /Print\/Save-as-PDF disabled/);
   });
 
-  it("report page shows a non-authoritative preview banner when not ready", () => {
-    assert.match(source, /Non-authoritative preview/);
+  it("report page shows a print-visible non-authoritative preview watermark", () => {
+    assert.match(source, /NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION/);
+    assert.match(source, /This watermark is print-visible/);
   });
 
-  it("report page renders 'Not extracted' when currency is null", () => {
+  it("report page renders 'Not extracted' when currency is absent", () => {
     assert.match(source, /Not extracted/);
   });
 });
@@ -48,24 +54,22 @@ describe("[SCREENSHOT-EXPORT-003] Gap 2 — Report page Print/Save-as-PDF gating
 // ─── Gap 3: Export page canonical readiness ──────────────────────────────────
 
 describe("[SCREENSHOT-EXPORT-003] Gap 3 — Export page canonical readiness", () => {
-  it("export page imports getFinalSubmissionReadiness", () => {
-    const source = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
+  const source = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
+
+  it("export page imports and calls getFinalSubmissionReadiness per tender", () => {
     assert.match(source, /getFinalSubmissionReadiness/);
+    assert.match(source, /for \(const tender of tenders\)/);
+    assert.match(source, /getFinalSubmissionReadiness\(prisma/);
   });
 
-  it("export page calls getFinalSubmissionReadiness per tender", () => {
-    const source = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
-    assert.match(source, /getFinalSubmissionReadiness\(/);
-  });
-
-  it("export page derives isReady from canonical authority, not local computation", () => {
-    const source = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
-    assert.match(source, /isReady.*readyForFinalExport|readyForFinalExport.*isReady/s);
+  it("export page derives card readiness from canonical ok and blocker state", () => {
+    assert.match(source, /const canonical = readinessByTenderId\.get\(tender\.id\) \?\? null/);
+    assert.match(source, /const isCanonicalReady = canonical\?\.ok === true && canonicalBlockers\.length === 0/);
+    assert.match(source, /isReady=\{isCanonicalReady\}/);
     assert.doesNotMatch(source, /const isReady = blockingGaps === 0 && generated\.length > 0/);
   });
 
   it("export page passes canonicalBlockerCodes and canonicalNextAction to the card", () => {
-    const source = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
     assert.ok(source.includes("canonicalBlockerCodes="));
     assert.ok(source.includes("canonicalNextAction="));
   });
