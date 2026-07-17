@@ -1,7 +1,12 @@
-# Triggered after the workflow existed on the consolidation branch.
+# Self-removing exact-head donor integration workflow for PR #1175.
 name: Incorporate open PR donors into consolidation
 
 on:
+  pull_request:
+    branches:
+      - integration/controlled-recovery
+    paths:
+      - .github/workflows/incorporate-open-pr-donors.yml
   push:
     branches:
       - release/consolidated-recovery-20260717
@@ -13,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: incorporate-open-pr-donors-${{ github.ref }}
+  group: incorporate-open-pr-donors-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
