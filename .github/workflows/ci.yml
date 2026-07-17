@@ -160,7 +160,7 @@ jobs:
         if: always()
         run: git diff --exit-code
 
-      - name: Upload diagnostics on failure
+      - name: Upload diagnostics and exact critical sources on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -170,5 +170,11 @@ jobs:
             build-results/
             playwright-report/
             test-results-e2e/
-          if-no-files-found: ignore
+            prisma/schema.prisma
+            prisma/migrations/
+            lib/ai-job-handlers.ts
+            lib/ai.ts
+            lib/engine/final-package-readiness-model.ts
+            lib/engine/public-readiness-envelope.ts
+          if-no-files-found: error
           retention-days: 7
