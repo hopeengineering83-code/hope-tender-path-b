@@ -188,8 +188,9 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
 
   // INVARIANT ASSERTION: validate the centralized effective values the runtime
-  // actually consumes. This is NOT a raw environment validation; supported
-  // defaults are authoritative when explicit timeout overrides are absent.
+  // actually consumes. This is NOT a raw environment validation; the
+  // centralized module already clamps/falls back to supported defaults when
+  // explicit timeout overrides are absent.
   const SUPPORTED_TIMEOUT_RANGES: Record<string, { min: number; max: number; label: string }> = {
     "AI_ANALYSIS_TIMEOUT_MS": { min: 5_000, max: 600_000, label: "analysis" },
     "AI_PROPOSAL_TIMEOUT_MS": { min: 10_000, max: 300_000, label: "proposal" },
