@@ -21,15 +21,20 @@ export async function GET(
 
   try {
     await prismaReady;
-    const [readiness, tender, finalPackage] = await Promise.all([
+    const [readiness, tender] = await Promise.all([
       getTenderGenerationReadinessStrict(prisma, userId, tenderId),
       prisma.tender.findFirst({
         where: { id: tenderId, userId },
         select: { notes: true },
       }),
-      getFinalPackageReadinessModel(prisma, tenderId, userId),
     ]);
     if (!readiness || !tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+    // Only called once the tender is confirmed to exist — this function
+    // throws for a nonexistent tender, which previously reached the
+    // Promise.all above and rejected the whole request into the generic
+    // 500 handler before the not-found check ever ran.
+    const finalPackage = await getFinalPackageReadinessModel(prisma, tenderId, userId);
 
     const submissionPlanBuilt = finalPackage.buildPlan.confirmed;
     const requiredDocumentsTotal = finalPackage.documents.required.length;
