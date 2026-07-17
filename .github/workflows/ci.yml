@@ -181,3 +181,67 @@ jobs:
             lib/engine/public-readiness-envelope.ts
           if-no-files-found: error
           retention-days: 7
+
+  validate-proposal-fallback-repair:
+    name: Validate mixed-fallback zero-write repair
+    if: >-
+      github.actor != 'github-actions[bot]' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 1175 &&
+      github.event.pull_request.head.ref == 'release/consolidated-recovery-20260717'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused?schema=public
+      SESSION_SECRET: validation-only-session-secret
+      GEMINI_API_KEY: validation-placeholder
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout exact consolidation branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/consolidated-recovery-20260717
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply exact mixed-fallback repair
+        run: python3 scripts/enforce-zero-write-proposal-fallback.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run focused zero-write regression
+        run: npx tsx --test tests/proposal-mixed-fallback-zero-write.test.ts
+
+      - name: Typecheck repaired tree
+        run: npm run typecheck
+
+      - name: Commit validated repair to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add lib/ai-job-handlers.ts tests/proposal-mixed-fallback-zero-write.test.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(ai): block mixed fallback before proposal persistence"
+          git push --force origin HEAD:refs/heads/automation/consolidation-proposal-fallback-validated
+
+      - name: Upload repair diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposal-fallback-repair-diagnostics
+          path: |
+            lib/ai-job-handlers.ts
+            tests/proposal-mixed-fallback-zero-write.test.ts
+          if-no-files-found: error
+          retention-days: 7
