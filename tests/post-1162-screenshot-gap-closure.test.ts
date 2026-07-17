@@ -1,16 +1,48 @@
 // Post-1162 screenshot gap closure tests
-// Tests for F-05, F-08, F-12 fixes
+// Tests for F-03, F-05, F-08, F-12 fixes
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+describe("F-03 — Matching page bounded take on match includes", () => {
+  it("page.tsx has a MATCH_TAKE constant for bounding match queries", () => {
+    const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
+    assert.match(
+      src,
+      /MATCH_TAKE/,
+      "Matching page must define a MATCH_TAKE constant to bound match queries",
+    );
+  });
+
+  it("expertMatches include has take: MATCH_TAKE", () => {
+    const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
+    assert.match(
+      src,
+      /expertMatches[\s\S]*?take:\s*MATCH_TAKE/,
+      "expertMatches include must have take: MATCH_TAKE to prevent unbounded loading",
+    );
+  });
+
+  it("projectMatches include has take: MATCH_TAKE", () => {
+    const src = readFileSync("app/dashboard/matching/page.tsx", "utf8");
+    assert.match(
+      src,
+      /projectMatches[\s\S]*?take:\s*MATCH_TAKE/,
+      "projectMatches include must have take: MATCH_TAKE to prevent unbounded loading",
+    );
+  });
+});
+
 describe("F-05 — AI readiness table mobile overflow fix", () => {
   it("does NOT use overflow-hidden on the section", () => {
     const src = readFileSync("app/dashboard/admin/ai-readiness/page.tsx", "utf8");
+    // Check that no actual className uses overflow-hidden (comments are OK)
+    const lines = src.split("\n").filter(l => !l.trim().startsWith("//") && !l.trim().startsWith("{/*"));
+    const codeWithoutComments = lines.join("\n");
     assert.ok(
-      !/section className="overflow-hidden/.test(src),
-      "AI readiness section must NOT use overflow-hidden — it clips table columns on mobile",
+      !/className="[^"]*overflow-hidden/.test(codeWithoutComments),
+      "AI readiness section must NOT use overflow-hidden in className — it clips table columns on mobile",
     );
   });
 
@@ -43,7 +75,6 @@ describe("F-05 — AI readiness table mobile overflow fix", () => {
 
   it("mobile cards show Scope, Severity, and Purpose", () => {
     const src = readFileSync("app/dashboard/admin/ai-readiness/page.tsx", "utf8");
-    // The mobile card section must reference variable.scope, variable.severity, variable.note
     const mobileSection = src.split("sm:hidden")[1] ?? "";
     assert.ok(mobileSection.includes("variable.scope"), "Mobile cards must show Scope");
     assert.ok(mobileSection.includes("variable.severity"), "Mobile cards must show Severity");
