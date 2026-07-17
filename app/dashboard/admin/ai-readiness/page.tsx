@@ -63,29 +63,47 @@ export default async function AIReadinessPage() {
         </section>
       )}
 
-      <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="px-4 py-3">Variable</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Scope</th>
-              <th className="px-4 py-3">Severity</th>
-              <th className="px-4 py-3">Purpose</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {report.variables.map((variable) => (
-              <tr key={variable.name}>
-                <td className="px-4 py-3 font-mono text-slate-900">{variable.name}</td>
-                <td className="px-4 py-3"><Pill ok={variable.present} /></td>
-                <td className="px-4 py-3 text-slate-600">{variable.scope}</td>
-                <td className="px-4 py-3 text-slate-600">{variable.severity}</td>
-                <td className="px-4 py-3 text-slate-600">{variable.note}</td>
+      {/* F-05: overflow-x-auto for desktop + mobile card layout */}
+      <section className="rounded-2xl border bg-white shadow-sm">
+        <div className="hidden sm:block overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Variable</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Scope</th>
+                <th className="px-4 py-3">Severity</th>
+                <th className="px-4 py-3">Purpose</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {report.variables.map((variable) => (
+                <tr key={variable.name}>
+                  <td className="px-4 py-3 font-mono text-slate-900">{variable.name}</td>
+                  <td className="px-4 py-3"><Pill ok={variable.present} /></td>
+                  <td className="px-4 py-3 text-slate-600">{variable.scope}</td>
+                  <td className="px-4 py-3 text-slate-600">{variable.severity}</td>
+                  <td className="px-4 py-3 text-slate-600">{variable.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="sm:hidden divide-y divide-slate-100">
+          {report.variables.map((variable) => (
+            <div key={variable.name} className="p-4 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-mono text-sm font-medium text-slate-900 break-all">{variable.name}</p>
+                <Pill ok={variable.present} />
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                <span><span className="font-medium text-slate-700">Scope:</span> {variable.scope}</span>
+                <span><span className="font-medium text-slate-700">Severity:</span> {variable.severity}</span>
+              </div>
+              <p className="text-xs text-slate-600">{variable.note}</p>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );

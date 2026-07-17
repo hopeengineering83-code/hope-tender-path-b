@@ -13,12 +13,14 @@ export default async function MatchingPage() {
     include: {
       expertMatches: {
         orderBy: { score: "desc" },
+        take: 20,
         include: {
           expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
         },
       },
       projectMatches: {
         orderBy: { score: "desc" },
+        take: 20,
         include: {
           project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
         },
