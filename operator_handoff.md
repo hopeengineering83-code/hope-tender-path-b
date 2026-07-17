@@ -74,6 +74,45 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-17 15:22 UTC — Codex (GPT-5.6 Sol), registry-completeness follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** replaced the incomplete manual provider-variable inventory in `lib/ai-environment-readiness.ts` with canonical-registry derivation. All supported key, base URL, proposal, analysis, and fast-model overrides are now reported in canonical order; registry defaults, Gemini fallbacks, and OCR defaults are explicit. Preserved OpenRouter free-model safety copy. Added uniqueness, full registry coverage, and default-parity tests.
+- **Tests:** provider/fallback, environment reconciliation, and post-1162 suites passed (62 tests); `npx tsc --noEmit` and lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Merge status:** **unsafe / not integration-ready** — remote exact-head and `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` blockers remain.
+
+### 2026-07-17 15:12 UTC — Codex (GPT-5.6 Sol), canonical-state follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** removed purpose-copy parsing from AI readiness truth. `lib/ai-environment-readiness.ts` now emits explicit `configurationState` and `requirementLabel` fields, including explicit default metadata; `components/ai-environment-variable-status.tsx` only renders those canonical fields. Added resolver-to-renderer regression coverage.
+- **Tests:** post-1162, AI-provider fallback, and screenshot-state truth suites passed (145 tests total); `npx tsc --noEmit` passed; lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Merge status:** **unsafe / not integration-ready** — remote exact-head and `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` blockers remain.
+
+### 2026-07-17 15:02 UTC — Codex (GPT-5.6 Sol), density/truth follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; PR #1162 untouched.
+- **Scope / files:** closed the remaining F-05/F-10 presentation truth gap in `components/ai-environment-variable-status.tsx`: mobile groups now follow canonical provider order before OCR/database/auth/runtime functions, and display states distinguish SET, NOT CONFIGURED alternative providers, DEFAULTED, RECOMMENDED, OPTIONAL, and genuinely MISSING required configuration. Critical database/auth rows display as required; individual provider keys display as alternatives because readiness requires at least one provider, not every provider. Added rendered and resolver behavior coverage in `tests/post-1162-ui-truth.test.ts` and updated the finding record.
+- **Tests / status:** targeted post-1162 tests 5/5 passed; `npx tsc --noEmit` passed; lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings. Remote, database, preview, CI, and screenshot blockers remain unchanged.
+- **Merge status:** **unsafe / not integration-ready** — `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE`.
+
+### 2026-07-17 14:48 UTC — Codex (GPT-5.6 Sol), review follow-up
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; follow-up to draft PR metadata, PR #1162 untouched.
+- **Scope / files:** hardened the AI-readiness repair by extracting `components/ai-environment-variable-status.tsx`, removing the `Object.groupBy` runtime dependency, enforcing deterministic scope order and a 44px disclosure touch target, and replacing brittle source-only readiness assertions with rendered-markup and grouping behavior tests in `tests/post-1162-ui-truth.test.ts`. Corrected F-13 from `SOLVED_BY_OPEN_PR` to `CLAIMED_BUT_NOT_PROVEN` because PR #1163's actual security boundary remains inaccessible.
+- **Tests:** targeted post-1162 tests 4/4 passed; `npx tsc --noEmit` passed; lint passed; production build passed with non-secret build-only placeholders and expected optional-provider/Sentry warnings.
+- **Risks / next action:** remote/CI/database/preview/screenshot blockers from the prior entry remain unchanged. Obtain authorized remote access and disposable test infrastructure, then complete exact-head evidence.
+- **Merge status:** **unsafe / not integration-ready** — `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE`.
+
+### 2026-07-17 14:36 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `fix/post-1162-screenshot-gap-closure`; new draft PR required after commit (PR #1162 was not touched).
+- **Scope / files:** bounded post-merge source audit at `808ed4b8992647a3dec7bbd2a2a6a8aca149d800`; repaired the mobile AI-readiness presentation (`app/dashboard/admin/ai-readiness/page.tsx`), truthful proposal-document heading/empty state (`app/dashboard/documents/page.tsx`), and root-link labels (`app/not-found.tsx`, `app/error.tsx`); added `tests/post-1162-ui-truth.test.ts` and the explicit evidence/blocker record under `evidence/post-1162/808ed4b8992647a3dec7bbd2a2a6a8aca149d800/`.
+- **Tests:** Prisma generation passed; targeted post-1162 tests passed (3/3); `npx tsc --noEmit` passed; lint passed; production build passed with build-only placeholder environment values and expected missing optional-provider/Sentry warnings. The first two build attempts correctly failed closed for missing required configuration. Playwright screenshot capture was attempted but blocked because no Chromium executable is installed.
+- **CI / deployment:** operator-supplied production deployment `dpl_25rmPtkMEQ7D8R6SgncotgyL5ALc` is recorded but could not be independently queried. Exact-main Actions dispatch/inspection, private open-PR enumeration, artifact download, push, preview deployment, disposable-PostgreSQL validation, and authenticated screenshots are blocked: `gh` is absent, no session PAT/Vercel/test-user credentials are present, private API access returns 401, and shell GitHub access returns CONNECT 403.
+- **Risks / assumptions:** this is not full post-merge completion. F-02/#1146, F-03/#1139, F-07/#1157, and F-13/#1163 remain delegated; F-14 remains a product decision; F-01 exact-main CI and F-15 integration routing remain blockers. No export/readiness/security gate was changed.
+- **Next action:** provide a non-persisted fine-grained PAT plus reachable GitHub/Actions tooling and an isolated preview database/test users, then enumerate/diff all open PRs, dispatch exact-main CI, run full PostgreSQL/E2E evidence capture, reconcile routing, and attach exact-head preview proof.
+- **Merge status:** **unsafe / not integration-ready** — `ROUTING_BLOCKED_BY_DIVERGED_INTEGRATION_BASE` and validation evidence is incomplete.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.
