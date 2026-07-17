@@ -182,3 +182,34 @@ describe("link-vault-evidence-auto — company-not-found is 422 not 404", () => 
     );
   });
 });
+
+describe("link-vault-evidence-auto — empty-vault response gives an actionable next step", () => {
+  // Previously, when the Knowledge Vault had zero documents matching any
+  // required category, the route returned a dead-end message with no
+  // nextAction — the Recovery Command Center's "Link Vault Evidence → Execute"
+  // button would report failure with no guidance on what to actually do.
+  // This mirrors the company-not-found (422) response, which already carried
+  // nextAction: OPEN_COMPANY_READINESS.
+  it("candidates.length === 0 branch includes nextAction: OPEN_COMPANY_READINESS", () => {
+    const emptyBranch = routeSource.slice(
+      routeSource.indexOf("if (candidates.length === 0)"),
+      routeSource.indexOf("if (candidates.length === 0)") + 400,
+    );
+    assert.ok(
+      emptyBranch.includes("OPEN_COMPANY_READINESS"),
+      "the zero-candidates response must include nextAction: OPEN_COMPANY_READINESS so the caller can guide the user to populate the vault",
+    );
+  });
+
+  it("candidates.length === 0 branch tells the user what to add, not just that it failed", () => {
+    const emptyBranch = routeSource.slice(
+      routeSource.indexOf("if (candidates.length === 0)"),
+      routeSource.indexOf("if (candidates.length === 0)") + 400,
+    );
+    assert.match(
+      emptyBranch,
+      /expert CVs|project references|financial statements|compliance records/i,
+      "the message should name concrete document categories to add, not just report failure",
+    );
+  });
+});
