@@ -65,7 +65,8 @@ describe("[SCREENSHOT-EXPORT-003] Gap 3 — Export page canonical readiness", ()
   it("export page derives card readiness from canonical ok and blocker state", () => {
     assert.match(source, /const canonical = readinessByTenderId\.get\(tender\.id\) \?\? null/);
     assert.match(source, /const isCanonicalReady = canonical\?\.ok === true && canonicalBlockers\.length === 0/);
-    assert.match(source, /isReady=\{isCanonicalReady\}/);
+    assert.match(source, /const isReady = isCanonicalReady/);
+    assert.match(source, /isReady=\{isReady\}/);
     assert.doesNotMatch(source, /const isReady = blockingGaps === 0 && generated\.length > 0/);
   });
 
