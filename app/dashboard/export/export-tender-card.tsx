@@ -42,9 +42,9 @@ export function ExportTenderCard({
   return (
     <div className="rounded-2xl border bg-white shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4 p-6">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">{tenderTitle}</h2>
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <h2 className="min-w-0 break-words text-lg font-semibold text-slate-900">{tenderTitle}</h2>
             {isExported && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs text-green-700">Exported</span>}
             {isReady && !isExported && <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs text-emerald-700">Ready</span>}
             {!isReady && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs text-amber-700">Not ready</span>}

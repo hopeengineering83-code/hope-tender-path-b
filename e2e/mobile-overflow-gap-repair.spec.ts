@@ -14,7 +14,7 @@
 // Fixture" tender (id 11111111-1111-4111-8111-111111111111, created by
 // scripts/seed-e2e-user.mjs and already relied on by
 // e2e/cross-user-isolation.spec.ts) rather than creating a new one.
-import { primaryTest as test, expect } from "./auth-helper";
+import { primaryTest as test, expect, injectSavedSessionIntoContext } from "./auth-helper";
 import type { Page } from "@playwright/test";
 
 const SEEDED_PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
@@ -50,11 +50,13 @@ test.describe("Mobile (390x844) overflow gap repair", () => {
 
   test("Knowledge Vault (company) page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, "/dashboard/company");
-    // The page renders "Loading Company Vault…" (role="status") until its
-    // client-side fetch resolves, then swaps in the repaired tab bar — wait
-    // for the loading status to clear so a slow DB response can't leave
-    // this measuring the loading placeholder instead of the real tabs.
-    await expect(page.getByRole("status", { name: /Loading Company Vault/ })).toBeHidden({ timeout: 15_000 });
+    // The page renders "Loading Company Vault…" (role="status", but with no
+    // aria-label/aria-labelledby — a name-filtered getByRole("status", {name})
+    // matches nothing even while it's genuinely showing, making toBeHidden()
+    // pass vacuously) until its client-side fetch resolves, then swaps in the
+    // repaired tab bar. Filter the unnamed status role by its text instead so
+    // this actually waits for the real loader to disappear.
+    await expect(page.getByRole("status").filter({ hasText: "Loading Company Vault" })).toBeHidden({ timeout: 15_000 });
     await expectNoHorizontalScroll(page, "/dashboard/company");
   });
 
@@ -66,5 +68,80 @@ test.describe("Mobile (390x844) overflow gap repair", () => {
   test("Export Hub page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, "/dashboard/export");
     await expectNoHorizontalScroll(page, "/dashboard/export");
+  });
+});
+
+test.describe("Mobile (390x844) overflow — pathologically long, unbroken tender title", () => {
+  // Found via automated PR review (codex) on a prior revision of this file:
+  // a tender title with no whitespace (e.g. a long procurement identifier —
+  // titles up to 120 chars are permitted at creation) is not wrapped by
+  // `break-words` alone in most of these contexts. Two distinct root causes
+  // were found and fixed:
+  //   1. Several card/table title elements had no `break-words`/`min-w-0` at
+  //      all (export card, matching/documents cards, command-center and
+  //      report headings, analysis/list tables).
+  //   2. The dashboard overview's "Live Pipeline" table sits inside a CSS
+  //      Grid (`grid ... xl:grid-cols-[...]`) with no `grid-template-columns`
+  //      override below the `xl` breakpoint — the browser's default `auto`
+  //      grid track sizes to content, so the long word's min-content width
+  //      propagated all the way up through the grid track itself. No amount
+  //      of fixing the table (table-fixed, overflow-x-auto, break-words) had
+  //      any effect until the grid got an explicit `grid-cols-1` (=
+  //      `minmax(0, 1fr)`) base class. This is the more instructive bug of
+  //      the two — a descendant's `overflow`/`break-words` cannot compensate
+  //      for an ancestor flex/grid item's default `min-width: auto`.
+  let tenderId: string | null = null;
+
+  test.beforeAll(async ({ browser }) => {
+    const context = await browser.newContext();
+    await injectSavedSessionIntoContext(context, "primary-loopback.json");
+    const page = await context.newPage();
+    const form = new FormData();
+    form.append("title", "A".repeat(120));
+    form.append("reference", "RFP-LONGTITLE-REGRESSION-001");
+    form.append("file", new Blob(["Long unbroken title overflow regression fixture."], { type: "text/plain" }), "fixture.txt");
+    const intake = await page.request.post("/api/tenders/upload-first", { multipart: form });
+    if (intake.status() === 201) {
+      const json = (await intake.json()) as { tenderId: string };
+      tenderId = json.tenderId;
+    }
+    await context.close();
+  });
+
+  test.afterAll(async ({ browser }) => {
+    if (!tenderId) return;
+    const context = await browser.newContext();
+    await injectSavedSessionIntoContext(context, "primary-loopback.json");
+    const page = await context.newPage();
+    await page.request.delete(`/api/tenders/${tenderId}`);
+    await context.close();
+  });
+
+  const routes = [
+    ["dashboard overview (Live Pipeline table)", "/dashboard"],
+    ["export card", "/dashboard/export"],
+    ["matching dashboard", "/dashboard/matching"],
+    ["documents page", "/dashboard/documents"],
+    ["analysis table", "/dashboard/analysis"],
+  ] as const;
+
+  for (const [label, route] of routes) {
+    test(`${label} has no horizontal overflow with a long unbroken title`, async ({ page }) => {
+      test.skip(!tenderId, "Fixture tender could not be created");
+      await visitAtMobileWidth(page, route);
+      await expectNoHorizontalScroll(page, route);
+    });
+  }
+
+  test("tender detail command-center has no horizontal overflow with a long unbroken title", async ({ page }) => {
+    test.skip(!tenderId, "Fixture tender could not be created");
+    await visitAtMobileWidth(page, `/dashboard/tenders/${tenderId}/command-center`);
+    await expectNoHorizontalScroll(page, `/dashboard/tenders/${tenderId}/command-center`);
+  });
+
+  test("tender report page has no horizontal overflow with a long unbroken title", async ({ page }) => {
+    test.skip(!tenderId, "Fixture tender could not be created");
+    await visitAtMobileWidth(page, `/dashboard/tenders/${tenderId}/report`);
+    await expectNoHorizontalScroll(page, `/dashboard/tenders/${tenderId}/report`);
   });
 });

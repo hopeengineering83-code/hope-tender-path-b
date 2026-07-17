@@ -166,11 +166,11 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
     <div className="mx-auto max-w-screen-xl px-4 py-6 sm:px-6 lg:px-8">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
-        <div>
+        <div className="min-w-0">
           <Link href={`/dashboard/tenders/${id}`} className="text-sm text-slate-500 hover:text-slate-800 no-underline">
             ← Tender detail
           </Link>
-          <h1 className="mt-2 text-2xl font-bold text-slate-900">{tender.title}</h1>
+          <h1 className="mt-2 break-words text-2xl font-bold text-slate-900">{tender.title}</h1>
           <p className="text-sm text-slate-500">Command Center — single view of readiness, blockers, and next best action.</p>
         </div>
         <div className="shrink-0 text-right text-sm">

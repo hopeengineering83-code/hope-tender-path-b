@@ -391,7 +391,7 @@ export default async function TendersPage({
                   <div key={tender.id} className={`p-4 flex flex-col gap-2 ${mobileUrgent ? "bg-amber-50/60" : "bg-white"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-slate-900 leading-snug">
+                        <p className="break-words font-semibold text-slate-900 leading-snug">
                           {cleanTenderTitle(tender.title, { clientName: tender.clientName || tender.procuringEntityName })}
                         </p>
                         {clientName && clientName !== "Client" && (

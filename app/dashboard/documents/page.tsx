@@ -176,9 +176,9 @@ export default function DocumentsPage() {
 
           return (
             <div key={tender.id} className="rounded-2xl border bg-white shadow-sm">
-              <div className="flex items-center justify-between gap-4 p-6">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">{tender.title}</h2>
+              <div className="flex flex-wrap items-center justify-between gap-4 p-6">
+                <div className="min-w-0">
+                  <h2 className="break-words text-lg font-semibold text-slate-900">{tender.title}</h2>
                   <p className="text-sm text-slate-500">
                     {generated.length} generated · {planned.length} planned
                     {approved > 0 && <span className="ml-2 text-green-600">{approved} approved</span>}
