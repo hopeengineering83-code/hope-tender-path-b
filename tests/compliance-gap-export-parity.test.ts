@@ -237,3 +237,21 @@ describe("tender-intake-detail-panel.tsx — Detail value column has min-w-0 (mo
     assert.match(src, /className=\{`min-w-0 flex-1 break-words text-sm/);
   });
 });
+
+describe("tender report page — every table has an overflow-x-auto wrapper (mobile overflow fix)", () => {
+  it("all 5 tables are wrapped so a wide table scrolls horizontally instead of pushing the whole page past the viewport", () => {
+    const src = read("app/dashboard/tenders/[id]/report/page.tsx");
+    const tableCount = (src.match(/<table className="w-full text-sm border-collapse">/g) ?? []).length;
+    const wrapperCount = (src.match(/<div className="overflow-x-auto">/g) ?? []).length;
+    assert.equal(tableCount, 5, "expected exactly 5 tables on the report page (regression guard if tables are added/removed)");
+    assert.equal(wrapperCount, tableCount, "every table must have a matching overflow-x-auto wrapper");
+  });
+});
+
+describe("empty-state.tsx — icon prop accepts a rendered element, not a raw emoji string", () => {
+  it("icon prop is typed ReactNode and the JSDoc example no longer uses a raw emoji", () => {
+    const src = read("components/empty-state.tsx");
+    assert.match(src, /icon\?:\s*ReactNode/);
+    assert.doesNotMatch(src, /icon="📋"/);
+  });
+});

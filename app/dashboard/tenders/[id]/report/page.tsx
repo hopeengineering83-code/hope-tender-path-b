@@ -266,6 +266,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
         <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
           Submission Details
         </h2>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <tbody>
             {[
@@ -287,6 +288,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             ))}
           </tbody>
         </table>
+        </div>
       </section>
 
       {/* ── AI Analysis summary ─────────────────────────────────────── */}
@@ -310,6 +312,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             Requirements (top {topRequirements.length} of {tender.requirements.length})
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -338,6 +341,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -347,6 +351,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             Generated Documents
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -373,6 +378,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -382,6 +388,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             Open Compliance Gaps ({tender.complianceGaps.length})
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -402,6 +409,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -411,6 +419,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <h2 className="mb-3 text-base font-bold uppercase tracking-wide text-slate-700 border-b border-slate-200 pb-1">
             File Extraction Summary
           </h2>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-slate-800 text-white text-left">
@@ -441,6 +450,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
               })}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
