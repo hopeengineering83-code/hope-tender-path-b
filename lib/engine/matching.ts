@@ -388,9 +388,14 @@ function trustLevelAdjustment(trustLevel: string | null | undefined): number {
 }
 
 function trustLevelLabel(trustLevel: string | null | undefined): string {
-  if (trustLevel === "REVIEWED") return "✓ Reviewed";
-  if (trustLevel === "AI_DRAFT") return "⚠ AI draft — review before final use";
-  return "⚠ Regex draft — review required";
+  // Plain text only — this flows into the rationale string rendered as raw
+  // text in the UI (app/dashboard/matching/matching-dashboard.tsx), which
+  // cannot render an inline SVG icon. A raw Unicode glyph prefix here
+  // depends on the viewer's font stack the same way the old icon buttons
+  // did (see components/icons.tsx).
+  if (trustLevel === "REVIEWED") return "Reviewed";
+  if (trustLevel === "AI_DRAFT") return "AI draft — review before final use";
+  return "Regex draft — review required";
 }
 
 function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
@@ -853,8 +858,8 @@ export function buildMatches(
       };
     })
     .sort((a, b) => {
-      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
-      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const aReviewed = a.rationale.includes("[Reviewed]") ? 1 : 0;
+      const bReviewed = b.rationale.includes("[Reviewed]") ? 1 : 0;
       if (aReviewed !== bReviewed) return bReviewed - aReviewed;
       return b.score - a.score;
     });
@@ -914,8 +919,8 @@ export function buildMatches(
       };
     })
     .sort((a, b) => {
-      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
-      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const aReviewed = a.rationale.includes("[Reviewed]") ? 1 : 0;
+      const bReviewed = b.rationale.includes("[Reviewed]") ? 1 : 0;
       if (aReviewed !== bReviewed) return bReviewed - aReviewed;
       return b.score - a.score;
     });

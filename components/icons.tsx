@@ -158,6 +158,16 @@ export function ChevronRightIcon(props: IconProps) {
   );
 }
 
+/** Hollow circle — not yet run / not started. Replaces ○ */
+export function CircleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="8" />
+    </svg>
+  );
+}
+
 /** Hourglass / clock — cooldown / waiting. Replaces ⏳ */
 export function ClockIcon(props: IconProps) {
   return (

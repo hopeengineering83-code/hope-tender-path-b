@@ -178,3 +178,62 @@ describe("NO_BID tender status — distinct label + color, not a silent DRAFT fa
     assert.ok(draftStyle && noBidStyle && draftStyle !== noBidStyle, "NO_BID must not share DRAFT's style string");
   });
 });
+
+// ─── Real Playwright screenshot recheck findings ───────────────────────────
+// Found by taking actual rendered screenshots against a real local
+// production build + Postgres (owner-requested visual recheck), not just
+// source inspection. Full behavioral coverage lives in the DB/E2E-gated
+// tests below; these are fast source-inspection guards against regression.
+
+describe("canonical-readiness-state.ts — CANONICAL_STATUS_CONFIG icons are rendered SVG, not raw Unicode", () => {
+  const src = read("lib/engine/canonical-readiness-state.ts");
+
+  it("no longer assigns raw Unicode glyphs to the icon field", () => {
+    for (const glyph of ["✓", "⚠", "✗", "↻", "◑", "○"]) {
+      assert.ok(!src.includes(`icon: "${glyph}"`), `icon field must not be the raw glyph ${glyph}`);
+    }
+  });
+
+  it("uses createElement with real icon components instead", () => {
+    assert.match(src, /icon: createElement\(CheckIcon\)/);
+    assert.match(src, /icon: createElement\(WarningIcon\)/);
+    assert.match(src, /icon: createElement\(CrossIcon\)/);
+    assert.match(src, /icon: createElement\(RefreshIcon\)/);
+    assert.match(src, /icon: createElement\(AlertCircleIcon\)/);
+    assert.match(src, /icon: createElement\(CircleIcon\)/);
+  });
+});
+
+describe("matching.ts — trust-level rationale text has no raw Unicode icon prefix", () => {
+  const src = read("lib/engine/matching.ts");
+
+  it("trustLevelLabel returns plain text, not a glyph-prefixed string", () => {
+    assert.doesNotMatch(src, /return "✓ Reviewed"/);
+    assert.doesNotMatch(src, /return "⚠ AI draft/);
+    assert.doesNotMatch(src, /return "⚠ Regex draft/);
+    assert.match(src, /return "Reviewed"/);
+  });
+
+  it("sort-priority detection matches the updated plain-text label", () => {
+    assert.doesNotMatch(src, /rationale\.includes\("✓ Reviewed"\)/);
+    assert.match(src, /rationale\.includes\("\[Reviewed\]"\)/);
+  });
+});
+
+describe("ai-multi-perspective-matcher.ts — assessment rationale has no raw Unicode icon prefix", () => {
+  const src = read("lib/engine/ai-multi-perspective-matcher.ts");
+
+  it("strength/concern parts use plain-text labels, not glyph prefixes", () => {
+    assert.doesNotMatch(src, /parts\.push\(`✓ /);
+    assert.doesNotMatch(src, /parts\.push\(`⚠ /);
+    assert.match(src, /parts\.push\(`Strength: /);
+    assert.match(src, /parts\.push\(`Concern: /);
+  });
+});
+
+describe("tender-intake-detail-panel.tsx — Detail value column has min-w-0 (mobile overflow fix)", () => {
+  it("flex-1 value div has min-w-0 and break-words so long unbreakable values (e.g. submission emails) cannot push the page past the viewport", () => {
+    const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
+    assert.match(src, /className=\{`min-w-0 flex-1 break-words text-sm/);
+  });
+});
