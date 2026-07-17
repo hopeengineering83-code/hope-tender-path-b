@@ -94,9 +94,12 @@ export function LoginForm() {
       )}
 
       <div>
-        <label className="mb-2 block text-sm font-medium">Email</label>
+        <label htmlFor="login-email" className="mb-2 block text-sm font-medium">Email</label>
         <input
+          id="login-email"
+          name="email"
           type="email"
+          required
           className="w-full rounded-xl border px-4 py-3 outline-none"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -105,9 +108,12 @@ export function LoginForm() {
       </div>
 
       <div>
-        <label className="mb-2 block text-sm font-medium">Password</label>
+        <label htmlFor="login-password" className="mb-2 block text-sm font-medium">Password</label>
         <input
+          id="login-password"
+          name="password"
           type="password"
+          required
           className="w-full rounded-xl border px-4 py-3 outline-none"
           value={password}
           onChange={(e) => setPassword(e.target.value)}

@@ -2,10 +2,15 @@
 import { useState } from "react";
 import Link from "next/link";
 
+// P1 fix: The page previously had misleading wording and unreachable reset-link display code.
+// display/copy a returned reset URL. The actual API never returns a reset link —
+// it sends instructions by email and returns only a generic message.
+// Fix: Changed wording to "Send reset instructions", removed resetLink display/copy logic.
+
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ note: string; resetLink?: string; expiresInMinutes?: number } | null>(null);
+  const [result, setResult] = useState<{ note: string } | null>(null);
   const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
@@ -21,7 +26,9 @@ export default function ForgotPasswordPage() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Request failed"); return; }
-      setResult(data);
+      // API returns { note: "If an account exists, reset instructions have been sent." }
+      // It does NOT return a resetLink. Do not display or copy any link.
+      setResult({ note: data.note ?? "If an account exists, reset instructions have been sent." });
     } catch {
       setError("Request failed. Check your connection.");
     } finally {
@@ -34,7 +41,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reset password</h1>
-          <p className="mt-1 text-sm text-slate-500">Enter your account email to generate a reset link.</p>
+          <p className="mt-1 text-sm text-slate-500">Enter your account email to send reset instructions.</p>
         </div>
 
         {!result ? (
@@ -43,14 +50,17 @@ export default function ForgotPasswordPage() {
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
             )}
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Email address</label>
+              <label htmlFor="forgot-email" className="mb-2 block text-sm font-medium text-slate-700">Email address</label>
               <input
+                id="forgot-email"
+                name="email"
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                 placeholder="you@example.com"
+                autoComplete="email"
               />
             </div>
             <button
@@ -58,7 +68,7 @@ export default function ForgotPasswordPage() {
               disabled={loading}
               className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
             >
-              {loading ? "Generating…" : "Generate Reset Link"}
+              {loading ? "Sending…" : "Send Reset Instructions"}
             </button>
           </form>
         ) : (
@@ -66,20 +76,6 @@ export default function ForgotPasswordPage() {
             <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
               {result.note}
             </div>
-            {result.resetLink && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">Reset Link (expires in {result.expiresInMinutes} min)</p>
-                <div className="break-all rounded-xl border bg-slate-50 px-3 py-3 font-mono text-xs text-slate-700 select-all">
-                  {result.resetLink}
-                </div>
-                <button
-                  onClick={() => navigator.clipboard.writeText(result.resetLink!)}
-                  className="text-xs text-slate-500 underline hover:text-slate-900"
-                >
-                  Copy to clipboard
-                </button>
-              </div>
-            )}
           </div>
         )}
 

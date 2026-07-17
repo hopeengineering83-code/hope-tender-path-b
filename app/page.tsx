@@ -1,5 +1,9 @@
 import Link from "next/link";
 
+// P2 fix: Public landing page previously showed competing actions to unauthenticated users.
+// to unauthenticated users. The latter two redirect to login anyway.
+// Fix: Single primary "Sign in" CTA. Dashboard/tender creation shown only after auth.
+
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -15,14 +19,8 @@ export default function HomePage() {
           </div>
 
           <div className="flex gap-3 flex-wrap">
-            <Link className="rounded-xl bg-black px-4 py-2 text-white" href="/login">
-              Login
-            </Link>
-            <Link className="rounded-xl border border-slate-200 px-4 py-2 text-slate-800" href="/dashboard">
-              Open Dashboard
-            </Link>
-            <Link className="rounded-xl border border-slate-200 px-4 py-2 text-slate-800" href="/dashboard/tenders/new">
-              Create Tender
+            <Link className="rounded-xl bg-black px-5 py-2.5 text-white font-medium" href="/login">
+              Sign in
             </Link>
           </div>
 
