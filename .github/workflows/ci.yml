@@ -5,12 +5,14 @@ on:
     branches:
       - main
       - integration/controlled-recovery
+      - release/consolidated-recovery-20260717
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   push:
     branches:
       - main
       - integration/controlled-recovery
+      - release/consolidated-recovery-20260717
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   workflow_dispatch:
@@ -149,11 +151,6 @@ jobs:
           TOGETHER_API_KEY: ""
           DEEPSEEK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
-          # Map the CI-seeded credentials to the env vars the Playwright tests check.
-          # E2E_FULL_AUTH is already set in the job-level env; E2E_GOLDEN_AUTH enables
-          # the golden tender workflow. SMOKE_TEST_EMAIL/PASSWORD enable the production
-          # smoke and tablet tests. The credentials are generated per-run and seeded
-          # by scripts/seed-e2e-user.mjs — they are not real production accounts.
           E2E_GOLDEN_AUTH: "true"
           SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
