@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 7) — Codex
+
+- **Mode:** continued SG-030 by strengthening reset-token expiry/one-time/revocation behavior rather than moving to a different gap. Runtime already had row locking and one-time consumption; this follow-up centralized token validity classification and added explicit expired-token revocation.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `lib/secure-password-reset.ts` now exports `classifyPasswordResetToken()` / `ResetTokenState`, uses that policy inside the transactional reset flow, and marks expired unconsumed rows consumed before returning the sanitized invalid-reset response; `tests/password-reset-token-policy.test.ts` adds behavior coverage for active/missing/consumed/expired classification plus expired-token revocation and same-transaction one-time semantics; `tests/password-reset-safe-sql-current.test.ts` now locks the centralized classifier contract; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/activity-safe-presentation.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (32/32); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** reset-token expiry/one-time/revocation semantics are now implemented and locally tested, but SG-030 still needs stock PostgreSQL execution, durable private storage/recovery implementation proof, and screenshots before full closure.
+- **Next action:** run repository checks for this follow-up, then continue the remaining SG-030 storage/recovery subgap or another non-overlapping matrix row only with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 6) — Codex
 
 - **Mode:** continued SG-030 by fixing the client flow after inspecting `/forgot-password` and `/reset-password`. Found two real contradictions: forgot-password still claimed it would generate a reset link and had code to render/copy raw `resetLink` fields if present; reset-password required a `uid` query param even though the server-generated reset URL only contains `token`.
