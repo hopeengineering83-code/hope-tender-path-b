@@ -44,11 +44,20 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
           await fetch(s.actionUrl, { method: s.actionMethod || "POST" });
           fetchStages();
       } else {
+          // Every stage without a server-provided actionUrl scrolls to its
+          // real section instead — stages 2, 4, 6, 7, and 9 were missing
+          // from this map entirely, so their "action" buttons rendered but
+          // silently did nothing when clicked (no scroll, no request).
           const targets: Record<number, string> = {
               1: "#tender-files",
+              2: "#extraction-quality",
               3: "#ai-analyze-section",
+              4: "#requirement-coverage",
               5: "#tender-edit-form",
+              6: "#submission-plan-reconciliation",
+              7: "#match-evidence",
               8: "#generated-documents",
+              9: "#authority-review",
               10: "#export-readiness"
           };
           const target = targets[s.stage];
@@ -70,10 +79,19 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
           panels compare against (both are returned by this same route but
           are independently derived) — this additive badge makes any
           disagreement between the Export ZIP stage and the authoritative
-          snapshot visible instead of leaving it silent. */}
+          snapshot visible instead of leaving it silent.
+          verdict="export" (not "finalZip") deliberately matches what stage
+          10 is actually computed from server-side
+          (app/api/tenders/[id]/workflow-center/route.ts uses
+          snapshot.exportEligible, not snapshot.finalZipEligible) —
+          finalZipBlockers is a strict superset of exportBlockers
+          (release-snapshot-eligibility.ts), so a tender can be
+          exportEligible=true while finalZipEligible=false. Comparing
+          against finalZip here would produce false-positive disagreement
+          warnings whenever that gap between the two tiers is live. */}
       <SnapshotConsistencyBadge
         tenderId={tenderId}
-        verdict="finalZip"
+        verdict="export"
         localEligible={stages.find((s) => s.stage === 10)?.status === "READY"}
         localLabel="Workflow Control Center"
       />

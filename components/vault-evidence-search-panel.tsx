@@ -156,7 +156,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
     const hasVaultContent = allExperts.length > 0 || allProjects.length > 0;
     if (!hasVaultContent) {
       return (
-        <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <section id="match-evidence" className="rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="mb-1 text-base font-semibold text-slate-900">Vault Evidence — coverage for this tender</h2>
           <p className="mb-4 text-sm text-slate-500">No vault records found. Import CV documents and project references to build your evidence vault.</p>
           <Link href="/dashboard/company/review" className="inline-block rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Set up Vault</Link>
@@ -165,7 +165,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
     }
 
     return (
-      <section className="rounded-2xl border bg-white shadow-sm">
+      <section id="match-evidence" className="rounded-2xl border bg-white shadow-sm">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Vault Evidence — coverage for this tender</h2>
