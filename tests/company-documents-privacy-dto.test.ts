@@ -8,6 +8,7 @@ const assetsRoute = readFileSync("app/api/company/assets/route.ts", "utf8");
 const expertsRoute = readFileSync("app/api/company/experts/route.ts", "utf8");
 const projectsRoute = readFileSync("app/api/company/projects/route.ts", "utf8");
 const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
+const reviewBoardPage = readFileSync("app/dashboard/company/review-board/page.tsx", "utf8");
 
 describe("company documents public DTO privacy", () => {
 
@@ -35,6 +36,19 @@ describe("company documents public DTO privacy", () => {
     assert.doesNotMatch(projectsRoute, /select: \{[^}]*contractValue: true/);
     assert.doesNotMatch(projectsRoute, /select: \{[^}]*currency: true/);
     assert.doesNotMatch(projectsRoute, /select: \{[^}]*summary: true/);
+  });
+
+
+  it("Knowledge Review Board uses bounded list DTOs and avoids raw source text", () => {
+    assert.doesNotMatch(reviewBoardPage, /fetch\("\/api\/company"/);
+    assert.match(reviewBoardPage, /fetch\("\/api\/company\/review-summary"/);
+    assert.match(reviewBoardPage, /fetch\("\/api\/company\/experts\?limit=50"/);
+    assert.match(reviewBoardPage, /fetch\("\/api\/company\/projects\?limit=50"/);
+    assert.match(reviewBoardPage, /type Paginated<T> = \{ items\?: T\[\] \} \| T\[\]/);
+    assert.match(reviewBoardPage, /function reviewEvidenceHint\(kind: "expert" \| "project"\)/);
+    assert.doesNotMatch(reviewBoardPage, /profile\?: string \| null/);
+    assert.doesNotMatch(reviewBoardPage, /summary\?: string \| null/);
+    assert.doesNotMatch(reviewBoardPage, /snippet\(/);
   });
 
   it("Company Review uses bounded list DTOs instead of the full company graph", () => {

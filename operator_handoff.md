@@ -74,6 +74,28 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 14) — Codex
+
+- **Mode:** continued SG-023 Vault privacy/progressive disclosure after batch mutation hardening. Found Knowledge Review Board still fetched `/api/company`, pulling the full embedded expert/project graph and rendering raw expert profile/project summary snippets despite the safer bounded list DTO endpoints existing.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata to be refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/dashboard/company/review-board/page.tsx` now loads `/api/company/review-summary`, `/api/company/experts?limit=50`, and `/api/company/projects?limit=50`, normalizes paginated payloads, uses summary counts for totals, and replaces raw profile/summary snippets with review-evidence hints; `tests/company-documents-privacy-dto.test.ts` locks the bounded/no-raw-source-text contract; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/company-batch-review-rbac-current.test.ts tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (45/45); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; no merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** SG-023 is safer for Company Review and Knowledge Review Board, but PostgreSQL proof, real browser screenshot proof, and 210-route artifact replacement remain required before full closure.
+- **Next action:** run focused and repository checks, then continue another non-overlapping matrix row with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
+### 2026-07-18 UTC (follow-up 13) — Codex
+
+- **Mode:** started SG-021 company tenancy with a concrete Company Review mutation path. Found expert/project batch-review routes scoped `updateMany` by company but could partially mutate owned ids while silently ignoring a mixed/cross-company id in the same request.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/api/company/experts/batch/route.ts` and `app/api/company/projects/batch/route.ts` now count actor-company-owned requested ids before mutation and return a safe 404 `RECORD_NOT_FOUND` response if any id is absent/cross-company/deleted; `tests/company-batch-review-rbac-current.test.ts` locks preflight-before-update behavior; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/company-batch-review-rbac-current.test.ts tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (44/44); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** SG-021 has a stronger direct mutation denial for Company Review batch approval, but full two-company PostgreSQL read/mutation/export/source/evidence proof remains required before full closure.
+- **Next action:** run repository checks for this follow-up, then continue SG-021 direct API paths or another non-overlapping matrix row with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 12) — Codex
 
 - **Mode:** continued SG-023 backend pagination after minimizing the Company Review DTOs. Found the Company Vault document/expert/project list endpoints bounded `limit` in intent but accepted invalid/negative/zero values through `Number(...)`, and their ordering lacked an id tie-breaker for deterministic pagination.
