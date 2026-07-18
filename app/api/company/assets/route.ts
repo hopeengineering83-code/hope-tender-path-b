@@ -74,10 +74,14 @@ export async function GET(_req: Request) {
     : [];
   const inlineLengthById = Object.fromEntries(inlineLengths.map((asset) => [asset.id, asset.fileContentLength]));
 
-  return privateJson({ assets: assets.map((asset) => ({
-    ...asset,
-    hasInlineFileContent: (inlineLengthById[asset.id] ?? 0) > 0,
-  })) });
+  return privateJson({ assets: assets.map((asset) => {
+    const { storagePath: privateStoragePath, ...publicAsset } = asset;
+    return {
+      ...publicAsset,
+      hasInlineFileContent: (inlineLengthById[asset.id] ?? 0) > 0,
+      hasPrivateStorage: Boolean(privateStoragePath?.trim()),
+    };
+  }) });
 }
 
 export async function POST(req: Request) {

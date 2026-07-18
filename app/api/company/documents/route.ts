@@ -65,11 +65,15 @@ export async function GET(req: Request) {
       : [];
   const lengthById = Object.fromEntries(textLengths.map((r) => [r.id, r.len]));
   const fileContentLengthById = Object.fromEntries(textLengths.map((r) => [r.id, (r as { fileContentLength?: number }).fileContentLength ?? 0]));
-  const itemsWithLength = items.map((doc) => ({
-    ...doc,
-    extractedTextLength: lengthById[doc.id] ?? 0,
-    hasInlineFileContent: (fileContentLengthById[doc.id] ?? 0) > 0,
-  }));
+  const itemsWithLength = items.map((doc) => {
+    const { storagePath: privateStoragePath, ...publicDoc } = doc;
+    return {
+      ...publicDoc,
+      extractedTextLength: lengthById[doc.id] ?? 0,
+      hasInlineFileContent: (fileContentLengthById[doc.id] ?? 0) > 0,
+      hasPrivateStorage: Boolean(privateStoragePath?.trim()),
+    };
+  });
 
   return NextResponse.json({ items: itemsWithLength, nextCursor, hasMore });
 }

@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 9) — Codex
+
+- **Mode:** continued SG-023 Vault privacy after finding `/api/company/documents` returned raw `storagePath` to the browser and the Company Vault client typed/rendered that storage pointer; while fixing documents, the new test exposed the same client-side DTO issue for company assets, so the fix was extended to `/api/company/assets` GET as the same privacy class.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/api/company/documents/route.ts` and `app/api/company/assets/route.ts` still select `storagePath` server-side when needed, but strip it from public DTOs and return `hasPrivateStorage` booleans instead; `app/dashboard/company/page.tsx` now consumes `hasPrivateStorage` for restored-inline labels and no longer types/renders raw document or asset storage paths; `tests/company-documents-privacy-dto.test.ts` locks those DTO/privacy contracts; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (37/37); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** SG-023 storage-path exposure is reduced for Company Vault list DTOs, but Company Review still needs server pagination/minimized expert/project DTO proof, stock PostgreSQL proof, and screenshots before full closure.
+- **Next action:** run repository checks for this follow-up, then continue SG-023 pagination/minimized DTOs or another non-overlapping matrix row with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 8) — Codex
 
 - **Mode:** continued SG-028 activity safety instead of starting a locked readiness/export area. Found `/api/audit` was safe in DTO shape but still used admin-only authorization, while the Activity Logs page is linked from the general dashboard; this made ordinary authenticated users unable to view their own personal activity and left the direct API authorization contract under-specified.
