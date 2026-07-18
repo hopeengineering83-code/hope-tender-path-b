@@ -7,9 +7,15 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
   const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
+    // The canonical analysis state lives at snapshot.analysis.state in the
+    // workflow-center response — there is no top-level `analysis` key.
+    // Reading `json.analysis.state` threw on every load (undefined.state),
+    // which the catch swallowed as a phantom "fetch failed" log, and the
+    // banner could never fire even when sections were detected without
+    // structured requirements.
     fetch(`/api/tenders/${tenderId}/workflow-center`)
       .then(res => res.json())
-      .then(json => setStatus(json.analysis.state))
+      .then((json: { snapshot?: { analysis?: { state?: string } } }) => setStatus(json.snapshot?.analysis?.state ?? null))
       .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
   }, [tenderId]);
 
