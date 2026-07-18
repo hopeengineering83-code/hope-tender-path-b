@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   const requestId = extractRequestId(req);
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
     catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`co-financial-get:${actor.id}`, API_RATE_LIMIT);
@@ -73,7 +73,7 @@ export async function POST(req: Request) {
         companyId: company.id,
         recordType,
         fiscalYear,
-        currency: body.currency ? str(body.currency, 10) : "USD",
+        currency: body.currency ? str(body.currency, 10) : null,
         amount,
         notes: body.notes ? str(body.notes, 1000) : null,
       },

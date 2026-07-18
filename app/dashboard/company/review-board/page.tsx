@@ -11,7 +11,6 @@ type Expert = {
   disciplines?: string[];
   sectors?: string[];
   certifications?: string[];
-  profile?: string | null;
   trustLevel?: string | null;
   reviewedAt?: string | null;
 };
@@ -23,10 +22,15 @@ type Project = {
   country?: string | null;
   sector?: string | null;
   serviceAreas?: string[];
-  summary?: string | null;
   trustLevel?: string | null;
   reviewedAt?: string | null;
 };
+
+type Paginated<T> = { items?: T[] } | T[];
+
+function itemsFrom<T>(payload: Paginated<T>): T[] {
+  return Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
+}
 
 type Company = {
   experts?: Expert[];
@@ -64,14 +68,10 @@ function badge(value?: string | null) {
   return "bg-red-100 text-red-700 border-red-200";
 }
 
-function snippet(value?: string | null) {
-  if (!value) return "No source snippet saved.";
-  return value
-    .replace(/^\[(AI_DRAFT|REGEX_DRAFT).*?\]\s*/i, "")
-    .replace(/Source snippet:/i, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 900);
+function reviewEvidenceHint(kind: "expert" | "project") {
+  return kind === "expert"
+    ? "Open the source CV or expert detail before approving. Raw CV text is not displayed in this review list."
+    : "Open the source project reference or project detail before approving. Raw project summaries are not displayed in this review list.";
 }
 
 function list(values?: string[]) {
@@ -97,14 +97,21 @@ export default function KnowledgeReviewBoardPage() {
     setLoading(true);
     setError("");
     try {
-      const [companyRes, summaryRes] = await Promise.all([
-        fetch("/api/company", { cache: "no-store" }),
+      const [summaryRes, expertsRes, projectsRes] = await Promise.all([
         fetch("/api/company/review-summary", { cache: "no-store" }),
+        fetch("/api/company/experts?limit=50", { cache: "no-store" }),
+        fetch("/api/company/projects?limit=50", { cache: "no-store" }),
       ]);
-      if (!companyRes.ok) throw new Error("Failed to load company records");
       if (!summaryRes.ok) throw new Error("Failed to load review summary");
-      setCompany(await companyRes.json());
-      setSummary(await summaryRes.json());
+      if (!expertsRes.ok) throw new Error("Failed to load expert records");
+      if (!projectsRes.ok) throw new Error("Failed to load project records");
+      const [summaryPayload, expertsPayload, projectsPayload] = await Promise.all([
+        summaryRes.json() as Promise<ReviewSummary>,
+        expertsRes.json() as Promise<Paginated<Expert>>,
+        projectsRes.json() as Promise<Paginated<Project>>,
+      ]);
+      setSummary(summaryPayload);
+      setCompany({ experts: itemsFrom(expertsPayload), projects: itemsFrom(projectsPayload) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load review board");
     } finally {
@@ -188,8 +195,8 @@ export default function KnowledgeReviewBoardPage() {
 
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{summary?.documents.total ?? 0}</p><p className="text-xs text-slate-400">{summary?.documents.extracted ?? 0} extracted</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{experts.length}</p><p className="text-xs text-slate-400">{reviewedExperts.length} reviewed · {draftExperts.length} draft</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{projects.length}</p><p className="text-xs text-slate-400">{reviewedProjects.length} reviewed · {draftProjects.length} draft</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{summary?.experts.total ?? experts.length}</p><p className="text-xs text-slate-400">{summary?.experts.reviewed ?? reviewedExperts.length} reviewed · {(summary?.experts.aiDraft ?? 0) + (summary?.experts.regexDraft ?? 0)} draft</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{summary?.projects.total ?? projects.length}</p><p className="text-xs text-slate-400">{summary?.projects.reviewed ?? reviewedProjects.length} reviewed · {(summary?.projects.aiDraft ?? 0) + (summary?.projects.regexDraft ?? 0)} draft</p></div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs uppercase tracking-wide text-slate-400">Final generation</p><p className={`mt-2 text-sm font-semibold ${summary?.readyForFinalGeneration ? "text-green-700" : "text-red-700"}`}>{summary?.readyForFinalGeneration ? "Ready" : "Blocked"}</p><p className="text-xs text-slate-400">{summary?.pendingReview ?? 0} pending review</p></div>
       </div>
 
@@ -203,7 +210,7 @@ export default function KnowledgeReviewBoardPage() {
                   <div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-900">{expert.fullName}</p><span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge(expert.trustLevel)}`}>{level(expert.trustLevel)}</span></div>
                   <p className="mt-1 text-xs text-slate-500">{expert.title || "No title"} · {expert.yearsExperience ? `${expert.yearsExperience} years` : "years not set"}</p>
                   <p className="mt-2 text-xs text-slate-500">Disciplines: {list(expert.disciplines)}</p>
-                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{snippet(expert.profile)}</p>
+                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{reviewEvidenceHint("expert")}</p>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => void patchRecord("expert", expert.id, "approve")} disabled={workingId === expert.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60">Approve</button>
@@ -226,7 +233,7 @@ export default function KnowledgeReviewBoardPage() {
                   <div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-900">{project.name}</p><span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge(project.trustLevel)}`}>{level(project.trustLevel)}</span></div>
                   <p className="mt-1 text-xs text-slate-500">{project.clientName || "No client"} · {project.country || "country not set"} · {project.sector || "sector not set"}</p>
                   <p className="mt-2 text-xs text-slate-500">Services: {list(project.serviceAreas)}</p>
-                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{snippet(project.summary)}</p>
+                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{reviewEvidenceHint("project")}</p>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => void patchRecord("project", project.id, "approve")} disabled={workingId === project.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60">Approve</button>
