@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 3) — Codex
+
+- **Mode:** responded to the instruction to score work against the master prompt and finish started gaps end-to-end. Scored the current branch before this follow-up as roughly 8-10% of the full master prompt, with SG-028/SG-030 only partially closed. Continued SG-028 instead of starting a new gap.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** strengthened SG-028 end-to-end within locally testable scope: `app/dashboard/activity/page.tsx` now handles non-OK fetch responses, distinguishes loading/error/empty/success states, provides retry, renders mobile cards (`md:hidden`) plus a scroll-safe desktop table, adds accessible filter `aria-pressed`, pagination nav/labels/current page, and visible focus rings; `tests/activity-safe-presentation.test.ts` now covers the API privacy contract plus responsive/a11y/error-state client contract; `docs/audits/final-screenshot-gap-closure-matrix.md` updates SG-028 evidence; `operator_handoff.md` updated.
+- **Tests/checks actually run:** `npx tsx --test tests/activity-safe-presentation.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (16/16); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** SG-028 is now fixed for API DTO/privacy/pagination and client responsive/a11y/error-state behavior, but still cannot be marked fully closed until authorized/unauthorized PostgreSQL behavior and replacement browser screenshots are executed. The full master task remains far from complete.
+- **Next action:** continue remaining matrix rows only one gap at a time, and do not start a gap unless it can be carried through runtime code, tests, matrix, handoff, and PR evidence.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 2) — Codex
 
 - **Mode:** continued fixing concrete, non-overlapping root gaps on `fix/final-screenshot-root-gap-closure`; implemented SG-028 activity-safety API/presentation hardening.
