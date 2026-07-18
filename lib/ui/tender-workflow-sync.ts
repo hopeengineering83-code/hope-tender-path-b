@@ -59,7 +59,7 @@ type WorkflowCenterPayload = {
 /**
  * Build a stable, timestamp-free fingerprint of the workflow facts that drive
  * every tender control center. This intentionally excludes generated-at fields
- * so polling does not create reload loops when no business state changed.
+ * so polling does not create refresh loops when no business state changed.
  */
 export function canonicalWorkflowFingerprint(payload: WorkflowCenterPayload | null | undefined): string {
   const snapshot = payload?.snapshot;
@@ -145,9 +145,43 @@ export function subscribeTenderWorkflowSync(
   return () => window.removeEventListener(TENDER_WORKFLOW_SYNC_EVENT, handler);
 }
 
+function formControlHasUnsavedValue(control: Element): boolean {
+  if (!(control instanceof HTMLElement) || control.closest("form") === null) return false;
+
+  if (control instanceof HTMLInputElement) {
+    if (control.disabled || control.type === "hidden") return false;
+    if (control.type === "file") return Boolean(control.files?.length);
+    if (control.type === "checkbox" || control.type === "radio") {
+      return control.checked !== control.defaultChecked;
+    }
+    return control.value !== control.defaultValue;
+  }
+
+  if (control instanceof HTMLTextAreaElement) {
+    return !control.disabled && control.value !== control.defaultValue;
+  }
+
+  if (control instanceof HTMLSelectElement) {
+    return !control.disabled && Array.from(control.options).some((option) => option.selected !== option.defaultSelected);
+  }
+
+  return control.matches("[contenteditable='true'][data-dirty='true']");
+}
+
+/**
+ * Detect both an actively edited field and a blurred form control whose value
+ * differs from its original DOM value. This deliberately errs toward showing a
+ * manual refresh prompt rather than allowing synchronization to overwrite an
+ * unsaved form.
+ */
 export function isUserEditingDocument(): boolean {
   if (typeof document === "undefined") return false;
+
   const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return false;
-  return active.matches("input, textarea, select, [contenteditable='true']");
+  if (active instanceof HTMLElement && active.matches("input:not([type='hidden']), textarea, select, [contenteditable='true']")) {
+    return true;
+  }
+
+  return Array.from(document.querySelectorAll("form input, form textarea, form select, [contenteditable='true'][data-dirty='true']"))
+    .some(formControlHasUnsavedValue);
 }
