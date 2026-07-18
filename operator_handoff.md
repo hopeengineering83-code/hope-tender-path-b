@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 16) — Codex
+
+- **Mode:** continued SG-024 matching fail-closed selection. Found `lib/engine/matching.ts` still contained below-threshold fallback/floor promotion paths that could select candidates scoring below the canonical selection threshold to avoid an empty set.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata to be refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `lib/engine/matching.ts` now removes below-threshold fallback/floor promotion and returns zero selected rows when no candidate clears the canonical threshold; `tests/matching-fail-closed-selection.test.ts` locks the no-fallback source contract and a healthcare-vs-logistics zero-selected case; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/matching-fail-closed-selection.test.ts tests/company-batch-review-rbac-current.test.ts tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (48/48); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; no merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** This closes one SG-024 algorithmic subgap, but persistence invalidation, reviewed-evidence revision binding, cross-company matching, browser workflow, and PostgreSQL negative tests remain required before full SG-024 closure.
+- **Next action:** run focused and repository checks, then continue another non-overlapping matrix row with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 15) — Codex
 
 - **Mode:** continued SG-021/SG-023 direct API minimization. Found expert/project detail `GET` routes still returned full raw profile/contact/financial detail DTOs to any authenticated same-company user, while minimized list DTOs already cover reviewer/viewer browsing.

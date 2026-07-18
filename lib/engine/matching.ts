@@ -447,33 +447,13 @@ function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
 
   let selected = 0;
-  const result = matches.map((m) => {
+  return matches.map((m) => {
     if (m.score >= SELECTION_THRESHOLD && selected < limit) {
       selected += 1;
       return { ...m, isSelected: true };
     }
     return { ...m, isSelected: false };
   });
-
-  // Floor guarantee: always select the top 3 by score when they fall just
-  // below threshold — but only when the candidate is borderline-relevant
-  // (score >= 0.55). Raised from 0.40 to 0.55 so only items with meaningful
-  // overlap are force-promoted. Confirmed off-sector items (warehouse
-  // projects for water tenders score ≈ 0.10–0.40 after the sector and
-  // mismatch penalties) no longer slip through.
-  const MIN_FLOOR_SCORE = 0.55;
-  const MIN_SELECTED = Math.min(3, limit, matches.length);
-  if (selected < MIN_SELECTED) {
-    let forcedCount = selected;
-    return result.map((m) => {
-      if (!m.isSelected && forcedCount < MIN_SELECTED && m.score >= MIN_FLOOR_SCORE) {
-        forcedCount += 1;
-        return { ...m, isSelected: true };
-      }
-      return m;
-    });
-  }
-  return result;
 }
 
 // ─── Portfolio optimization (Stage 2 selection) ──────────────────────────────
@@ -598,12 +578,11 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
-  // PR XX-MATCH-FIX MERGE: combine remote's "strict family gate" (only
-  // candidates whose families include a strict-required family qualify
-  // when a strict family is required) with my "below-threshold fallback"
-  // (select top-N below threshold and tag rationale, so the engine never
-  // produces an empty selection set that leaves the cover letter
-  // unanchored).
+  // Fail-closed selection: only candidates that meet the canonical
+  // selection threshold can be selected. If none clear the threshold, the
+  // result intentionally contains zero selected candidates so readiness and
+  // generation gates can surface a real matching blocker instead of anchoring
+  // output to weak or off-sector evidence.
   const hardFamilyGate = strictFamilyRequired(requiredFamilies);
   const strictEligible = candidates.filter((c) => {
     if (c.match.score < SELECTION_THRESHOLD) return false;
@@ -614,41 +593,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     ? strictEligible
     : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
 
-  // PR XX-MATCH-FIX Fix D — soft fallback when zero candidates clear
-  // the threshold. Without this, a sector-mismatched vault produces an
-  // empty selection set that leaves the cover letter with nothing to
-  // anchor. Below-threshold rows are tagged so downstream consumers can
-  // shift to transferable-competency framing.
-  //
-  // Respects the same MIN_FLOOR_SCORE=0.55 invariant the Stage 1
-  // selector uses: confirmed off-sector items (warehouse for water,
-  // logistics for healthcare) that score below 0.55 must remain
-  // unselected. The fallback only promotes candidates that are
-  // borderline-relevant (≥ 0.55) but missed the 0.90 auto-select bar.
-  const FALLBACK_MIN_SCORE = 0.55;
-  if (eligible.length === 0 && candidates.length > 0) {
-    const fallbackPool = [...candidates]
-      .filter((c) => c.match.score >= FALLBACK_MIN_SCORE)
-      .sort((a, b) => b.match.score - a.match.score)
-      .slice(0, Math.min(limit, candidates.length));
-    if (fallbackPool.length > 0) {
-      eligible = fallbackPool.map((c) => {
-        const m = c.match as T & { rationale?: string };
-        return {
-          ...c,
-          match: {
-            ...c.match,
-            rationale: `[Below-threshold fallback: no candidate cleared the ${SELECTION_THRESHOLD} sector-fit threshold for this tender — selected by best-available rank (≥ ${FALLBACK_MIN_SCORE}). Bid-team to flag transferable-competency framing in the cover letter and surface "no comparable sector experience in vault" gap to the client.] ${m.rationale ?? ""}`,
-          } as T,
-        };
-      });
-    } else {
-      // No candidates even meet the 0.55 floor — leave selection empty
-      // so the engine surfaces "no comparable sector experience" rather
-      // than promoting confirmed off-sector projects.
-      return matches.map((m) => ({ ...m, isSelected: false }));
-    }
-  } else if (eligible.length === 0) {
+  if (eligible.length === 0) {
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
