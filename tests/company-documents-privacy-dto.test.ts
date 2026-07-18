@@ -15,6 +15,7 @@ const financialRecordsRoute = readFileSync("app/api/company/financial-records/ro
 const complianceRecordsRoute = readFileSync("app/api/company/compliance-records/route.ts", "utf8");
 const legalRecordsRoute = readFileSync("app/api/company/legal-records/route.ts", "utf8");
 const documentDetailRoute = readFileSync("app/api/company/documents/[id]/route.ts", "utf8");
+const assetDetailRoute = readFileSync("app/api/company/assets/[id]/route.ts", "utf8");
 
 describe("company documents public DTO privacy", () => {
 
@@ -150,6 +151,16 @@ describe("company documents public DTO privacy", () => {
     assert.match(assetsRoute, /take: limit/);
     assert.match(assetsRoute, /hasMore: page \* limit < total/);
     assert.match(page, /fetch\("\/api\/company\/assets\?limit=50"\)/);
+  });
+
+
+  it("uses opaque asset download names while preserving direct-byte tenant checks", () => {
+    assert.match(assetDetailRoute, /function safeAssetDownloadName\(id: string, originalFileName: string\): string/);
+    assert.match(assetDetailRoute, /return `company-asset-\$\{id\.slice\(0, 8\)\}\$\{extension\}`/);
+    assert.match(assetDetailRoute, /select: \{[\s\S]*id: true[\s\S]*originalFileName: true[\s\S]*\}/);
+    assert.match(assetDetailRoute, /where: \{ id, companyId: company\.id, isActive: true \}/);
+    assert.match(assetDetailRoute, /const safeFileName = sanitizeCompanyAssetFileName\(safeAssetDownloadName\(asset\.id, validation\.safeFileName\)\)/);
+    assert.doesNotMatch(assetDetailRoute, /filename="\$\{asset\.originalFileName\}"/);
   });
 
   it("keeps asset storage paths server-side while exposing only storage booleans", () => {
