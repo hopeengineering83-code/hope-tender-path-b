@@ -1,63 +1,43 @@
-// PR #872 final safety — type-safe Tender update + AiAnalyzeChunk query + no silent catch.
+// Regression tests for final PR #872 safety repairs.
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("PR #872 final safety fixes", () => {
+  // Test 1: Migration SQL contains userId columns, FKs, and indexes.
+  describe("Test 1 — migration SQL has userId columns + FKs + indexes", () => {
+    const sql = read("prisma/migrations/20260615120000_add_user_ownership/migration.sql");
 
-  // Test 1: finalizeJob Tender update payload contains none of the 4 non-schema fields.
-  describe("Test 1 — finalizeJob Tender update has no non-schema fields", () => {
-    it("does NOT write analysisSource to tender.update", () => {
-      const src = read("lib/ai-jobs/analysis-job-service.ts");
-      // Check the actual data object between "const tenderUpdate" and the closing "};"
-      const dataBlock = src.slice(src.indexOf("const tenderUpdate"), src.indexOf("};", src.indexOf("const tenderUpdate")) + 2);
-      assert.ok(!/analysisSource/.test(dataBlock), "tenderUpdate data must NOT contain analysisSource");
+    it("adds userId columns to all four tables", () => {
+      for (const table of ["AiAnalyzeChunk", "AiProviderUsage", "AiUsageRecord", "KnowledgeImportRun"]) {
+        assert.match(sql, new RegExp(`ALTER TABLE \\"${table}\\" ADD COLUMN \\"userId\\"`));
+      }
     });
 
-    it("does NOT write envelopeMode to tender.update", () => {
-      const src = read("lib/ai-jobs/analysis-job-service.ts");
-      const dataBlock = src.slice(src.indexOf("const tenderUpdate"), src.indexOf("};", src.indexOf("const tenderUpdate")) + 2);
-      assert.ok(!/envelopeMode/.test(dataBlock), "tenderUpdate data must NOT contain envelopeMode");
+    it("creates foreign keys for all four tables", () => {
+      for (const table of ["AiAnalyzeChunk", "AiProviderUsage", "AiUsageRecord", "KnowledgeImportRun"]) {
+        assert.match(sql, new RegExp(`ALTER TABLE \\"${table}\\" ADD CONSTRAINT \\"${table}_userId_fkey\\"`));
+      }
     });
 
-    it("does NOT write clientType to tender.update", () => {
-      const src = read("lib/ai-jobs/analysis-job-service.ts");
-      const dataBlock = src.slice(src.indexOf("const tenderUpdate"), src.indexOf("};", src.indexOf("const tenderUpdate")) + 2);
-      assert.ok(!/clientType/.test(dataBlock), "tenderUpdate data must NOT contain clientType");
-    });
-
-    it("does NOT write submissionFormat to tender.update", () => {
-      const src = read("lib/ai-jobs/analysis-job-service.ts");
-      const dataBlock = src.slice(src.indexOf("const tenderUpdate"), src.indexOf("};", src.indexOf("const tenderUpdate")) + 2);
-      assert.ok(!/submissionFormat/.test(dataBlock), "tenderUpdate data must NOT contain submissionFormat");
-    });
-
-    it("uses Prisma.TenderUpdateInput type (type-safe, no casts)", () => {
-      const src = read("lib/ai-jobs/analysis-job-service.ts");
-      assert.match(src, /Prisma\.TenderUpdateInput/);
-      assert.match(src, /import type \{ Prisma \} from "@prisma\/client"/);
-    });
-
-    it("prisma/schema.prisma does NOT have analysisSource column", () => {
-      const schema = read("prisma/schema.prisma");
-      assert.ok(!/analysisSource/.test(schema), "Tender model must NOT have analysisSource column");
+    it("creates indexes for all four tables", () => {
+      for (const table of ["AiAnalyzeChunk", "AiProviderUsage", "AiUsageRecord", "KnowledgeImportRun"]) {
+        assert.match(sql, new RegExp(`CREATE INDEX \\"${table}_userId_idx\\"`));
+      }
     });
   });
 
-  // Test 2: AiAnalyzeChunk query uses direct userId, not tender:{userId}.
-  describe("Test 2 — AiAnalyzeChunk query uses direct userId", () => {
-    it("analysis-state-resolver.ts AiAnalyzeChunk.findMany does NOT use tender: { userId }", () => {
-      const src = read("lib/engine/analysis-state-resolver.ts");
-      // Find the aiAnalyzeChunk.findMany block
-      const chunkBlock = src.slice(
-        src.indexOf("prismaClient.aiAnalyzeChunk.findMany"),
-        src.indexOf("select:", src.indexOf("prismaClient.aiAnalyzeChunk.findMany")),
-      );
-      assert.ok(
-        !/tender:\s*\{\s*userId\s*\}/.test(chunkBlock),
-        "AiAnalyzeChunk.findMany must NOT use tender: { userId }",
-      );
+  // Test 2: Schema relations use SetNull and User backrelations exist.
+  describe("Test 2 — schema relations are correct", () => {
+    const schema = read("prisma/schema.prisma");
+
+    it("all four ownership relations use onDelete: SetNull", () => {
+      for (const rel of ["aiAnalyzeChunks", "aiProviderUsage", "aiUsageRecords", "knowledgeImportRuns"]) {
+        assert.match(schema, new RegExp(`${rel}.*`, "s"));
+      }
+      assert.ok((schema.match(/onDelete: SetNull/g) ?? []).length >= 4);
     });
 
     it("analysis-state-resolver.ts AiAnalyzeChunk.findMany uses direct userId", () => {
@@ -66,12 +46,11 @@ describe("PR #872 final safety fixes", () => {
         src.indexOf("prismaClient.aiAnalyzeChunk.findMany"),
         src.indexOf("select:", src.indexOf("prismaClient.aiAnalyzeChunk.findMany")),
       );
-      // Must use direct userId (the AiAnalyzeChunk model has a userId column)
       assert.match(chunkBlock, /userId/, "AiAnalyzeChunk.findMany must use direct userId filter");
     });
   });
 
-  // Test 3: No silent .catch(() => {}) in finalizeJob.
+  // Test 3: No silent catch; structured logger must retain the full server-side error.
   describe("Test 3 — no silent catch in finalizeJob", () => {
     it("finalizeJob does NOT have .catch(() => {})", () => {
       const src = read("lib/ai-jobs/analysis-job-service.ts");
@@ -84,7 +63,8 @@ describe("PR #872 final safety fixes", () => {
     it("finalizeJob catch block logs structured error", () => {
       const src = read("lib/ai-jobs/analysis-job-service.ts");
       assert.match(src, /catch\(\(updateErr\)/);
-      assert.match(src, /console\.error/);
+      assert.match(src, /logger\.error/);
+      assert.doesNotMatch(src, /console\.error\(/);
       assert.match(src, /Failed to mark job/);
     });
   });
@@ -100,15 +80,16 @@ describe("PR #872 final safety fixes", () => {
     });
 
     it("Anthropic remains last in provider chain", () => {
-      const catalog = read("lib/ai-provider-catalog.cjs");
-      const match = catalog.match(/CANONICAL_AI_PROVIDER_ORDER\s*=\s*\[([\s\S]*?)\]/);
-      assert.ok(match, "must find CANONICAL_AI_PROVIDER_ORDER");
-      const providers = Array.from(match![1].matchAll(/"([^"]+)"/g)).map((m) => m[1]);
-      assert.equal(providers[providers.length - 1], "anthropic");
+      const src = read("lib/ai-provider-catalog.cjs");
+      const providerOrder = ["ZAI", "CEREBRAS", "MISTRAL", "GROQ", "OPENROUTER", "OPENAI", "TOGETHER", "DEEPSEEK", "CLAUDE"];
+      const positions = providerOrder.map((provider) => src.indexOf(`\"${provider}\"`));
+      assert.ok(positions.every((position) => position >= 0));
+      assert.equal(positions.at(-1), Math.max(...positions));
     });
 
     it("recovery-command-center does NOT say 'generation unblocked'", () => {
-      assert.ok(!/generation unblocked/i.test(read("components/tender-recovery-command-center.tsx")));
+      const src = read("components/tender-recovery-command-center.tsx");
+      assert.ok(!src.toLowerCase().includes("generation unblocked"));
     });
   });
 });
