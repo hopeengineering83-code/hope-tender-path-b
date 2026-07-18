@@ -18,11 +18,42 @@ concurrency:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_screenshot
+          POSTGRES_DB: hope_tender_screenshot
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_screenshot -d hope_tender_screenshot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
-      SCREENSHOT_BASE_URL: https://hope-tender-path-b.vercel.app
-      SCREENSHOT_TEST_EMAIL: ${{ secrets.SCREENSHOT_TEST_EMAIL }}
-      SCREENSHOT_TEST_PASSWORD: ${{ secrets.SCREENSHOT_TEST_PASSWORD }}
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "postgresql://hope_screenshot@127.0.0.1:5432/hope_tender_screenshot?schema=public"
+      SESSION_SECRET: "screenshot-session-${{ github.run_id }}-${{ github.sha }}"
+      NEXTAUTH_SECRET: "screenshot-nextauth-${{ github.run_id }}-${{ github.sha }}"
+      GEMINI_API_KEY: "screenshot-provider-placeholder-not-used-at-runtime"
+      ANTHROPIC_API_KEY: ""
+      E2E_FULL_AUTH: "true"
+      E2E_SEED_ALLOWED: "true"
+      E2E_TEST_EMAIL: "screenshot-primary@example.test"
+      E2E_TEST_PASSWORD: "ScreenshotPrimary-${{ github.run_id }}-A9!secure"
+      E2E_SECOND_EMAIL: "screenshot-secondary@example.test"
+      E2E_SECOND_PASSWORD: "ScreenshotSecondary-${{ github.run_id }}-B8!secure"
+      ALLOW_DB_FILE_STORAGE: "true"
+      CSRF_MODE: "off"
+      SCREENSHOT_BASE_URL: "http://127.0.0.1:3000"
+      SCREENSHOT_TEST_EMAIL: "screenshot-primary@example.test"
+      SCREENSHOT_TEST_PASSWORD: "ScreenshotPrimary-${{ github.run_id }}-A9!secure"
+      SCREENSHOT_EVIDENCE_MODE: "exact-head-disposable-postgres"
+      SCREENSHOT_SOURCE_SHA: "${{ github.event.pull_request.head.sha || github.sha }}"
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@v4
@@ -36,14 +67,38 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Validate and migrate disposable database
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx prisma validate
+          npx prisma generate
+          npx prisma migrate deploy
+          npm run db:check-critical-schema
+
+      - name: Build exact application head
+        run: npm run build
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Verify screenshot credentials exist
+      - name: Seed isolated screenshot fixtures
+        run: node scripts/seed-e2e-user.mjs
+
+      - name: Start exact-head application
         shell: bash
         run: |
-          test -n "$SCREENSHOT_TEST_EMAIL"
-          test -n "$SCREENSHOT_TEST_PASSWORD"
+          mkdir -p artifacts
+          nohup npm run start -- -p 3000 > artifacts/app-server.log 2>&1 &
+          echo $! > artifacts/app-server.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/login > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat artifacts/app-server.log
+          exit 1
 
       - name: Capture and audit all reachable app pages
         id: capture
@@ -54,13 +109,23 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hope-tender-app-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
-          path: artifacts/app-screenshots
+          name: hope-tender-exact-head-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/app-screenshots
+            artifacts/app-server.log
           if-no-files-found: error
           retention-days: 7
+
+      - name: Stop exact-head application
+        if: always()
+        shell: bash
+        run: |
+          if test -f artifacts/app-server.pid; then
+            kill "$(cat artifacts/app-server.pid)" 2>/dev/null || true
+          fi
 
       - name: Enforce screenshot audit result
         if: steps.capture.outcome == 'failure'
         run: |
-          echo "Screenshot audit found critical route or horizontal-overflow defects. Download the artifact and repair the indexed findings."
+          echo "Exact-head screenshot audit found critical route or horizontal-overflow defects. Download the indexed artifact and repair every reported offender."
           exit 1
