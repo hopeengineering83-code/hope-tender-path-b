@@ -146,7 +146,19 @@ export default function ActivityPage() {
         ))}
       </div>
 
-      {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => void load(page, filter)}
+            aria-label="Retry activity logs"
+            className="min-h-10 rounded border border-red-300 bg-white px-3 py-1 text-red-700 hover:bg-red-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <section className="min-w-0 overflow-hidden rounded-2xl border bg-white shadow-sm" aria-label="Activity events">
         {loading ? (
@@ -199,7 +211,7 @@ export default function ActivityPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
         <p>{total} tenant-scoped audit records{groupedOnPage > 0 ? ` · ${groupedOnPage} duplicate event(s) grouped on this page` : ""}</p>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" aria-label="Activity pagination">
           <button type="button" onClick={() => handlePage(page - 1)} disabled={page === 1} className="min-h-10 rounded border px-3 py-1 disabled:opacity-50" aria-label="Previous activity page">Previous</button>
           <span className="px-3 py-1">{page} / {totalPages}</span>
           <button type="button" onClick={() => handlePage(page + 1)} disabled={page >= totalPages} className="min-h-10 rounded border px-3 py-1 disabled:opacity-50" aria-label="Next activity page">Next</button>

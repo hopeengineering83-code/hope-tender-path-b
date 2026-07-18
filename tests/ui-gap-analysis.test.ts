@@ -20,14 +20,16 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
   });
 
   describe("Gap 2 — TenderWorkflowActionCenter anchors are valid", () => {
+    // The targets map became an array-per-stage (fallback support for
+    // stage 4's conditional anchor) — same anchors, new shape.
     it("stage 1 targets #tender-files (not #tender-source-files)", () => {
       const src = read("components/tender-workflow-action-center.tsx");
-      assert.match(src, /1:\s*"#tender-files"/);
+      assert.match(src, /1:\s*\["#tender-files"\]/);
       assert.ok(!src.includes("#tender-source-files"), "must not reference #tender-source-files");
     });
     it("stage 10 targets #export-readiness (not #export-section)", () => {
       const src = read("components/tender-workflow-action-center.tsx");
-      assert.match(src, /10:\s*"#export-readiness"/);
+      assert.match(src, /10:\s*\["#export-readiness"\]/);
       assert.ok(!src.includes("#export-section"), "must not reference #export-section");
     });
   });

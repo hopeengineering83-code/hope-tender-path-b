@@ -104,13 +104,19 @@ describe("company documents public DTO privacy", () => {
     assert.doesNotMatch(reviewBoardPage, /snippet\(/);
   });
 
-  it("Company Review uses bounded list DTOs instead of the full company graph", () => {
-    assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"/);
-    assert.match(reviewPage, /fetch\("\/api\/company\/review-summary"/);
-    assert.match(reviewPage, /fetch\("\/api\/company\/documents\?limit=50"/);
-    assert.match(reviewPage, /fetch\("\/api\/company\/experts\?limit=50"/);
-    assert.match(reviewPage, /fetch\("\/api\/company\/projects\?limit=50"/);
-    assert.match(reviewPage, /type Paginated<T> = \{ items\?: T\[\]/);
+  it("Company Review uses bounded server-paginated diagnostics instead of the full company graph", () => {
+    // The retained #1175 Company Review page is deliberately stronger than
+    // the donor snapshot this assertion was written against: instead of four
+    // client-side ?limit=50 list fetches it consumes ONE privacy-safe,
+    // server-paginated diagnostics endpoint (/api/company/knowledge/repair)
+    // whose DTOs are bounded, redacted, and paged server-side
+    // (RECORD_PAGE_SIZE skip/take). Assert that design's equivalent
+    // properties rather than the donor client shape.
+    assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"[,)]/);
+    assert.match(reviewPage, /fetch\(`\/api\/company\/knowledge\/repair\?\$\{params\}`/);
+    assert.match(reviewPage, /expertPage: String\(expertPage\)/);
+    assert.match(reviewPage, /projectPage: String\(projectPage\)/);
+    assert.match(reviewPage, /Only bounded summaries reach this page\./);
   });
 
   it("keeps storage paths server-side while exposing only storage booleans", () => {

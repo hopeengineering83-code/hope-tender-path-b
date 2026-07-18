@@ -274,9 +274,14 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
     }
   };
 
+  // Every branch below carries id="requirement-coverage" — this is the
+  // Workflow Control Center's "Review Requirements" scroll anchor
+  // (tender-workflow-action-center.tsx targets map) and NextActionPanel
+  // link target. It must stay attached in the loading/error/empty states
+  // too, or clicking the button in those states silently does nothing.
   if (loading) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
           Loading mandatory requirement coverage…
@@ -287,7 +292,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
 
   if (error || !data) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+      <div id="requirement-coverage" className="rounded-xl border border-red-200 bg-red-50 p-4">
         <p className="text-sm text-red-700">{error ?? "Unable to load requirement coverage."}</p>
         <button onClick={load} className="mt-2 text-xs text-red-600 underline">Retry</button>
       </div>
@@ -296,7 +301,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
 
   if (data.totalMandatory === 0) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+      <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-gray-50 p-4">
         <p className="text-sm text-gray-500">No mandatory requirements found. Run AI Analyze or Run Engine to extract requirements.</p>
       </div>
     );

@@ -8,8 +8,11 @@ describe("post-audit authentication and landing truth", () => {
   it("forgot-password sends instructions without exposing a reset link", () => {
     const source = read("app/forgot-password/page.tsx");
 
-    assert.match(source, /Send Reset Instructions/);
-    assert.match(source, /send reset instructions/i);
+    // Wording aligned with donor #1196's password-reset client contract
+    // (tests/password-reset-client-contract.test.ts): the page "requests
+    // password reset instructions" — it never claims to generate a link.
+    assert.match(source, /Request reset instructions/);
+    assert.match(source, /request password reset instructions/i);
     assert.doesNotMatch(source, /data\.resetLink/);
     assert.doesNotMatch(source, /navigator\.clipboard/);
   });

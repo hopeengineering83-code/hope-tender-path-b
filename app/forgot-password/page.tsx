@@ -2,10 +2,10 @@
 import { useState } from "react";
 import Link from "next/link";
 
-// P1 fix: The page previously had misleading wording and unreachable reset-link display code.
-// display/copy a returned reset URL. The actual API never returns a reset link —
-// it sends instructions by email and returns only a generic message.
-// Fix: Changed wording to "Send reset instructions", removed resetLink display/copy logic.
+// P1 fix: The page previously had misleading wording and unreachable
+// reset-URL display code. The actual API never returns a reset URL — it
+// sends instructions by email and returns only a generic message, so this
+// page only requests instructions and never renders or copies any URL.
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -27,7 +27,7 @@ export default function ForgotPasswordPage() {
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Request failed"); return; }
       // API returns { note: "If an account exists, reset instructions have been sent." }
-      // It does NOT return a resetLink. Do not display or copy any link.
+      // It never returns a reset URL. Do not display or copy any link.
       setResult({ note: data.note ?? "If an account exists, reset instructions have been sent." });
     } catch {
       setError("Request failed. Check your connection.");
@@ -41,7 +41,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reset password</h1>
-          <p className="mt-1 text-sm text-slate-500">Enter your account email to send reset instructions.</p>
+          <p className="mt-1 text-sm text-slate-500">Enter your account email to request password reset instructions.</p>
         </div>
 
         {!result ? (
@@ -68,7 +68,7 @@ export default function ForgotPasswordPage() {
               disabled={loading}
               className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
             >
-              {loading ? "Sending…" : "Send Reset Instructions"}
+              {loading ? "Sending…" : "Request reset instructions"}
             </button>
           </form>
         ) : (

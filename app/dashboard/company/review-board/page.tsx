@@ -12,7 +12,6 @@ type Expert = {
   disciplines?: string[];
   sectors?: string[];
   certifications?: string[];
-  profile?: string | null;
   trustLevel?: string | null;
   reviewedAt?: string | null;
 };
@@ -24,7 +23,6 @@ type Project = {
   country?: string | null;
   sector?: string | null;
   serviceAreas?: string[];
-  summary?: string | null;
   trustLevel?: string | null;
   reviewedAt?: string | null;
 };
@@ -33,6 +31,14 @@ type Company = {
   experts?: Expert[];
   projects?: Project[];
 };
+
+// Bounded list DTOs return { items } envelopes; tolerate a bare array so a
+// server rollback can never break this page.
+type Paginated<T> = { items?: T[] } | T[];
+
+function listOf<T>(value: Paginated<T>): T[] {
+  return Array.isArray(value) ? value : value.items ?? [];
+}
 
 function level(value?: string | null) {
   if (value === "REVIEWED") return "REVIEWED";
@@ -51,14 +57,13 @@ function badge(value?: string | null) {
   return "border-red-200 bg-red-100 text-red-700";
 }
 
-function snippet(value?: string | null) {
-  if (!value) return "No source snippet saved.";
-  return value
-    .replace(/^\[(AI_DRAFT|REGEX_DRAFT).*?\]\s*/i, "")
-    .replace(/Source snippet:/i, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 900);
+// The bounded list DTOs deliberately omit raw profile/summary source text
+// (privacy minimization accepted from donor #1196) — the Review Board shows
+// where to verify evidence instead of echoing raw source text here.
+function reviewEvidenceHint(kind: "expert" | "project") {
+  return kind === "expert"
+    ? "Verify source evidence in the privacy-safe Company Review page before approving this expert."
+    : "Verify source evidence in the privacy-safe Company Review page before approving this project.";
 }
 
 function list(values?: string[]) {
@@ -85,13 +90,16 @@ export default function KnowledgeReviewBoardPage() {
     setLoading(true);
     setError("");
     try {
-      const [companyRes, summaryRes] = await Promise.all([
-        fetch("/api/company", { cache: "no-store" }),
+      const [expertsRes, projectsRes, summaryRes] = await Promise.all([
+        fetch("/api/company/experts?limit=50", { cache: "no-store" }),
+        fetch("/api/company/projects?limit=50", { cache: "no-store" }),
         fetch("/api/company/review-summary", { cache: "no-store" }),
       ]);
-      if (!companyRes.ok) throw new Error("Failed to load company records");
+      if (!expertsRes.ok || !projectsRes.ok) throw new Error("Failed to load company records");
       if (!summaryRes.ok) throw new Error("Failed to load review summary");
-      setCompany(await companyRes.json());
+      const expertsJson = (await expertsRes.json()) as Paginated<Expert>;
+      const projectsJson = (await projectsRes.json()) as Paginated<Project>;
+      setCompany({ experts: listOf(expertsJson), projects: listOf(projectsJson) });
       setSummary(await summaryRes.json());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load review board");
@@ -203,7 +211,7 @@ export default function KnowledgeReviewBoardPage() {
                   <div className="flex flex-wrap items-center gap-2"><p className="break-words font-semibold text-slate-900">{expert.fullName}</p><span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge(expert.trustLevel)}`}>{level(expert.trustLevel)}</span></div>
                   <p className="mt-1 text-xs text-slate-500">{expert.title || "No title"} · {expert.yearsExperience ? `${expert.yearsExperience} years` : "years not set"}</p>
                   <p className="mt-2 break-words text-xs text-slate-500">Disciplines: {list(expert.disciplines)}</p>
-                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{snippet(expert.profile)}</p>
+                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{reviewEvidenceHint("expert")}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={() => void patchRecord("expert", expert.id, "approve")} disabled={workingId === expert.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60">Approve</button>
@@ -226,7 +234,7 @@ export default function KnowledgeReviewBoardPage() {
                   <div className="flex flex-wrap items-center gap-2"><p className="break-words font-semibold text-slate-900">{project.name}</p><span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge(project.trustLevel)}`}>{level(project.trustLevel)}</span></div>
                   <p className="mt-1 break-words text-xs text-slate-500">{project.clientName || "No client"} · {project.country || "country not set"} · {project.sector || "sector not set"}</p>
                   <p className="mt-2 break-words text-xs text-slate-500">Services: {list(project.serviceAreas)}</p>
-                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{snippet(project.summary)}</p>
+                  <p className="mt-3 max-h-28 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">{reviewEvidenceHint("project")}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={() => void patchRecord("project", project.id, "approve")} disabled={workingId === project.id} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60">Approve</button>

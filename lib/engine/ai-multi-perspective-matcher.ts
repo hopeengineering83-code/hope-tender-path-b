@@ -144,7 +144,7 @@ ${JSON_SHAPE}
 
 Rules:
 - Think multi-dimensionally: technical fit, eligibility, evidence, delivery risk, strategy, and portfolio complement must all influence the score.
-- A weak but best-available candidate can still be useful; do not force 90% scores.
+- Fail closed: a weak or below-threshold candidate must remain unselected; never inflate scores to fill a team.
 - If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
 - DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
 - recommendSelection means "would consider for the best-available team", not "perfect match".
@@ -164,7 +164,7 @@ ${JSON_SHAPE}
 
 Rules:
 - Think multi-dimensionally: technical fit, eligibility, evidence, scale, delivery risk, strategy, and portfolio complement must all influence the score.
-- A weak but best-available reference can still be selected when no perfect reference exists, but unsafe sector mismatches must not be selected.
+- Fail closed: a weak or below-threshold reference must remain unselected, and unsafe sector mismatches must never be selected.
 - If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
 - DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
 - recommendSelection means "would consider for the best-available reference set", not "perfect match".
@@ -241,7 +241,9 @@ function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsT
       `sector: ${p.sector ?? "<unknown>"}`,
       `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
       `universal_candidate_profile: ${universalProfileSummary(profile)}`,
-      `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
+      // Never present USD as the currency of a record that has none — a
+      // fabricated currency is unsupported financial authority (issue #1134).
+      `contract_value: ${p.contractValue ? `${p.currency?.trim() ? p.currency : "Currency unresolved"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
       `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
       `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
       `trustLevel: ${p.trustLevel ?? "unknown"}`,
