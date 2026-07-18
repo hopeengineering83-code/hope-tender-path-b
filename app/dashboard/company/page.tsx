@@ -6,7 +6,7 @@ import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from ".
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
   size: number; extractedTextLength?: number | null; aiExtractionStatus?: string | null; createdAt: string;
-  storagePath?: string | null; hasInlineFileContent?: boolean | null;
+  hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null;
 };
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
@@ -30,7 +30,7 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
-type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; storagePath?: string | null; hasInlineFileContent?: boolean | null };
+type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null };
 
 const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
 
@@ -113,12 +113,12 @@ export default function CompanyPage() {
   const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
 
   // Project state
-  const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+  const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
   const projectFormRef = useRef<HTMLFormElement>(null);
   const [projectSaving, setProjectSaving] = useState(false);
   const [editProject, setEditProject] = useState<Project|null>(null);
   const [projectEditSaving, setProjectEditSaving] = useState(false);
-  const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+  const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
@@ -134,7 +134,7 @@ export default function CompanyPage() {
   const [complianceLoading, setComplianceLoading] = useState(false);
   const [complianceForm, setComplianceForm] = useState({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" });
   const [legalForm, setLegalForm] = useState({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" });
-  const [financialForm, setFinancialForm] = useState({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" });
+  const [financialForm, setFinancialForm] = useState({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"", amount:"", notes:"" });
   const [complianceSaving, setComplianceSaving] = useState(false);
   const [legalSaving, setLegalSaving] = useState(false);
   const [financialSaving, setFinancialSaving] = useState(false);
@@ -156,9 +156,9 @@ export default function CompanyPage() {
     setComplianceLoading(true);
     try {
       const [cr, lr, fr] = await Promise.all([
-        fetch("/api/company/compliance-records").then(r=>r.json()),
-        fetch("/api/company/legal-records").then(r=>r.json()),
-        fetch("/api/company/financial-records").then(r=>r.json()),
+        fetch("/api/company/compliance-records?limit=50").then(r=>r.json()),
+        fetch("/api/company/legal-records?limit=50").then(r=>r.json()),
+        fetch("/api/company/financial-records?limit=50").then(r=>r.json()),
       ]);
       setComplianceRecords(cr.records ?? []);
       setLegalRecords(lr.records ?? []);
@@ -201,7 +201,7 @@ export default function CompanyPage() {
     try {
       const res = await fetch("/api/company/financial-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...financialForm, fiscalYear: Number(financialForm.fiscalYear), amount: financialForm.amount ? Number(financialForm.amount) : null }) });
       if (!res.ok) { setError("We could not add that financial record. Please check the required fields and try again."); return; }
-      setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); await loadComplianceData();
+      setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"", amount:"", notes:"" }); await loadComplianceData();
     } catch {
       setError("Network interruption while adding the financial record. Please retry when your connection is stable.");
     } finally { setFinancialSaving(false); }
@@ -260,7 +260,7 @@ export default function CompanyPage() {
 
   async function loadDocs(): Promise<boolean> {
     try {
-      const r = await fetch("/api/company/documents");
+      const r = await fetch("/api/company/documents?limit=50");
       if (!r.ok) return false;
       const d = await r.json() as { items?: CompanyDoc[] };
       if (!d || !Array.isArray(d.items)) return false;
@@ -274,8 +274,8 @@ export default function CompanyPage() {
   useEffect(() => {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
-      fetch("/api/company/documents").then(r=>r.json()),
-      fetch("/api/company/assets").then(r=>r.json()),
+      fetch("/api/company/documents?limit=50").then(r=>r.json()),
+      fetch("/api/company/assets?limit=50").then(r=>r.json()),
     ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
@@ -508,7 +508,7 @@ export default function CompanyPage() {
       if (!res.ok) { setError("We could not add that project record. Please check the required fields and try again."); return; }
       const project = await res.json() as Project;
       setCompany(c => ({ ...c, projects:[project, ...(c.projects||[])] }));
-      setProjectForm({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+      setProjectForm({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
     } catch {
       setError("Network interruption while adding the project record. Please retry when your connection is stable.");
     } finally {
@@ -521,7 +521,7 @@ export default function CompanyPage() {
     setProjectEditForm({
       name:p.name, clientName:p.clientName??"", sector:p.sector??"", country:p.country??"",
       serviceAreas:(p.serviceAreas||[]).join(", "), contractValue:p.contractValue?.toString()??"",
-      currency:p.currency??"USD", summary:p.summary??"",
+      currency:p.currency??"", summary:p.summary??"",
     });
   }
 
@@ -804,7 +804,7 @@ export default function CompanyPage() {
                     <p className="text-xs font-medium text-slate-800 truncate">{doc.originalFileName}</p>
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[doc.category]??"bg-slate-100 text-slate-500"}`}>{CATEGORY_LABELS[doc.category]??doc.category}</span>
-                      <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !(doc.storagePath ?? "").trim() ? " · Restored inline file available" : ""}</span>
+                      <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !doc.hasPrivateStorage ? " · Restored inline file available" : ""}</span>
                       {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600"><CheckIcon /> {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
@@ -951,6 +951,7 @@ export default function CompanyPage() {
                 <input value={projectForm.country} onChange={e=>setProjectForm({...projectForm,country:e.target.value})} placeholder="Country" className="rounded-lg border px-3 py-2 text-sm" />
                 <input value={projectForm.contractValue} onChange={e=>setProjectForm({...projectForm,contractValue:e.target.value})} type="number" placeholder="Contract value" className="rounded-lg border px-3 py-2 text-sm" />
                 <select value={projectForm.currency} onChange={e=>setProjectForm({...projectForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                  <option value="">Currency unresolved</option>
                   {["USD","EUR","GBP","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>
@@ -1198,6 +1199,7 @@ export default function CompanyPage() {
                     <input value={financialForm.fiscalYear} onChange={e=>setFinancialForm({...financialForm,fiscalYear:e.target.value})} type="number" min="1990" max="2100" placeholder="Fiscal year *" className="rounded-lg border px-3 py-2 text-sm" />
                     <input value={financialForm.amount} onChange={e=>setFinancialForm({...financialForm,amount:e.target.value})} type="number" placeholder="Amount" className="rounded-lg border px-3 py-2 text-sm" />
                     <select value={financialForm.currency} onChange={e=>setFinancialForm({...financialForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                      <option value="">Currency unresolved</option>
                       {["USD","EUR","GBP","ETB","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
                     </select>
                   </div>
@@ -1284,6 +1286,7 @@ export default function CompanyPage() {
                 <input value={projectEditForm.country} onChange={e=>setProjectEditForm({...projectEditForm,country:e.target.value})} placeholder="Country" className="rounded-lg border px-3 py-2 text-sm" />
                 <input value={projectEditForm.contractValue} onChange={e=>setProjectEditForm({...projectEditForm,contractValue:e.target.value})} type="number" placeholder="Contract value" className="rounded-lg border px-3 py-2 text-sm" />
                 <select value={projectEditForm.currency} onChange={e=>setProjectEditForm({...projectEditForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                  <option value="">Currency unresolved</option>
                   {["USD","EUR","GBP","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>

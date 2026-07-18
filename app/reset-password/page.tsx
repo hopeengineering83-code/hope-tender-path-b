@@ -6,8 +6,11 @@ import { ArrowRightIcon } from "../../components/icons";
 
 function ResetForm() {
   const params = useSearchParams();
+  // The server's emailed reset links are token-only
+  // (forgot-password/route.ts builds reset-password?token=...), and the
+  // reset API consumes { token, password } — requiring a second query
+  // param here made every real emailed link land on a disabled form.
   const token = params.get("token") ?? "";
-  const uid = params.get("uid") ?? "";
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -16,8 +19,8 @@ function ResetForm() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!token || !uid) setError("Invalid or missing reset link. Request a new one.");
-  }, [token, uid]);
+    if (!token) setError("Invalid or missing reset link. Request a new one.");
+  }, [token]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,7 +32,7 @@ function ResetForm() {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, uid, password }),
+        body: JSON.stringify({ token, password }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Reset failed"); return; }
@@ -84,7 +87,7 @@ function ResetForm() {
       </div>
       <button
         type="submit"
-        disabled={loading || !token || !uid}
+        disabled={loading || !token}
         className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
       >
         {loading ? "Updating…" : "Set New Password"}

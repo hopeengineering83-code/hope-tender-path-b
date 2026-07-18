@@ -46,7 +46,10 @@ export async function GET(req: Request) {
         description: true,
         createdAt: true,
       },
-      orderBy: { createdAt: "desc" },
+      // Two-key order: createdAt ties are possible under load, and an
+      // unstable order across pages can duplicate or drop rows at page
+      // boundaries. The id tiebreaker makes pagination deterministic.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * limit,
       take: limit,
     }),

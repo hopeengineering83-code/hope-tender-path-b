@@ -477,8 +477,10 @@ function selectedLimit(requirements: RequirementDraft[], type: string, available
 function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
 
-  // GLM-A2 Issue #1135 Gap #2: Fail-closed selection. The previous code had
-  // a below-threshold fallback that force-promoted
+  // GLM-A2 Issue #1135 Gap #2:
+  // Fail-closed selection: only candidates that meet the canonical
+  // SELECTION_THRESHOLD are ever selected. The previous
+  // code had a below-threshold fallback that force-promoted
   // candidates to avoid an empty selection set. This violated fail-closed
   // evidence rules: for strict sectors or absent source-grounded candidates,
   // selection must remain empty, a blocking evidence gap must be created,
@@ -636,8 +638,10 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     ? strictEligible
     : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
 
-  // GLM-A2 Issue #1135 Gap #2: Fail-closed selection. The previous code had
-  // a below-threshold fallback that promoted
+  // GLM-A2 Issue #1135 Gap #2:
+  // Fail-closed selection: only candidates that meet the canonical
+  // SELECTION_THRESHOLD are ever selected. The previous
+  // code had a below-threshold fallback that promoted
   // candidates when zero cleared the threshold. This violated fail-closed
   // evidence rules. The fallback has been removed.
   //
@@ -935,7 +939,7 @@ export function buildMatches(
       return {
         projectId: project.id,
         score,
-        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} ${domainLabel} Required-family coverage: ${requiredFamilyHits}/${Math.max(requiredFamiliesUnique.length, 1)}. Capability families: ${families || "general project profile"}. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
+        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} ${domainLabel} Required-family coverage: ${requiredFamilyHits}/${Math.max(requiredFamiliesUnique.length, 1)}. Capability families: ${families || "general project profile"}. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency?.trim() ? project.currency : "Currency unresolved"} ${project.contractValue.toLocaleString()}.` : ""}`,
         evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
