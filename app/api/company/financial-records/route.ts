@@ -73,7 +73,7 @@ export async function POST(req: Request) {
         companyId: company.id,
         recordType,
         fiscalYear,
-        currency: body.currency ? str(body.currency, 10) : "USD",
+        currency: body.currency ? str(body.currency, 10) : null,
         amount,
         notes: body.notes ? str(body.notes, 1000) : null,
       },
