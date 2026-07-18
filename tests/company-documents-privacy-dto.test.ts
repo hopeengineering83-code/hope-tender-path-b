@@ -14,6 +14,7 @@ const reviewBoardPage = readFileSync("app/dashboard/company/review-board/page.ts
 const financialRecordsRoute = readFileSync("app/api/company/financial-records/route.ts", "utf8");
 const complianceRecordsRoute = readFileSync("app/api/company/compliance-records/route.ts", "utf8");
 const legalRecordsRoute = readFileSync("app/api/company/legal-records/route.ts", "utf8");
+const documentDetailRoute = readFileSync("app/api/company/documents/[id]/route.ts", "utf8");
 
 describe("company documents public DTO privacy", () => {
 
@@ -128,6 +129,16 @@ describe("company documents public DTO privacy", () => {
     assert.match(page, /fetch\("\/api\/company\/documents\?limit=50"\)/);
   });
 
+
+
+  it("uses opaque document download names and public audit descriptions", () => {
+    assert.match(documentDetailRoute, /function safeDocumentDownloadName\(id: string, originalFileName: string\): string/);
+    assert.match(documentDetailRoute, /return `company-document-\$\{id\.slice\(0, 8\)\}\$\{extension\}`/);
+    assert.match(documentDetailRoute, /const safeFileName = safeDocumentDownloadName\(doc\.id, doc\.originalFileName\)/);
+    assert.doesNotMatch(documentDetailRoute, /filename="\$\{doc\.originalFileName\}"/);
+    assert.match(documentDetailRoute, /description: "Re-extracted company document"/);
+    assert.doesNotMatch(documentDetailRoute, /description: `Re-extracted "\$\{doc\.originalFileName\}"`/);
+  });
 
   it("paginates asset list DTOs with deterministic ordering", () => {
     assert.match(assetsRoute, /const DEFAULT_PAGE_SIZE = 50/);
