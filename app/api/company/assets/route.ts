@@ -17,6 +17,23 @@ import {
 } from "../../../../lib/company-asset-security";
 import { inspectActualFileBytes } from "../../../../lib/engine/persisted-byte-integrity";
 
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedInt(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parsePage(value: string | null): number {
+  return parseBoundedInt(value, 1);
+}
+
+function parseLimit(value: string | null): number {
+  return Math.min(parseBoundedInt(value, DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
+}
+
 function privateJson(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Cache-Control", "private, no-store");
@@ -35,34 +52,43 @@ async function writableActor() {
   }
 }
 
-export async function GET(_req: Request) {
+export async function GET(req: Request) {
   const userId = await getSession();
   if (!userId) return unauthorizedResponse();
   await prismaReady;
 
+  const url = new URL(req.url);
+  const page = parsePage(url.searchParams.get("page"));
+  const limit = parseLimit(url.searchParams.get("limit"));
   const company = await ensureCompanyForUser(prisma, userId);
-  const assets = await prisma.companyAsset.findMany({
-    where: {
-      companyId: company.id,
-      NOT: { metadata: { contains: COMPANY_ASSET_PENDING_DELETE_MARKER } },
-    },
-    select: {
-      id: true,
-      assetType: true,
-      originalFileName: true,
-      mimeType: true,
-      size: true,
-      isActive: true,
-      createdAt: true,
-      storagePath: true,
-      integrityStatus: true,
-      contentSha256: true,
-      contentByteLength: true,
-      detectedFormat: true,
-      integrityVerifiedAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const where = {
+    companyId: company.id,
+    NOT: { metadata: { contains: COMPANY_ASSET_PENDING_DELETE_MARKER } },
+  };
+  const [assets, total] = await prisma.$transaction([
+    prisma.companyAsset.findMany({
+      where,
+      select: {
+        id: true,
+        assetType: true,
+        originalFileName: true,
+        mimeType: true,
+        size: true,
+        isActive: true,
+        createdAt: true,
+        storagePath: true,
+        integrityStatus: true,
+        contentSha256: true,
+        contentByteLength: true,
+        detectedFormat: true,
+        integrityVerifiedAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.companyAsset.count({ where }),
+  ]);
 
   const ids = assets.map((asset) => asset.id);
   const inlineLengths = ids.length > 0
@@ -74,14 +100,20 @@ export async function GET(_req: Request) {
     : [];
   const inlineLengthById = Object.fromEntries(inlineLengths.map((asset) => [asset.id, asset.fileContentLength]));
 
-  return privateJson({ assets: assets.map((asset) => {
-    const { storagePath: privateStoragePath, ...publicAsset } = asset;
-    return {
-      ...publicAsset,
-      hasInlineFileContent: (inlineLengthById[asset.id] ?? 0) > 0,
-      hasPrivateStorage: Boolean(privateStoragePath?.trim()),
-    };
-  }) });
+  return privateJson({
+    assets: assets.map((asset) => {
+      const { storagePath: privateStoragePath, ...publicAsset } = asset;
+      return {
+        ...publicAsset,
+        hasInlineFileContent: (inlineLengthById[asset.id] ?? 0) > 0,
+        hasPrivateStorage: Boolean(privateStoragePath?.trim()),
+      };
+    }),
+    page,
+    limit,
+    total,
+    hasMore: page * limit < total,
+  });
 }
 
 export async function POST(req: Request) {

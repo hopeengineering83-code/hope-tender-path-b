@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 25) — Codex
+
+- **Mode:** continued SG-023 privacy/progressive-disclosure on Company assets. Found `/api/company/assets` still returned the full same-company asset collection without server pagination or an id tie-breaker, despite stripping storage paths from the public DTO.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata to be refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/api/company/assets/route.ts` now parses bounded `page`/`limit`, uses `take`/`skip`, counts total rows, adds an `id` deterministic ordering tie-breaker, and returns pagination metadata while continuing to keep `storagePath` server-side; `app/dashboard/company/page.tsx` requests `?limit=50`; `tests/company-documents-privacy-dto.test.ts` locks the asset pagination contract; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/tender-currency-no-default-current.test.ts tests/currency-authority-current.test.ts tests/matching-fail-closed-selection.test.ts tests/company-batch-review-rbac-current.test.ts tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (60/60); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; no merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** This closes an asset list pagination subgap only; full SG-023 still requires browser progressive-disclosure screenshots and stock PostgreSQL pagination/tenant tests.
+- **Next action:** run focused and repository checks, then refresh the draft PR metadata.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 24) — Codex
 
 - **Mode:** continued SG-023 privacy/progressive-disclosure on adjacent company evidence lists. Found `/api/company/compliance-records` and `/api/company/legal-records` still returned full same-company collections without server pagination or id tie-breakers.

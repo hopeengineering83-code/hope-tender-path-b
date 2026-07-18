@@ -127,6 +127,19 @@ describe("company documents public DTO privacy", () => {
     assert.match(page, /doc\.hasInlineFileContent && !doc\.hasPrivateStorage/);
   });
 
+
+  it("paginates asset list DTOs with deterministic ordering", () => {
+    assert.match(assetsRoute, /const DEFAULT_PAGE_SIZE = 50/);
+    assert.match(assetsRoute, /const MAX_PAGE_SIZE = 100/);
+    assert.match(assetsRoute, /function parseLimit\(value: string \| null\): number/);
+    assert.match(assetsRoute, /const where = \{[\s\S]*companyId: company\.id[\s\S]*COMPANY_ASSET_PENDING_DELETE_MARKER[\s\S]*\}/);
+    assert.match(assetsRoute, /orderBy: \[\{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+    assert.match(assetsRoute, /skip: \(page - 1\) \* limit/);
+    assert.match(assetsRoute, /take: limit/);
+    assert.match(assetsRoute, /hasMore: page \* limit < total/);
+    assert.match(page, /fetch\("\/api\/company\/assets\?limit=50"\)/);
+  });
+
   it("keeps asset storage paths server-side while exposing only storage booleans", () => {
     assert.match(assetsRoute, /select: \{[\s\S]*storagePath: true[\s\S]*\}/);
     assert.match(assetsRoute, /const \{ storagePath: privateStoragePath, \.\.\.publicAsset \} = asset/);

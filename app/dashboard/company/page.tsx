@@ -275,7 +275,7 @@ export default function CompanyPage() {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents").then(r=>r.json()),
-      fetch("/api/company/assets").then(r=>r.json()),
+      fetch("/api/company/assets?limit=50").then(r=>r.json()),
     ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
