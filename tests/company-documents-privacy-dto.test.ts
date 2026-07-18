@@ -125,6 +125,7 @@ describe("company documents public DTO privacy", () => {
     assert.doesNotMatch(page, /asset\.storagePath/);
     assert.match(page, /hasPrivateStorage\?: boolean \| null/);
     assert.match(page, /doc\.hasInlineFileContent && !doc\.hasPrivateStorage/);
+    assert.match(page, /fetch\("\/api\/company\/documents\?limit=50"\)/);
   });
 
 
