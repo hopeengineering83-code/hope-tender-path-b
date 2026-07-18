@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { clientLogger } from "@/lib/ui/client-logger";
 import {
   canonicalWorkflowFingerprint,
@@ -19,26 +20,30 @@ type WorkflowCenterPayload = {
  *
  * Every control center on the tender page reads a different bounded endpoint,
  * but all of them ultimately depend on the workflow-center's canonical
- * snapshot and decision. This component polls that contract and reloads the
- * complete tender workspace when canonical business state changes, so source,
- * analysis, matching, generation, review, readiness and final-package panels
- * cannot remain on different revisions after an action completes.
+ * snapshot and decision. This component polls that contract and refreshes the
+ * server-rendered tender workspace when canonical business state changes, so
+ * source, analysis, matching, generation, review, readiness and final-package
+ * panels cannot remain on different revisions after an action completes.
+ *
+ * App Router refresh is deliberately used instead of a full browser reload: it
+ * updates Server Components while preserving unrelated browser and client
+ * state. A visible refresh control is still offered while a form is being
+ * edited, so no background synchronization can overwrite unsaved input.
  */
 export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
   const [refreshAvailable, setRefreshAvailable] = useState(false);
   const baselineFingerprint = useRef<string | null>(null);
-  const reloading = useRef(false);
 
   const refreshAllCenters = useCallback(() => {
-    if (reloading.current) return;
     if (isUserEditingDocument()) {
       setRefreshAvailable(true);
       return;
     }
-    reloading.current = true;
-    window.location.reload();
-  }, []);
+    setRefreshAvailable(false);
+    router.refresh();
+  }, [router]);
 
   const loadCanonicalWorkflow = useCallback(async () => {
     try {
@@ -85,6 +90,11 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
     return () => window.clearInterval(interval);
   }, [loadCanonicalWorkflow]);
 
+  const applyDeferredRefresh = () => {
+    setRefreshAvailable(false);
+    router.refresh();
+  };
+
   if (refreshAvailable) {
     return (
       <div role="status" className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
@@ -97,7 +107,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
           </div>
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={applyDeferredRefresh}
             className="rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800"
           >
             Refresh all centers
@@ -119,7 +129,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
         </div>
         <button
           type="button"
-          onClick={() => window.location.reload()}
+          onClick={() => router.refresh()}
           className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
         >
           Refresh workflow truth
