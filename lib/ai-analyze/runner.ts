@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { logger } from "../observability";
 import { prisma } from "@/lib/prisma";
 import {
   createAnalysisJob,
@@ -84,7 +85,7 @@ export class AiAnalyzeRunner {
     } catch (error) {
       const category = toSafeAiFailureCategory(error);
       // We don't throw here to avoid 500ing the worker, but we log the safe category
-      console.error(`AI Chunk failed: ${category}`);
+      logger.error(`AI Chunk failed: ${category}`);
       throw error;
     }
   }

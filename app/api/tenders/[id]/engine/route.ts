@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logger } from "../../../../../lib/observability";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
@@ -139,7 +140,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   } catch (error) {
     const errorName = error instanceof Error ? error.constructor.name : typeof error;
-    console.error("Engine run failed:", { diagnosticId, errorName });
+    logger.error("Engine run failed:", { diagnosticId, errorName });
     const mapped = actionableEngineError(error);
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }

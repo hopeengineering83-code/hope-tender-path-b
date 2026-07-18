@@ -1,4 +1,5 @@
 // Central authoritative generation/export readiness gate.
+import { logger } from "../observability";
 //
 // THE single fail-closed authorization source for every path that can create a
 // GeneratedDocument, regenerate a section, run an AI proposal (interactive or
@@ -816,7 +817,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     // Fail closed — never let a thrown error read as authorization.
     // Log technical details server-side only; return only stable public-safe code.
     const detail = err instanceof Error ? err.message : "unknown error";
-    console.error("[generation-readiness-gate] GATE_INTERNAL_ERROR:", detail);
+    logger.error("[generation-readiness-gate] GATE_INTERNAL_ERROR", { detail });
     return { ok: false, blockerCode: "GATE_INTERNAL_ERROR", blockerDetail: "Readiness gate failed to evaluate. Check server logs for details.", purpose };
   }
 }

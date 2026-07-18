@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
@@ -73,15 +74,15 @@ export async function POST(req: Request) {
       // Restore DB-backed provider cooldowns before retry eligibility checks;
       // otherwise a cold-start worker can re-arm jobs using empty in-memory health.
       const healthRestore = await restoreHealthFromDbBounded(2_000);
-      if (healthRestore.warning) console.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
+      if (healthRestore.warning) logger.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
       const due = await findJobsDueForRetry(10);
       for (const job of due) {
         await rearmJobForRetry(job.jobId).catch((err: unknown) => {
-          console.error(`[run-next] Retry re-arm failed for job ${job.jobId}: ${err instanceof Error ? err.message : String(err)}`);
+          logger.error(`[run-next] Retry re-arm failed for job ${job.jobId}: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
     } catch (err) {
-      console.error(`[run-next] Retry due-job lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(`[run-next] Retry due-job lookup failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
           (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED")
         ) {
           await recordRetryStateForJob(claimed.id, result.terminalStatus).catch((err: unknown) => {
-            console.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
+            logger.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
           });
         }
         processedJobs.push({
@@ -159,7 +160,7 @@ export async function POST(req: Request) {
     } catch (error) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      logger.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
       await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
       processedJobs.push({
         jobId: claimed.id,
