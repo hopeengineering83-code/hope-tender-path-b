@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
 
 // This panel previously fetched /api/tenders/[id]/workflow-center and read
 // `json.plan` — a key that route has never returned in its consolidated form
@@ -36,33 +37,45 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
   const [summary, setSummary] = useState<PlanSummary | null>(null);
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    fetch(`/api/tenders/${tenderId}/submission-plan`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`submission-plan ${res.status}`);
-        return res.json();
-      })
-      .then((json: { summary?: PlanSummary }) => {
-        if (json.summary) setSummary(json.summary);
-        else setFailed(true);
-      })
-      .catch((e: unknown) => {
-        setFailed(true);
-        clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) });
+  const load = useCallback(async () => {
+    setFailed(false);
+    try {
+      const response = await fetch(`/api/tenders/${tenderId}/submission-plan`, {
+        cache: "no-store",
+        credentials: "include",
       });
+      const json = await response.json().catch(() => ({})) as { summary?: PlanSummary; error?: string };
+      if (!response.ok) throw new Error(json.error ?? `submission-plan ${response.status}`);
+      if (!json.summary) throw new Error("Submission plan response did not include a summary");
+      setSummary(json.summary);
+    } catch (error) {
+      setFailed(true);
+      clientLogger.error(
+        "submission plan truth fetch failed",
+        error instanceof Error ? { message: error.message } : { error: String(error) },
+      );
+    }
   }, [tenderId]);
+
+  useEffect(() => {
+    void load();
+    return subscribeTenderWorkflowSync(tenderId, () => {
+      void load();
+    });
+  }, [load, tenderId]);
 
   if (failed) {
     return (
       <div id="submission-plan" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
         <p className="text-sm text-red-700">Submission plan status could not be loaded.</p>
+        <button type="button" onClick={() => void load()} className="mt-2 text-xs font-medium text-red-700 underline">Retry</button>
       </div>
     );
   }
 
   if (!summary) {
     return (
-      <div id="submission-plan" className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div id="submission-plan" className="mt-4 rounded-xl border border-slate-200 bg-white p-4" aria-busy="true">
         <p className="text-sm text-slate-500">Loading submission plan status…</p>
       </div>
     );
@@ -76,8 +89,8 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
       </h3>
       <p className="mt-1 text-xs text-slate-600">{planReason(summary)}</p>
       <div className="mt-3 flex gap-4 text-[10px] font-bold uppercase">
-          <span className="text-slate-500">Required: {summary.totalRequired}</span>
-          <span className="text-slate-500">Generated: {summary.totalGenerated}</span>
+        <span className="text-slate-500">Required: {summary.totalRequired}</span>
+        <span className="text-slate-500">Generated: {summary.totalGenerated}</span>
       </div>
     </div>
   );
