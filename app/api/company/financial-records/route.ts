@@ -8,6 +8,23 @@ import { companyRecordRuntimeError } from "../../../../lib/company-record-route-
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedInt(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parsePage(value: string | null): number {
+  return parseBoundedInt(value, 1);
+}
+
+function parseLimit(value: string | null): number {
+  return Math.min(parseBoundedInt(value, DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
+}
+
 function str(value: unknown, max = 300): string {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -16,20 +33,29 @@ export async function GET(req: Request) {
   const requestId = extractRequestId(req);
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
     catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`co-financial-get:${actor.id}`, API_RATE_LIMIT);
     if (!rl.allowed) return NextResponse.json({ error: "Too many requests", code: "RATE_LIMITED" }, { status: 429 });
 
     await prismaReady;
+    const url = new URL(req.url);
+    const page = parsePage(url.searchParams.get("page"));
+    const limit = parseLimit(url.searchParams.get("limit"));
     const company = await ensureCompanyForUser(prisma, actor.id);
-    const records = await prisma.financialRecord.findMany({
-      where: { companyId: company.id },
-      select: { id: true, recordType: true, fiscalYear: true, currency: true, amount: true, createdAt: true },
-      orderBy: [{ fiscalYear: "desc" }, { createdAt: "desc" }],
-    });
-    return NextResponse.json({ ok: true, records });
+    const where = { companyId: company.id };
+    const [records, total] = await prisma.$transaction([
+      prisma.financialRecord.findMany({
+        where,
+        select: { id: true, recordType: true, fiscalYear: true, currency: true, amount: true, createdAt: true },
+        orderBy: [{ fiscalYear: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.financialRecord.count({ where }),
+    ]);
+    return NextResponse.json({ ok: true, records, page, limit, total, hasMore: page * limit < total });
   } catch (error) {
     return companyRecordRuntimeError({
       route: "company financial-records GET",
@@ -73,7 +99,7 @@ export async function POST(req: Request) {
         companyId: company.id,
         recordType,
         fiscalYear,
-        currency: body.currency ? str(body.currency, 10) : "USD",
+        currency: body.currency ? str(body.currency, 10) : null,
         amount,
         notes: body.notes ? str(body.notes, 1000) : null,
       },

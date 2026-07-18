@@ -1,7 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 
 function toJsonArray(value: unknown): string {
@@ -28,12 +28,13 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const expert = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });

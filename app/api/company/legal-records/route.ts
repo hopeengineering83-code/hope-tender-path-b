@@ -8,6 +8,23 @@ import { companyRecordRuntimeError } from "../../../../lib/company-record-route-
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedInt(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parsePage(value: string | null): number {
+  return parseBoundedInt(value, 1);
+}
+
+function parseLimit(value: string | null): number {
+  return Math.min(parseBoundedInt(value, DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
+}
+
 function str(value: unknown, max = 300): string {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -23,13 +40,22 @@ export async function GET(req: Request) {
     if (!rl.allowed) return NextResponse.json({ error: "Too many requests", code: "RATE_LIMITED" }, { status: 429 });
 
     await prismaReady;
+    const url = new URL(req.url);
+    const page = parsePage(url.searchParams.get("page"));
+    const limit = parseLimit(url.searchParams.get("limit"));
     const company = await ensureCompanyForUser(prisma, actor.id);
-    const records = await prisma.legalRecord.findMany({
-      where: { companyId: company.id },
+    const where = { companyId: company.id };
+    const [records, total] = await prisma.$transaction([
+      prisma.legalRecord.findMany({
+      where,
       select: { id: true, recordType: true, title: true, authority: true, referenceNumber: true, status: true, issueDate: true, expiryDate: true, createdAt: true },
-      orderBy: { createdAt: "desc" },
-    });
-    return NextResponse.json({ ok: true, records });
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+      prisma.legalRecord.count({ where }),
+    ]);
+    return NextResponse.json({ ok: true, records, page, limit, total, hasMore: page * limit < total });
   } catch (error) {
     return companyRecordRuntimeError({
       route: "company legal-records GET",

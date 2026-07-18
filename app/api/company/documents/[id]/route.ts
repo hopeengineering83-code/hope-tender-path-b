@@ -22,6 +22,12 @@ async function companyForUser(userId: string) {
   return prisma.company.findUnique({ where: { userId } });
 }
 
+function safeDocumentDownloadName(id: string, originalFileName: string): string {
+  const extensionMatch = originalFileName.match(/\.([a-zA-Z0-9]{1,12})$/);
+  const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : "";
+  return `company-document-${id.slice(0, 8)}${extension}`;
+}
+
 // maxDuration = 60 — extraction (especially OCR on scanned PDFs) can take
 // 30-40s. Without this, Vercel Hobby defaults to 10s and the route times out.
 export const maxDuration = 60;
@@ -52,7 +58,7 @@ export async function GET(
       fileContent: doc.fileContent,
       fileName: doc.originalFileName,
     });
-    const safeFileName = doc.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
+    const safeFileName = safeDocumentDownloadName(doc.id, doc.originalFileName);
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": doc.mimeType || "application/octet-stream",
@@ -153,7 +159,7 @@ export async function POST(
     action: "COMPANY_DOCUMENT_REEXTRACT",
     entityType: "CompanyDocument",
     entityId: id,
-    description: `Re-extracted "${doc.originalFileName}"`,
+    description: "Re-extracted company document",
     metadata: { companyId: company.id, fileName: doc.originalFileName, fileType, extracted: meaningful, knowledgeImport, knowledgeImportError },
   });
 
