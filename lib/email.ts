@@ -16,9 +16,9 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryRes
   const port = Number.parseInt(process.env.SMTP_PORT ?? "587", 10);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  const from = process.env.EMAIL_FROM ?? "noreply@hopetender.com";
+  const from = process.env.EMAIL_FROM;
 
-  if (!host || !user || !pass) {
+  if (!host || !user || !pass || !process.env.EMAIL_FROM) {
     if (process.env.NODE_ENV !== "production") {
       logger.warn("[email] SMTP is not configured; message was not delivered");
     }

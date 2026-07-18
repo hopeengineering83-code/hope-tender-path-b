@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 1) — Codex
+
+- **Mode:** continued the final screenshot root-gap closure branch after the prior matrix-only commit was insufficient. Implemented one concrete, non-overlapping runtime repair for SG-030 (durable storage/reset mail/recovery) rather than claiming full end-to-end completion.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; base remains requested as `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable in this container (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `lib/email.ts` now requires `EMAIL_FROM` alongside SMTP host/user/pass before reporting delivery and no longer synthesizes `noreply@hopetender.com`; `app/api/auth/forgot-password/route.ts` now uses honest anti-enumeration copy saying delivery must be configured instead of promising mail will be sent; `tests/password-reset-mail-configuration.test.ts` locks the behavior; `docs/audits/final-screenshot-gap-closure-matrix.md` updates SG-030 evidence without marking the broader storage/recovery gap complete; `operator_handoff.md` updated.
+- **Tests/checks actually run:** `npx tsx --test tests/password-reset-mail-configuration.test.ts tests/password-reset-safe-sql-current.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (14/14); `git diff --check` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** this follow-up fixes only the reset-mail false-claim/configuration subgap of SG-030. It does not complete the full master task, PostgreSQL behavioral suite, live PR #1175/#1190/#1157/#1128 inspection, or 210-screenshot artifact replacement.
+- **Next action:** continue implementing remaining `NEEDS_IMPLEMENTATION` rows with focused runtime fixes and PostgreSQL/browser proof in a GitHub-enabled environment; do not mark SG-030 complete until durable storage, reset-token DB behavior, recovery docs, and screenshots are all proven.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC — Codex
 
 - **Mode:** started the requested `MASTER TASK — Close Every Remaining Screenshot Gap in One New Controlled PR` on the requested single branch. Live GitHub inspection was blocked in this container: no Git remote is configured, `gh` is unavailable, and direct `git ls-remote https://github.com/hopeengineering83-code/hope-tender-path-b.git ...` failed with `CONNECT tunnel failed, response 403`. No live PR branch was modified.
