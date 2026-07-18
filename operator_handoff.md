@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 2) — Codex
+
+- **Mode:** continued fixing concrete, non-overlapping root gaps on `fix/final-screenshot-root-gap-closure`; implemented SG-028 activity-safety API/presentation hardening.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/api/audit/route.ts` now returns a minimized public DTO instead of raw audit rows: no `metadata`/`entityId` selection, opaque `audit_` display ids, bounded descriptions, sanitized entity type, capped page size (50), default limit (30), invalid pagination recovery, and deterministic `{createdAt desc, id desc}` ordering; `app/dashboard/activity/page.tsx` now consumes the minimized DTO shape; `tests/activity-safe-presentation.test.ts` locks the contract; `docs/audits/final-screenshot-gap-closure-matrix.md` updates SG-028 evidence without marking browser/DB proof complete; `operator_handoff.md` updated.
+- **Tests/checks actually run:** `npx tsx --test tests/activity-safe-presentation.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (13/13); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** this fixes the activity API public DTO/privacy/pagination subgap, but SG-028 still requires authorized/unauthorized PostgreSQL behavioral proof and browser screenshots before it can be fully closed. The overall master task remains incomplete.
+- **Next action:** continue with remaining `NEEDS_IMPLEMENTATION` rows, prioritizing non-overlapping API privacy/tenancy/evidence fixes that can be tested locally; run full PostgreSQL/E2E/210-screenshot proof when infrastructure is available.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 1) — Codex
 
 - **Mode:** continued the final screenshot root-gap closure branch after the prior matrix-only commit was insufficient. Implemented one concrete, non-overlapping runtime repair for SG-030 (durable storage/reset mail/recovery) rather than claiming full end-to-end completion.

@@ -2,8 +2,8 @@
 import { useState, useEffect } from "react";
 
 type Log = {
-  id: string; action: string; entityType: string | null; entityId: string | null;
-  description: string; metadata: string; createdAt: string;
+  id: string; action: string; entityType: string | null;
+  description: string; createdAt: string;
 };
 
 const ACTION_COLORS: Record<string, string> = {
