@@ -3,6 +3,7 @@ import {
   AlignmentType, Table, TableRow, TableCell, WidthType,
   BorderStyle, PageBreak, Header, Footer,
 } from "docx";
+import { logger } from "../observability";
 import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./transactional-generation-gate";
 import { prisma } from "../prisma";
@@ -334,7 +335,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           },
         }),
       );
-    } catch (err) { console.error(`[generate] failed for doc "${doc.name}"`, { errorName: err instanceof Error ? err.constructor.name : typeof err }); }
+    } catch (err) { logger.error(`[generate] failed for doc "${doc.name}"`, { errorName: err instanceof Error ? err.constructor.name : typeof err }); }
   }
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 }

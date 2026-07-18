@@ -1,4 +1,5 @@
 // Tender Metadata Override endpoint.
+import { logger } from "../../../../../lib/observability";
 //
 // GET: Return all TenderMetadataOverride rows for a tender.
 // POST: Upsert a TenderMetadataOverride for a specific field.
@@ -581,7 +582,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (ledgerErr) {
     // Ledger mutation failed — log but don't fail the override. The legacy
     // TenderMetadataOverride row is already written and is the fallback.
-    console.error("[metadata-override] ledger mutation failed (non-blocking):", ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr));
+    logger.error("[metadata-override] ledger mutation failed (non-blocking)", { detail: ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr) });
   }
 
   // ─── Post-override source-evidence enrichment (INFORMATIONAL ONLY) ────────
