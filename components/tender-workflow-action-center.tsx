@@ -48,23 +48,30 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
           // real section instead — stages 2, 4, 6, 7, and 9 were missing
           // from this map entirely, so their "action" buttons rendered but
           // silently did nothing when clicked (no scroll, no request).
-          const targets: Record<number, string> = {
-              1: "#tender-files",
-              2: "#extraction-quality",
-              3: "#ai-analyze-section",
-              4: "#requirement-coverage",
-              5: "#tender-edit-form",
-              6: "#submission-plan-reconciliation",
-              7: "#match-evidence",
-              8: "#generated-documents",
-              9: "#authority-review",
-              10: "#export-readiness"
+          //
+          // Stage 4 prefers the precise requirement-coverage panel. That
+          // component intentionally has conditional loading/error/empty
+          // render branches, so the anchor may be temporarily absent. In
+          // those states, fall back to the always-rendered AI analysis
+          // section in the same workflow stage rather than leaving the
+          // Review Requirements action as a silent no-op.
+          const targets: Record<number, string[]> = {
+              1: ["#tender-files"],
+              2: ["#extraction-quality"],
+              3: ["#ai-analyze-section"],
+              4: ["#requirement-coverage", "#ai-analyze-section"],
+              5: ["#tender-edit-form"],
+              6: ["#submission-plan-reconciliation"],
+              7: ["#match-evidence"],
+              8: ["#generated-documents"],
+              9: ["#authority-review"],
+              10: ["#export-readiness"]
           };
-          const target = targets[s.stage];
-          if (target) {
-              const el = document.querySelector(target);
-              if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }
+          const selectors = targets[s.stage] ?? [];
+          const el = selectors
+              .map((selector) => document.querySelector(selector))
+              .find((candidate): candidate is Element => candidate !== null);
+          if (el) el.scrollIntoView({ behavior: "smooth" });
       }
   };
 
