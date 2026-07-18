@@ -6,6 +6,8 @@ import path from "node:path";
 const baseUrl = (process.env.SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 const email = process.env.SCREENSHOT_TEST_EMAIL || "";
 const password = process.env.SCREENSHOT_TEST_PASSWORD || "";
+const evidenceMode = process.env.SCREENSHOT_EVIDENCE_MODE || "unspecified";
+const sourceSha = process.env.SCREENSHOT_SOURCE_SHA || process.env.GITHUB_SHA || "unknown";
 const outputRoot = path.resolve("artifacts/app-screenshots");
 
 if (!baseUrl) throw new Error("SCREENSHOT_BASE_URL is required");
@@ -69,6 +71,15 @@ function shortMessage(value, limit = 500) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
+function benignFailedRequest(url, failure) {
+  try {
+    const parsed = new URL(url);
+    return failure.includes("net::ERR_ABORTED") && parsed.searchParams.has("_rsc");
+  } catch {
+    return false;
+  }
+}
+
 async function settle(page) {
   await page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
@@ -99,6 +110,19 @@ async function inspectLayout(page) {
       const box = element.getBoundingClientRect();
       return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0 && box.width > 1 && box.height > 1;
     };
+    const describe = (element) => {
+      const box = element.getBoundingClientRect();
+      const className = element instanceof HTMLElement && typeof element.className === "string" ? element.className : "";
+      return {
+        tag: element.tagName.toLowerCase(),
+        id: element.id || null,
+        className: className.slice(0, 240),
+        text: (element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim().replace(/\s+/g, " ").slice(0, 180),
+        left: Math.round(box.left),
+        right: Math.round(box.right),
+        width: Math.round(box.width),
+      };
+    };
 
     const root = document.documentElement;
     const body = document.body;
@@ -111,6 +135,21 @@ async function inspectLayout(page) {
         element.matches('button[type="submit"], input[type="submit"]') ||
         /bg-(?:slate-9|blue-6|blue-7|green-6|emerald-6|black)/.test(String(classes));
     });
+    const overflowElements = Array.from(document.querySelectorAll("body *"))
+      .filter(visible)
+      .filter((element) => {
+        const box = element.getBoundingClientRect();
+        return box.right > viewportWidth + 4 || box.left < -4;
+      })
+      .sort((a, b) => {
+        const aBox = a.getBoundingClientRect();
+        const bBox = b.getBoundingClientRect();
+        const aOverflow = Math.max(0, aBox.right - viewportWidth, -aBox.left);
+        const bOverflow = Math.max(0, bBox.right - viewportWidth, -bBox.left);
+        return bOverflow - aOverflow;
+      })
+      .slice(0, 20)
+      .map(describe);
 
     const labels = primaryActions.slice(0, 12).map((element) => {
       if (element instanceof HTMLInputElement) return (element.value || element.getAttribute("aria-label") || "").trim();
@@ -122,6 +161,7 @@ async function inspectLayout(page) {
       scrollWidth,
       horizontalOverflow: scrollWidth > viewportWidth + 4,
       overflowPixels: Math.max(0, scrollWidth - viewportWidth),
+      overflowElements,
       visibleActionCount: actions.length,
       primaryActionCount: primaryActions.length,
       primaryActionLabels: labels,
@@ -131,6 +171,7 @@ async function inspectLayout(page) {
     scrollWidth: null,
     horizontalOverflow: false,
     overflowPixels: 0,
+    overflowElements: [],
     visibleActionCount: null,
     primaryActionCount: null,
     primaryActionLabels: [],
@@ -168,7 +209,7 @@ async function captureRoute(page, viewportName, route, records, runtime) {
   });
 
   const links = await page.locator("a[href]").evaluateAll((anchors) => anchors.map((anchor) => anchor.getAttribute("href") || "")).catch(() => []);
-  const record = {
+  records.push({
     viewport: viewportName,
     requestedRoute: route,
     finalPath,
@@ -182,8 +223,7 @@ async function captureRoute(page, viewportName, route, records, runtime) {
     consoleErrors: [...runtime.consoleErrors],
     pageErrors: [...runtime.pageErrors],
     failedRequests: [...runtime.failedRequests],
-  };
-  records.push(record);
+  });
   return links;
 }
 
@@ -205,7 +245,7 @@ async function captureViewport(browser, viewport) {
   page.on("pageerror", (err) => runtime.pageErrors.push(shortMessage(err instanceof Error ? err.message : err)));
   page.on("requestfailed", (request) => {
     const failure = request.failure()?.errorText || "request failed";
-    runtime.failedRequests.push(shortMessage(`${request.method()} ${request.url()} — ${failure}`));
+    if (!benignFailedRequest(request.url(), failure)) runtime.failedRequests.push(shortMessage(`${request.method()} ${request.url()} — ${failure}`));
   });
 
   const records = [];
@@ -273,6 +313,8 @@ const warningFindings = allRecords.filter((record) =>
 const summary = {
   generatedAt: new Date().toISOString(),
   baseUrl,
+  evidenceMode,
+  sourceSha,
   totalScreenshots: allRecords.length,
   routeCountByViewport: Object.fromEntries(viewports.map((viewport) => [viewport.name, allRecords.filter((record) => record.viewport === viewport.name).length])),
   viewports,
@@ -287,6 +329,8 @@ await fs.writeFile(path.join(outputRoot, "index.json"), JSON.stringify(summary, 
 await fs.writeFile(path.join(outputRoot, "audit-summary.json"), JSON.stringify({
   generatedAt: summary.generatedAt,
   baseUrl,
+  evidenceMode,
+  sourceSha,
   counts: summary.findingCounts,
   critical: criticalFindings,
   horizontalOverflow: overflowFindings,
@@ -301,9 +345,10 @@ const rows = allRecords.map((record) => {
     record.consoleErrors.length ? `console errors: ${record.consoleErrors.length}` : "",
     record.failedRequests.length ? `failed requests: ${record.failedRequests.length}` : "",
   ].filter(Boolean).join("; ");
-  return `<tr><td>${escapeHtml(record.viewport)}</td><td><code>${escapeHtml(record.requestedRoute)}</code></td><td><code>${escapeHtml(record.finalPath)}</code></td><td>${escapeHtml(record.status)}</td><td>${escapeHtml(result)}</td><td>${escapeHtml(record.visibleActionCount)}</td><td>${escapeHtml(record.primaryActionLabels.join(" | "))}</td><td>${escapeHtml(browserSignals)}</td><td><a href="${escapeHtml(record.screenshot)}">${escapeHtml(record.screenshot)}</a></td><td>${escapeHtml(record.error)}</td></tr>`;
+  const offenders = record.overflowElements.map((element) => `${element.tag}${element.id ? `#${element.id}` : ""} [${element.left},${element.right}] ${element.text}`).join(" | ");
+  return `<tr><td>${escapeHtml(record.viewport)}</td><td><code>${escapeHtml(record.requestedRoute)}</code></td><td><code>${escapeHtml(record.finalPath)}</code></td><td>${escapeHtml(record.status)}</td><td>${escapeHtml(result)}</td><td>${escapeHtml(record.visibleActionCount)}</td><td>${escapeHtml(record.primaryActionLabels.join(" | "))}</td><td>${escapeHtml(browserSignals)}</td><td>${escapeHtml(offenders)}</td><td><a href="${escapeHtml(record.screenshot)}">${escapeHtml(record.screenshot)}</a></td><td>${escapeHtml(record.error)}</td></tr>`;
 }).join("\n");
-await fs.writeFile(path.join(outputRoot, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Hope Tender Screenshot Index</title><style>body{font:14px system-ui;margin:24px;color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}th{background:#f1f5f9}code{font-size:12px}</style></head><body><h1>Hope Tender App Screenshot Index</h1><p>Generated ${summary.generatedAt}. Total screenshots: ${summary.totalScreenshots}. Critical: ${criticalFindings.length}. Overflow: ${overflowFindings.length}. Warnings: ${warningFindings.length}.</p><table><thead><tr><th>Viewport</th><th>Requested route</th><th>Final route</th><th>HTTP</th><th>Result</th><th>Visible actions</th><th>Primary actions</th><th>Browser signals</th><th>Screenshot</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
+await fs.writeFile(path.join(outputRoot, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Hope Tender Screenshot Index</title><style>body{font:14px system-ui;margin:24px;color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}th{background:#f1f5f9}code{font-size:12px}</style></head><body><h1>Hope Tender App Screenshot Index</h1><p>Mode: ${escapeHtml(evidenceMode)}. Source SHA: ${escapeHtml(sourceSha)}. Generated ${summary.generatedAt}. Total screenshots: ${summary.totalScreenshots}. Critical: ${criticalFindings.length}. Overflow: ${overflowFindings.length}. Warnings: ${warningFindings.length}.</p><table><thead><tr><th>Viewport</th><th>Requested route</th><th>Final route</th><th>HTTP</th><th>Result</th><th>Visible actions</th><th>Primary actions</th><th>Browser signals</th><th>Overflow offenders</th><th>Screenshot</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
 
 const filesForManifest = (await listFiles(outputRoot)).filter((file) => !file.endsWith("sha256-manifest.txt")).sort();
 const manifestLines = [];
