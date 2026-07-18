@@ -40,6 +40,7 @@ import { AuthorityReviewPanel } from "../../../../components/authority-review-pa
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
+import { TenderWorkflowStateWrapper } from "../../../../components/tender-workflow-state-wrapper";
 // ClientSubmissionDetailsPanel removed from normal workflow — was a duplicate
 // of TenderIntakeDetailPanel. Kept available for Final Submission Check /
 // admin diagnostics via its component file.
@@ -177,6 +178,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const confirmedPlanItems = confirmedPlanForSnapshot.ok ? confirmedPlanForSnapshot.items : null;
 
   return (
+    <TenderWorkflowStateWrapper tenderId={tender.id}>
     <main className="space-y-5" aria-label="Tender workflow workspace">
       <ClientEntityWarningBanner tender={{
         id: tender.id,
@@ -203,10 +205,23 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
 
+      {/* Cross-panel navigation: quick-jump links between workflow stages */}
       <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        Work from Stage 1 through Stage 5. Each major action appears once and uses the canonical server-side readiness gates.
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">Workflow:</span>
+          <a href="#stage-1" className="rounded px-2 py-0.5 text-blue-700 hover:bg-blue-100">1. Intake</a>
+          <span className="text-blue-300">→</span>
+          <a href="#stage-2" className="rounded px-2 py-0.5 text-blue-700 hover:bg-blue-100">2. Analysis</a>
+          <span className="text-blue-300">→</span>
+          <a href="#stage-3" className="rounded px-2 py-0.5 text-blue-700 hover:bg-blue-100">3. Evidence</a>
+          <span className="text-blue-300">→</span>
+          <a href="#stage-4" className="rounded px-2 py-0.5 text-blue-700 hover:bg-blue-100">4. Generation</a>
+          <span className="text-blue-300">→</span>
+          <a href="#stage-5" className="rounded px-2 py-0.5 text-blue-700 hover:bg-blue-100">5. Package</a>
+        </div>
       </nav>
 
+      <div id="stage-1">
       <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
@@ -214,7 +229,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderIntakeDetailPanel tender={tenderForUi} />
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
+      </div>
 
+      <div id="stage-2">
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
         <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
         <AIHealthPanel />
@@ -232,7 +249,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
         {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
       </WorkflowStage>
+      </div>
 
+      <div id="stage-3">
       <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
         <MatchingQualityPanel tenderId={tender.id} />
         <ProposalEvidenceReadinessPanel tenderId={tender.id} />
@@ -240,7 +259,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <VaultEvidenceSearchPanel tenderId={tender.id} />
         <ComplianceHeatmapPanel tenderId={tender.id} />
       </WorkflowStage>
+      </div>
 
+      <div id="stage-4">
       <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
         <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
@@ -251,7 +272,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <DocumentValidatorPanel tenderId={tender.id} />
         <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
       </WorkflowStage>
+      </div>
 
+      <div id="stage-5">
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
         <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
@@ -259,7 +282,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
+      </div>
       <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
     </main>
+    </TenderWorkflowStateWrapper>
   );
 }
