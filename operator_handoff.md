@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 5) — Codex
+
+- **Mode:** continued SG-030 end-to-end by wiring System Readiness to the same email delivery configuration authority and adding behavior-level config tests, not only source-string checks.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `lib/system-readiness.ts` now imports and uses `isEmailDeliveryConfigured()` so operational readiness and actual reset-mail delivery share the same SMTP/EMAIL_FROM/port authority; `tests/password-reset-mail-configuration.test.ts` now imports `lib/email` and behavior-tests missing `EMAIL_FROM` -> `NOT_CONFIGURED`, invalid SMTP port rejection, and trimmed valid config; `docs/audits/final-screenshot-gap-closure-matrix.md` updates SG-030 evidence; `operator_handoff.md` updated.
+- **Tests/checks actually run:** `npx tsx --test tests/password-reset-mail-configuration.test.ts tests/activity-safe-presentation.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (20/20); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** SG-030 reset-mail configuration is now shared and behavior-tested, but the broader SG-030 still needs reset-token PostgreSQL behavior, durable storage, recovery docs, and screenshots before full closure.
+- **Next action:** continue only one remaining matrix row/subgap at a time, preferring behavior-level tests over source-string checks where possible.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 4) — Codex
 
 - **Mode:** continued the already-started SG-030 reset-mail gap and addressed an implementation-rule issue: `nodemailer` was previously loaded from inside the delivery `try` block.
