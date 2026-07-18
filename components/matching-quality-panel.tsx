@@ -28,10 +28,7 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
   // vault has reviewed evidence ready but engine hasn't been run on this
   // tender. Without these counts the panel hard-deducted -35-35 → 30/100
   // POOR while the Bid Control Verdict (which DID pass vault counts via
-  // getTenderGenerationReadiness) showed 64/100 WARNING. PR #371 fixed
-  // the dedicated API route but missed this server-component path which
-  // calls assessMatchingQuality directly — that's why the May 16
-  // screenshot still showed 30/100 in the panel even after the route fix.
+  // getTenderGenerationReadiness) showed 64/100 WARNING.
   const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const quality = assessMatchingQuality({
     requirements: tender.requirements,
@@ -41,13 +38,6 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
 
-  // ─── State-aware panel UX ─────────────────────────────────────────
-  // Pre-fix the panel used a binary `ready = severity !== "POOR"`
-  // headline, which conflated 5 meaningfully different matching states.
-  // The screenshot showed "Matches appear usable" for a tender where
-  // matches DIDN'T exist yet (state = VAULT_AWAITS_ENGINE) — misleading.
-  // Now the panel renders the right headline, colour, and action for
-  // each of the 5 states emitted by the matching state machine.
   type PanelStyle = { color: "green" | "amber" | "red"; title: string };
   const panelStyle: PanelStyle = (() => {
     switch (quality.state) {
@@ -80,37 +70,42 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
       : "text-red-700";
 
   return (
-    <section id="matching-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionCls}`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${labelCls}`}>Matching quality</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{panelStyle.title}</h2>
-          <p className="mt-1 text-sm text-slate-600">Checks selected and reviewed expert/project matches before proposal generation.</p>
+    // `#match-evidence` is the canonical Stage-7 workflow shortcut target.
+    // Keep the historical `#matching-quality` id on the inner section because
+    // other readiness panels and the command-center page still link to it.
+    <div id="match-evidence" className="scroll-mt-24">
+      <section id="matching-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionCls}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide ${labelCls}`}>Matching quality</p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">{panelStyle.title}</h2>
+            <p className="mt-1 text-sm text-slate-600">Checks selected and reviewed expert/project matches before proposal generation.</p>
+          </div>
         </div>
-      </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Score</p><p className="text-xl font-bold text-slate-900">{quality.score}/100</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Expert matches</p><p className="text-xl font-bold text-slate-900">{quality.expertMatches}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Project matches</p><p className="text-xl font-bold text-slate-900">{quality.projectMatches}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Selected experts</p><p className="text-xl font-bold text-slate-900">{quality.selectedExperts}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Selected projects</p><p className="text-xl font-bold text-slate-900">{quality.selectedProjects}</p></div>
-      </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Score</p><p className="text-xl font-bold text-slate-900">{quality.score}/100</p></div>
+          <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Expert matches</p><p className="text-xl font-bold text-slate-900">{quality.expertMatches}</p></div>
+          <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Project matches</p><p className="text-xl font-bold text-slate-900">{quality.projectMatches}</p></div>
+          <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Selected experts</p><p className="text-xl font-bold text-slate-900">{quality.selectedExperts}</p></div>
+          <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Selected projects</p><p className="text-xl font-bold text-slate-900">{quality.selectedProjects}</p></div>
+        </div>
 
-      {quality.warnings.length > 0 && (
-        <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-slate-700">
-          {quality.warnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
-        </ul>
-      )}
-
-      {quality.recommendations.length > 0 && panelStyle.color !== "green" && (
-        <div className="mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended actions</p>
-          <ul className="list-disc space-y-1 pl-4 text-sm text-slate-700">
-            {quality.recommendations.slice(0, 4).map((rec) => <li key={rec}>{rec}</li>)}
+        {quality.warnings.length > 0 && (
+          <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-slate-700">
+            {quality.warnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
           </ul>
-        </div>
-      )}
-    </section>
+        )}
+
+        {quality.recommendations.length > 0 && panelStyle.color !== "green" && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended actions</p>
+            <ul className="list-disc space-y-1 pl-4 text-sm text-slate-700">
+              {quality.recommendations.slice(0, 4).map((rec) => <li key={rec}>{rec}</li>)}
+            </ul>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

@@ -17,7 +17,8 @@ describe("Workflow Control Center requirement-action anchor fallback", () => {
   it("selects the first attached target instead of silently doing nothing", () => {
     assert.match(actionCenter, /\.map\(\(selector\)\s*=>\s*document\.querySelector\(selector\)\)/);
     assert.match(actionCenter, /\.find\(\(candidate\): candidate is Element => candidate !== null\)/);
-    assert.match(actionCenter, /if \(el\) el\.scrollIntoView/);
+    assert.match(actionCenter, /(?:el|element)\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+    assert.match(actionCenter, /could not find its target panel/);
   });
 
   it("the fallback anchor is rendered unconditionally by AIAnalyzePanel", () => {

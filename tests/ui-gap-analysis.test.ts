@@ -20,16 +20,16 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
   });
 
   describe("Gap 2 — TenderWorkflowActionCenter anchors are valid", () => {
-    // The targets map became an array-per-stage (fallback support for
-    // stage 4's conditional anchor) — same anchors, new shape.
+    // The targets map supports ordered fallbacks while keeping the first item
+    // as the canonical owning panel for each workflow stage.
     it("stage 1 targets #tender-files (not #tender-source-files)", () => {
       const src = read("components/tender-workflow-action-center.tsx");
       assert.match(src, /1:\s*\["#tender-files"\]/);
       assert.ok(!src.includes("#tender-source-files"), "must not reference #tender-source-files");
     });
-    it("stage 10 targets #export-readiness (not #export-section)", () => {
+    it("stage 10 primarily targets #export-readiness and may fall back to the final manifest", () => {
       const src = read("components/tender-workflow-action-center.tsx");
-      assert.match(src, /10:\s*\["#export-readiness"\]/);
+      assert.match(src, /10:\s*\["#export-readiness"(?:,\s*"#final-package-manifest")?\]/);
       assert.ok(!src.includes("#export-section"), "must not reference #export-section");
     });
   });
@@ -84,40 +84,33 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
   });
 
   describe("Gap 7 — TenderWorkflowActionCenter's StatusBadge handles every canonical stage state", () => {
-    // The canonical decision engine (lib/engine/canonical-workflow-decision.ts)
-    // legitimately produces 6 stage-state strings: READY, BLOCKED,
-    // BLOCKED_BY_PRIOR_STEP, WAITING_ON_PRIOR_STEP, COMPLETE, IN_PROGRESS. The
-    // workflow-center route passes these straight through (stageStatusFromCanonical
-    // does NOT normalize). Previously StatusBadge only had cases for
-    // READY/IN_PROGRESS/WARNING/BLOCKED, so COMPLETE, BLOCKED_BY_PRIOR_STEP, and
-    // WAITING_ON_PRIOR_STEP all silently rendered as the generic "Pending" default —
-    // making a tender that was fully complete on every other panel (e.g. the Tender
-    // Health Score) look untouched in the Workflow Control Center.
+    // The canonical decision engine legitimately produces these states. The
+    // control center must never collapse them into the generic Pending badge.
     const src = read("components/tender-workflow-action-center.tsx");
 
-    it("WorkflowStageInfo['status'] type includes all 6 canonical states", () => {
+    it("WorkflowStageInfo['status'] type includes all canonical states", () => {
       assert.match(src, /"COMPLETE"/);
       assert.match(src, /"BLOCKED_BY_PRIOR_STEP"/);
       assert.match(src, /"WAITING_ON_PRIOR_STEP"/);
     });
 
-    it("StatusBadge has an explicit case for COMPLETE (not the Pending default)", () => {
+    it("StatusBadge has an explicit case for COMPLETE", () => {
       assert.match(src, /case "COMPLETE":/);
     });
 
-    it("StatusBadge has an explicit case for BLOCKED_BY_PRIOR_STEP (not the Pending default)", () => {
+    it("StatusBadge has an explicit case for BLOCKED_BY_PRIOR_STEP", () => {
       assert.match(src, /case "BLOCKED_BY_PRIOR_STEP":/);
     });
 
-    it("StatusBadge has an explicit case for WAITING_ON_PRIOR_STEP (not the Pending default)", () => {
+    it("StatusBadge has an explicit case for WAITING_ON_PRIOR_STEP", () => {
       assert.match(src, /case "WAITING_ON_PRIOR_STEP":/);
     });
 
     it("each new case renders a label distinct from the generic Pending badge", () => {
       const caseBlock = (state: string) => {
-        const m = src.match(new RegExp(`case "${state}":[\\s\\S]*?;`));
-        assert.ok(m, `expected a case block for ${state}`);
-        return m![0];
+        const match = src.match(new RegExp(`case "${state}":[\\s\\S]*?;`));
+        assert.ok(match, `expected a case block for ${state}`);
+        return match[0];
       };
       assert.ok(!caseBlock("COMPLETE").includes(">Pending<"));
       assert.ok(!caseBlock("BLOCKED_BY_PRIOR_STEP").includes(">Pending<"));
