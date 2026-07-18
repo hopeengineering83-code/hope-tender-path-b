@@ -1,0 +1,66 @@
+name: Temporary app screenshot capture
+
+on:
+  pull_request:
+    branches: [integration/controlled-recovery]
+    paths:
+      - "scripts/capture-production-pages.mjs"
+      - ".github/workflows/temporary-app-screenshot-capture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-screenshot-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SCREENSHOT_BASE_URL: https://hope-tender-path-b.vercel.app
+      SCREENSHOT_TEST_EMAIL: ${{ secrets.SCREENSHOT_TEST_EMAIL }}
+      SCREENSHOT_TEST_PASSWORD: ${{ secrets.SCREENSHOT_TEST_PASSWORD }}
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify screenshot credentials exist
+        shell: bash
+        run: |
+          test -n "$SCREENSHOT_TEST_EMAIL"
+          test -n "$SCREENSHOT_TEST_PASSWORD"
+
+      - name: Capture and audit all reachable app pages
+        id: capture
+        continue-on-error: true
+        run: node scripts/capture-production-pages.mjs
+
+      - name: Upload indexed screenshot package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hope-tender-app-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/app-screenshots
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce screenshot audit result
+        if: steps.capture.outcome == 'failure'
+        run: |
+          echo "Screenshot audit found critical route or horizontal-overflow defects. Download the artifact and repair the indexed findings."
+          exit 1
