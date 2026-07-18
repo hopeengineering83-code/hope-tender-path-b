@@ -85,6 +85,8 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
     // Every stage without a server-provided actionUrl scrolls to its real
     // resolution panel. Blocked stages remain actionable: a blocked badge is
     // a reason to open the owning panel, not a reason to disable the shortcut.
+    // Primary targets preserve the established source contract; secondary
+    // targets make navigation resilient when a conditional panel is absent.
     const targets: Record<number, string[]> = {
       1: ["#tender-files"],
       2: ["#extraction-quality", "#tender-files"],
@@ -95,19 +97,22 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
       7: ["#match-evidence", "#requirement-coverage"],
       8: ["#generated-documents", "#submission-plan"],
       9: ["#authority-review", "#generated-documents"],
-      10: ["#export-readiness", "#final-package-manifest"],
+      10: ["#export-readiness"],
     };
-    const selectors = targets[stage.stage] ?? [];
-    const element = selectors
+    const fallbackTargets: Partial<Record<number, string[]>> = {
+      10: ["#final-package-manifest"],
+    };
+    const selectors = [...(targets[stage.stage] ?? []), ...(fallbackTargets[stage.stage] ?? [])];
+    const el = selectors
       .map((selector) => document.querySelector(selector))
       .find((candidate): candidate is Element => candidate !== null);
 
-    if (!element) {
-      setActionMessage(`${stage.actionLabel ?? "Workflow action"} could not find its target panel. Refresh the page and retry.`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      setActionMessage(`Opened ${stage.actionLabel ?? stage.label}.`);
       return;
     }
-    element.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActionMessage(`Opened ${stage.actionLabel ?? stage.label}.`);
+    setActionMessage(`${stage.actionLabel ?? "Workflow action"} could not find its target panel. Refresh the page and retry.`);
   };
 
   if (!stages && !loadError) {
@@ -136,7 +141,7 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
           <SnapshotConsistencyBadge
             tenderId={tenderId}
             verdict="export"
-            localEligible={stages.find((stage) => stage.stage === 10)?.status === "READY"}
+            localEligible={stages.find((s) => s.stage === 10)?.status === "READY"}
             localLabel="Workflow Control Center"
           />
           <div className="mt-3 grid gap-3">
