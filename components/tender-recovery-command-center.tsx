@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
 import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -544,6 +545,20 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             <ChevronDownIcon className={`transition-transform ${expanded ? "rotate-180" : ""}`} /> {expanded ? "Collapse" : "Details"}
           </button>
         </div>
+      </div>
+
+      {/* Recovery Command Center computes its own verdict via a separate
+          orchestrator (tender-lifecycle-orchestrator.ts) rather than the
+          shared release snapshot the other readiness panels compare
+          against — this additive badge makes any resulting disagreement
+          visible instead of leaving it silent. */}
+      <div className="px-5 pt-3">
+        <SnapshotConsistencyBadge
+          tenderId={tenderId}
+          verdict="finalZip"
+          localEligible={data.finalSubmissionStatus === "READY"}
+          localLabel="Recovery Command Center"
+        />
       </div>
 
       {/* Primary Next Action */}

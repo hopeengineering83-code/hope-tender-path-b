@@ -57,6 +57,15 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
       "components/bid-control-verdict-panel.tsx",
       "components/tender-health-score-panel.tsx",
       "app/dashboard/tenders/[id]/executive-snapshot.tsx",
+      // Recovery Command Center and Workflow Control Center each compute
+      // their verdict via their own separate orchestrator (respectively
+      // tender-lifecycle-orchestrator.ts's computeTenderLifecycle, and
+      // getCanonicalTenderWorkflowDecision) rather than the shared release
+      // snapshot the panels above compare against — without the overlay a
+      // real disagreement between either of them and the snapshot would be
+      // completely invisible in the UI.
+      "components/tender-recovery-command-center.tsx",
+      "components/tender-workflow-action-center.tsx",
     ]) {
       const src = read(panel);
       assert.ok(
@@ -64,6 +73,22 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
         `${panel} must mount the additive SnapshotConsistencyBadge overlay`,
       );
     }
+  });
+
+  it("recovery-command-center compares its own final-submission verdict to the snapshot", () => {
+    const recovery = read("components/tender-recovery-command-center.tsx");
+    assert.ok(
+      recovery.includes('verdict="finalZip"') && recovery.includes('localEligible={data.finalSubmissionStatus === "READY"}'),
+      "tender-recovery-command-center must pass its own finalSubmissionStatus-derived verdict so a disagreement with the snapshot is surfaced",
+    );
+  });
+
+  it("workflow-control-center compares its own Export ZIP stage status to the snapshot", () => {
+    const workflow = read("components/tender-workflow-action-center.tsx");
+    assert.ok(
+      workflow.includes('verdict="finalZip"') && workflow.includes('stages.find((s) => s.stage === 10)?.status === "READY"'),
+      "tender-workflow-action-center must pass its own Export ZIP stage verdict so a disagreement with the snapshot is surfaced",
+    );
   });
 
   it("bid-control-verdict-panel compares its strict full-proposal verdict to the snapshot", () => {
