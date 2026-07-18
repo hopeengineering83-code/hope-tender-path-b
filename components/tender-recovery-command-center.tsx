@@ -19,7 +19,12 @@ type LifecycleState =
   | "EXPORT_READINESS_BLOCKED" | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
 
 type BlockedAction = { action: string; reason: string };
-type Blocker = { code: string; message: string; action: string };
+// buildPublicReadinessEnvelope (lib/engine/public-readiness-envelope.ts)
+// normalizes every blocker's recommended action to `nextAction` before this
+// route's response is built — the orchestrator's own internal `action` field
+// never reaches the client. Reading `.action` here always returned
+// `undefined`, rendering "Action: " with nothing after it.
+type Blocker = { code: string; message: string; nextAction: string };
 type Warning = { code: string; message: string };
 
 type LifecycleResult = {
@@ -605,7 +610,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             {data.blockers.map((b) => (
               <li key={b.code} className="rounded border border-red-200 bg-red-50 px-3 py-1.5">
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
-                <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
+                <p className="mt-0.5 text-xs text-red-600">Action: {b.nextAction}</p>
                 {/* Quick-action shortcuts for specific blocker codes */}
                 {/* METADATA_INCOMPLETE quick-actions removed — metadata is advisory only */}
                 {canMutate && b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
