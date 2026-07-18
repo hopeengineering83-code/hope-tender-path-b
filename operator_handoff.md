@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 4) — Codex
+
+- **Mode:** continued the already-started SG-030 reset-mail gap and addressed an implementation-rule issue: `nodemailer` was previously loaded from inside the delivery `try` block.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `lib/email.ts` now imports `nodemailer` at module scope, exposes `getEmailDeliveryConfig()` / `isEmailDeliveryConfigured()`, trims SMTP fields, rejects invalid/missing `EMAIL_FROM` or invalid ports before attempting delivery, and keeps provider failures sanitized; `tests/password-reset-mail-configuration.test.ts` now asserts no `require("nodemailer")`, no import/require inside the delivery try block, and the deterministic config helper; `docs/audits/final-screenshot-gap-closure-matrix.md` updates SG-030 evidence; `operator_handoff.md` updated.
+- **Tests/checks actually run:** `npx tsx --test tests/password-reset-mail-configuration.test.ts tests/activity-safe-presentation.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (17/17); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** SG-030 reset-mail config/import subgap is now stronger, but SG-030 still requires reset-token PostgreSQL behavior, durable storage, recovery docs, and screenshots before full closure. The full master task remains incomplete.
+- **Next action:** continue remaining matrix rows one gap at a time, finishing each gap’s implementation/test/matrix/handoff/PR evidence before moving on.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 3) — Codex
 
 - **Mode:** responded to the instruction to score work against the master prompt and finish started gaps end-to-end. Scored the current branch before this follow-up as roughly 8-10% of the full master prompt, with SG-028/SG-030 only partially closed. Continued SG-028 instead of starting a new gap.

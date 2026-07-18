@@ -11,12 +11,22 @@ const systemReadinessSource = read("lib/system-readiness.ts");
 describe("password reset mail configuration truth", () => {
   it("does not synthesize a default sender for password-reset delivery", () => {
     assert.doesNotMatch(emailSource, /noreply@hopetender\.com/);
-    assert.match(emailSource, /const from = process\.env\.EMAIL_FROM/);
+    assert.match(emailSource, /const from = process\.env\.EMAIL_FROM\?\.trim\(\)/);
   });
 
-  it("requires EMAIL_FROM before reporting a delivered email", () => {
-    assert.match(emailSource, /!host \|\| !user \|\| !pass \|\| !process\.env\.EMAIL_FROM/);
+  it("uses a deterministic delivery-configuration helper that requires EMAIL_FROM", () => {
+    assert.match(emailSource, /export function getEmailDeliveryConfig\(\): EmailDeliveryConfig \| null/);
+    assert.match(emailSource, /export function isEmailDeliveryConfigured\(\): boolean/);
+    assert.match(emailSource, /!host \|\| !user \|\| !pass \|\| !from/);
+    assert.match(emailSource, /return \{ host, port, user, pass, from \}/);
     assert.match(systemReadinessSource, /SMTP_HOST\) && has\(process\.env\.SMTP_USER\) && has\(process\.env\.SMTP_PASS\) && has\(process\.env\.EMAIL_FROM\)/);
+  });
+
+  it("does not load nodemailer from inside the delivery try block", () => {
+    assert.match(emailSource, /import nodemailer from "nodemailer"/);
+    assert.doesNotMatch(emailSource, /require\("nodemailer"\)/);
+    const tryBlock = emailSource.slice(emailSource.indexOf("try {"), emailSource.indexOf("} catch"));
+    assert.doesNotMatch(tryBlock, /import\(|require\(/);
   });
 
   it("keeps forgot-password anti-enumeration copy honest when delivery is not configured", () => {
