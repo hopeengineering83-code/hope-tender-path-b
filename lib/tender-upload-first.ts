@@ -279,7 +279,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           category: metadata.category,
           country: metadata.country,
           budget: metadata.budget ?? null,
-          currency: metadata.currency || "USD",
+          currency: metadata.currency ?? null,
           deadline: metadata.deadline,
           submissionMethod: metadata.submissionMethod,
           submissionAddress: metadata.submissionAddress,
