@@ -69,11 +69,11 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
       setActionStage(stage.stage);
       try {
         const response = await fetch(stage.actionUrl, { method: stage.actionMethod || "POST" });
-        const json = await response.json().catch(() => ({})) as { error?: string; message?: string };
-        if (!response.ok) throw new Error(json.error ?? json.message ?? `${stage.actionLabel ?? "Action"} failed`);
+        const actionJson = await response.json().catch(() => ({})) as { error?: string; message?: string };
+        if (!response.ok) throw new Error(actionJson.error ?? actionJson.message ?? `${stage.actionLabel ?? "Action"} failed`);
         emitTenderWorkflowSync({ tenderId, source: `workflow-center-stage-${stage.stage}` });
         await fetchStages();
-        setActionMessage(json.message ?? `${stage.actionLabel ?? "Action"} completed. All control centers are refreshing.`);
+        setActionMessage(actionJson.message ?? `${stage.actionLabel ?? "Action"} completed. All control centers are refreshing.`);
       } catch (error) {
         setActionMessage(error instanceof Error ? error.message : "Workflow action failed");
       } finally {
