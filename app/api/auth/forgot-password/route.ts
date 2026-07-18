@@ -11,7 +11,7 @@ import { logAction } from "../../../../lib/audit";
 
 const GENERIC_RESPONSE = {
   success: true,
-  note: "If that email is registered, password reset instructions will be sent.",
+  note: "If that email is registered and email delivery is configured, password reset instructions will be sent.",
 };
 
 function baseUrl(): string {

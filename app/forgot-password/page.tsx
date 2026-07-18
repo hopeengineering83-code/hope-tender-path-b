@@ -5,7 +5,7 @@ import Link from "next/link";
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ note: string; resetLink?: string; expiresInMinutes?: number } | null>(null);
+  const [result, setResult] = useState<{ note: string } | null>(null);
   const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
@@ -34,7 +34,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reset password</h1>
-          <p className="mt-1 text-sm text-slate-500">Enter your account email to generate a reset link.</p>
+          <p className="mt-1 text-sm text-slate-500">Enter your account email to request password reset instructions.</p>
         </div>
 
         {!result ? (
@@ -58,7 +58,7 @@ export default function ForgotPasswordPage() {
               disabled={loading}
               className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
             >
-              {loading ? "Generating…" : "Generate Reset Link"}
+              {loading ? "Generating…" : "Request reset instructions"}
             </button>
           </form>
         ) : (
@@ -66,20 +66,7 @@ export default function ForgotPasswordPage() {
             <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
               {result.note}
             </div>
-            {result.resetLink && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">Reset Link (expires in {result.expiresInMinutes} min)</p>
-                <div className="break-all rounded-xl border bg-slate-50 px-3 py-3 font-mono text-xs text-slate-700 select-all">
-                  {result.resetLink}
-                </div>
-                <button
-                  onClick={() => navigator.clipboard.writeText(result.resetLink!)}
-                  className="text-xs text-slate-500 underline hover:text-slate-900"
-                >
-                  Copy to clipboard
-                </button>
-              </div>
-            )}
+
           </div>
         )}
 

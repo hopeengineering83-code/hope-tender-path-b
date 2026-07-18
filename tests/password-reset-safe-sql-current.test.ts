@@ -24,11 +24,11 @@ describe("password reset SQL safety", () => {
 });
 
 describe("password reset one-time and privacy semantics", () => {
-  it("keeps token locking, conditional consumption, password change, and session revocation in one transaction", () => {
+  it("keeps token locking, centralized classification, conditional consumption, password change, and session revocation in one transaction", () => {
     assert.match(reset, /prisma\.\$transaction\(async \(tx\) => \{/);
     assert.match(reset, /FOR UPDATE/);
-    assert.match(reset, /row\.consumedAt/);
-    assert.match(reset, /new Date\(row\.expiresAt\)\.getTime\(\) <= Date\.now\(\)/);
+    assert.match(reset, /const tokenState = classifyPasswordResetToken\(row\)/);
+    assert.match(reset, /tokenState !== "ACTIVE"/);
     assert.match(reset, /WHERE "id" = \$\{row\.id\} AND "consumedAt" IS NULL/);
     assert.match(reset, /tx\.user\.update/);
     assert.match(reset, /tx\.session\.deleteMany/);

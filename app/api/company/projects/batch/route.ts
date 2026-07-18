@@ -52,6 +52,16 @@ export async function PATCH(req: Request) {
   }
 
   const company = await ensureCompanyForUser(prisma, actor.id);
+  const ownedCount = await prisma.project.count({
+    where: { id: { in: ids }, companyId: company.id, deletedAt: null },
+  });
+  if (ownedCount !== ids.length) {
+    return NextResponse.json(
+      { error: "One or more requested records were not found", code: "RECORD_NOT_FOUND", requestId },
+      { status: 404 },
+    );
+  }
+
   const result = await prisma.project.updateMany({
     where: { id: { in: ids }, companyId: company.id, deletedAt: null },
     data: {

@@ -6,7 +6,7 @@ import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from ".
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
   size: number; extractedTextLength?: number | null; aiExtractionStatus?: string | null; createdAt: string;
-  storagePath?: string | null; hasInlineFileContent?: boolean | null;
+  hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null;
 };
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
@@ -30,7 +30,7 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
-type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; storagePath?: string | null; hasInlineFileContent?: boolean | null };
+type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null };
 
 const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
 
@@ -804,7 +804,7 @@ export default function CompanyPage() {
                     <p className="text-xs font-medium text-slate-800 truncate">{doc.originalFileName}</p>
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[doc.category]??"bg-slate-100 text-slate-500"}`}>{CATEGORY_LABELS[doc.category]??doc.category}</span>
-                      <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !(doc.storagePath ?? "").trim() ? " · Restored inline file available" : ""}</span>
+                      <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !doc.hasPrivateStorage ? " · Restored inline file available" : ""}</span>
                       {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600"><CheckIcon /> {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
