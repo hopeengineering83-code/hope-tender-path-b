@@ -6,7 +6,9 @@ const route = readFileSync("app/api/company/documents/route.ts", "utf8");
 const page = readFileSync("app/dashboard/company/page.tsx", "utf8");
 const assetsRoute = readFileSync("app/api/company/assets/route.ts", "utf8");
 const expertsRoute = readFileSync("app/api/company/experts/route.ts", "utf8");
+const expertDetailRoute = readFileSync("app/api/company/experts/[id]/route.ts", "utf8");
 const projectsRoute = readFileSync("app/api/company/projects/route.ts", "utf8");
+const projectDetailRoute = readFileSync("app/api/company/projects/[id]/route.ts", "utf8");
 const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
 const reviewBoardPage = readFileSync("app/dashboard/company/review-board/page.tsx", "utf8");
 
@@ -25,6 +27,17 @@ describe("company documents public DTO privacy", () => {
     assert.match(route, /orderBy: \[\{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
     assert.match(expertsRoute, /orderBy: \[\{ trustLevel: "asc" \}, \{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
     assert.match(projectsRoute, /orderBy: \[\{ trustLevel: "asc" \}, \{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+  });
+
+
+  it("restricts raw expert and project detail DTOs to company knowledge managers", () => {
+    for (const source of [expertDetailRoute, projectDetailRoute]) {
+      assert.match(source, /try \{ actor = await requireRole\("ADMIN", "PROPOSAL_MANAGER"\); \}/);
+      assert.doesNotMatch(source, /const userId = await getSession\(\)/);
+      assert.match(source, /where: \{ userId: actor\.id \}/);
+      assert.match(source, /companyId: company\.id/);
+      assert.match(source, /deletedAt: null/);
+    }
   });
 
   it("minimizes Company Review expert and project list DTOs", () => {

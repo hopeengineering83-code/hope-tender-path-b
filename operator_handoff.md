@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 15) — Codex
+
+- **Mode:** continued SG-021/SG-023 direct API minimization. Found expert/project detail `GET` routes still returned full raw profile/contact/financial detail DTOs to any authenticated same-company user, while minimized list DTOs already cover reviewer/viewer browsing.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata to be refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/api/company/experts/[id]/route.ts` and `app/api/company/projects/[id]/route.ts` now require `ADMIN` or `PROPOSAL_MANAGER` for full-detail reads while preserving company scoping and safe 404 behavior; `tests/company-documents-privacy-dto.test.ts` locks the manager-only detail-read contract; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/company-batch-review-rbac-current.test.ts tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (46/46); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; no merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** This narrows raw detail exposure but is still not a full SG-021/SG-023 closure without stock PostgreSQL role/isolation tests and browser proof.
+- **Next action:** run focused and repository checks, then continue another non-overlapping matrix row with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 14) — Codex
 
 - **Mode:** continued SG-023 Vault privacy/progressive disclosure after batch mutation hardening. Found Knowledge Review Board still fetched `/api/company`, pulling the full embedded expert/project graph and rendering raw expert profile/project summary snippets despite the safer bounded list DTO endpoints existing.
