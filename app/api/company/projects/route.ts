@@ -43,7 +43,7 @@ export async function GET(req: Request) {
     },
     orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
     take: limit + 1,
-    select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true, trustLevel: true, createdAt: true },
+    select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, trustLevel: true, createdAt: true },
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 

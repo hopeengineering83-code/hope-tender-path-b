@@ -5,9 +5,23 @@ import { readFileSync } from "node:fs";
 const route = readFileSync("app/api/company/documents/route.ts", "utf8");
 const page = readFileSync("app/dashboard/company/page.tsx", "utf8");
 const assetsRoute = readFileSync("app/api/company/assets/route.ts", "utf8");
+const expertsRoute = readFileSync("app/api/company/experts/route.ts", "utf8");
+const projectsRoute = readFileSync("app/api/company/projects/route.ts", "utf8");
 const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
 
 describe("company documents public DTO privacy", () => {
+
+  it("minimizes Company Review expert and project list DTOs", () => {
+    assert.match(expertsRoute, /select: \{ id: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, trustLevel: true, createdAt: true \}/);
+    assert.doesNotMatch(expertsRoute, /select: \{[^}]*email: true/);
+    assert.doesNotMatch(expertsRoute, /select: \{[^}]*phone: true/);
+    assert.doesNotMatch(expertsRoute, /select: \{[^}]*profile: true/);
+    assert.match(projectsRoute, /select: \{ id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, trustLevel: true, createdAt: true \}/);
+    assert.doesNotMatch(projectsRoute, /select: \{[^}]*contractValue: true/);
+    assert.doesNotMatch(projectsRoute, /select: \{[^}]*currency: true/);
+    assert.doesNotMatch(projectsRoute, /select: \{[^}]*summary: true/);
+  });
+
   it("Company Review uses bounded list DTOs instead of the full company graph", () => {
     assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"/);
     assert.match(reviewPage, /fetch\("\/api\/company\/review-summary"/);
