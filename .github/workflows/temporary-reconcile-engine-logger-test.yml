@@ -1,0 +1,66 @@
+name: Temporary reconcile engine logger test
+
+on:
+  pull_request:
+    branches: [integration/controlled-recovery]
+    paths:
+      - ".github/workflows/temporary-reconcile-engine-logger-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reconcile-engine-logger-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Reconcile stale console logger assertions
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("tests/engine-runtime-ui-honesty-icons.test.ts")
+          source = path.read_text(encoding="utf-8")
+
+          raw_old = 'assert.doesNotMatch(src, /console\\.error\\("Engine run failed:", \\{ diagnosticId, error \\}\\)/);'
+          raw_new = 'assert.doesNotMatch(src, /logger\\.error\\("Engine run failed:", \\{ diagnosticId, error \\}\\)/);'
+          named_old = 'assert.match(src, /console\\.error\\("Engine run failed:", \\{ diagnosticId, errorName \\}\\)/);'
+          named_new = 'assert.match(src, /logger\\.error\\("Engine run failed:", \\{ diagnosticId, errorName \\}\\)/);\n    assert.doesNotMatch(src, /console\\.error\\(/);'
+
+          if source.count(raw_old) != 2:
+              raise SystemExit(f"expected exactly 2 raw-error console assertions, found {source.count(raw_old)}")
+          if source.count(named_old) != 1:
+              raise SystemExit(f"expected exactly 1 errorName console assertion, found {source.count(named_old)}")
+
+          updated = source.replace(raw_old, raw_new).replace(named_old, named_new)
+          if updated.count('logger\\.error\\("Engine run failed:"') < 3:
+              raise SystemExit("structured logger assertions were not installed")
+          if updated == source:
+              raise SystemExit("no file change produced")
+
+          path.write_text(updated, encoding="utf-8")
+
+      - name: Verify focused assertions
+        run: npx tsx --test tests/engine-runtime-ui-honesty-icons.test.ts tests/remaining-gaps-final.test.ts
+
+      - name: Commit exact reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/engine-runtime-ui-honesty-icons.test.ts
+          git diff --cached --check
+          git commit -m "test: reconcile engine logger safety contracts"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
