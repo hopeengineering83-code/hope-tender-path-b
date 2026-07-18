@@ -44,11 +44,20 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
           await fetch(s.actionUrl, { method: s.actionMethod || "POST" });
           fetchStages();
       } else {
+          // Every stage without a server-provided actionUrl scrolls to its
+          // real section instead — stages 2, 4, 6, 7, and 9 were missing
+          // from this map entirely, so their "action" buttons rendered but
+          // silently did nothing when clicked (no scroll, no request).
           const targets: Record<number, string> = {
               1: "#tender-files",
+              2: "#extraction-quality",
               3: "#ai-analyze-section",
+              4: "#requirement-coverage",
               5: "#tender-edit-form",
+              6: "#submission-plan-reconciliation",
+              7: "#match-evidence",
               8: "#generated-documents",
+              9: "#authority-review",
               10: "#export-readiness"
           };
           const target = targets[s.stage];
