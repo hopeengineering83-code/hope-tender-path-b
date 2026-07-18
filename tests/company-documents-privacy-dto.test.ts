@@ -12,6 +12,8 @@ const projectDetailRoute = readFileSync("app/api/company/projects/[id]/route.ts"
 const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
 const reviewBoardPage = readFileSync("app/dashboard/company/review-board/page.tsx", "utf8");
 const financialRecordsRoute = readFileSync("app/api/company/financial-records/route.ts", "utf8");
+const complianceRecordsRoute = readFileSync("app/api/company/compliance-records/route.ts", "utf8");
+const legalRecordsRoute = readFileSync("app/api/company/legal-records/route.ts", "utf8");
 
 describe("company documents public DTO privacy", () => {
 
@@ -58,6 +60,22 @@ describe("company documents public DTO privacy", () => {
     assert.match(financialRecordsRoute, /take: limit/);
     assert.match(financialRecordsRoute, /hasMore: page \* limit < total/);
     assert.match(page, /fetch\("\/api\/company\/financial-records\?limit=50"\)/);
+  });
+
+
+  it("paginates compliance and legal record list DTOs with deterministic ordering", () => {
+    for (const source of [complianceRecordsRoute, legalRecordsRoute]) {
+      assert.match(source, /const DEFAULT_PAGE_SIZE = 50/);
+      assert.match(source, /const MAX_PAGE_SIZE = 100/);
+      assert.match(source, /function parseLimit\(value: string \| null\): number/);
+      assert.match(source, /const where = \{ companyId: company\.id \}/);
+      assert.match(source, /orderBy: \[\{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+      assert.match(source, /skip: \(page - 1\) \* limit/);
+      assert.match(source, /take: limit/);
+      assert.match(source, /hasMore: page \* limit < total/);
+    }
+    assert.match(page, /fetch\("\/api\/company\/compliance-records\?limit=50"\)/);
+    assert.match(page, /fetch\("\/api\/company\/legal-records\?limit=50"\)/);
   });
 
   it("minimizes Company Review expert and project list DTOs", () => {
