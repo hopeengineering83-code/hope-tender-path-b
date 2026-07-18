@@ -103,16 +103,16 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
       10: ["#final-package-manifest"],
     };
     const selectors = [...(targets[stage.stage] ?? []), ...(fallbackTargets[stage.stage] ?? [])];
-    const el = selectors
+    const element = selectors
       .map((selector) => document.querySelector(selector))
       .find((candidate): candidate is Element => candidate !== null);
 
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      setActionMessage(`Opened ${stage.actionLabel ?? stage.label}.`);
+    if (!element) {
+      setActionMessage(`${stage.actionLabel ?? "Workflow action"} could not find its target panel. Refresh the page and retry.`);
       return;
     }
-    setActionMessage(`${stage.actionLabel ?? "Workflow action"} could not find its target panel. Refresh the page and retry.`);
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActionMessage(`Opened ${stage.actionLabel ?? stage.label}.`);
   };
 
   if (!stages && !loadError) {
