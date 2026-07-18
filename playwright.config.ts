@@ -18,6 +18,7 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   "share-link.spec.ts",
   "tender-list.spec.ts",
   "mobile-overflow-gap-repair.spec.ts",
+  "full-route-mobile-tablet-overflow.spec.ts",
 ];
 
 // Tablet-authenticated contract specs validate responsive UI, role-aware
