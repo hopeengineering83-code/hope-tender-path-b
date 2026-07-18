@@ -5,6 +5,15 @@ import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from
 import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedLimit(value: string | null): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(parsed, MAX_PAGE_SIZE);
+}
+
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -27,7 +36,7 @@ export async function GET(req: Request) {
   await prismaReady;
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 200);
+  const limit = parseBoundedLimit(searchParams.get("limit"));
   const cursor = searchParams.get("cursor") ?? undefined;
   const trustLevel = searchParams.get("trustLevel") ?? undefined;
   const q = searchParams.get("q") ?? "";
@@ -41,7 +50,7 @@ export async function GET(req: Request) {
       ...(trustLevel ? { trustLevel } : {}),
       ...(q ? { OR: [{ name: { contains: q } }, { clientName: { contains: q } }, { sector: { contains: q } }] } : {}),
     },
-    orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+    orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, trustLevel: true, createdAt: true },
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

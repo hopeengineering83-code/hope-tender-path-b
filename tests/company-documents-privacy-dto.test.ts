@@ -11,6 +11,21 @@ const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8")
 
 describe("company documents public DTO privacy", () => {
 
+
+  it("uses bounded fail-safe pagination and deterministic ordering for vault list DTOs", () => {
+    for (const source of [route, expertsRoute, projectsRoute]) {
+      assert.match(source, /const DEFAULT_PAGE_SIZE = 50/);
+      assert.match(source, /const MAX_PAGE_SIZE = 100/);
+      assert.match(source, /function parseBoundedLimit\(value: string \| null\): number/);
+      assert.match(source, /if \(!Number\.isFinite\(parsed\) \|\| parsed <= 0\) return DEFAULT_PAGE_SIZE/);
+      assert.match(source, /return Math\.min\(parsed, MAX_PAGE_SIZE\)/);
+      assert.match(source, /const limit = parseBoundedLimit\(searchParams\.get\("limit"\)\)/);
+    }
+    assert.match(route, /orderBy: \[\{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+    assert.match(expertsRoute, /orderBy: \[\{ trustLevel: "asc" \}, \{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+    assert.match(projectsRoute, /orderBy: \[\{ trustLevel: "asc" \}, \{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+  });
+
   it("minimizes Company Review expert and project list DTOs", () => {
     assert.match(expertsRoute, /select: \{ id: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, trustLevel: true, createdAt: true \}/);
     assert.doesNotMatch(expertsRoute, /select: \{[^}]*email: true/);
