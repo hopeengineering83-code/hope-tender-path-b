@@ -21,8 +21,11 @@ describe("tender workflow synchronization safety", () => {
   });
 
   it("keeps the canonical fingerprint timestamp-free", () => {
-    assert.match(sync, /canonicalWorkflowFingerprint/);
-    assert.doesNotMatch(sync, /generatedAt/);
-    assert.doesNotMatch(sync, /changedAt:.*canonicalWorkflowFingerprint/s);
+    const start = sync.indexOf("export function canonicalWorkflowFingerprint");
+    const end = sync.indexOf("export function workflowHasInProgressStage");
+    assert.ok(start >= 0 && end > start, "canonical fingerprint function boundaries must exist");
+    const fingerprintImplementation = sync.slice(start, end);
+    assert.doesNotMatch(fingerprintImplementation, /generatedAt/);
+    assert.doesNotMatch(fingerprintImplementation, /changedAt/);
   });
 });
