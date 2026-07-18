@@ -7,6 +7,7 @@ type CompanyDoc = { id: string; originalFileName: string; category: string; aiEx
 type Expert = { id: string; fullName: string; title?: string | null; yearsExperience?: number | null; disciplines?: string[]; sectors?: string[]; certifications?: string[]; profile?: string | null; trustLevel?: string | null };
 type Project = { id: string; name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas?: string[]; contractValue?: number | null; currency?: string | null; summary?: string | null; trustLevel?: string | null };
 type Company = { experts?: Expert[]; projects?: Project[]; expertCount?: number; projectCount?: number };
+type Paginated<T> = { items?: T[]; total?: number; nextCursor?: string | null; hasMore?: boolean };
 type Gap = { severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; title: string; detail: string };
 type Diagnostics = {
   importVersion: string;
@@ -76,18 +77,29 @@ export default function KnowledgeReviewPage() {
     setError("");
     setMessage("");
     try {
-      const [companyRes, docsRes, diagRes] = await Promise.all([
-        fetch("/api/company", { cache: "no-store" }),
-        fetch("/api/company/documents", { cache: "no-store" }),
+      const [summaryRes, docsRes, expertsRes, projectsRes, diagRes] = await Promise.all([
+        fetch("/api/company/review-summary", { cache: "no-store" }),
+        fetch("/api/company/documents?limit=50", { cache: "no-store" }),
+        fetch("/api/company/experts?limit=50", { cache: "no-store" }),
+        fetch("/api/company/projects?limit=50", { cache: "no-store" }),
         fetch("/api/company/knowledge/repair", { cache: "no-store" }),
       ]);
-      if (!companyRes.ok) throw new Error("Failed to load company knowledge");
+      if (!summaryRes.ok) throw new Error("Failed to load company knowledge summary");
       if (!docsRes.ok) throw new Error("Failed to load documents");
+      if (!expertsRes.ok) throw new Error("Failed to load experts");
+      if (!projectsRes.ok) throw new Error("Failed to load projects");
       if (!diagRes.ok) throw new Error("Failed to load diagnostics");
-      const companyJson = await companyRes.json() as Company;
-      const docsJson = await docsRes.json() as { items?: CompanyDoc[] };
+      const summaryJson = await summaryRes.json() as { experts?: { total?: number }; projects?: { total?: number } };
+      const docsJson = await docsRes.json() as Paginated<CompanyDoc>;
+      const expertsJson = await expertsRes.json() as Paginated<Expert>;
+      const projectsJson = await projectsRes.json() as Paginated<Project>;
       const diagJson = await diagRes.json() as { diagnostics: Diagnostics };
-      setCompany(companyJson);
+      setCompany({
+        experts: expertsJson.items ?? [],
+        projects: projectsJson.items ?? [],
+        expertCount: summaryJson.experts?.total ?? expertsJson.items?.length ?? 0,
+        projectCount: summaryJson.projects?.total ?? projectsJson.items?.length ?? 0,
+      });
       setDocs(docsJson.items ?? []);
       setDiagnostics(diagJson.diagnostics);
     } catch (err) {

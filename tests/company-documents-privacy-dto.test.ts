@@ -5,8 +5,18 @@ import { readFileSync } from "node:fs";
 const route = readFileSync("app/api/company/documents/route.ts", "utf8");
 const page = readFileSync("app/dashboard/company/page.tsx", "utf8");
 const assetsRoute = readFileSync("app/api/company/assets/route.ts", "utf8");
+const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
 
 describe("company documents public DTO privacy", () => {
+  it("Company Review uses bounded list DTOs instead of the full company graph", () => {
+    assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"/);
+    assert.match(reviewPage, /fetch\("\/api\/company\/review-summary"/);
+    assert.match(reviewPage, /fetch\("\/api\/company\/documents\?limit=50"/);
+    assert.match(reviewPage, /fetch\("\/api\/company\/experts\?limit=50"/);
+    assert.match(reviewPage, /fetch\("\/api\/company\/projects\?limit=50"/);
+    assert.match(reviewPage, /type Paginated<T> = \{ items\?: T\[\]/);
+  });
+
   it("keeps storage paths server-side while exposing only storage booleans", () => {
     assert.match(route, /select: \{[\s\S]*storagePath: true[\s\S]*\}/);
     assert.match(route, /const \{ storagePath: privateStoragePath, \.\.\.publicDoc \} = doc/);

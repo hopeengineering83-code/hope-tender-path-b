@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC (follow-up 10) — Codex
+
+- **Mode:** continued SG-023 after the storage-path DTO fix by addressing the Company Review enormous-page/root-data issue. Found `app/dashboard/company/review/page.tsx` was fetching `/api/company`, which includes the full embedded expert/project graph, rather than the existing bounded list DTO endpoints.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata refreshed for `fix: close remaining screenshot root gaps and release blockers`; requested base remains `release/consolidated-recovery-20260717`. Live GitHub fetch remains unavailable (`gh` absent, no configured remote, direct GitHub fetch 403).
+- **Exact scope and files changed:** `app/dashboard/company/review/page.tsx` now fetches `/api/company/review-summary`, `/api/company/documents?limit=50`, `/api/company/experts?limit=50`, and `/api/company/projects?limit=50` instead of the full `/api/company` graph; it uses summary counts for totals and bounded list DTO items for rendered records. `tests/company-documents-privacy-dto.test.ts` now locks this bounded-loading contract; matrix and handoff updated.
+- **Tests/checks actually run:** `npx tsx --test tests/company-documents-privacy-dto.test.ts tests/activity-safe-presentation.test.ts tests/password-reset-token-policy.test.ts tests/password-reset-safe-sql-current.test.ts tests/password-reset-client-contract.test.ts tests/password-reset-mail-configuration.test.ts tests/final-screenshot-gap-closure-matrix.test.ts` PASS (38/38); `git diff --check` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `npm run audit:release-integrity` PASS.
+- **CI/deployment status:** not checked; GitHub CLI/direct fetch unavailable. No merge, deployment, preview, production data access, or production migration.
+- **Known risks/assumptions:** Company Review no longer fetches the full graph, but SG-023 still needs deeper expert/project presentation minimization, stock PostgreSQL proof, and browser screenshot proof before full closure.
+- **Next action:** run repository checks for this follow-up, then continue SG-023 progressive-disclosure/minimized DTOs or another non-overlapping matrix row with implementation plus tests.
+- **Merge status:** not reviewed; draft-only; not safe to merge as final closure.
+
 ### 2026-07-18 UTC (follow-up 9) — Codex
 
 - **Mode:** continued SG-023 Vault privacy after finding `/api/company/documents` returned raw `storagePath` to the browser and the Company Vault client typed/rendered that storage pointer; while fixing documents, the new test exposed the same client-side DTO issue for company assets, so the fix was extended to `/api/company/assets` GET as the same privacy class.
