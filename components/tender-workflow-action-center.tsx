@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 
 export interface WorkflowStageInfo {
@@ -64,7 +65,19 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
         <h2 className="text-lg font-bold text-slate-900">Workflow Control Center</h2>
         <button onClick={fetchStages} className="shrink-0 text-[10px] font-bold text-slate-400 hover:text-slate-600 uppercase tracking-widest">Refresh State</button>
       </div>
-      <div className="grid gap-3">
+      {/* Per-stage statuses here come from getCanonicalTenderWorkflowDecision,
+          a separate computation from the release snapshot other readiness
+          panels compare against (both are returned by this same route but
+          are independently derived) — this additive badge makes any
+          disagreement between the Export ZIP stage and the authoritative
+          snapshot visible instead of leaving it silent. */}
+      <SnapshotConsistencyBadge
+        tenderId={tenderId}
+        verdict="finalZip"
+        localEligible={stages.find((s) => s.stage === 10)?.status === "READY"}
+        localLabel="Workflow Control Center"
+      />
+      <div className="mt-3 grid gap-3">
         {stages.map((s) => (
           <div key={s.stage} className="flex items-start gap-4 p-3 rounded-xl border border-slate-50 hover:bg-slate-50 transition-colors">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">

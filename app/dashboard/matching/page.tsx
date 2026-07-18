@@ -3,17 +3,9 @@ import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { MatchingDashboard } from "./matching-dashboard";
 import { TENDERS_PER_PAGE, MATCH_PAGE_SIZE } from "../../../lib/engine/matching-config";
+import { presentMatchRationale } from "./present-match-rationale";
 
 export const dynamic = "force-dynamic";
-
-export function presentMatchRationale(value: string | null): string | null {
-  if (!value) return value;
-  return value
-    .replace(/[✓✔☑⚠⚠️▲▼←→]/gu, "")
-    .replace(/\s+/g, " ")
-    .replace(/^\[\s+/, "[")
-    .trim();
-}
 
 export default async function MatchingPage({
   searchParams,

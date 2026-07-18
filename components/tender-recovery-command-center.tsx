@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
 import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
+import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -19,7 +20,12 @@ type LifecycleState =
   | "EXPORT_READINESS_BLOCKED" | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
 
 type BlockedAction = { action: string; reason: string };
-type Blocker = { code: string; message: string; action: string };
+// buildPublicReadinessEnvelope (lib/engine/public-readiness-envelope.ts)
+// normalizes every blocker's recommended action to `nextAction` before this
+// route's response is built — the orchestrator's own internal `action` field
+// never reaches the client. Reading `.action` here always returned
+// `undefined`, rendering "Action: " with nothing after it.
+type Blocker = { code: string; message: string; nextAction: string };
 type Warning = { code: string; message: string };
 
 type LifecycleResult = {
@@ -541,6 +547,20 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         </div>
       </div>
 
+      {/* Recovery Command Center computes its own verdict via a separate
+          orchestrator (tender-lifecycle-orchestrator.ts) rather than the
+          shared release snapshot the other readiness panels compare
+          against — this additive badge makes any resulting disagreement
+          visible instead of leaving it silent. */}
+      <div className="px-5 pt-3">
+        <SnapshotConsistencyBadge
+          tenderId={tenderId}
+          verdict="finalZip"
+          localEligible={data.finalSubmissionStatus === "READY"}
+          localLabel="Recovery Command Center"
+        />
+      </div>
+
       {/* Primary Next Action */}
       <div className="border-b border-gray-100 bg-blue-50 px-5 py-3">
         <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Primary Next Action</p>
@@ -605,7 +625,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             {data.blockers.map((b) => (
               <li key={b.code} className="rounded border border-red-200 bg-red-50 px-3 py-1.5">
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
-                <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
+                <p className="mt-0.5 text-xs text-red-600">Action: {b.nextAction}</p>
                 {/* Quick-action shortcuts for specific blocker codes */}
                 {/* METADATA_INCOMPLETE quick-actions removed — metadata is advisory only */}
                 {canMutate && b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (

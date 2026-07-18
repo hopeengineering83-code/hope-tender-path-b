@@ -147,7 +147,7 @@ export default function NewTenderPage() {
 
         <div className="mt-5 rounded-2xl border border-dashed border-blue-300 bg-white p-4 sm:p-5">
           <label htmlFor={fileInputId} className="block text-sm font-semibold text-slate-800">Tender source documents</label>
-          <p id={uploadHelpId} className="mt-1 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, or CSV. Maximum 10 files, 10 MB each, and 30 MB total. Convert legacy DOC/XLS files first.</p>
+          <p id={uploadHelpId} className="mt-1 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, and CSV. Maximum 10 files, 10 MB each, and 30 MB total. Convert legacy DOC/XLS files first.</p>
           <input
             id={fileInputId}
             type="file"

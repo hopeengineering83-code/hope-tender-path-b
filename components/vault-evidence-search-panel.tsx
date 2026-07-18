@@ -211,15 +211,23 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
             )}
           </div>
 
-          <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show all reviewed experts ({reviewedExperts.length})</summary>
-            <div className="mt-3"><ExpertList experts={unselectedExperts} selectedIds={selectedExpertIds} matchedIds={matchedExpertIds} /></div>
-          </details>
+          {unselectedExperts.length > 0 && (
+            <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              {/* Label and list must use the same count — this renders
+                  unselectedExperts (reviewed experts not yet selected for
+                  this tender), not all reviewed experts, so the label counts
+                  the same set instead of promising more than the list shows. */}
+              <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show other reviewed experts ({unselectedExperts.length})</summary>
+              <div className="mt-3"><ExpertList experts={unselectedExperts} selectedIds={selectedExpertIds} matchedIds={matchedExpertIds} /></div>
+            </details>
+          )}
 
-          <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show all reviewed projects ({reviewedProjects.length})</summary>
-            <div className="mt-3"><ProjectList projects={unselectedProjects} selectedIds={selectedProjectIds} matchedIds={matchedProjectIds} /></div>
-          </details>
+          {unselectedProjects.length > 0 && (
+            <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show other reviewed projects ({unselectedProjects.length})</summary>
+              <div className="mt-3"><ProjectList projects={unselectedProjects} selectedIds={selectedProjectIds} matchedIds={matchedProjectIds} /></div>
+            </details>
+          )}
 
           {(aiDraftExperts.length > 0 || regexDraftExperts.length > 0 || aiDraftProjects.length > 0 || regexDraftProjects.length > 0) && (
             <p className="text-xs text-slate-400">{aiDraftExperts.length + regexDraftExperts.length + aiDraftProjects.length + regexDraftProjects.length} draft vault item(s) pending review — not eligible for final generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Review now</Link></p>
