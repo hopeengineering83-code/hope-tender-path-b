@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-18 UTC — Codex
+
+- **Mode:** started the requested `MASTER TASK — Close Every Remaining Screenshot Gap in One New Controlled PR` on the requested single branch. Live GitHub inspection was blocked in this container: no Git remote is configured, `gh` is unavailable, and direct `git ls-remote https://github.com/hopeengineering83-code/hope-tender-path-b.git ...` failed with `CONNECT tunnel failed, response 403`. No live PR branch was modified.
+- **Branch / PR:** `fix/final-screenshot-root-gap-closure` / draft PR metadata prepared for `fix: close remaining screenshot root gaps and release blockers` targeting `release/consolidated-recovery-20260717`; local starting SHA `820c9cb`, observed task SHA `f225094b67a52867071ecd2c18ded9464cbd0bbf` could not be fetched or verified from this environment.
+- **Exact scope and files changed:** documentation/test-only safety commit: added `docs/audits/final-screenshot-gap-closure-matrix.md` with all 30 primary screenshot-root gap groups, starting evidence/status, required tests/screenshots, live-fetch blockers, and the mandatory WORKING declaration; added `tests/final-screenshot-gap-closure-matrix.test.ts` to prevent incomplete matrices or falsely-complete unverified rows. No application runtime, schema, migration, `.github/**`, Vercel, production data, or deployment controls changed.
+- **Tests/checks actually run:** `npx tsx --test tests/final-screenshot-gap-closure-matrix.test.ts` PASS (5/5); `git diff --check` PASS; `npx prisma validate` without `DATABASE_URL` FAIL as environment limitation (`Environment variable not found: DATABASE_URL`); `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma validate` PASS; `DATABASE_URL=postgresql://test:test@localhost:5432/test npx prisma generate` PASS; `npm run typecheck -- --pretty false` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS. Full PostgreSQL behavioral suite, E2E, and 210-screenshot replacement artifact were not run because live PR/artifact access and a disposable PostgreSQL/browser artifact workflow were not available in this turn.
+- **CI/deployment status:** not checked; GitHub CLI and direct fetch unavailable. No deploy or preview triggered.
+- **Known risks/assumptions:** this commit does not claim to close every source-code gap; it establishes the required matrix and truthful blocker/status discipline. Rows marked `NEEDS_IMPLEMENTATION`, `NEEDS_LIVE_VERIFICATION`, or `SKIPPED_BLOCKER` require a GitHub-enabled environment to fetch PR #1175/#1190/#1157/#1128, baseline run `29429622568`, artifact `8350811807`, and then run PostgreSQL/E2E/screenshot proof before any completion claim.
+- **Next action:** in a GitHub-enabled environment, fetch the exact PR #1175 head, refresh this matrix against live PR/donor/audit artifacts, then implement only reproducible non-overlapping root-cause fixes and attach the 70-route × 3-viewport replacement screenshot artifact.
+- **Merge status:** not reviewed; draft-only; not safe to merge until live PR/artifact inspection, implementation rows, PostgreSQL proof, and all 210 screenshots are complete.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.
