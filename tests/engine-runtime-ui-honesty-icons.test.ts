@@ -34,13 +34,14 @@ describe("GAP A — Engine route returns success:false when partial", () => {
 describe("GAP B — Engine route logs errorName only (no raw error leak)", () => {
   it("catch-block does NOT log the raw error object", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
-    assert.doesNotMatch(src, /console\.error\("Engine run failed:", \{ diagnosticId, error \}\)/);
+    assert.doesNotMatch(src, /logger\.error\("Engine run failed:", \{ diagnosticId, error \}\)/);
   });
 
   it("catch-block logs errorName (constructor name) instead of raw error", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     assert.match(src, /const errorName = error instanceof Error \? error\.constructor\.name : typeof error/);
-    assert.match(src, /console\.error\("Engine run failed:", \{ diagnosticId, errorName \}\)/);
+    assert.match(src, /logger\.error\("Engine run failed:", \{ diagnosticId, errorName \}\)/);
+    assert.doesNotMatch(src, /console\.error\(/);
   });
 });
 
@@ -294,7 +295,7 @@ describe("No raw error leaks in engine runtime path", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     // Must NOT log the raw error object (may contain provider keys, org IDs,
     // prompt text, or Prisma connection strings).
-    assert.doesNotMatch(src, /console\.error\("Engine run failed:", \{ diagnosticId, error \}\)/);
+    assert.doesNotMatch(src, /logger\.error\("Engine run failed:", \{ diagnosticId, error \}\)/);
     assert.match(src, /const errorName = error instanceof Error \? error\.constructor\.name : typeof error/);
   });
 
