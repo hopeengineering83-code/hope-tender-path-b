@@ -158,7 +158,7 @@ export default function CompanyPage() {
       const [cr, lr, fr] = await Promise.all([
         fetch("/api/company/compliance-records").then(r=>r.json()),
         fetch("/api/company/legal-records").then(r=>r.json()),
-        fetch("/api/company/financial-records").then(r=>r.json()),
+        fetch("/api/company/financial-records?limit=50").then(r=>r.json()),
       ]);
       setComplianceRecords(cr.records ?? []);
       setLegalRecords(lr.records ?? []);

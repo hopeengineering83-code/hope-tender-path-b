@@ -45,8 +45,19 @@ describe("company documents public DTO privacy", () => {
   it("restricts financial record list DTOs to company knowledge managers", () => {
     assert.match(financialRecordsRoute, /try \{ actor = await requireRole\("ADMIN", "PROPOSAL_MANAGER"\); \}/);
     assert.doesNotMatch(financialRecordsRoute, /requireRole\("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"\)/);
-    assert.match(financialRecordsRoute, /where: \{ companyId: company\.id \}/);
+    assert.match(financialRecordsRoute, /const where = \{ companyId: company\.id \}/);
     assert.match(financialRecordsRoute, /currency: body\.currency \? str\(body\.currency, 10\) : null/);
+  });
+
+  it("paginates financial record list DTOs with deterministic ordering", () => {
+    assert.match(financialRecordsRoute, /const DEFAULT_PAGE_SIZE = 50/);
+    assert.match(financialRecordsRoute, /const MAX_PAGE_SIZE = 100/);
+    assert.match(financialRecordsRoute, /function parseLimit\(value: string \| null\): number/);
+    assert.match(financialRecordsRoute, /orderBy: \[\{ fiscalYear: "desc" \}, \{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
+    assert.match(financialRecordsRoute, /skip: \(page - 1\) \* limit/);
+    assert.match(financialRecordsRoute, /take: limit/);
+    assert.match(financialRecordsRoute, /hasMore: page \* limit < total/);
+    assert.match(page, /fetch\("\/api\/company\/financial-records\?limit=50"\)/);
   });
 
   it("minimizes Company Review expert and project list DTOs", () => {
