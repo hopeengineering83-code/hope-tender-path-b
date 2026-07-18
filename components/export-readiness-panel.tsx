@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, WarningIcon, ClockIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
+import { useWorkflowState } from "../lib/ui/tender-workflow-sync";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -102,6 +103,11 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const [autoFinalizing, setAutoFinalizing] = useState(false);
   const [generatingMissing, setGeneratingMissing] = useState(false);
   const [resolvingAdvisory, setResolvingAdvisory] = useState<string | null>(null);
+
+  // Consume shared workflow state — same canonical authority as all panels.
+  // When the shared state says blocked, the ZIP/download buttons stay
+  // disabled even before this panel's own fetch completes.
+  const sharedState = useWorkflowState();
   const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
   const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);

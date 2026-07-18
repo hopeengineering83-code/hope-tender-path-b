@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
+import { useWorkflowState } from "../lib/ui/tender-workflow-sync";
 import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
@@ -157,6 +158,9 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<number | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
+
+  // Consume shared workflow state — same canonical authority as all panels.
+  const sharedState = useWorkflowState();
   // NOTE: The old `ocrProvider` state was dead — setOcrProvider was never
   // called (no <select> or programmatic setter), so the state was always
   // "auto" and the `isReExtract && ocrProvider !== "auto"` branch below was

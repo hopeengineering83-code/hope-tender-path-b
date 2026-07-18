@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { useWorkflowState } from "../lib/ui/tender-workflow-sync";
 
 
 export interface WorkflowStageInfo {
@@ -22,6 +23,9 @@ export interface WorkflowStageInfo {
 
 export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [stages, setStages] = useState<WorkflowStageInfo[] | null>(null);
+
+  // Consume shared workflow state — same canonical authority as all panels.
+  const sharedState = useWorkflowState();
 
   const fetchStages = useCallback(() => {
     fetch(`/api/tenders/${tenderId}/workflow-center`)

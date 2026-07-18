@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from "react";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
+import { useWorkflowState } from "../lib/ui/tender-workflow-sync";
 
 type ReadinessSeverity = "READY" | "PARTIAL" | "BLOCKED";
 
@@ -76,6 +77,9 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
   const [data, setData] = useState<ReadinessScoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Consume shared workflow state for consistent blocker display.
+  const sharedState = useWorkflowState();
 
   useEffect(() => {
     let cancelled = false;

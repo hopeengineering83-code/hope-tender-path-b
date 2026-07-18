@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
+import { useWorkflowState } from "../lib/ui/tender-workflow-sync";
 
 type ExportReadiness = {
   ok: boolean;
@@ -58,6 +59,10 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
   const [exportReadiness, setExportReadiness] = useState<ExportReadiness | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Consume the shared workflow state — same canonical authority as all
+  // other panels. This replaces the independent fetch for blocker display.
+  const sharedState = useWorkflowState();
 
   const generationBlocked = Boolean(
     generationReadiness?.analysisSourceGate === "BLOCKED_REGEX_FALLBACK" ||

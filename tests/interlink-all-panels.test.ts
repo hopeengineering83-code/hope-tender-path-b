@@ -101,3 +101,35 @@ describe("[INTERLINK] All panels are present in the tender detail page", () => {
     }
   });
 });
+
+describe("[INTERLINK] Client-side panels consume shared workflow state", () => {
+  it("tender-workflow-action-center imports and uses useWorkflowState", () => {
+    const src = readFileSync(resolve("components/tender-workflow-action-center.tsx"), "utf8");
+    assert.ok(src.includes("useWorkflowState"), "must import useWorkflowState");
+    assert.ok(src.includes("sharedState"), "must consume sharedState");
+  });
+
+  it("tender-recovery-command-center imports and uses useWorkflowState", () => {
+    const src = readFileSync(resolve("components/tender-recovery-command-center.tsx"), "utf8");
+    assert.ok(src.includes("useWorkflowState"), "must import useWorkflowState");
+    assert.ok(src.includes("sharedState"), "must consume sharedState");
+  });
+
+  it("final-submission-control-center imports and uses useWorkflowState", () => {
+    const src = readFileSync(resolve("components/final-submission-control-center.tsx"), "utf8");
+    assert.ok(src.includes("useWorkflowState"), "must import useWorkflowState");
+    assert.ok(src.includes("sharedState"), "must consume sharedState");
+  });
+
+  it("export-readiness-panel imports and uses useWorkflowState", () => {
+    const src = readFileSync(resolve("components/export-readiness-panel.tsx"), "utf8");
+    assert.ok(src.includes("useWorkflowState"), "must import useWorkflowState");
+    assert.ok(src.includes("sharedState"), "must consume sharedState");
+  });
+
+  it("canonical-readiness-score-widget imports and uses useWorkflowState", () => {
+    const src = readFileSync(resolve("components/canonical-readiness-score-widget.tsx"), "utf8");
+    assert.ok(src.includes("useWorkflowState"), "must import useWorkflowState");
+    assert.ok(src.includes("sharedState"), "must consume sharedState");
+  });
+});
