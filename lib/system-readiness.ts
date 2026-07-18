@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "./prisma";
+import { isEmailDeliveryConfigured } from "./email";
 import { resolveStorageProvider } from "./storage";
 import {
   CANONICAL_AI_PROVIDER_ORDER,
@@ -99,7 +100,7 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
   const storageProvider = resolveStorageProvider();
   const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
   const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
-  const smtpConfigured = has(process.env.SMTP_HOST) && has(process.env.SMTP_USER) && has(process.env.SMTP_PASS) && has(process.env.EMAIL_FROM);
+  const smtpConfigured = isEmailDeliveryConfigured();
   const durableStorage = storageProvider === "blob" || (storageProvider === "db-base64" && process.env.ALLOW_DB_FILE_STORAGE === "true");
 
   checks.push(

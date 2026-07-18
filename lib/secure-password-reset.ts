@@ -10,12 +10,21 @@ import { logAction } from "./audit";
 
 const invalidReset = { error: "Invalid or expired reset link" };
 
-type ResetRow = {
+export type ResetRow = {
   id: string;
   userId: string;
   expiresAt: Date;
   consumedAt: Date | null;
 };
+
+export type ResetTokenState = "MISSING" | "CONSUMED" | "EXPIRED" | "ACTIVE";
+
+export function classifyPasswordResetToken(row: ResetRow | null | undefined, now = new Date()): ResetTokenState {
+  if (!row) return "MISSING";
+  if (row.consumedAt) return "CONSUMED";
+  if (new Date(row.expiresAt).getTime() <= now.getTime()) return "EXPIRED";
+  return "ACTIVE";
+}
 
 export async function handleSecurePasswordReset(req: Request) {
   const body = await req.json().catch(() => ({})) as { token?: string; password?: string };
@@ -57,7 +66,15 @@ export async function handleSecurePasswordReset(req: Request) {
         FOR UPDATE
       `;
       const row = rows[0];
-      if (!row || row.consumedAt || new Date(row.expiresAt).getTime() <= Date.now()) {
+      const tokenState = classifyPasswordResetToken(row);
+      if (tokenState !== "ACTIVE") {
+        if (tokenState === "EXPIRED" && row) {
+          await tx.$executeRaw`
+            UPDATE "PasswordResetToken"
+            SET "consumedAt" = NOW()
+            WHERE "id" = ${row.id} AND "consumedAt" IS NULL
+          `;
+        }
         throw new Error("INVALID_RESET_TOKEN");
       }
 

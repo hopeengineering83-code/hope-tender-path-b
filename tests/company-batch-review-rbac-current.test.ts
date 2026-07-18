@@ -52,3 +52,15 @@ describe("company batch review RBAC and explicit approval", () => {
     assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
   });
 });
+
+
+it("company batch review denies mixed or cross-company ids before mutation", () => {
+  for (const source of [expertSource, projectSource]) {
+    assert.match(source, /const ownedCount = await prisma\.(expert|project)\.count\(\{[\s\S]*where: \{ id: \{ in: ids \}, companyId: company\.id, deletedAt: null \}/);
+    assert.match(source, /if \(ownedCount !== ids\.length\) \{/);
+    assert.match(source, /code: "RECORD_NOT_FOUND"/);
+    const countPos = source.indexOf("const ownedCount = await prisma.");
+    const updatePos = source.indexOf("const result = await prisma.");
+    assert.ok(countPos >= 0 && updatePos > countPos, "ownership count must happen before updateMany");
+  }
+});

@@ -22,6 +22,8 @@ export const dynamic = "force-dynamic";
 
 const PRE_FILTER_LIMIT = 20;
 const PORTFOLIO_ITERATIONS = 20;
+const AI_SELECTION_THRESHOLD = 0.75;
+const AI_CRITICAL_FLOOR_MINIMUM = 5;
 
 type RequirementForLimit = {
   title: string;
@@ -103,13 +105,18 @@ function setScore(selected: CandidateAssessment[]): number {
   return averageScore * 0.50 + coverageScore * 0.30 + floorAverage * 0.20 - weakPenalty;
 }
 
+function isSelectionEligible(assessment: CandidateAssessment): boolean {
+  return assessment.overallScore >= AI_SELECTION_THRESHOLD && criticalFloor(assessment) >= AI_CRITICAL_FLOOR_MINIMUM && assessment.recommendSelection === true;
+}
+
 function selectBestAvailable(assessments: CandidateAssessment[], limit: number): Set<string> {
-  if (limit <= 0 || assessments.length === 0) return new Set();
+  const eligibleAssessments = assessments.filter(isSelectionEligible);
+  if (limit <= 0 || eligibleAssessments.length === 0) return new Set();
 
   let bestSelection: CandidateAssessment[] = [];
   let bestScore = -Infinity;
   for (let cycle = 0; cycle < PORTFOLIO_ITERATIONS; cycle += 1) {
-    const selected = [...assessments]
+    const selected = [...eligibleAssessments]
       .sort((a, b) => rankForCycle(b, cycle) - rankForCycle(a, cycle))
       .slice(0, limit);
     const score = setScore(selected);
@@ -127,7 +134,7 @@ function withAppliedSelection(assessment: CandidateAssessment, selectedIds: Set<
 }
 
 function appendRematchNote(existingNotes: string | null, selectedExpertCount: number, selectedProjectCount: number): string {
-  const note = `AI Multi-Perspective Rematch applied to main engine match records. ${selectedExpertCount} expert(s) and ${selectedProjectCount} project reference(s) selected after ${PORTFOLIO_ITERATIONS} best-available portfolio passes using 12-perspective scoring and critical-floor risk control. Compliance review should be refreshed/confirmed before final export.`;
+  const note = `AI Multi-Perspective Rematch applied to main engine match records. ${selectedExpertCount} expert(s) and ${selectedProjectCount} project reference(s) selected after ${PORTFOLIO_ITERATIONS} threshold-gated portfolio passes using 12-perspective scoring and critical-floor risk control. Compliance review should be refreshed/confirmed before final export.`;
   if (!existingNotes?.trim()) return note;
   if (existingNotes.includes("AI Multi-Perspective Rematch applied to main engine match records")) return existingNotes;
   return `${existingNotes.trim()}\n${note}`;
@@ -273,59 +280,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (!expertBatch && !projectBatch) {
-    // AI scoring failed entirely (timeout, parse failure, or missing key).
-    // Rather than returning an error and leaving the user stuck, fall back
-    // to selecting the top-N candidates by their existing engine scores so
-    // the best available experts and projects are always selected.
-    if (!applySelections) {
-      return NextResponse.json(
-        {
-          warning: "AI scoring unavailable — showing top candidates by existing engine score. Click 'Re-score + apply selections' to apply.",
-          code: "AI_FALLBACK_PREVIEW",
-          expertAssessments: tender.expertMatches.slice(0, selectionLimit(tender.requirements, "EXPERT", tender.expertMatches.length)).map((m) => ({ candidateId: m.expert.id, name: m.expert.fullName, overallScore: m.score, recommendSelection: true, fallback: true })),
-          projectAssessments: tender.projectMatches.slice(0, selectionLimit(tender.requirements, "PROJECT_EXPERIENCE", tender.projectMatches.length)).map((m) => ({ candidateId: m.project.id, name: m.project.name, overallScore: m.score, recommendSelection: true, fallback: true })),
-        },
-        { status: 200 }
-      );
-    }
-
-    // applySelections=true: persist the top-N by engine score to the DB
-    const expertLimit = selectionLimit(tender.requirements, "EXPERT", tender.expertMatches.length);
-    const projectLimit = selectionLimit(tender.requirements, "PROJECT_EXPERIENCE", tender.projectMatches.length);
-    const fallbackExpertIds = new Set(tender.expertMatches.slice(0, expertLimit).map((m) => m.expert.id));
-    const fallbackProjectIds = new Set(tender.projectMatches.slice(0, projectLimit).map((m) => m.project.id));
-
-    // Union with existing manual selections so nothing is lost
-    const mergedExpertIds = new Set([...tender.expertMatches.filter((m) => m.isSelected).map((m) => m.expert.id), ...fallbackExpertIds]);
-    const mergedProjectIds = new Set([...tender.projectMatches.filter((m) => m.isSelected).map((m) => m.project.id), ...fallbackProjectIds]);
-
-    for (const match of tender.expertMatches) {
-      if (mergedExpertIds.has(match.expert.id) !== match.isSelected) {
-        await prisma.tenderExpertMatch.update({ where: { id: match.id }, data: { isSelected: mergedExpertIds.has(match.expert.id) } });
-      }
-    }
-    for (const match of tender.projectMatches) {
-      if (mergedProjectIds.has(match.project.id) !== match.isSelected) {
-        await prisma.tenderProjectMatch.update({ where: { id: match.id }, data: { isSelected: mergedProjectIds.has(match.project.id) } });
-      }
-    }
-
-    await prisma.tender.update({
-      where: { id: tenderId },
-      data: {
-        status: "COMPLIANCE_REVIEW",
-        stage: "COMPLIANCE",
-        notes: appendRematchNote(tender.notes, mergedExpertIds.size, mergedProjectIds.size),
+    return NextResponse.json(
+      {
+        error: "AI rematch scoring unavailable. No fallback selections were applied; keep existing reviewed selections or retry after provider recovery.",
+        code: "AI_REMATCH_UNAVAILABLE_NO_SELECTION",
+        applySelections,
       },
-    });
-
-    return NextResponse.json({
-      warning: "AI scoring unavailable — top candidates selected by existing engine score.",
-      code: "AI_FALLBACK_APPLIED",
-      expertsSelected: mergedExpertIds.size,
-      projectsSelected: mergedProjectIds.size,
-      applySelections: true,
-    });
+      { status: applySelections ? 409 : 503 },
+    );
   }
 
   const aiSelectedExpertIds = expertBatch
@@ -348,9 +310,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // persist; AI recommendations are added on top so the bid team can
   // see both their picks and the AI's picks.
   //
-  // Result: "selected projects and experts must be included and added
-  // to the main proposal even if the score is below 90 percent" — the
-  // user's exact requirement.
+  // Fail-closed rematch semantics: existing manual selections are preserved,
+  // but new AI-selected rows must pass the threshold/critical-floor gate above.
   const userSelectedExpertIds = new Set(
     tender.expertMatches.filter((m) => m.isSelected).map((m) => m.expert.id)
   );
