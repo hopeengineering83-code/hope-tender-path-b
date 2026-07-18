@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../lib/auth";
+import { requireUser, unauthorizedResponse } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 
 const INTERNAL_AUDIT_ENTITY_TYPE = "TenderStorageCleanup";
@@ -42,9 +42,9 @@ function publicAuditLog(row: {
 export async function GET(req: Request) {
   let actor;
   try {
-    actor = await requireRole("ADMIN");
-  } catch (e) {
-    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+    actor = await requireUser();
+  } catch {
+    return unauthorizedResponse();
   }
   const userId = actor.id;
   await prismaReady;

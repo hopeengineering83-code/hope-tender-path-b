@@ -6,6 +6,17 @@ const route = readFileSync("app/api/audit/route.ts", "utf8");
 const page = readFileSync("app/dashboard/activity/page.tsx", "utf8");
 
 describe("activity API safe presentation contract", () => {
+
+  it("authorizes direct API access by authenticated user and only returns that actor's rows", () => {
+    assert.match(route, /import \{ requireUser, unauthorizedResponse \} from "\.\.\/\.\.\/\.\.\/lib\/auth"/);
+    assert.match(route, /actor = await requireUser\(\)/);
+    assert.doesNotMatch(route, /requireRole\("ADMIN"\)/);
+    assert.match(route, /const userId = actor\.id/);
+    assert.match(route, /where = \{[\s\S]*userId,[\s\S]*NOT: \{ entityType: INTERNAL_AUDIT_ENTITY_TYPE \}/);
+    assert.match(route, /prisma\.auditLog\.findMany\(\{[\s\S]*where,[\s\S]*select:/);
+    assert.match(route, /prisma\.auditLog\.count\(\{ where \}\)/);
+  });
+
   it("selects only minimized public audit-log fields", () => {
     assert.match(route, /select: \{ id: true, action: true, entityType: true, description: true, createdAt: true \}/);
     assert.doesNotMatch(route, /metadata: true/);
