@@ -70,10 +70,19 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
           panels compare against (both are returned by this same route but
           are independently derived) — this additive badge makes any
           disagreement between the Export ZIP stage and the authoritative
-          snapshot visible instead of leaving it silent. */}
+          snapshot visible instead of leaving it silent.
+          verdict="export" (not "finalZip") deliberately matches what stage
+          10 is actually computed from server-side
+          (app/api/tenders/[id]/workflow-center/route.ts uses
+          snapshot.exportEligible, not snapshot.finalZipEligible) —
+          finalZipBlockers is a strict superset of exportBlockers
+          (release-snapshot-eligibility.ts), so a tender can be
+          exportEligible=true while finalZipEligible=false. Comparing
+          against finalZip here would produce false-positive disagreement
+          warnings whenever that gap between the two tiers is live. */}
       <SnapshotConsistencyBadge
         tenderId={tenderId}
-        verdict="finalZip"
+        verdict="export"
         localEligible={stages.find((s) => s.stage === 10)?.status === "READY"}
         localLabel="Workflow Control Center"
       />

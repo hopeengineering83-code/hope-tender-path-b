@@ -83,11 +83,22 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
     );
   });
 
-  it("workflow-control-center compares its own Export ZIP stage status to the snapshot", () => {
+  it("workflow-control-center compares its own Export ZIP stage status to the matching snapshot field (exportEligible, not the stricter finalZipEligible)", () => {
     const workflow = read("components/tender-workflow-action-center.tsx");
     assert.ok(
-      workflow.includes('verdict="finalZip"') && workflow.includes('stages.find((s) => s.stage === 10)?.status === "READY"'),
+      workflow.includes('verdict="export"') && workflow.includes('stages.find((s) => s.stage === 10)?.status === "READY"'),
       "tender-workflow-action-center must pass its own Export ZIP stage verdict so a disagreement with the snapshot is surfaced",
+    );
+    // The Export ZIP stage's own status (workflow-center/route.ts) is
+    // computed from snapshot.exportEligible, not snapshot.finalZipEligible.
+    // finalZipBlockers is a strict superset of exportBlockers
+    // (release-snapshot-eligibility.ts), so exportEligible=true while
+    // finalZipEligible=false is a real, reachable state — comparing against
+    // "finalZip" here would fire false-positive disagreement warnings.
+    assert.doesNotMatch(
+      workflow,
+      /verdict="finalZip"/,
+      "must not compare the Export ZIP stage (driven by exportEligible) against the stricter finalZipEligible tier",
     );
   });
 
