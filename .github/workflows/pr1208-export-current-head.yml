@@ -1,0 +1,29 @@
+name: PR 1208 export current head
+
+on:
+  push:
+    branches:
+      - fix/pr1175-dead-broken-overlap-audit
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact audit branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/pr1175-dead-broken-overlap-audit
+          fetch-depth: 0
+      - name: Archive exact current head
+        run: git archive --format=tar.gz --output=pr1208-current-head.tar.gz HEAD
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1208-current-head-${{ github.sha }}
+          path: pr1208-current-head.tar.gz
+          if-no-files-found: error
+          retention-days: 3
