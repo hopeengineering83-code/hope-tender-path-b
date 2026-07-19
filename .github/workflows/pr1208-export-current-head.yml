@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/pr1175-dead-broken-overlap-audit
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
 
 permissions:
   contents: read
