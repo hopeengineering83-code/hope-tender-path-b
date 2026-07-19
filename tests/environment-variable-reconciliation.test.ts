@@ -515,18 +515,16 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(result.ok);
     });
 
-    it("bootstrap-admin enforcement lives in lib/prisma.ts (dev-only + password strength)", () => {
-      // Real check: the guard must exist in source. lib/prisma.ts is responsible
-      // for refusing bootstrap-admin in production and enforcing password rules.
+    it("runtime bootstrap enforcement is delegated to the explicit policy resolver", () => {
+      const policySrc = readFileSync(join(process.cwd(), "lib/bootstrap-admin-policy.ts"), "utf8");
       const prismaSrc = readFileSync(join(process.cwd(), "lib/prisma.ts"), "utf8");
-      assert.ok(
-        /BOOTSTRAP_ADMIN_ENABLED/.test(prismaSrc),
-        "lib/prisma.ts must reference BOOTSTRAP_ADMIN_ENABLED to gate bootstrap admin",
-      );
-      assert.ok(
-        /BOOTSTRAP_ADMIN_PASSWORD/.test(prismaSrc),
-        "lib/prisma.ts must reference BOOTSTRAP_ADMIN_PASSWORD for password enforcement",
-      );
+
+      assert.match(policySrc, /resolveRuntimeBootstrapAdminPolicy/);
+      assert.match(policySrc, /envFlag\("BOOTSTRAP_ADMIN_ENABLED"\)/);
+      assert.match(policySrc, /readEnv\("BOOTSTRAP_ADMIN_PASSWORD"\)/);
+      assert.match(policySrc, /validateProductionBootstrapPassword/);
+      assert.match(prismaSrc, /resolveRuntimeBootstrapAdminPolicy/);
+      assert.doesNotMatch(prismaSrc, /process\.env\.BOOTSTRAP_ADMIN_PASSWORD/);
     });
   });
 

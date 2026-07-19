@@ -12,3 +12,9 @@ test("disabled bootstrap admin seed is not emitted as a production warning", () 
 test("genuine bootstrap failures remain error-level events", () => {
   assert.match(source, /logger\.error\("\[bootstrap\] failed:"/);
 });
+
+
+test("Prisma consumes the dedicated runtime bootstrap policy", () => {
+  assert.match(source, /resolveRuntimeBootstrapAdminPolicy/);
+  assert.doesNotMatch(source, /process\.env\.BOOTSTRAP_ADMIN_PASSWORD/);
+});

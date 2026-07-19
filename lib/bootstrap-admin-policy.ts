@@ -41,9 +41,26 @@ export function resolveBootstrapAdminPolicy(): BootstrapAdminPolicy {
   };
 }
 
+/** Resolve runtime seeding independently from the permanently disabled login repair path. */
+export function resolveRuntimeBootstrapAdminPolicy(): BootstrapAdminPolicy {
+  if (process.env.NODE_ENV !== "production") {
+    return { allowRepair: true, password: readEnv("BOOTSTRAP_ADMIN_PASSWORD") || "Admin123!", reason: null };
+  }
+
+  if (!envFlag("BOOTSTRAP_ADMIN_ENABLED")) {
+    return { allowRepair: false, password: "", reason: "Runtime bootstrap admin seeding is disabled." };
+  }
+
+  const password = readEnv("BOOTSTRAP_ADMIN_PASSWORD");
+  const passwordError = validateProductionBootstrapPassword(password);
+  if (passwordError) {
+    return { allowRepair: false, password: "", reason: passwordError };
+  }
+
+  return { allowRepair: true, password: password!, reason: null };
+}
+
 /** Runtime seed is allowed only through explicit opt-in and a strong password. */
 export function isRuntimeBootstrapAdminAllowed(): boolean {
-  if (!envFlag("BOOTSTRAP_ADMIN_ENABLED")) return false;
-  const password = readEnv("BOOTSTRAP_ADMIN_PASSWORD");
-  return validateProductionBootstrapPassword(password) === null;
+  return resolveRuntimeBootstrapAdminPolicy().allowRepair;
 }

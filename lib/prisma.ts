@@ -1,7 +1,7 @@
 import { logger } from "./observability";
 import { PrismaClient } from "@prisma/client";
 import { checkEnv } from "./env-check";
-import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
+import { resolveRuntimeBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
 
 // Validate env vars before anything else. Crashes loudly on bad config.
 checkEnv();
@@ -1380,7 +1380,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   // route uses to repair a missing password hash. In development the seed
   // still runs with the legacy password so `npm run dev` continues to work
   // without ceremony.
-  const policy = resolveBootstrapAdminPolicy();
+  const policy = resolveRuntimeBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {
       logger.debug("[bootstrap] Bootstrap admin seed is disabled by policy.");
