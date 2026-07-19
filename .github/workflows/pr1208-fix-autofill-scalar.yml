@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Checkout audit branch
+      - name: Checkout exact audit branch
         uses: actions/checkout@v4
         with:
           ref: fix/pr1175-dead-broken-overlap-audit
