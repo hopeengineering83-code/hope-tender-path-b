@@ -58,10 +58,11 @@ export type MetadataAutoFillResult = {
   skipped: string[];
 };
 
-function isEmptyOrPlaceholder(value: string | null | undefined): boolean {
-  if (!value || value.trim() === "") return true;
-  if (isPlaceholderClientName(value)) return true;
-  return false;
+function isEmptyOrPlaceholder(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value !== "string") return false;
+  if (value.trim() === "") return true;
+  return isPlaceholderClientName(value);
 }
 
 function combineExtractedText(files: TenderFileForAutoFill[]): string {
@@ -98,7 +99,7 @@ export async function autoFillTenderMetadata(
     validate?: (v: T) => boolean,
   ): void {
     if (inferred == null) { skipped.push(field); return; }
-    if (current != null && !isEmptyOrPlaceholder(current as unknown as string)) {
+    if (current != null && !isEmptyOrPlaceholder(current)) {
       skipped.push(field);
       return;
     }
