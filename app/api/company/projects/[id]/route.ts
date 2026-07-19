@@ -109,13 +109,38 @@ export async function PATCH(
   }
 
   const isApprove = body.action === "approve";
+  const reviewedAt = new Date();
+
+  // Build durable provenance for the review action (same as batch endpoint).
+  let reviewNotes = body.notes ?? null;
+  if (isApprove) {
+    const fullRecord = await prisma.project.findFirst({
+      where: { id, companyId: company.id, deletedAt: null },
+      include: { sourceDocument: { select: { id: true, companyId: true, extractedText: true, originalFileName: true } } },
+    });
+    if (fullRecord) {
+      const { buildReviewProvenance, projectReviewFields } = await import("../../../../../lib/vault-review-provenance");
+      const ownedSource = fullRecord.sourceDocument?.companyId === company.id ? fullRecord.sourceDocument : null;
+      const provenance = buildReviewProvenance({
+        recordType: "PROJECT",
+        sourceDocument: ownedSource,
+        fields: projectReviewFields(fullRecord),
+        reviewerId: actor.id,
+        reviewedAt,
+      });
+      if (provenance.ok) {
+        reviewNotes = provenance.serialized;
+      }
+    }
+  }
+
   const updated = await prisma.project.update({
     where: { id },
     data: {
       trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
       reviewedBy: actor.id,
-      reviewedAt: new Date(),
-      reviewNotes: body.notes ?? null,
+      reviewedAt,
+      reviewNotes,
       updatedAt: new Date(),
     },
   });

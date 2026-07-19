@@ -117,13 +117,43 @@ export async function PATCH(
   }
 
   const isApprove = body.action === "approve";
+  const reviewedAt = new Date();
+
+  // Build durable provenance for the review action (same as batch endpoint).
+  // Without this, isDurablyReviewed() returns false and the record is flagged
+  // as a CRITICAL gap by diagnostics while still being selected by matching.
+  let reviewNotes = body.notes ?? null;
+  if (isApprove) {
+    const fullRecord = await prisma.expert.findFirst({
+      where: { id, companyId: company.id, deletedAt: null },
+      include: { sourceDocument: { select: { id: true, companyId: true, extractedText: true, originalFileName: true } } },
+    });
+    if (fullRecord) {
+      const { buildReviewProvenance, expertReviewFields } = await import("../../../../../lib/vault-review-provenance");
+      const ownedSource = fullRecord.sourceDocument?.companyId === company.id ? fullRecord.sourceDocument : null;
+      const provenance = buildReviewProvenance({
+        recordType: "EXPERT",
+        sourceDocument: ownedSource,
+        fields: expertReviewFields(fullRecord),
+        reviewerId: actor.id,
+        reviewedAt,
+      });
+      if (provenance.ok) {
+        reviewNotes = provenance.serialized;
+      }
+      // If provenance fails, proceed with plain notes — the record will be
+      // flagged by diagnostics as lacking durable provenance, which is the
+      // correct fail-open behavior for the review action itself.
+    }
+  }
+
   const updated = await prisma.expert.update({
     where: { id },
     data: {
       trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
       reviewedBy: actor.id,
-      reviewedAt: new Date(),
-      reviewNotes: body.notes ?? null,
+      reviewedAt,
+      reviewNotes,
       updatedAt: new Date(),
     },
   });
