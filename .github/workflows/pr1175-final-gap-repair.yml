@@ -138,10 +138,58 @@ jobs:
         run: npm run lint
 
       - name: Full test suite
-        run: npm test
+        id: full
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee artifacts/pr1175-full-tests.log
+
+      - name: Upload full-suite diagnostics
+        if: steps.full.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1175-full-test-diagnostics-${{ github.sha }}
+          path: |
+            artifacts/pr1175-full-tests.log
+            tests/
+            app/api/company/experts/[id]/route.ts
+            app/api/company/projects/[id]/route.ts
+            app/api/tenders/[id]/ai-rematch/route.ts
+            lib/engine/matching-eligibility.ts
+            lib/engine/matching.ts
+            lib/engine/run-tender-engine.ts
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop on full-suite failure
+        if: steps.full.outcome == 'failure'
+        run: exit 1
 
       - name: Production build
-        run: npm run build
+        id: build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee artifacts/pr1175-build.log
+
+      - name: Upload build diagnostics
+        if: steps.build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1175-build-diagnostics-${{ github.sha }}
+          path: |
+            artifacts/pr1175-build.log
+            app/
+            lib/
+            prisma/schema.prisma
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop on build failure
+        if: steps.build.outcome == 'failure'
+        run: exit 1
 
       - name: Verify patch hygiene
         run: |
