@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout controlled branch
@@ -32,41 +31,29 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           path = Path("lib/prisma.ts")
           source = path.read_text()
-          old = '''    if (process.env.NODE_ENV === "production") {
-              logger.warn(
-                "[bootstrap] Skipping bootstrap admin seed in production. Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable.",
-              );
-            }'''
-          new = '''    if (process.env.NODE_ENV === "production") {
-              logger.debug(
-                "[bootstrap] Bootstrap admin seed is disabled by policy.",
-              );
-            }'''
+          pattern = re.compile(
+              r'logger\.warn\(\s*"\[bootstrap\] Skipping bootstrap admin seed in production\.'
+              r' Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable\."\s*,?\s*\);'
+          )
+          replacement = 'logger.debug("[bootstrap] Bootstrap admin seed is disabled by policy.");'
+          updated, count = pattern.subn(replacement, source)
+          if count != 1:
+              raise SystemExit(f"Expected exactly one bootstrap warning block, found {count}")
+          path.write_text(updated)
 
-          if source.count(old) != 1:
-              raise SystemExit(f"Expected exactly one bootstrap warning block, found {source.count(old)}")
-
-          path.write_text(source.replace(old, new, 1))
-
-          test = Path("tests/bootstrap-admin-log-noise.test.ts")
-          test.write_text('''import assert from "node:assert/strict";
+          Path("tests/bootstrap-admin-log-noise.test.ts").write_text('''import assert from "node:assert/strict";
           import { readFileSync } from "node:fs";
           import { test } from "node:test";
 
           const source = readFileSync("lib/prisma.ts", "utf8");
 
           test("disabled bootstrap admin seed is not emitted as a production warning", () => {
-            assert.doesNotMatch(
-              source,
-              /logger\\.warn\\([\\s\\S]{0,240}Skipping bootstrap admin seed in production/,
-            );
-            assert.match(
-              source,
-              /logger\\.debug\\([\\s\\S]{0,160}Bootstrap admin seed is disabled by policy/,
-            );
+            assert.doesNotMatch(source, /logger\\.warn\\([\\s\\S]{0,240}Skipping bootstrap admin seed in production/);
+            assert.match(source, /logger\\.debug\\([\\s\\S]{0,160}Bootstrap admin seed is disabled by policy/);
           });
 
           test("genuine bootstrap failures remain error-level events", () => {
