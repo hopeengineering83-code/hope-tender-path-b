@@ -559,10 +559,14 @@ describe("PATH 5: Resume behavior — only unfinished chunks resume", () => {
 
   it("checkpoint error messages are redacted (no API key leakage in errorMessage)", () => {
     const checkpointSrc = read("lib/ai-analyze-checkpoints.ts");
-    // cleanErrorMessage must redact sk-*, AIza*, Bearer *
-    assert.match(checkpointSrc, /sk-\[a-zA-Z0-9_-\]/);
-    assert.match(checkpointSrc, /AIza\[a-zA-Z0-9_-\]/);
-    assert.match(checkpointSrc, /Bearer\\s\+/);
+    // cleanErrorMessage must delegate to the canonical redactSecrets() helper
+    // from lib/sanitize-error.ts. Previously this checked for inline sk-/AIza/
+    // Bearer regexes — consolidated to a single helper so patterns cannot diverge.
+    assert.match(checkpointSrc, /redactSecrets/);
+    assert.ok(
+      checkpointSrc.includes("from \"./sanitize-error\""),
+      "must import redactSecrets from ./sanitize-error",
+    );
   });
 
   it("the AI Analyze route uses getCompletedChunkResults to skip already-succeeded chunks (source-shape)", () => {
