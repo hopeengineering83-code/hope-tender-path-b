@@ -1,0 +1,121 @@
+name: PR 1208 dead broken overlap audit
+
+on:
+  push:
+    branches:
+      - fix/pr1175-dead-broken-overlap-audit
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      START_SHA: 4c37510578e0d725fecf8bc6e4f388dd807408b6
+      PARENT_BASE_SHA: b3c9db5de89a2a665e61a83facbff0f276f9983c
+    steps:
+      - name: Checkout isolated audit branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Initialize audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          {
+            echo "start_sha=$START_SHA"
+            echo "audit_head=$(git rev-parse HEAD)"
+            echo "parent_base_sha=$PARENT_BASE_SHA"
+            echo "node=$(node --version)"
+            echo "npm=$(npm --version)"
+          } > audit-output/context.txt
+          git diff --name-status "$PARENT_BASE_SHA" "$START_SHA" > audit-output/pr1175-changed-files.txt
+          git log --oneline --decorate --no-merges "$PARENT_BASE_SHA..$START_SHA" > audit-output/pr1175-commits.txt
+
+      - name: Baseline compiler and lint verification
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee audit-output/typecheck.txt
+          npm run lint 2>&1 | tee audit-output/lint.txt
+
+      - name: Strict unused local and parameter scan
+        shell: bash
+        run: |
+          set +e
+          npx tsc --noEmit --noUnusedLocals --noUnusedParameters --pretty false > audit-output/tsc-unused.txt 2>&1
+          echo "$?" > audit-output/tsc-unused-exit-code.txt
+          exit 0
+
+      - name: Export and file reachability scan
+        shell: bash
+        run: |
+          set +e
+          npx --yes knip@latest --reporter json > audit-output/knip.json 2> audit-output/knip.stderr.txt
+          echo "$?" > audit-output/knip-exit-code.txt
+          npx --yes depcheck@1.4.7 --json > audit-output/depcheck.json 2> audit-output/depcheck.stderr.txt
+          echo "$?" > audit-output/depcheck-exit-code.txt
+          exit 0
+
+      - name: Import-cycle and duplication scan
+        shell: bash
+        run: |
+          set +e
+          npx --yes madge@latest --circular --warning --extensions ts,tsx --ts-config tsconfig.json app components lib > audit-output/madge-cycles.txt 2> audit-output/madge.stderr.txt
+          echo "$?" > audit-output/madge-exit-code.txt
+          npx --yes jscpd@latest app components lib --min-lines 12 --min-tokens 90 --reporters json --output audit-output/jscpd > audit-output/jscpd.stdout.txt 2> audit-output/jscpd.stderr.txt
+          echo "$?" > audit-output/jscpd-exit-code.txt
+          exit 0
+
+      - name: Repository overlap and temporary-code scan
+        shell: bash
+        run: |
+          set +e
+          git grep -n -I -E 'TODO|FIXME|HACK|TEMPORARY|temporary|deprecated|legacy|dead code|unreachable' "$START_SHA" -- app components lib scripts tests .github > audit-output/temporary-markers.txt
+          git ls-tree -r --name-only "$START_SHA" | sort > audit-output/repository-files.txt
+          git ls-tree -r --name-only "$START_SHA" | awk -F/ '{print $NF}' | sort | uniq -d > audit-output/duplicate-basenames.txt
+          find app components lib -type f \( -name '*.ts' -o -name '*.tsx' \) -print0 | xargs -0 sha256sum | sort -k1,1 > audit-output/source-hashes.txt
+          awk '{count[$1]++; files[$1]=files[$1] "\n" $2} END {for (h in count) if (count[h] > 1) print h, count[h], files[h]}' audit-output/source-hashes.txt > audit-output/exact-duplicate-files.txt
+          exit 0
+
+      - name: Summarize machine findings
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const out = { generatedAt: new Date().toISOString() };
+          function readJson(path) {
+            try { return JSON.parse(fs.readFileSync(path, 'utf8')); }
+            catch (error) { return { parseError: String(error) }; }
+          }
+          out.knip = readJson('audit-output/knip.json');
+          out.depcheck = readJson('audit-output/depcheck.json');
+          const unused = fs.readFileSync('audit-output/tsc-unused.txt', 'utf8').split(/\r?\n/).filter(Boolean);
+          out.tscUnusedCount = unused.length;
+          out.tscUnused = unused.slice(0, 1000);
+          const cycles = fs.readFileSync('audit-output/madge-cycles.txt', 'utf8').split(/\r?\n/).filter(Boolean);
+          out.madgeOutput = cycles.slice(0, 1000);
+          fs.writeFileSync('audit-output/summary.json', JSON.stringify(out, null, 2));
+          NODE
+
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1208-code-audit-${{ github.sha }}
+          path: audit-output
+          if-no-files-found: error
+          retention-days: 7
