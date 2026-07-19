@@ -33,6 +33,26 @@ const authenticatedSeeds = Array.from(new Set(routeManifest
   .map((entry) => entry.representativeRoute)))
   .sort();
 
+const baselineTenderIds = [
+  "45a2d090-af4c-4815-9736-c8b5bbbdf89d",
+  "2362d615-c78b-4b01-b420-515c8679d0c2",
+  "5cf8ae9b-af8a-4b8d-bcd0-dfaf75b6037c",
+];
+const baselineTenderStatuses = [
+  "ALL", "DRAFT", "INTAKE", "ANALYZED", "AI_ANALYZED", "AI_ANALYSIS_PARTIAL",
+  "FALLBACK_DRAFT_CREATED", "ANALYSIS_REQUIRES_REVIEW", "MATCHED", "COMPLIANCE_REVIEW",
+  "READY_FOR_GENERATION", "GENERATED", "IN_REVIEW", "APPROVED", "EXPORTED", "CLOSED",
+  "REGEX_FALLBACK",
+];
+const baselineScenarioRoutes = [
+  ...baselineTenderIds.flatMap((id) => [
+    `/dashboard/tenders/${id}`,
+    `/dashboard/tenders/${id}/command-center`,
+    `/dashboard/tenders/${id}/report`,
+  ]),
+  ...baselineTenderStatuses.map((status) => `/dashboard/tenders?status=${status}`),
+];
+
 const viewports = [
   { name: "desktop", width: 1440, height: 1000 },
   { name: "tablet", width: 1024, height: 1366 },
@@ -252,7 +272,7 @@ async function captureViewport(browser, viewport) {
   for (const route of publicRoutes) await captureRoute(page, viewport.name, route, records, runtime);
   await login(page);
 
-  const queue = [...authenticatedSeeds];
+  const queue = [...authenticatedSeeds, ...baselineScenarioRoutes];
   const seen = new Set();
   const routeLimit = Math.max(240, routeManifest.length * 6);
   while (queue.length > 0 && seen.size < routeLimit) {

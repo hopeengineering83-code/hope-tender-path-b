@@ -5,6 +5,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { buildReviewProvenance, expertReviewFields } from "../lib/vault-review-provenance";
 import {
   capabilityScore,
   capabilityFamilies,
@@ -24,6 +26,46 @@ const HEALTHCARE_QUERY = `
   biomedical engineering, clinical workflow, patient flow, infection control,
   pharmacy design, radiology, surgical suite, ICU, OPD, ministry of health.
 `;
+
+
+function durableExpertRecord() {
+  const companyId = "company-durable";
+  const reviewedAt = new Date("2026-01-01T00:00:00.000Z");
+  const sourceText = "Hana Durable is a Structural Engineer with 20 years of experience in Buildings and holds PE certification.";
+  const sourceDocument = {
+    id: "doc-durable",
+    companyId,
+    extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: "expert-durable",
+    companyId,
+    fullName: "Hana Durable",
+    title: "Structural Engineer",
+    yearsExperience: 20,
+    disciplines: JSON.stringify(["Structural Engineer"]),
+    sectors: JSON.stringify(["Buildings"]),
+    certifications: JSON.stringify(["PE"]),
+    trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id,
+    reviewedBy: "user-durable",
+    reviewedAt,
+    sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "EXPERT",
+    sourceDocument,
+    fields: expertReviewFields(record),
+    reviewerId: record.reviewedBy,
+    reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("durable fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
+}
 
 // ─── Gap #1: Irrelevant projects must NOT score high for healthcare ────────
 
@@ -227,18 +269,11 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     );
   });
 
-  it("fully-grounded REVIEWED record IS eligible for matching", () => {
-    const record = {
-      id: "expert-6",
-      trustLevel: "REVIEWED",
-      sourceDocumentId: "doc-1",
-      reviewedBy: "user-1",
-      reviewedAt: new Date("2026-01-01"),
-    };
+  it("durably-grounded REVIEWED record IS eligible for matching", () => {
     assert.equal(
-      isEligibleForMatching(record),
+      isEligibleForMatching(durableExpertRecord()),
       true,
-      "Fully-grounded REVIEWED record must be eligible",
+      "Only a REVIEWED record bound to current verified source bytes must be eligible",
     );
   });
 
@@ -258,20 +293,9 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     );
   });
 
-  it("enforceMatchingEligibility preserves eligible record score", () => {
-    const record = {
-      id: "expert-8",
-      trustLevel: "REVIEWED",
-      sourceDocumentId: "doc-1",
-      reviewedBy: "user-1",
-      reviewedAt: new Date("2026-01-01"),
-    };
-    const score = enforceMatchingEligibility(0.85, record);
-    assert.equal(
-      score,
-      0.85,
-      "Eligible record score must be preserved, got " + score,
-    );
+  it("enforceMatchingEligibility preserves only a durably reviewed record score", () => {
+    const score = enforceMatchingEligibility(0.85, durableExpertRecord());
+    assert.equal(score, 0.85, "Durably eligible record score must be preserved, got " + score);
   });
 
   it("checkMatchingEligibility returns explicit rejection for ungrounded record", () => {
@@ -348,10 +372,10 @@ describe("Issue #1135 Revision #5 — blocking evidence gap + generation lock", 
       !src.includes("require("),
       "matching-eligibility.ts must NOT use require() — use explicit contract instead",
     );
-    // Must NOT import from vault-review-provenance (that's PR #1146's scope)
+    // The provenance module is now integrated and is the canonical matching authority.
     assert.ok(
-      !src.includes("vault-review-provenance"),
-      "matching-eligibility.ts must NOT reference vault-review-provenance (PR #1146 scope)",
+      src.includes("vault-review-provenance") && src.includes("canUseVaultRecord"),
+      "matching-eligibility.ts must delegate to the canonical durable provenance authority",
     );
   });
 
@@ -365,6 +389,7 @@ describe("Issue #1135 Revision #5 — blocking evidence gap + generation lock", 
     assert.match(src, /NO_SOURCE_DOCUMENT/);
     assert.match(src, /NO_REVIEWER/);
     assert.match(src, /NO_REVIEW_TIMESTAMP/);
+    assert.match(src, /NO_DURABLE_PROVENANCE/);
   });
 
   it("matching-config.ts is the shared constant module (Revision #4)", () => {

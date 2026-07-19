@@ -7,15 +7,22 @@
  */
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { buildMatches } from "../lib/engine/matching";
 import type { CompanyKnowledgeSnapshot, RequirementDraft } from "../lib/engine/types";
+import { buildReviewProvenance, expertReviewFields, projectReviewFields } from "../lib/vault-review-provenance";
 
-function provenance(id: string) {
+const REVIEWED_AT = new Date("2026-07-01T00:00:00.000Z");
+const REVIEWER_ID = "reviewer-1";
+
+function verifiedSource(id: string, text: string) {
   return {
-    sourceDocumentId: `source-${id}`,
-    reviewedBy: "reviewer-1",
-    reviewedAt: new Date("2026-07-01T00:00:00.000Z"),
-    reviewNotes: "Reviewed against the owned source document.",
+    id: `source-${id}`,
+    companyId: "c1",
+    extractedText: text,
+    contentSha256: createHash("sha256").update(text, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(text),
+    integrityStatus: "VERIFIED",
   };
 }
 
@@ -26,7 +33,7 @@ function makeProject(
   summary: string,
   serviceAreas: string[],
 ): CompanyKnowledgeSnapshot["projects"][number] {
-  return {
+  const base = {
     id,
     companyId: "c1",
     name,
@@ -40,12 +47,30 @@ function makeProject(
     startDate: null,
     endDate: null,
     trustLevel: "REVIEWED",
-    ...provenance(id),
+    reviewedBy: REVIEWER_ID,
+    reviewedAt: REVIEWED_AT,
     deletedAt: null,
     deletedBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+  const sourceText = `Project ${name}. Client Client. Country ET. Sector ${sector}. Service areas ${serviceAreas.join(", ")}. Contract value 150000. Currency USD. This verified project reference contains complete source evidence for matching review.`;
+  const sourceDocument = verifiedSource(id, sourceText);
+  const provenance = buildReviewProvenance({
+    recordType: "PROJECT",
+    sourceDocument,
+    fields: projectReviewFields(base),
+    reviewerId: REVIEWER_ID,
+    reviewedAt: REVIEWED_AT,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("project fixture provenance failed");
+  return {
+    ...base,
+    sourceDocumentId: sourceDocument.id,
+    sourceDocument,
+    reviewNotes: provenance.serialized,
+  } as unknown as CompanyKnowledgeSnapshot["projects"][number];
 }
 
 function makeExpert(
@@ -56,7 +81,7 @@ function makeExpert(
   disciplines: string[],
   sectors: string[],
 ): CompanyKnowledgeSnapshot["experts"][number] {
-  return {
+  const base = {
     id,
     companyId: "c1",
     fullName,
@@ -70,12 +95,30 @@ function makeExpert(
     yearsExperience: 12,
     isActive: true,
     trustLevel: "REVIEWED",
-    ...provenance(id),
+    reviewedBy: REVIEWER_ID,
+    reviewedAt: REVIEWED_AT,
     deletedAt: null,
     deletedBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+  const sourceText = `Expert ${fullName}. Title ${title}. Years experience 12. Disciplines ${disciplines.join(", ")}. Sectors ${sectors.join(", ")}. This verified curriculum vitae contains complete source evidence for matching review.`;
+  const sourceDocument = verifiedSource(id, sourceText);
+  const provenance = buildReviewProvenance({
+    recordType: "EXPERT",
+    sourceDocument,
+    fields: expertReviewFields(base),
+    reviewerId: REVIEWER_ID,
+    reviewedAt: REVIEWED_AT,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("expert fixture provenance failed");
+  return {
+    ...base,
+    sourceDocumentId: sourceDocument.id,
+    sourceDocument,
+    reviewNotes: provenance.serialized,
+  } as unknown as CompanyKnowledgeSnapshot["experts"][number];
 }
 
 const emptyKnowledgeBase: Pick<

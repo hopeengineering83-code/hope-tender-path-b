@@ -3,6 +3,12 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
+import { extractRequestId } from "../../../../../lib/request-id";
+import {
+  buildReviewProvenance,
+  expertReviewFields,
+  publicVaultIdentifier,
+} from "../../../../../lib/vault-review-provenance";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -102,13 +108,11 @@ export async function PATCH(
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  const requestId = extractRequestId(req);
   await prismaReady;
   const { id } = await params;
   const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json().catch(() => null) as { action?: string; notes?: string } | null;
   if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
@@ -116,58 +120,103 @@ export async function PATCH(
     return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
   }
 
-  const isApprove = body.action === "approve";
-  const reviewedAt = new Date();
-
-  // Build durable provenance for the review action (same as batch endpoint).
-  // Without this, isDurablyReviewed() returns false and the record is flagged
-  // as a CRITICAL gap by diagnostics while still being selected by matching.
-  let reviewNotes = body.notes ?? null;
-  if (isApprove) {
-    const fullRecord = await prisma.expert.findFirst({
-      where: { id, companyId: company.id, deletedAt: null },
-      include: { sourceDocument: { select: { id: true, companyId: true, extractedText: true, originalFileName: true } } },
-    });
-    if (fullRecord) {
-      const { buildReviewProvenance, expertReviewFields } = await import("../../../../../lib/vault-review-provenance");
-      const ownedSource = fullRecord.sourceDocument?.companyId === company.id ? fullRecord.sourceDocument : null;
-      const provenance = buildReviewProvenance({
-        recordType: "EXPERT",
-        sourceDocument: ownedSource,
-        fields: expertReviewFields(fullRecord),
-        reviewerId: actor.id,
-        reviewedAt,
-      });
-      if (provenance.ok) {
-        reviewNotes = provenance.serialized;
-      }
-      // If provenance fails, proceed with plain notes — the record will be
-      // flagged by diagnostics as lacking durable provenance, which is the
-      // correct fail-open behavior for the review action itself.
-    }
-  }
-
-  const updated = await prisma.expert.update({
-    where: { id },
-    data: {
-      trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
-      reviewedBy: actor.id,
-      reviewedAt,
-      reviewNotes,
-      updatedAt: new Date(),
+  const record = await prisma.expert.findFirst({
+    where: { id, companyId: company.id, deletedAt: null },
+    select: {
+      id: true,
+      companyId: true,
+      fullName: true,
+      title: true,
+      yearsExperience: true,
+      disciplines: true,
+      sectors: true,
+      certifications: true,
+      sourceDocumentId: true,
+      sourceDocument: {
+        select: {
+          id: true,
+          companyId: true,
+          extractedText: true,
+          contentSha256: true,
+          contentByteLength: true,
+          integrityStatus: true,
+        },
+      },
     },
   });
+  if (!record) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await logAction({
-    userId: actor.id,
-    action: "EXPERT_REVIEW",
-    entityType: "Expert",
-    entityId: id,
-    description: `Expert "${existing.fullName}" ${isApprove ? "approved" : "rejected"}${body.notes ? ` — ${body.notes}` : ""}`,
-    metadata: { expertId: id, action: body.action },
-  });
+  const isApprove = body.action === "approve";
+  const reviewedAt = new Date();
+  const ownedSource = record.sourceDocument?.companyId === company.id ? record.sourceDocument : null;
+  const provenance = isApprove
+    ? buildReviewProvenance({
+        recordType: "EXPERT",
+        sourceDocument: ownedSource,
+        fields: expertReviewFields(record),
+        reviewerId: actor.id,
+        reviewedAt,
+      })
+    : null;
 
-  return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+  if (provenance && !provenance.ok) {
+    return NextResponse.json({
+      error: "Expert approval requires durable source evidence.",
+      code: provenance.code,
+      missingEvidenceFields: provenance.missingFields.slice(0, 8),
+      requestId,
+    }, { status: 422 });
+  }
+
+  const durableProvenance = provenance?.ok ? provenance : null;
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.expert.updateMany({
+        where: { id, companyId: company.id, deletedAt: null },
+        data: {
+          trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
+          reviewedBy: actor.id,
+          reviewedAt,
+          reviewNotes: durableProvenance?.serialized ?? (body.notes?.trim() || null),
+          updatedAt: new Date(),
+        },
+      });
+      if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
+
+      await tx.auditLog.create({
+        data: {
+          userId: actor.id,
+          action: "EXPERT_REVIEW",
+          entityType: "Expert",
+          entityId: id,
+          description: isApprove
+            ? "Expert record reviewed with durable source evidence."
+            : "Expert record returned to draft review state.",
+          metadata: JSON.stringify({
+            requestId,
+            recordRef: publicVaultIdentifier(id),
+            action: body.action,
+            reviewedAt: reviewedAt.toISOString(),
+            ...(durableProvenance ? {
+              sourceContentHash: durableProvenance.sourceContentHash,
+              sourceByteLength: durableProvenance.sourceByteLength,
+              sourceTextHash: durableProvenance.sourceTextHash,
+              evidenceFields: durableProvenance.evidenceFields,
+            } : {}),
+          }),
+        },
+      });
+
+      return tx.expert.findUniqueOrThrow({ where: { id } });
+    });
+    return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+  } catch (error) {
+    if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
+      return NextResponse.json({ error: "Expert changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
+    }
+    logger.error("expert review failed", { requestId, errorClass: error instanceof Error ? error.constructor.name : "UnknownError" });
+    return NextResponse.json({ error: "Expert review failed. Retry with the request ID.", code: "EXPERT_REVIEW_FAILED", requestId }, { status: 500 });
+  }
 }
 
 export async function DELETE(

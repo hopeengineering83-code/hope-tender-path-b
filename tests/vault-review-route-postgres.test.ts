@@ -131,12 +131,16 @@ async function callBatch(
 describe("vault batch review routes — real authenticated PostgreSQL", () => {
   let expertRoute: { PATCH(req: Request): Promise<Response> };
   let projectRoute: { PATCH(req: Request): Promise<Response> };
+  let expertSingleRoute: { PATCH(req: Request, context: { params: Promise<{ id: string }> }): Promise<Response> };
+  let projectSingleRoute: { PATCH(req: Request, context: { params: Promise<{ id: string }> }): Promise<Response> };
   const userIds: string[] = [];
 
   before(async () => {
     await prismaReady;
     expertRoute = await import("../app/api/company/experts/batch/route");
     projectRoute = await import("../app/api/company/projects/batch/route");
+    expertSingleRoute = await import("../app/api/company/experts/[id]/route");
+    projectSingleRoute = await import("../app/api/company/projects/[id]/route");
   });
 
   after(async () => {
@@ -315,4 +319,88 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
       where: { userId: owner.user.id, action: "EXPERT_REVIEW", entityId: expert.id },
     }), 0);
   });
+
+  it("single expert approval creates durable provenance and audit atomically", async () => {
+    const owner = await createWorkspace("ADMIN");
+    userIds.push(owner.user.id);
+    const source = await createSourceDocument(owner.company.id);
+    const expert = await prisma.expert.create({
+      data: {
+        companyId: owner.company.id,
+        fullName: "Hana Route",
+        title: "Structural Engineer",
+        yearsExperience: 20,
+        disciplines: JSON.stringify(["Structural Engineering"]),
+        sectors: JSON.stringify(["Buildings"]),
+        sourceDocumentId: source.id,
+      },
+    });
+    await authenticate(owner.user.id);
+    const response = await expertSingleRoute.PATCH(new Request(`http://localhost/api/company/experts/${expert.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve" }),
+    }), { params: Promise.resolve({ id: expert.id }) });
+    assert.equal(response.status, 200);
+    const reviewed = await prisma.expert.findUniqueOrThrow({
+      where: { id: expert.id },
+      select: {
+        companyId: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true,
+        trustLevel: true, reviewedBy: true, reviewedAt: true, reviewNotes: true, sourceDocumentId: true,
+        sourceDocument: { select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true } },
+      },
+    });
+    assert.equal(isDurablyReviewed(reviewed), true);
+    assert.equal(await prisma.auditLog.count({ where: { userId: owner.user.id, action: "EXPERT_REVIEW", entityId: expert.id } }), 1);
+  });
+
+  it("single project approval rejects unverified bytes with zero writes", async () => {
+    const owner = await createWorkspace("PROPOSAL_MANAGER");
+    userIds.push(owner.user.id);
+    const source = await createSourceDocument(owner.company.id, false);
+    const project = await prisma.project.create({
+      data: {
+        companyId: owner.company.id,
+        name: "Project Route",
+        clientName: "Client Route",
+        country: "Ethiopia",
+        sector: "Buildings",
+        serviceAreas: JSON.stringify(["Structural Engineering"]),
+        contractValue: 1000,
+        currency: "ETB",
+        sourceDocumentId: source.id,
+      },
+    });
+    await authenticate(owner.user.id);
+    const response = await projectSingleRoute.PATCH(new Request(`http://localhost/api/company/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve" }),
+    }), { params: Promise.resolve({ id: project.id }) });
+    assert.equal(response.status, 422);
+    const unchanged = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    assert.equal(unchanged.trustLevel, "REGEX_DRAFT");
+    assert.equal(unchanged.reviewedAt, null);
+    assert.equal(await prisma.auditLog.count({ where: { userId: owner.user.id, action: "PROJECT_REVIEW", entityId: project.id } }), 0);
+  });
+
+  it("single approval returns not found for a foreign-company record", async () => {
+    const owner = await createWorkspace("REVIEWER");
+    const foreign = await createWorkspace("ADMIN");
+    userIds.push(owner.user.id, foreign.user.id);
+    const source = await createSourceDocument(foreign.company.id);
+    const expert = await prisma.expert.create({
+      data: { companyId: foreign.company.id, fullName: "Hana Route", sourceDocumentId: source.id },
+    });
+    await authenticate(owner.user.id);
+    const response = await expertSingleRoute.PATCH(new Request(`http://localhost/api/company/experts/${expert.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve" }),
+    }), { params: Promise.resolve({ id: expert.id }) });
+    assert.equal(response.status, 404);
+    const unchanged = await prisma.expert.findUniqueOrThrow({ where: { id: expert.id } });
+    assert.equal(unchanged.trustLevel, "REGEX_DRAFT");
+  });
+
 });
