@@ -10,6 +10,7 @@ const engine = readFileSync("lib/engine/run-tender-engine.ts", "utf8");
 const rematch = readFileSync("app/api/tenders/[id]/ai-rematch/route.ts", "utf8");
 const capture = readFileSync("scripts/capture-production-pages.mjs", "utf8");
 
+// Exact-head validation contract for the cleaned PR #1204 product branch.
 describe("PR 1175 final gap repair contracts", () => {
   for (const [name, source] of [["expert", expertRoute], ["project", projectRoute]] as const) {
     it(`${name} single approval is fail-closed and atomic`, () => {
