@@ -12,8 +12,9 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
+import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type ReadinessSeverity = "READY" | "PARTIAL" | "BLOCKED";
 
@@ -77,26 +78,31 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/tenders/${tenderId}/readiness-score`, { method: "GET" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? `Readiness score lookup failed (${res.status})`);
-        if (!cancelled) setData(json);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load readiness score");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/readiness-score`, { method: "GET" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Readiness score lookup failed (${res.status})`);
+      setData(json);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load readiness score");
+    } finally {
+      setLoading(false);
+    }
   }, [tenderId]);
+
+  useEffect(() => { void fetchData(); }, [fetchData]);
+
+  // Poll every 15s when tab is visible + subscribe to cross-panel sync
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!document.hidden) void fetchData();
+    }, 15_000);
+    const unsub = subscribeTenderWorkflowSync(tenderId, () => { void fetchData(); });
+    return () => { clearInterval(interval); unsub(); };
+  }, [tenderId, fetchData]);
 
   if (loading) {
     return (

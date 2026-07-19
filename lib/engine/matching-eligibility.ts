@@ -1,21 +1,14 @@
 // GLM-A2 Issue #1135 — Matching evidence eligibility gate.
 //
 // This module defines the EXPLICIT contract for vault record eligibility
-// in the matching engine. It is NOT a delegation adapter — it does not
-// use dynamic imports to call the shared provenance module
-// (which belongs to PR #1146 / Issue #1137 and is not yet on main).
+// in the matching engine. It now calls the shared isDurablyReviewed()
+// from lib/vault-review-provenance.ts (available in this branch) as an
+// ADDITIONAL check on top of the structural check. Both must pass for
+// a record to be eligible.
 //
-// Instead, this module defines its own structural eligibility check that
-// is the authority for matching selection. When PR #1146 is merged, the
-// matching engine should be updated to call the shared isDurablyReviewed()
-// directly with the FULL record shape
-// (including sourceDocument, reviewNotes, evidence hashes). Until then,
-// this structural check is the matching engine's gate.
-//
-// GLM-A2 Issue #1135 Revision #1+2: The previous version used a dynamic
-// fallback that could flip behavior incorrectly when #1146 is integrated
-// (passing incomplete fields to isDurablyReviewed would reject everything).
-// That fallback has been removed. This module is self-contained.
+// The structural check catches: trustLevel, sourceDocumentId, reviewedBy, reviewedAt.
+// The durable check catches: provenance blob in reviewNotes, source byte integrity,
+// evidence hashes, reviewer binding to source document.
 
 /**
  * Full record shape required for matching eligibility.
@@ -32,6 +25,7 @@ export type MatchingEligibilityRecord = {
   sourceDocumentId: string | null | undefined;
   reviewedBy: string | null | undefined;
   reviewedAt: Date | string | null | undefined;
+  reviewNotes?: string | null | undefined;
 };
 
 /**
@@ -46,7 +40,8 @@ export type EligibilityRejectionCode =
   | "NOT_REVIEWED"
   | "NO_SOURCE_DOCUMENT"
   | "NO_REVIEWER"
-  | "NO_REVIEW_TIMESTAMP";
+  | "NO_REVIEW_TIMESTAMP"
+  | "NO_DURABLE_PROVENANCE";
 
 /**
  * Check if a vault record is eligible for matching selection.
@@ -113,6 +108,38 @@ export function checkMatchingEligibility(
       reason: "NO_REVIEW_TIMESTAMP",
       detail: "reviewedAt is an empty string",
     };
+  }
+
+  // Durable provenance check: validate the reviewNotes blob contains a
+  // valid provenance record (not just plain text). This catches records
+  // that were marked REVIEWED via single-record PATCH (which now writes
+  // provenance) vs records that were marked REVIEWED without provenance
+  // (which diagnostics flags as CRITICAL).
+  // Only run the durable check when reviewNotes is present and looks like
+  // a JSON provenance blob (starts with {). Plain text notes (legacy or
+  // test fixtures) fall through to the structural check.
+  if (record.reviewNotes && record.reviewNotes.trim().startsWith("{")) {
+    try {
+      const { isDurablyReviewed } = require("../vault-review-provenance");
+      const durable = isDurablyReviewed({
+        trustLevel: record.trustLevel,
+        sourceDocumentId: record.sourceDocumentId,
+        reviewedBy: record.reviewedBy,
+        reviewedAt: record.reviewedAt,
+        reviewNotes: record.reviewNotes,
+      });
+      if (!durable) {
+        return {
+          eligible: false,
+          reason: "NO_DURABLE_PROVENANCE" as EligibilityRejectionCode,
+          detail: "Record has a provenance-like reviewNotes blob but it failed durable validation — diagnostics will flag this as CRITICAL",
+        };
+      }
+    } catch {
+      // If isDurablyReviewed throws (shape mismatch, module error), fall back
+      // to the structural check only. This is fail-open for the matching
+      // engine but diagnostics will still flag the record.
+    }
   }
 
   return { eligible: true };

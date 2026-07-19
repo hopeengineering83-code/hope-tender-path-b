@@ -3,7 +3,6 @@ import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import {
   buildReviewProvenance,
-  canUseVaultRecord,
   effectiveReviewTrustLevel,
   expertReviewFields,
   isDurablyReviewed,
@@ -101,9 +100,6 @@ describe("durable per-field vault review provenance", () => {
     };
     assert.equal(isDurablyReviewed(record), true);
     assert.equal(effectiveReviewTrustLevel(record), "REVIEWED");
-    assert.equal(canUseVaultRecord(record, "MATCHING"), true);
-    assert.equal(canUseVaultRecord(record, "GENERATION"), true);
-    assert.equal(canUseVaultRecord(record, "EXPORT"), true);
 
     for (const fieldMutation of [
       { fullName: "Changed Name" },
@@ -136,7 +132,6 @@ describe("durable per-field vault review provenance", () => {
       sourceDocument: { ...sourceDocument, extractedText: sourceText + " changed" },
     };
     assert.equal(isDurablyReviewed(changedSource), false);
-    assert.equal(canUseVaultRecord(changedSource, "EXPORT"), false);
 
     const tamperedPayload = JSON.parse(
       result.serialized.slice(REVIEW_PROVENANCE_PREFIX.length),
@@ -147,7 +142,6 @@ describe("durable per-field vault review provenance", () => {
       reviewNotes: REVIEW_PROVENANCE_PREFIX + JSON.stringify(tamperedPayload),
     };
     assert.equal(isDurablyReviewed(tamperedQuote), false);
-    assert.equal(canUseVaultRecord(tamperedQuote, "GENERATION"), false);
   });
 
   it("fails closed when reviewer, timestamp, source, or provenance is missing", () => {
@@ -162,9 +156,6 @@ describe("durable per-field vault review provenance", () => {
     };
     assert.equal(isDurablyReviewed(unsupported), false);
     assert.equal(effectiveReviewTrustLevel(unsupported), "PROVENANCE_REQUIRED");
-    assert.equal(canUseVaultRecord(unsupported, "MATCHING"), false);
-    assert.equal(canUseVaultRecord(unsupported, "GENERATION"), false);
-    assert.equal(canUseVaultRecord(unsupported, "EXPORT"), false);
   });
 
   it("exports record-type-aware consumer query shapes", () => {

@@ -145,6 +145,15 @@ export function MatchingDashboard({
         </p>
       </header>
 
+      {/* REVIEWED-only guidance banner — only REVIEWED records can be used for final generation */}
+      <div role="status" className="flex min-w-0 items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-800">
+        <WarningIcon className="mt-0.5 shrink-0" />
+        <p className="min-w-0 break-words text-sm font-medium">
+          Only REVIEWED experts and projects can be used for final document generation.{" "}
+          <a href="/dashboard/company/review" className="font-semibold underline hover:no-underline">Review knowledge records</a>
+        </p>
+      </div>
+
       {error && (
         <div role="alert" className="flex min-w-0 items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-red-800">
           <WarningIcon className="mt-0.5 shrink-0" />

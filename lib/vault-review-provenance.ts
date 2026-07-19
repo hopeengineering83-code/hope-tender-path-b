@@ -429,13 +429,6 @@ export function effectiveReviewTrustLevel(
   return record.trustLevel === "AI_DRAFT" ? "AI_DRAFT" : "REGEX_DRAFT";
 }
 
-export function canUseVaultRecord(
-  record: ReviewRecordState,
-  _purpose: "MATCHING" | "GENERATION" | "EXPORT",
-): boolean {
-  return isDurablyReviewed(record);
-}
-
 export function parseStoredStringList(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value !== "string") return [];

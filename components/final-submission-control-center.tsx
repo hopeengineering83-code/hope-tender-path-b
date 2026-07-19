@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
+import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type ExportReadiness = {
   ok: boolean;
@@ -58,6 +59,12 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
   const [exportReadiness, setExportReadiness] = useState<ExportReadiness | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Subscribe to cross-panel workflow sync so this panel auto-refreshes
+  // when other panels take actions.
+  useEffect(() => {
+    return subscribeTenderWorkflowSync(tenderId, () => { void checkFinalExport(); });
+  }, [tenderId]);
 
   const generationBlocked = Boolean(
     generationReadiness?.analysisSourceGate === "BLOCKED_REGEX_FALLBACK" ||
