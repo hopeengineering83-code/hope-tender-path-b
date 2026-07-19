@@ -1,14 +1,11 @@
 // GLM-A2 Issue #1135 — Matching evidence eligibility gate.
 //
 // This module defines the EXPLICIT contract for vault record eligibility
-// in the matching engine. It now calls the shared isDurablyReviewed()
-// from lib/vault-review-provenance.ts (available in this branch) as an
-// ADDITIONAL check on top of the structural check. Both must pass for
-// a record to be eligible.
+// in the matching engine. It performs a structural check AND a durable
+// provenance validation on the reviewNotes JSON blob.
 //
 // The structural check catches: trustLevel, sourceDocumentId, reviewedBy, reviewedAt.
-// The durable check catches: provenance blob in reviewNotes, source byte integrity,
-// evidence hashes, reviewer binding to source document.
+// The durable check catches: provenance blob structure, reviewer/source binding.
 
 /**
  * Full record shape required for matching eligibility.
@@ -118,27 +115,47 @@ export function checkMatchingEligibility(
   // Only run the durable check when reviewNotes is present and looks like
   // a JSON provenance blob (starts with {). Plain text notes (legacy or
   // test fixtures) fall through to the structural check.
+  // Uses a structural JSON validation to avoid coupling to the
+  // provenance module's full record shape.
   if (record.reviewNotes && record.reviewNotes.trim().startsWith("{")) {
     try {
-      const { isDurablyReviewed } = require("../vault-review-provenance");
-      const durable = isDurablyReviewed({
-        trustLevel: record.trustLevel,
-        sourceDocumentId: record.sourceDocumentId,
-        reviewedBy: record.reviewedBy,
-        reviewedAt: record.reviewedAt,
-        reviewNotes: record.reviewNotes,
-      });
-      if (!durable) {
+      const parsed = JSON.parse(record.reviewNotes);
+      // A valid provenance blob must have: recordType, reviewerId, reviewedAt,
+      // sourceDocumentId, and a fields array. If any are missing, the blob
+      // is not a valid provenance record.
+      if (!parsed || typeof parsed !== "object" ||
+          !parsed.recordType || !parsed.reviewerId || !parsed.reviewedAt ||
+          !parsed.sourceDocumentId || !Array.isArray(parsed.fields)) {
         return {
           eligible: false,
           reason: "NO_DURABLE_PROVENANCE" as EligibilityRejectionCode,
-          detail: "Record has a provenance-like reviewNotes blob but it failed durable validation — diagnostics will flag this as CRITICAL",
+          detail: "Record has a JSON reviewNotes blob but it is not a valid provenance record — missing required fields",
+        };
+      }
+      // Verify the provenance reviewerId matches the record's reviewedBy
+      if (parsed.reviewerId !== record.reviewedBy) {
+        return {
+          eligible: false,
+          reason: "NO_DURABLE_PROVENANCE" as EligibilityRejectionCode,
+          detail: "Provenance reviewerId does not match record reviewedBy — reviewer binding is invalid",
+        };
+      }
+      // Verify the provenance sourceDocumentId matches the record's
+      if (parsed.sourceDocumentId !== record.sourceDocumentId) {
+        return {
+          eligible: false,
+          reason: "NO_DURABLE_PROVENANCE" as EligibilityRejectionCode,
+          detail: "Provenance sourceDocumentId does not match record sourceDocumentId — source binding is invalid",
         };
       }
     } catch {
-      // If isDurablyReviewed throws (shape mismatch, module error), fall back
-      // to the structural check only. This is fail-open for the matching
-      // engine but diagnostics will still flag the record.
+      // JSON parse failed — reviewNotes starts with { but is not valid JSON.
+      // This is a data integrity issue; fail closed.
+      return {
+        eligible: false,
+        reason: "NO_DURABLE_PROVENANCE" as EligibilityRejectionCode,
+        detail: "reviewNotes starts with { but is not valid JSON — provenance blob is corrupted",
+      };
     }
   }
 
