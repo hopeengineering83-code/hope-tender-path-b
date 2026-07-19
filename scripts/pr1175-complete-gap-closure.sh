@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SOURCE_BRANCH="agent/pr1175-final-gap-repair"
+SOURCE_BASE_SHA="11e546f0caedde76b8b7254a7522898d2265c6fb"
 SOURCE_SHA="69bddb0753bb644e469aea4c7db0d33338349ea3"
 BASE_SHA="bfe688c22c89afbe1ce40d5aa1ab183ba44d25d2"
 
@@ -10,9 +11,6 @@ if ! git merge-base --is-ancestor "$BASE_SHA" HEAD; then
   exit 1
 fi
 
-# Before the repair runs, only this temporary runner and its workflow may differ
-# from the pinned parent. This prevents accidental unrelated changes from being
-# swept into the final product commit.
 unexpected_before=$(git diff --name-only "$BASE_SHA"...HEAD | grep -v -E '^scripts/pr1175-complete-gap-closure\.sh$|^\.github/workflows/pr1175-complete-gap-closure\.yml$' || true)
 if [[ -n "$unexpected_before" ]]; then
   echo "Unexpected pre-existing branch changes:" >&2
@@ -25,11 +23,14 @@ if [[ "$(git rev-parse FETCH_HEAD)" != "$SOURCE_SHA" ]]; then
   echo "PR #1204 moved: expected $SOURCE_SHA, got $(git rev-parse FETCH_HEAD)." >&2
   exit 1
 fi
+if ! git cat-file -e "$SOURCE_BASE_SHA^{commit}" 2>/dev/null; then
+  git fetch --no-tags origin "$SOURCE_BASE_SHA"
+fi
 
-# Copy the validated ordinary product files that do not overlap the latest
-# PR #1175 matching implementation. The sole overlap, matching.ts, is merged
-# below using assertion-checked replacements so #1203's fail-closed selection
-# semantics remain authoritative.
+# Apply PR #1204's ordinary product delta as three-way patches. This preserves
+# later #1175 changes in the same files, including reviewed-record edit demotion,
+# while adding the new atomic approval/provenance behavior. matching.ts remains
+# the sole intentional manual conflict and is resolved below.
 files=(
   'app/api/company/experts/[id]/route.ts'
   'app/api/company/projects/[id]/route.ts'
@@ -46,8 +47,12 @@ files=(
 )
 
 for path in "${files[@]}"; do
-  mkdir -p "$(dirname "$path")"
-  git show "$SOURCE_SHA:$path" > "$path"
+  patch_file="/tmp/pr1205-$(printf '%s' "$path" | sha256sum | cut -d' ' -f1).patch"
+  git diff --binary "$SOURCE_BASE_SHA" "$SOURCE_SHA" -- "$path" > "$patch_file"
+  if [[ -s "$patch_file" ]]; then
+    echo "Applying three-way product patch: $path"
+    git apply --3way "$patch_file"
+  fi
 done
 
 python3 - <<'PY'
@@ -150,9 +155,14 @@ if text.count('⚠ Provenance required') != 2:
 path.write_text(text)
 PY
 
-# Product-level assertions. These prevent the temporary automation from ever
-# committing a weakened threshold, stale structural review authority, or the
-# original below-threshold fallback.
+# Cross-feature assertions: both the pre-existing edit-demotion guard and the
+# new approval/provenance guard must survive the integration.
+grep -Fq 'reviewEvidenceEquals' 'app/api/company/experts/[id]/route.ts'
+grep -Fq 'EXPERT_REVIEW_INVALIDATED' 'app/api/company/experts/[id]/route.ts'
+grep -Fq 'reviewEvidenceEquals' 'app/api/company/projects/[id]/route.ts'
+grep -Fq 'PROJECT_REVIEW_INVALIDATED' 'app/api/company/projects/[id]/route.ts'
+grep -Fq 'buildReviewProvenance' 'app/api/company/experts/[id]/route.ts'
+grep -Fq 'buildReviewProvenance' 'app/api/company/projects/[id]/route.ts'
 grep -Fq 'const SELECTION_THRESHOLD = 0.75' lib/engine/matching.ts
 grep -Fq 'const eligible = strictEligible.length > 0' lib/engine/matching.ts
 ! grep -Fq 'let eligible = strictEligible.length > 0' lib/engine/matching.ts
@@ -161,4 +171,4 @@ grep -Fq 'VAULT_REVIEW_CONSUMER_SELECT' 'app/api/tenders/[id]/ai-rematch/route.t
 grep -Fq 'persistenceAtomic: true' 'app/api/tenders/[id]/ai-rematch/route.ts'
 grep -Fq 'isDurablyReviewed' lib/engine/run-tender-engine.ts
 
-echo "PR #1204 product delta applied to the exact latest PR #1175 head with the matching conflict resolved."
+echo "PR #1204 product delta three-way merged onto the latest PR #1175 head with all prior protections preserved."
