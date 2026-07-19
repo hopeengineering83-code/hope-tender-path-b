@@ -14,7 +14,7 @@ import {
 } from "../../../../../lib/engine/ai-multi-perspective-matcher";
 import { exactSelectionLimit } from "../../../../../lib/engine/scope-policy";
 import { logAction } from "../../../../../lib/audit";
-import { childLogger, time, reportError } from "../../../../../lib/observability";
+import { childLogger, time, reportError, logger } from "../../../../../lib/observability";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const maxDuration = 60;
@@ -347,28 +347,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     for (const assessment of expertBatchForResponse.assessments) {
       const match = tender.expertMatches.find((candidate) => candidate.expert.id === assessment.candidateId);
       if (!match) continue;
-      await prisma.tenderExpertMatch.update({
-        where: { id: match.id },
-        data: {
-          score: assessment.overallScore,
-          rationale: formatAssessmentRationale(assessment),
-          ...(applySelections ? { isSelected: selectedExpertIds.has(assessment.candidateId) } : {}),
-        },
-      });
-      // Persist per-dimension scores. AI scoring uses 0–10; writer expects
-      // 0–100, so multiply by 10.
-      const perspectives100 = Object.fromEntries(
-        Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
-      ) as Partial<Record<MatchPerspective, number>>;
-      await writeScoreBreakdown({
-        tenderId,
-        entityType: "EXPERT",
-        entityId: assessment.candidateId,
-        perspectives: perspectives100,
-        rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
-        source: "AI_REMATCH",
-      });
-      expertsUpdated += 1;
+      // Wrap each match's updates in a try/catch so a partial failure on
+      // one assessment (DB connectivity blip, constraint violation, etc.)
+      // cannot abort the entire rematch and leave the tender in a
+      // half-updated state. The match.update and the per-dimension
+      // breakdown writes are paired best-effort: writeScoreBreakdown
+      // already catches per-row errors internally, so the catch below
+      // only fires for the authoritative match.update failure.
+      try {
+        await prisma.tenderExpertMatch.update({
+          where: { id: match.id },
+          data: {
+            score: assessment.overallScore,
+            rationale: formatAssessmentRationale(assessment),
+            ...(applySelections ? { isSelected: selectedExpertIds.has(assessment.candidateId) } : {}),
+          },
+        });
+        // Persist per-dimension scores. AI scoring uses 0–10; writer expects
+        // 0–100, so multiply by 10.
+        const perspectives100 = Object.fromEntries(
+          Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
+        ) as Partial<Record<MatchPerspective, number>>;
+        await writeScoreBreakdown({
+          tenderId,
+          entityType: "EXPERT",
+          entityId: assessment.candidateId,
+          perspectives: perspectives100,
+          rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
+          source: "AI_REMATCH",
+        });
+        expertsUpdated += 1;
+      } catch (err) {
+        logger.warn(`[ai-rematch] expert ${assessment.candidateId} update failed; continuing with remaining assessments`, { detail: err instanceof Error ? err.message : err });
+      }
     }
   }
 
@@ -377,26 +388,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     for (const assessment of projectBatchForResponse.assessments) {
       const match = tender.projectMatches.find((candidate) => candidate.project.id === assessment.candidateId);
       if (!match) continue;
-      await prisma.tenderProjectMatch.update({
-        where: { id: match.id },
-        data: {
-          score: assessment.overallScore,
-          rationale: formatAssessmentRationale(assessment),
-          ...(applySelections ? { isSelected: selectedProjectIds.has(assessment.candidateId) } : {}),
-        },
-      });
-      const perspectives100 = Object.fromEntries(
-        Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
-      ) as Partial<Record<MatchPerspective, number>>;
-      await writeScoreBreakdown({
-        tenderId,
-        entityType: "PROJECT",
-        entityId: assessment.candidateId,
-        perspectives: perspectives100,
-        rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
-        source: "AI_REMATCH",
-      });
-      projectsUpdated += 1;
+      try {
+        await prisma.tenderProjectMatch.update({
+          where: { id: match.id },
+          data: {
+            score: assessment.overallScore,
+            rationale: formatAssessmentRationale(assessment),
+            ...(applySelections ? { isSelected: selectedProjectIds.has(assessment.candidateId) } : {}),
+          },
+        });
+        const perspectives100 = Object.fromEntries(
+          Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
+        ) as Partial<Record<MatchPerspective, number>>;
+        await writeScoreBreakdown({
+          tenderId,
+          entityType: "PROJECT",
+          entityId: assessment.candidateId,
+          perspectives: perspectives100,
+          rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
+          source: "AI_REMATCH",
+        });
+        projectsUpdated += 1;
+      } catch (err) {
+        logger.warn(`[ai-rematch] project ${assessment.candidateId} update failed; continuing with remaining assessments`, { detail: err instanceof Error ? err.message : err });
+      }
     }
   }
 

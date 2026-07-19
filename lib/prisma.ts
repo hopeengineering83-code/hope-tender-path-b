@@ -1281,39 +1281,82 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     }
   }
 
-  // SubmissionPlanRevision: audit trail of plan revisions (migration 20260703100000)
+  // SubmissionPlanRevision: durable, revisioned submission-plan authority.
+  // Columns MUST match prisma/schema.prisma — drift here breaks dev cold-starts
+  // (CI runs migrations first, so this block is a no-op there). Audit test:
+  // tests/bootstrap-schema-coverage.test.ts.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanRevision" (
     "id" TEXT NOT NULL,
     "tenderId" TEXT NOT NULL,
     "revision" INTEGER NOT NULL,
-    "status" TEXT NOT NULL,
-    "contentHash" TEXT NOT NULL,
-    "itemsJson" TEXT NOT NULL,
-    "validationJson" TEXT,
-    "builtById" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'DRAFT',
+    "sourceContentHash" TEXT NOT NULL,
+    "requirementsHash" TEXT NOT NULL,
+    "createdById" TEXT NOT NULL,
+    "confirmedById" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "confirmedAt" TIMESTAMP(3),
+    "supersededAt" TIMESTAMP(3),
+    "invalidatedAt" TIMESTAMP(3),
+    "invalidationReason" TEXT,
+    "confirmationHash" TEXT,
     CONSTRAINT "SubmissionPlanRevision_pkey" PRIMARY KEY ("id")
   )`);
-  // SubmissionPlanItem: individual items in a plan revision (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "SubmissionPlanRevision_tenderId_revision_key"
+    ON "SubmissionPlanRevision" ("tenderId", "revision")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanRevision_tenderId_idx"
+    ON "SubmissionPlanRevision" ("tenderId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanRevision_status_idx"
+    ON "SubmissionPlanRevision" ("status")`);
+  // SubmissionPlanItem: individual planned documents in a revision.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanItem" (
     "id" TEXT NOT NULL,
-    "revisionId" TEXT NOT NULL,
+    "submissionPlanId" TEXT NOT NULL,
     "exactFileName" TEXT NOT NULL,
     "exactOrder" INTEGER NOT NULL,
-    "documentType" TEXT,
-    "format" TEXT,
+    "documentType" TEXT NOT NULL DEFAULT 'TENDER_REQUIRED_FILE',
+    "format" TEXT NOT NULL DEFAULT 'DOCX',
+    "envelope" TEXT NOT NULL DEFAULT 'TECHNICAL',
+    "status" TEXT NOT NULL DEFAULT 'PLANNED',
+    "sourceRequirementIds" TEXT NOT NULL DEFAULT '[]',
+    "sourceFileCitations" TEXT NOT NULL DEFAULT '[]',
+    "requiresOriginalUpload" BOOLEAN NOT NULL DEFAULT FALSE,
+    "generatedDocumentId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "SubmissionPlanItem_pkey" PRIMARY KEY ("id")
   )`);
-  // RequirementEvidenceDecision: evidence approval decisions (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanItem_submissionPlanId_idx"
+    ON "SubmissionPlanItem" ("submissionPlanId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanItem_generatedDocumentId_idx"
+    ON "SubmissionPlanItem" ("generatedDocumentId")`);
+  // RequirementEvidenceDecision: durable per-field evidence review records.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "RequirementEvidenceDecision" (
     "id" TEXT NOT NULL,
-    "tenderId" TEXT NOT NULL,
-    "requirementId" TEXT,
-    "decision" TEXT NOT NULL,
-    "decidedById" TEXT,
+    "tenderRequirementId" TEXT NOT NULL,
+    "tenderFileId" TEXT NOT NULL,
+    "pageNumber" INTEGER NOT NULL,
+    "exactQuote" TEXT NOT NULL,
+    "evidenceType" TEXT NOT NULL,
+    "companyAssetType" TEXT NOT NULL,
+    "companyAssetId" TEXT NOT NULL,
+    "relevanceExplanation" TEXT NOT NULL,
+    "reviewerId" TEXT NOT NULL,
+    "decisionStatus" TEXT NOT NULL DEFAULT 'DRAFT',
+    "sourceContentHash" TEXT NOT NULL,
+    "companyEvidenceHash" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "invalidatedAt" TIMESTAMP(3),
+    "invalidationReason" TEXT,
     CONSTRAINT "RequirementEvidenceDecision_pkey" PRIMARY KEY ("id")
   )`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RequirementEvidenceDecision_tenderRequirementId_idx"
+    ON "RequirementEvidenceDecision" ("tenderRequirementId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RequirementEvidenceDecision_decisionStatus_idx"
+    ON "RequirementEvidenceDecision" ("decisionStatus")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RequirementEvidenceDecision_companyAssetId_idx"
+    ON "RequirementEvidenceDecision" ("companyAssetId")`);
   // TenderFactsLedger: universal tender facts authority ledger (migration 20260708000000)
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderFactsLedger" (
     "id" TEXT NOT NULL,
